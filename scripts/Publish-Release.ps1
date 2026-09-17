@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([string]$Go='go',[string]$GitHubCLI='gh',[string]$Notes='')
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot

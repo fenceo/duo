@@ -1,4 +1,4 @@
-param([string]$DataDirectory = (Join-Path $PSScriptRoot '..\data'))
+﻿param([string]$DataDirectory = (Join-Path $PSScriptRoot '..\data'))
 $ErrorActionPreference = 'Stop'
 $program = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\build\jianzuo.exe'))
 $secure = Read-Host '输入新的简作访问密码（先停止简作服务）' -AsSecureString

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([string]$Go = 'go')
 $ErrorActionPreference='Stop'
 $projectRoot = Split-Path $PSScriptRoot
@@ -26,8 +26,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
     & $Go build -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $packageDir 'jianzuo-service.exe') .
     if ($LASTEXITCODE -ne 0) { throw 'Service build failed' }
-    & $compiler /nologo /target:winexe /platform:x64 /utf8output ("/out:"+(Join-Path $packageDir '简作.exe')) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll portable\Launcher.cs
+    # csc.exe parses its command line through the system ANSI code page, so a non-ASCII /out: path
+    # turns into a mangled name (CS2021). Compile to an ASCII temp name and rename afterwards.
+    $launcher = Join-Path $packageDir 'jianzuo-launcher.exe'
+    Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+    & $compiler /nologo /target:winexe /platform:x64 /utf8output /codepage:65001 ("/out:"+$launcher) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll portable\Launcher.cs
     if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
+    Move-Item -LiteralPath $launcher -Destination (Join-Path $packageDir '简作.exe') -Force
     Copy-Item -LiteralPath 'portable\使用说明.md' -Destination $packageDir -Force
     $notices = [System.Text.StringBuilder]::new()
     [void]$notices.AppendLine('Jianzuo portable - Third-party notices')

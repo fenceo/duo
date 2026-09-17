@@ -12,7 +12,8 @@ assert.equal(conv.runFooter({...run,status:'running'}),'');assert.match(conv.run
 const interval=globalThis.setInterval;globalThis.setInterval=()=>0;
 const sticky=await load('sticky.ts','parseAppearance');globalThis.setInterval=interval;
 assert.equal(sticky.parseAppearance('{"font":99,"sidebar":10,"width":5000,"accent":"injection","theme":"x"}').font,18);
-assert.equal(sticky.parseAppearance('{"sidebar":10}').sidebar,210);assert.equal(sticky.parseAppearance('null').theme,'light');assert.equal(sticky.parseAppearance('{"notes":false}').notes,false);
+assert.equal(sticky.parseAppearance('{"sidebar":10}').sidebar,180);assert.equal(sticky.parseAppearance('{"sidebar":900}').sidebar,420);assert.equal(sticky.parseAppearance('null').theme,'light');assert.equal(sticky.parseAppearance('{"notes":false}').notes,false);
+assert.equal(sticky.parseAppearance('{}').tool,42);assert.equal(sticky.parseAppearance('{"tool":5}').tool,22);assert.equal(sticky.parseAppearance('{"tool":900}').tool,75);
 const workflow=await load('workflow.ts','validateAttachmentFiles');
 assert.throws(()=>workflow.validateAttachmentFiles([{size:8*1024*1024+1}]));assert.throws(()=>workflow.validateAttachmentFiles([{size:1}],5));workflow.validateAttachmentFiles([{size:8*1024*1024}],4);
 console.log('PASS: per-turn real usage/duration, unavailable history, appearance bounds, attachment limits.');

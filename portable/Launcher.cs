@@ -68,7 +68,7 @@ sealed class ServiceHost:IDisposable {
         process.OutputDataReceived+=(s,e)=>{};process.Start();process.BeginErrorReadLine();process.BeginOutputReadLine();
         for(int i=0;i<80;i++){
             if(process.HasExited)throw new Exception("服务启动失败：\n"+errors+"\n日志："+Path.Combine(Portable.Data,"service.log"));
-            try{var req=(HttpWebRequest)WebRequest.Create(Portable.URL+"healthz");req.Proxy=null;req.Timeout=350;using(var res=req.GetResponse())using(var reader=new StreamReader(res.GetResponseStream())){var obj=Portable.Json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());if(Convert.ToString(obj["app"])=="jianzuo"&&Convert.ToString(obj["version"])=="0.12.0-portable")return;}}catch(WebException){}
+            try{var req=(HttpWebRequest)WebRequest.Create(Portable.URL+"healthz");req.Proxy=null;req.Timeout=350;using(var res=req.GetResponse())using(var reader=new StreamReader(res.GetResponseStream())){var obj=Portable.Json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());if(Convert.ToString(obj["app"])=="jianzuo"&&Convert.ToString(obj["version"])=="0.12.1-portable")return;}}catch(WebException){}
             Thread.Sleep(150);
         }
         if(Running){process.StandardInput.Close();process.WaitForExit(20000);}throw new Exception("启动超时，请查看 data/service.log。");

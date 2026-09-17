@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $exe = Join-Path $root 'build\jianzuo.exe'
 $data = Join-Path $root 'data'

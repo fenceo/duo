@@ -23,15 +23,9 @@ function installWorkspace(){
  const workspace=document.createElement('div');workspace.id='workspace';
  const chat=document.createElement('div');chat.id='chat-column';
  const dock=document.createElement('aside');dock.id='tool-dock';dock.className='hidden';dock.setAttribute('aria-label','任务工具');
- dock.innerHTML='<div id="tool-resizer" role="separator" tabindex="0" aria-label="调整工具宽度" aria-orientation="vertical" aria-valuemin="30" aria-valuemax="65"></div><header class="tool-dock-head"><strong id="tool-title">任务工具</strong><div class="actions"><button id="tool-expand" title="展开工具面板">全屏</button><button id="tool-close" aria-label="关闭工具面板">✕</button></div></header><div id="tool-body"></div>';
+ dock.innerHTML='<div id="tool-resizer" role="separator" tabindex="0" aria-label="调整工具宽度" aria-orientation="vertical" aria-valuemin="22" aria-valuemax="75"></div><header class="tool-dock-head"><strong id="tool-title">任务工具</strong><div class="actions"><button id="tool-expand" title="展开工具面板">全屏</button><button id="tool-close" aria-label="关闭工具面板">✕</button></div></header><div id="tool-body"></div>';
  main.append(workspace);workspace.append(chat,dock);chat.append(element('conversation'),element('composer-wrap'));for(const id of ['notebook','scratch-panel','hardware-panel'])element('tool-body').append(element(id));
  button('chat-tab').textContent='对话';button('tool-close').onclick=()=>switchTab('chat');button('tool-expand').onclick=()=>{toolFullscreen=!toolFullscreen;workspace.classList.toggle('tool-full',toolFullscreen);button('tool-expand').textContent=toolFullscreen?'分屏':'全屏'};
- const resize=element('tool-resizer');let width=42;try{width=Number(localStorage.getItem('jianzuo-tool-width'))||42}catch{}
- const setWidth=(value:number)=>{width=Math.max(30,Math.min(65,value));workspace.style.setProperty('--tool-width',width+'%');resize.setAttribute('aria-valuenow',String(Math.round(width)));try{localStorage.setItem('jianzuo-tool-width',String(width))}catch{}};setWidth(width);
- resize.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();resize.setPointerCapture(e.pointerId)};
- resize.onpointermove=e=>{if(!resize.hasPointerCapture(e.pointerId))return;const rect=workspace.getBoundingClientRect();setWidth((rect.right-e.clientX)/rect.width*100)};
- resize.onpointerup=e=>{if(resize.hasPointerCapture(e.pointerId))resize.releasePointerCapture(e.pointerId)};resize.ondblclick=()=>setWidth(42);
- resize.onkeydown=e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();setWidth(width+(e.key==='ArrowLeft'?2:-2))}if(e.key==='Home'){e.preventDefault();setWidth(42)}};
 }
 
 function installSettingsSections(){

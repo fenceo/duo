@@ -36,3 +36,25 @@
 .update-version{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0 12px}.update-version small{display:block;color:var(--muted);font-size:11px;margin-bottom:7px}.update-version strong{font-size:20px;font-weight:550}.update-version button{font-size:12px}.update-links{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.update-links a{display:block;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:12px}.update-links a:hover{background:var(--tint)}#update-result{min-height:36px;overflow-wrap:anywhere}#update-notes{border:1px solid var(--line);border-radius:9px;padding:12px;font-size:12px}#update-notes>summary,.update-source>summary{cursor:pointer;color:var(--muted)}#update-notes-content{white-space:pre-wrap;overflow-wrap:anywhere;max-height:270px;overflow:auto;font-family:inherit;font-size:12px;line-height:1.8}.update-source{margin-top:20px;border-top:1px solid var(--line);padding-top:15px;font-size:12px}.update-source button{font-size:12px}.update-help{margin-top:20px!important}
 :root[data-theme="light"] .settings-nav{background:var(--canvas)}
 @media(max-width:560px){.settings-nav{gap:3px}.settings-nav button{font-size:11px;padding:9px 5px}.update-version strong{font-size:18px}}
+/* Manual layout: drag a panel edge with the mouse, double-click it to reset, arrow keys nudge. */
+.panel-resizer{position:relative;flex:none;background:transparent;z-index:6;touch-action:none;user-select:none;-webkit-user-select:none}
+.panel-resizer::before{content:"";position:absolute;background:var(--accent);opacity:0;transition:opacity .12s}
+.panel-resizer:hover::before,.panel-resizer:focus-visible::before,.panel-resizer.dragging::before{opacity:.8}
+.panel-resizer:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
+body.resizing-x,body.resizing-x *{cursor:col-resize!important}
+body.resizing-y,body.resizing-y *{cursor:row-resize!important}
+body.resizing-x *,body.resizing-y *{user-select:none!important}
+.sidebar{position:relative}
+#sidebar-resizer{position:absolute;top:0;bottom:0;right:-4px;width:9px;cursor:col-resize}
+#sidebar-resizer::before{top:0;bottom:0;right:4px;width:1px}
+#sidebar-resizer:hover::before,#sidebar-resizer.dragging::before,#sidebar-resizer:focus-visible::before{right:3px;width:2px}
+#tool-resizer{padding:0;background:transparent}
+#tool-resizer::before{top:0;bottom:0;left:3px;width:2px}
+.sticky-board{position:relative}
+#sticky-resizer{position:absolute;top:-5px;left:0;right:0;height:10px;cursor:row-resize}
+#sticky-resizer::before{left:0;right:0;top:4px;height:2px}
+.sticky-board[data-sized="1"]{max-height:none;height:var(--sticky-height,32vh)}
+#hardware-resizer{height:10px;margin:-3px 0;cursor:row-resize}
+#hardware-resizer::before{left:0;right:0;top:4px;height:2px}
+#hardware-panel[data-sized="1"] #hardware-send-details{height:var(--hardware-height,auto);max-height:none}
+@media(max-width:760px){.panel-resizer{display:none}}
