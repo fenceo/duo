@@ -4,7 +4,7 @@
 
 ## 下载与开始
 
-在本仓库 **Releases** 下载 `Jianzuo-portable-windows-x64.zip`，完整解压后双击 **简作.exe**。首次选择执行环境、工作目录并设置面板密码。程序驻留 Windows 系统托盘，可打开面板、查看日志、重启或退出。
+在 [Releases](https://github.com/fenceo/jianzuo/releases) 下载 `Jianzuo-portable-windows-x64.zip`，完整解压后双击 **简作.exe**。首次选择执行环境、工作目录并设置面板密码。程序驻留 Windows 系统托盘，可打开面板、查看日志、重启或退出。
 
 运行环境：Windows 10/11 x64、系统 .NET Framework 4.8。使用便携包无需安装 Go、Node.js；AI 执行环境仍需自行安装并登录 Codex CLI 或 Claude Code。WSL / SSH 的文件与运行辅助功能需要对应环境中的 Python 3。
 

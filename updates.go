@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// Set to the public upstream repository when publishing the first release.
-var releaseRepository = ""
+// The public upstream repository used as the default update source.
+var releaseRepository = "fenceo/jianzuo"
 
 const portableAssetName = "Jianzuo-portable-windows-x64.zip"
 
