@@ -28,7 +28,7 @@ function installLayout(){
  for(const id of ['note-tab','scratch-tab'])element('more-tools').append(element(id));
  element('more-tools').addEventListener('click',()=>element('more-tools').parentElement!.removeAttribute('open'));
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';
- const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);model.title='本任务使用的 AI 工具、模型和推理强度';
+ const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);element('task-model-button').title='本任务使用的 AI 工具、模型和推理强度';
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
  element('composer-wrap').querySelector('.footnote')!.remove();
  element('task-list').addEventListener('click',e=>{const target=(e.target as HTMLElement).closest<HTMLElement>('[data-workspace]');if(!target)return;const key=target.dataset.workspace!;if(collapsedWorkspaces.has(key))collapsedWorkspaces.delete(key);else collapsedWorkspaces.add(key);try{localStorage.setItem('jianzuo-folders-v1',JSON.stringify([...collapsedWorkspaces]))}catch{}renderList()});

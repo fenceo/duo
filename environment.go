@@ -258,41 +258,145 @@ func parseModels(raw []byte) ([]ModelOption, error) {
 }
 
 const readRemoteModels = `import pathlib,sys,json
-p=pathlib.Path(sys.argv[1]).expanduser() if sys.argv[1] else pathlib.Path.home()/'.codex/models_cache.json'
-if not p.exists(): print(json.dumps({'models':[],'message':'此环境还没有模型缓存，请先登录并运行一次 Codex。'}));sys.exit(0)
-if p.stat().st_size>4194304: raise ValueError('model cache too large')
-d=json.loads(p.read_text(encoding='utf-8'))
+import os,re
 allowed={'none','minimal','low','medium','high','xhigh','max','ultra'}
-models=[{'id':m['slug'],'name':m.get('display_name') or m['slug'],'reasoning_levels':[r['effort'] for r in m['supported_reasoning_levels'] if isinstance(r,dict) and r.get('effort') in allowed] if isinstance(m.get('supported_reasoning_levels'),list) else None,'default_reasoning':m.get('default_reasoning_level','')} for m in d.get('models',[]) if m.get('slug') and m.get('visibility','list') in ('list','')]
-print(json.dumps({'models':models,'modified':int(p.stat().st_mtime*1000)},ensure_ascii=False))
+root=pathlib.Path.home()/'.codex'
+cands=[sys.argv[1]] if sys.argv[1] else []
+try:
+ cfg=root/'config.toml'
+ if cfg.is_file():
+  match=re.search(r'(?m)^\s*model_catalog_json\s*=\s*["\']([^"\']+)["\']',cfg.read_text(encoding='utf-8',errors='replace'))
+  if match: cands.append(match.group(1) if os.path.isabs(match.group(1)) else str(root/match.group(1)))
+except OSError: pass
+cands+= [str(root/'models_cache.json'),str(root/'model_catalog.json'),str(root/'cockpit-model-catalog.json')]
+models=[];used=[];seen=set();modified=0
+for c in cands:
+ p=pathlib.Path(c).expanduser()
+ try:
+  if not p.is_file() or p.stat().st_size>4194304: continue
+  d=json.loads(p.read_text(encoding='utf-8'))
+ except (OSError,ValueError): continue
+ found=0
+ for m in d.get('models',[]):
+  slug=m.get('slug')
+  if not slug or slug in seen or m.get('visibility','list') not in ('list',''): continue
+  levels=m.get('supported_reasoning_levels')
+  seen.add(slug);found+=1
+  models.append({'id':slug,'name':m.get('display_name') or slug,'reasoning_levels':[r['effort'] for r in levels if isinstance(r,dict) and r.get('effort') in allowed] if isinstance(levels,list) else None,'default_reasoning':m.get('default_reasoning_level','')})
+ if found: used.append(p.name)
+ modified=max(modified,int(p.stat().st_mtime*1000))
+out={'models':models,'modified':modified}
+if models: out['source']='该环境的 Codex 模型目录 · '+' + '.join(used)
+else: out['message']='此环境还没有模型缓存，请先登录并运行一次 Codex。'
+print(json.dumps(out,ensure_ascii=False))
 `
+
+// Codex keeps its model list in models_cache.json, but a custom
+// model_catalog_json (cockpit-style setups, third-party providers) replaces
+// that file. Read every known location so those models show up too.
+var modelCacheFileNames = []string{"models_cache.json", "model_catalog.json", "cockpit-model-catalog.json"}
+
+func codexHome() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex")
+}
+
+func catalogFromConfig(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) > 1024*1024 {
+		return ""
+	}
+	match := regexp.MustCompile(`(?m)^\s*model_catalog_json\s*=\s*["']([^"']+)["']`).FindSubmatch(raw)
+	if match == nil {
+		return ""
+	}
+	return string(match[1])
+}
+
+func modelCacheCandidates(explicit string) []string {
+	home := codexHome()
+	out := []string{}
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		clean := filepath.Clean(path)
+		for _, seen := range out {
+			if seen == clean {
+				return
+			}
+		}
+		out = append(out, clean)
+	}
+	if catalog := catalogFromConfig(filepath.Join(home, "config.toml")); catalog != "" {
+		if filepath.IsAbs(catalog) {
+			add(catalog)
+		} else {
+			add(filepath.Join(home, catalog))
+		}
+	}
+	add(explicit)
+	for _, name := range modelCacheFileNames {
+		add(filepath.Join(home, name))
+	}
+	return out
+}
+
+// readModelCaches merges every readable catalog. A model keeps the position and
+// name it has in the file that lists it first.
+func readModelCaches(paths []string) ([]ModelOption, []string, int64, string) {
+	models, used := []ModelOption{}, []string{}
+	seen := map[string]bool{}
+	var modified int64
+	note := ""
+	for _, path := range paths {
+		stat, err := os.Stat(path)
+		if err != nil || stat.IsDir() {
+			continue
+		}
+		if stat.Size() > 4*1024*1024 {
+			note = "部分模型目录过大，已跳过"
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		list, err := parseModels(raw)
+		if err != nil {
+			continue
+		}
+		found := 0
+		for _, m := range list {
+			if seen[m.ID] {
+				continue
+			}
+			seen[m.ID] = true
+			found++
+			models = append(models, m)
+		}
+		if found > 0 {
+			used = append(used, filepath.Base(path))
+		}
+		if stamp := stat.ModTime().UnixMilli(); stamp > modified {
+			modified = stamp
+		}
+	}
+	return models, used, modified, note
+}
 
 func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error) {
 	out := ModelList{Models: []ModelOption{}, Source: "Codex 本地模型缓存"}
 	if e.Type == "windows" {
-		p := e.ModelCache
-		if p == "" {
-			home, _ := os.UserHomeDir()
-			p = filepath.Join(home, ".codex", "models_cache.json")
+		candidates := modelCacheCandidates(e.ModelCache)
+		models, used, modified, note := readModelCaches(candidates)
+		out.Models, out.Modified = models, modified
+		if len(models) > 0 {
+			out.Source = "Codex 模型目录 · " + strings.Join(used, " + ")
+		} else {
+			out.Message = "没有读到模型目录，请先在该环境登录并运行一次 Codex。" + note
 		}
-		stat, err := os.Stat(p)
-		if os.IsNotExist(err) {
-			out.Message = "此环境还没有模型缓存，请先登录并运行一次 Codex。"
-			return out, nil
-		}
-		if err != nil {
-			return out, err
-		}
-		if stat.Size() > 4*1024*1024 {
-			return out, errors.New("模型缓存过大")
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return out, err
-		}
-		out.Models, err = parseModels(raw)
-		out.Modified = stat.ModTime().UnixMilli()
-		return out, err
+		return out, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -306,6 +410,8 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 	if err = json.Unmarshal(raw, &out); err != nil {
 		return out, errors.New("环境返回的模型数据无效，请检查 Python 3 和 SSH 登录输出")
 	}
-	out.Source = "该环境的 Codex 模型缓存"
+	if out.Source == "" {
+		out.Source = "该环境的 Codex 模型缓存"
+	}
 	return out, nil
 }

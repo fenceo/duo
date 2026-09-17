@@ -153,22 +153,65 @@ func (s *Server) Handler() http.Handler {
 	}))
 	m.HandleFunc("GET /api/tasks/{id}", s.secure(s.detail))
 	m.HandleFunc("PATCH /api/tasks/{id}", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		var v struct{ Title string }
+		var v struct {
+			Title           *string `json:"title"`
+			Model           *string `json:"model"`
+			ReasoningEffort *string `json:"reasoning_effort"`
+		}
 		if !body(w, r, &v) {
 			return
 		}
-		if strings.TrimSpace(v.Title) == "" || len([]rune(v.Title)) > 180 {
-			fail(w, 400, "任务名称无效")
-			return
-		}
-		res, e := s.app.store.Exec("UPDATE tasks SET title=?,updated=? WHERE id=?", strings.TrimSpace(v.Title), now(), r.PathValue("id"))
+		id := r.PathValue("id")
+		task, e := s.app.store.task(id)
 		if e != nil {
-			fail(w, 500, e.Error())
+			fail(w, 404, "任务不存在")
 			return
 		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			fail(w, 404, "任务不存在")
+		if v.Title == nil && v.Model == nil && v.ReasoningEffort == nil {
+			fail(w, 400, "没有需要修改的内容")
+			return
+		}
+		if v.Title != nil {
+			title := strings.TrimSpace(*v.Title)
+			if title == "" || len([]rune(title)) > 180 {
+				fail(w, 400, "任务名称无效")
+				return
+			}
+			if _, e = s.app.store.Exec("UPDATE tasks SET title=?,updated=? WHERE id=?", title, now(), id); e != nil {
+				fail(w, 500, e.Error())
+				return
+			}
+		}
+		if v.Model != nil {
+			model := strings.TrimSpace(*v.Model)
+			if len(model) > 120 || strings.ContainsAny(model, "\r\n") {
+				fail(w, 400, "模型名称无效")
+				return
+			}
+			if _, e = s.app.store.Exec("UPDATE tasks SET model=?,updated=? WHERE id=?", model, now(), id); e != nil {
+				fail(w, 500, e.Error())
+				return
+			}
+		}
+		if v.ReasoningEffort != nil {
+			reasoning := strings.TrimSpace(*v.ReasoningEffort)
+			if !validEngineReasoning(task.Engine, reasoning) {
+				fail(w, 400, "此 AI 工具不支持所选推理强度")
+				return
+			}
+			if _, e = s.app.store.Exec("UPDATE tasks SET updated=? WHERE id=?", now(), id); e != nil {
+				fail(w, 500, e.Error())
+				return
+			}
+			// Older tasks predate task_execution rows, so create the row on demand.
+			if _, e = s.app.store.Exec("INSERT INTO task_execution(task_id,reasoning_effort,engine) VALUES(?,?,?) ON CONFLICT(task_id) DO UPDATE SET reasoning_effort=excluded.reasoning_effort", id, reasoning, task.Engine); e != nil {
+				fail(w, 500, e.Error())
+				return
+			}
+		}
+		s.app.changed()
+		if updated, e := s.app.store.task(id); e == nil {
+			jsonOut(w, 200, updated)
 			return
 		}
 		jsonOut(w, 200, map[string]bool{"ok": true})
