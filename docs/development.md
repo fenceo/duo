@@ -21,6 +21,13 @@ node scripts/Test-Updates-Web.mjs
 
 `data`、`dist`、`build`、`_backups`、`_testdata`、本机部署脚本与验收资料不进入 Git。测试用密码与回环地址只是合成测试数据。
 
+## Windows 与 WSL 进程约定
+
+- 调用 `wsl.exe` 时只传递 `SystemRoot` 和 `WINDIR`。不要把 Windows 的完整 `PATH`、代理变量或受限沙箱变量传给 WSL；Linux 命令必须使用所选用户的登录环境。
+- 从 `command` 或 `environmentProbeCommand` 创建带超时的子进程时，统一使用 `commandWithContext`，以保留最小宿主环境和 `Dir`。
+- Windows 自启使用当前用户的 `Jianzuo User` 计划任务。配置一致时应复用现有任务，不从受限进程强制重注册。
+- WSL、计划任务相关测试必须在普通 Windows 用户上下文运行；Codex 沙箱账户通常没有 `wsl.exe` 和任务计划服务所需权限。
+
 ## 发布新版本
 
 1. 同步修改 `portable.go`、`portable/Launcher.cs`、`package.json`、`package-lock.json` 和 `scripts/Test-Portable.py` 中的版本号。

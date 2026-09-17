@@ -1,5 +1,8 @@
 /data/
 /build/
+/.gocache/
+/.gomodcache/
+/.npm-cache/
 *.log
 __pycache__/
 *.py[cod]

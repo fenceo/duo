@@ -48,9 +48,20 @@ func TestDetectedAuthConservative(t *testing.T) {
 	}
 }
 func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
+	t.Setenv("SystemRoot", `C:\Windows`)
+	t.Setenv("WINDIR", `C:\Windows`)
+	t.Setenv("PATH", `C:\restricted-tools`)
+	t.Setenv("HTTPS_PROXY", "http://private.example")
 	cmd := environmentProbeCommand(Environment{Type: "wsl", Distro: "Ubuntu-22.04", User: "dev"}, "sh", "-c", discoverWSLScript)
 	if !reflect.DeepEqual(cmd.Args[1:], []string{"-d", "Ubuntu-22.04", "-u", "dev", "--exec", "sh", "-c", discoverWSLScript}) {
 		t.Fatalf("WSL script would be expanded by an extra shell: %v", cmd.Args)
+	}
+	if !reflect.DeepEqual(cmd.Env, []string{`SystemRoot=C:\Windows`, `WINDIR=C:\Windows`}) {
+		t.Fatalf("WSL must receive only the minimal Windows host environment: %v", cmd.Env)
+	}
+	bounded := commandWithContext(context.Background(), cmd)
+	if !reflect.DeepEqual(bounded.Env, cmd.Env) || bounded.Path != cmd.Path {
+		t.Fatalf("context command must preserve the WSL host environment: %+v", bounded)
 	}
 	env := Environment{ID: "wsl", Type: "wsl", Distro: "Ubuntu-22.04", Workspaces: []string{"/home"}}
 	probe := func(ctx context.Context, e Environment, args ...string) (string, error) {
@@ -61,7 +72,7 @@ func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
 			if e.User != "" {
 				t.Error("detection must use distro default user")
 			}
-			return "warning\n__JIANZUO_ENV__\ndev\n/home/dev\n/home/dev/.local/bin/codex\n/home/dev/.local/bin/claude\n", nil
+			return "warning\n__JIANZUO_ENV__\ndev\n/home/dev\n/home/dev/.local/bin/codex\n/home/dev/.local/bin/claude\nproxy=1\ngit_config=1\nssh_agent=0\nshell=1\n", nil
 		}
 		if e.User != "dev" {
 			t.Error("auth must use detected user")
@@ -79,11 +90,14 @@ func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
 	if got.Environment.DefaultEngine != "claude" || got.Environment.User != "dev" || got.Environment.Workspaces[0] != "/home/dev" || got.Codex.State != "login" {
 		t.Fatalf("bad detection: %+v", got)
 	}
+	if !strings.Contains(got.Message, "代理") || !strings.Contains(got.Message, "Git") || !strings.Contains(got.Message, "SSH agent") {
+		t.Fatalf("missing WSL environment diagnostics: %q", got.Message)
+	}
 	if env.User != "" || env.Workspaces[0] != "/home" {
 		t.Fatal("input config was mutated")
 	}
 	failed := discoverOne(context.Background(), func(context.Context, Environment, ...string) (string, error) { return "", context.DeadlineExceeded }, env)
-	if failed.Message == "" || failed.Codex.State != "unknown" {
+	if failed.Message == "" || failed.Codex.State != "unknown" || !strings.Contains(failed.Message, "Codex/受限沙箱") || !strings.Contains(failed.Message, "资源管理器") {
 		t.Fatal("failed WSL detection must not claim installation/login")
 	}
 }

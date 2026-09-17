@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,10 +105,50 @@ func command(c Config, args ...string) *exec.Cmd {
 		if c.User != "" {
 			base = append(base, "-u", c.User)
 		}
-		return exec.Command("wsl.exe", append(base, append([]string{"--"}, args...)...)...)
+		return wslCommand(append(base, append([]string{"--"}, args...)...)...)
 	}
 	return exec.Command(args[0], args[1:]...)
 }
+
+// WSL should use the selected Linux user's own home, Git, SSH agent, proxy and
+// login configuration. Passing the caller's full Windows environment can leak
+// restricted-tool variables and prepend Windows shims to the Linux PATH.
+func wslHostEnvironment() []string {
+	env := []string{}
+	for _, name := range []string{"SystemRoot", "WINDIR"} {
+		if value := os.Getenv(name); value != "" {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
+}
+
+func wslExecutable() string {
+	if path, err := exec.LookPath("wsl.exe"); err == nil {
+		return path
+	}
+	if root := os.Getenv("SystemRoot"); root != "" {
+		candidate := filepath.Join(root, "System32", "wsl.exe")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "wsl.exe"
+}
+
+func wslCommand(args ...string) *exec.Cmd {
+	cmd := exec.Command(wslExecutable(), args...)
+	cmd.Env = wslHostEnvironment()
+	return cmd
+}
+
+func commandWithContext(ctx context.Context, base *exec.Cmd) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, base.Path, base.Args[1:]...)
+	cmd.Env = base.Env
+	cmd.Dir = base.Dir
+	return cmd
+}
+
 func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (string, string, error) {
 	if ctx.Err() != nil {
 		return t.Session, "", ctx.Err()
@@ -175,7 +216,7 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 			if (c.Distro != "" || c.SSHHost != "") && group > 1 {
 				kill := command(c, "python3", "-c", stopTree, strconv.Itoa(group))
 				killCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				bounded := exec.CommandContext(killCtx, kill.Path, kill.Args[1:]...)
+				bounded := commandWithContext(killCtx, kill)
 				hideCommand(bounded)
 				if err := bounded.Run(); err != nil && c.SSHHost != "" {
 					mu.Lock()
@@ -339,7 +380,7 @@ func checkEnvironment(c Config) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := command(c, c.Codex, "login", "status")
-	bounded := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	bounded := commandWithContext(ctx, cmd)
 	hideCommand(bounded)
 	b, e := bounded.CombinedOutput()
 	return string(b), e

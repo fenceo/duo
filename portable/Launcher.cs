@@ -7,7 +7,10 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -102,10 +105,67 @@ sealed class TrayApp:ApplicationContext,IDisposable {
         if(!background)Portable.Open(Portable.URL);
     }
     bool ConfirmStop(string action){return MessageBox.Show(action+"会停止正在执行的任务并断开硬件连接。是否继续？","简作",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;}
-    bool IsStartup(){using(var key=Registry.CurrentUser.OpenSubKey(RunKey)){return key!=null&&Convert.ToString(key.GetValue(RunName))==StartupCommand;}}
-    void ToggleStartup(){using(var key=Registry.CurrentUser.CreateSubKey(RunKey)){if(IsStartup())key.DeleteValue(RunName,false);else{string old=Convert.ToString(key.GetValue(RunName));if(old!=""&&old!=StartupCommand&&MessageBox.Show("将替换另一目录的简作便携版自启记录，继续？","简作",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;key.SetValue(RunName,StartupCommand);}}startup.Checked=IsStartup();}
+    bool IsStartup(){try{using(var task=new UserStartup(StartupCommand))return task.IsConfigured();}catch{return false;}}
+    void ToggleStartup(){
+        using(var task=new UserStartup(StartupCommand)){
+            if(task.IsConfigured()){task.Remove();DeleteLegacyRun();startup.Checked=false;return;}
+            string old=LegacyRunCommand();
+            if((old!=""&&old!=StartupCommand||task.Exists())&&MessageBox.Show("将替换另一目录的简作便携版自启记录，继续？","简作",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;
+            task.Install();DeleteLegacyRun();startup.Checked=task.IsConfigured();
+        }
+    }
+    static string LegacyRunCommand(){using(var key=Registry.CurrentUser.OpenSubKey(RunKey))return key==null?"":Convert.ToString(key.GetValue(RunName));}
+    static void DeleteLegacyRun(){using(var key=Registry.CurrentUser.OpenSubKey(RunKey,true)){if(key!=null)key.DeleteValue(RunName,false);}}
     static void Safe(Action action){try{action();}catch(Exception e){MessageBox.Show(e.Message,"简作",MessageBoxButtons.OK,MessageBoxIcon.Error);}}
     protected override void Dispose(bool disposing){if(disposing){timer.Dispose();icon.Visible=false;icon.Dispose();}base.Dispose(disposing);}
+}
+
+sealed class UserStartup:IDisposable {
+    const string TaskName="Jianzuo User";
+    readonly string command,identity;object service,root;
+    public UserStartup(string taskCommand){
+        command=taskCommand;identity=WindowsIdentity.GetCurrent().Name;Connect();
+    }
+    void Connect(){
+        Type type=Type.GetTypeFromProgID("Schedule.Service");
+        if(type==null)throw new Exception("当前系统没有 Windows 任务计划服务。");
+        service=Activator.CreateInstance(type);Call(service,"Connect");root=Call(service,"GetFolder","\\");
+    }
+    static object Get(object target,string name){return target.GetType().InvokeMember(name,BindingFlags.GetProperty,null,target,null);}
+    static void Set(object target,string name,object value){target.GetType().InvokeMember(name,BindingFlags.SetProperty,null,target,new object[]{value});}
+    static object Call(object target,string name,params object[] args){return target.GetType().InvokeMember(name,BindingFlags.InvokeMethod,null,target,args);}
+    object Find(){try{return Call(root,"GetTask",TaskName);}catch{return null;}}
+    public bool Exists(){return Find()!=null;}
+    public bool IsConfigured(){
+        try{
+            object task=Find();if(task==null||Convert.ToInt32(Get(task,"State"))==1)return false;
+            object definition=Get(task,"Definition"),actions=Get(definition,"Actions"),principal=Get(definition,"Principal");
+            if(Convert.ToInt32(Get(actions,"Count"))!=1)return false;
+            object action=Call(actions,"Item",1);
+            string path=Convert.ToString(Get(action,"Path")),args=Convert.ToString(Get(action,"Arguments")),dir=Convert.ToString(Get(action,"WorkingDirectory"));
+            bool sameUser=String.Equals(Convert.ToString(Get(principal,"UserId")),identity,StringComparison.OrdinalIgnoreCase)||SameSid(Convert.ToString(Get(principal,"UserId")));
+            return String.Equals(path,Application.ExecutablePath,StringComparison.OrdinalIgnoreCase)&&args==command&&String.Equals(Path.GetFullPath(dir),Path.GetFullPath(Portable.Root),StringComparison.OrdinalIgnoreCase)&&sameUser&&Convert.ToInt32(Get(principal,"RunLevel"))==0;
+        }catch{return false;}
+    }
+    static bool SameSid(string value){
+        try{return String.Equals(new NTAccount(value).Translate(typeof(SecurityIdentifier)).Value,WindowsIdentity.GetCurrent().User.Value,StringComparison.OrdinalIgnoreCase);}catch{return false;}
+    }
+    public void Install(){
+        object definition=Call(service,"NewTask",0),settings=Get(definition,"Settings"),principal=Get(definition,"Principal");
+        Set(Get(definition,"RegistrationInfo"),"Description","简作独立任务工作台（当前用户登录后启动）");
+        Set(settings,"StartWhenAvailable",true);Set(settings,"AllowDemandStart",true);Set(settings,"Hidden",true);
+        Set(settings,"DisallowStartIfOnBatteries",false);Set(settings,"StopIfGoingOnBatteries",false);
+        Set(settings,"ExecutionTimeLimit","PT0S");Set(settings,"RestartCount",3);Set(settings,"RestartInterval","PT1M");Set(settings,"MultipleInstances",2);
+        Set(principal,"UserId",identity);Set(principal,"LogonType",3);Set(principal,"RunLevel",0);
+        object trigger=Call(Get(definition,"Triggers"),"Create",9);Set(trigger,"UserId",identity);Set(trigger,"Enabled",true);
+        object action=Call(Get(definition,"Actions"),"Create",0);
+        Set(action,"Path",Application.ExecutablePath);Set(action,"Arguments",command);Set(action,"WorkingDirectory",Portable.Root);
+        Call(root,"RegisterTaskDefinition",TaskName,definition,6,null,null,3,null);
+    }
+    public void Remove(){
+        if(Find()!=null)Call(root,"DeleteTask",TaskName,0);
+    }
+    public void Dispose(){foreach(object item in new[]{root,service})if(item!=null&&Marshal.IsComObject(item))try{Marshal.FinalReleaseComObject(item);}catch{}root=null;service=null;}
 }
 
 sealed class FoundTool { public string path {get;set;} public string state {get;set;} public string label {get;set;} }

@@ -401,7 +401,7 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := command(runtimeConfig(Config{}, e), "python3", "-c", readRemoteModels, e.ModelCache)
-	bounded := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	bounded := commandWithContext(ctx, cmd)
 	hideCommand(bounded)
 	raw, err := bounded.CombinedOutput()
 	if err != nil {

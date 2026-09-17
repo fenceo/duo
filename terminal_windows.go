@@ -141,6 +141,12 @@ func startWindowsPTY(args []string, dir string) (*windowsPTY, error) {
 		block := utf16.Encode([]rune(strings.Join(env, "\x00") + "\x00\x00"))
 		envBlock = &block[0]
 		flags |= windows.CREATE_UNICODE_ENVIRONMENT
+	} else if strings.EqualFold(filepath.Base(args[0]), "wsl.exe") {
+		// Keep Windows shims and restricted-process variables out of the Linux
+		// shell. The selected WSL user's own login environment remains intact.
+		block := utf16.Encode([]rune(strings.Join(wslHostEnvironment(), "\x00") + "\x00\x00"))
+		envBlock = &block[0]
+		flags |= windows.CREATE_UNICODE_ENVIRONMENT
 	}
 	if err = windows.CreateProcess(app, cmd, nil, nil, false, flags, envBlock, cwd, &info.StartupInfo, &process); err != nil {
 		return failure(err)

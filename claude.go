@@ -148,7 +148,7 @@ func checkEngine(c Config, engine string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := command(c, c.Claude, "auth", "status", "--text")
-	bounded := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	bounded := commandWithContext(ctx, cmd)
 	hideCommand(bounded)
 	b, err := bounded.CombinedOutput()
 	if err != nil && len(b) == 0 {

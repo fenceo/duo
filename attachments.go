@@ -11,7 +11,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -189,7 +188,7 @@ func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) 
 		defer cancel()
 		raw, _ := json.Marshal(payload)
 		original := environmentProbeCommand(*t.Environment, "python3", "-c", stageAttachmentScript)
-		cmd := exec.CommandContext(ctx, original.Path, original.Args[1:]...)
+		cmd := commandWithContext(ctx, original)
 		hideCommand(cmd)
 		cmd.WaitDelay = time.Second
 		cmd.Stdin = bytes.NewReader(raw)
@@ -212,7 +211,7 @@ func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) 
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			probe := environmentProbeCommand(*t.Environment, "python3", "-c", cleanupAttachmentScript, root)
-			remove := exec.CommandContext(cleanupCtx, probe.Path, probe.Args[1:]...)
+			remove := commandWithContext(cleanupCtx, probe)
 			remove.WaitDelay = time.Second
 			hideCommand(remove)
 			_ = remove.Run()

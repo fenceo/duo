@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -50,7 +49,7 @@ func browseDirectories(ctx context.Context, env Environment, p string) (Director
 		ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		defer cancel()
 		original := environmentProbeCommand(env, "python3", "-c", directoryScript, p)
-		cmd := exec.CommandContext(ctx, original.Path, original.Args[1:]...)
+		cmd := commandWithContext(ctx, original)
 		hideCommand(cmd)
 		cmd.WaitDelay = time.Second
 		data := &cappedOutput{limit: 512 * 1024}

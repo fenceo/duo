@@ -51,7 +51,7 @@ func probeEnvironment(ctx context.Context, env Environment, args ...string) (str
 	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
 	defer cancel()
 	base := environmentProbeCommand(env, args...)
-	cmd := exec.CommandContext(ctx, base.Path, base.Args[1:]...)
+	cmd := commandWithContext(ctx, base)
 	cmd.WaitDelay = time.Second
 	hideCommand(cmd)
 	data, err := cmd.CombinedOutput()
@@ -68,7 +68,7 @@ func environmentProbeCommand(env Environment, args ...string) *exec.Cmd {
 		}
 		// `wsl -- sh -c` invokes an extra login shell, expanding $@ and
 		// $candidate before our script runs. --exec passes the script intact.
-		return exec.Command("wsl.exe", append(append(base, "--exec"), args...)...)
+		return wslCommand(append(append(base, "--exec"), args...)...)
 	}
 	return command(runtimeConfig(Config{}, env), args...)
 }
@@ -104,7 +104,36 @@ find_cli() {
 }
 find_cli "$HOME/.codex/packages/standalone/current/bin/codex" "$HOME/.local/bin/codex" "$(command -v codex 2>/dev/null)" /usr/local/bin/codex
 find_cli "$HOME/.local/bin/claude" "$(command -v claude 2>/dev/null)" /usr/local/bin/claude
+proxy=0
+for value in "${HTTPS_PROXY:-}" "${HTTP_PROXY:-}" "${ALL_PROXY:-}" "${https_proxy:-}" "${http_proxy:-}" "${all_proxy:-}"; do
+ if [ -n "$value" ]; then proxy=1; break; fi
+done
+git_config=0
+for file in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config" "${GIT_CONFIG_GLOBAL:-}"; do
+ if [ -n "$file" ] && [ -f "$file" ]; then git_config=1; break; fi
+done
+ssh_agent=0
+if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then ssh_agent=1; fi
+shell=${SHELL:-/bin/sh}
+shell_ready=0
+if command -v "$shell" >/dev/null 2>&1; then shell_ready=1; fi
+printf 'proxy=%s\ngit_config=%s\nssh_agent=%s\nshell=%s\n' "$proxy" "$git_config" "$ssh_agent" "$shell_ready"
 `
+
+func wslDiagnosticMessage(parts []string) string {
+	state := func(index int, name, present, missing string) string {
+		if len(parts) > index && parts[index] == name+"=1" {
+			return present
+		}
+		return missing
+	}
+	return strings.Join([]string{
+		state(4, "proxy", "已发现代理变量", "未设置代理变量"),
+		state(5, "git_config", "Git 全局配置已发现", "未发现 Git 全局配置"),
+		state(6, "ssh_agent", "SSH agent 可用", "未连接 SSH agent"),
+		state(7, "shell", "用户 shell 可用", "用户 shell 不可用"),
+	}, "；")
+}
 
 func discoverTool(ctx context.Context, probe environmentProbe, env Environment, path, engine string) detectedTool {
 	if path == "" {
@@ -124,8 +153,8 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		out, err := probe(ctx, env, "sh", "-c", discoverWSLScript)
 		_, payload, ok := strings.Cut(out, "__JIANZUO_ENV__\n")
 		parts := strings.Split(strings.ReplaceAll(payload, "\r\n", "\n"), "\n")
-		if err != nil || !ok || len(parts) < 4 || !strings.HasPrefix(parts[1], "/") {
-			result.Message = "未完成检测，可在高级设置中手工配置"
+		if err != nil || !ok || len(parts) < 8 || !strings.HasPrefix(parts[1], "/") {
+			result.Message = "未完成 WSL 检测。请确认所选发行版和用户可用；当前进程可能位于 Codex/受限沙箱，请从资源管理器、开始菜单或普通快捷方式启动简作，再到高级设置手动配置。"
 			result.Codex = detectedTool{State: "unknown", Label: "未完成检测"}
 			result.Claude = result.Codex
 			return result
@@ -133,6 +162,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		env.User = parts[0]
 		env.Workspaces = []string{parts[1]}
 		codex, claude = parts[2], parts[3]
+		result.Message = wslDiagnosticMessage(parts)
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)

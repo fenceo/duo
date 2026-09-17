@@ -12,7 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -98,9 +97,13 @@ func (b *cappedOutput) ReadFrom(r io.Reader) (int64, error) {
 }
 func workspaceCommand(ctx context.Context, c Config, input string, limit int, args ...string) ([]byte, bool, error) {
 	original := command(c, args...)
-	cmd := exec.CommandContext(ctx, original.Path, original.Args[1:]...)
+	cmd := commandWithContext(ctx, original)
 	hideCommand(cmd)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	if original.Env == nil {
+		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	} else {
+		cmd.Env = append(append([]string{}, original.Env...), "GIT_OPTIONAL_LOCKS=0")
+	}
 	cmd.WaitDelay = time.Second
 	out := &cappedOutput{limit: limit}
 	diagnostic := &cappedOutput{limit: 4096}
