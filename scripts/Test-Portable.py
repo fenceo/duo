@@ -55,7 +55,7 @@ def start(directory, port):
                 raise AssertionError(proc.stderr.read().decode("utf-8", "replace"))
             try:
                 with client.open(url + "/healthz", timeout=0.5) as res:
-                    assert json.load(res)["version"] == "0.14.1-portable"
+                    assert json.load(res)["version"] == "0.15.0-portable"
                     return proc, client, url
             except OSError:
                 time.sleep(.1)
@@ -108,7 +108,7 @@ with tempfile.TemporaryDirectory(prefix="portable-中文 path-", dir=test_root) 
             assert error.code == 401
         csrf = api(client, url, "login", "POST", {"password": PASSWORD})["csrf"]
         initial_update = api(client, url, "updates")
-        assert initial_update["current"] == "0.14.1-portable"
+        assert initial_update["current"] == "0.15.0-portable"
         assert not initial_update.get("checked")
         try:
             api(client, url, "updates", "PUT", {"repository": "owner/jianzuo"})

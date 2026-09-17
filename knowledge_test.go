@@ -20,6 +20,21 @@ func knowledgeFixture(t *testing.T, a *App) (Task, Run) {
 	return task, r
 }
 
+func TestKnowledgeTitleFollowsRunKind(t *testing.T) {
+	stamp := int64(1758000000000)
+	// A settled chat turn is named by what it was about.
+	if got := runKnowledgeTitle("chat", "修复串口乱码", stamp); got != "修复串口乱码" {
+		t.Fatal(got)
+	}
+	// The knowledge prompt is an instruction, so the entry is named by the moment.
+	if got := runKnowledgeTitle("knowledge", "请整理已有对话", stamp); !strings.HasPrefix(got, "执行总结 · ") {
+		t.Fatal(got)
+	}
+	if got := runKnowledgeTitle("chat", strings.Repeat("长", 61), stamp); !strings.HasPrefix(got, "执行总结 · ") {
+		t.Fatal(got)
+	}
+}
+
 func TestKnowledgeCardSavesExactDraftOnceAfterTaskSwitch(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	enableRunCards(t, a)
@@ -51,12 +66,11 @@ func TestKnowledgeCardSavesExactDraftOnceAfterTaskSwitch(t *testing.T) {
 			t.Fatal(response, err)
 		}
 	}
-	n, _ := a.store.note(task.ID)
-	if n.Content != r.Result || n.Revision != 1 || a.bound("chat") != other.ID {
-		t.Fatal(n, "selection changed")
+	saved, _ := a.store.knowledgeForRun(task.ID, r.ID)
+	if saved.Content != r.Result || saved.Revision != 1 || saved.Status != "observed" || saved.Source != "run" || a.bound("chat") != other.ID {
+		t.Fatal(saved, "selection changed")
 	}
-	n, _ = a.store.note(other.ID)
-	if n.Revision != 0 {
+	if stray, _ := a.store.knowledgeForRun(other.ID, r.ID); stray.ID != "" {
 		t.Fatal("saved into selected task instead of card's task")
 	}
 	raw, _ = json.Marshal(response.Card.Data)
@@ -65,40 +79,56 @@ func TestKnowledgeCardSavesExactDraftOnceAfterTaskSwitch(t *testing.T) {
 	}
 }
 
-func TestKnowledgeSaveRejectsModifiedNotesAndWrongRuns(t *testing.T) {
+func TestKnowledgeAdoptGuardsIncompleteDraftsAndConflicts(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	task, r := knowledgeFixture(t, a)
 	other := taskFor(t, a)
 	if _, err := a.store.adoptKnowledge(other.ID, r.ID, 0); err == nil {
 		t.Fatal("cross-task run saved")
 	}
-	n, err := a.store.saveNote(task.ID, "手工维护的知识", 0)
-	if err != nil {
+	saved, err := a.store.adoptKnowledge(task.ID, r.ID, 0)
+	if err != nil || saved.Revision != 1 || saved.Content != r.Result || saved.Status != "observed" || saved.Source != "run" {
+		t.Fatal(saved, err)
+	}
+	// A repeated callback reads the same entry instead of writing a second one.
+	again, err := a.store.adoptKnowledge(task.ID, r.ID, 0)
+	if err != nil || again.Revision != saved.Revision || again.ID != saved.ID {
+		t.Fatal(again, err)
+	}
+	// A manual edit is newer than the generation, so a stale save must conflict.
+	edited := saved
+	edited.Content = "手工维护的知识"
+	if err = a.store.writeKnowledge(edited, false); err != nil {
 		t.Fatal(err)
 	}
-	// Make the edit unequivocally newer than the generation, even on a fast clock.
-	a.store.Exec("UPDATE notes SET updated=? WHERE task_id=?", r.Created+1, task.ID)
-	for _, revision := range []int64{0, n.Revision} {
+	for _, revision := range []int64{0, saved.Revision} {
 		if _, err = a.store.adoptKnowledge(task.ID, r.ID, revision); !errors.Is(err, errConflict) {
-			t.Fatal("stale generation overwrote newer knowledge", err)
+			t.Fatal("stale generation overwrote newer knowledge", revision, err)
 		}
 	}
-	for _, status := range []string{"queued", "failed", "interrupted"} {
+	merged, err := a.store.adoptKnowledge(task.ID, r.ID, saved.Revision+1)
+	if err != nil || merged.Revision != saved.Revision+2 || merged.Content != r.Result {
+		t.Fatal(merged, err)
+	}
+	for _, status := range []string{"queued", "running", "failed", "interrupted"} {
 		a.store.Exec("UPDATE runs SET status=? WHERE id=?", status, r.ID)
-		if _, err = a.store.adoptKnowledge(task.ID, r.ID, n.Revision); err == nil {
+		if _, err = a.store.adoptKnowledge(task.ID, r.ID, merged.Revision); err == nil {
 			t.Fatal("saved incomplete draft", status)
 		}
 	}
-	n, _ = a.store.note(task.ID)
-	if n.Content != "手工维护的知识" || n.Revision != 1 {
-		t.Fatal(n)
+	items, _ := a.store.knowledgeList(task.ID)
+	if len(items) != 1 || items[0].ID != saved.ID {
+		t.Fatal(items)
 	}
 }
 
-func TestKnowledgeAdoptAPIAndCardRetryStayConsistent(t *testing.T) {
+func TestKnowledgeAPIStoresManyEntriesPerTask(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
+	enableRunCards(t, a)
 	task, r := knowledgeFixture(t, a)
 	request := toolsClient(t, a)
+	base := "/api/tasks/" + task.ID + "/knowledge"
+	// A delivery retry reuses the action token and renders the same card.
 	first, _ := a.feishu.knowledgeResultCard("chat", task.ID, r.ID)
 	second, _ := a.feishu.knowledgeResultCard("chat", task.ID, r.ID)
 	one, _ := json.Marshal(first)
@@ -106,13 +136,67 @@ func TestKnowledgeAdoptAPIAndCardRetryStayConsistent(t *testing.T) {
 	if string(one) != string(two) {
 		t.Fatal("new action token on retry")
 	}
-	request("/api/tasks/"+task.ID+"/note/adopt", "POST", map[string]any{"run_id": r.ID, "revision": 0}, 200)
-	request("/api/tasks/"+task.ID+"/note/adopt", "POST", map[string]any{"run_id": r.ID, "revision": 0}, 200)
-	var n Note
-	json.Unmarshal(request("/api/tasks/"+task.ID+"/note", "GET", nil, 200), &n)
-	if n.Content != r.Result || n.Revision != 1 {
-		t.Fatal(n)
+	adopt := "/api/tasks/" + task.ID + "/note/adopt"
+	request(adopt, "POST", map[string]any{"run_id": r.ID, "revision": 0}, 200)
+	request(adopt, "POST", map[string]any{"run_id": r.ID, "revision": 0}, 200)
+	var items []Knowledge
+	json.Unmarshal(request(base, "GET", nil, 200), &items)
+	if len(items) != 1 || items[0].Content != r.Result {
+		t.Fatal(items)
 	}
-	request("/api/tasks/"+task.ID+"/note", "PUT", Note{Content: "新知识", Revision: 1}, 200)
-	request("/api/tasks/"+task.ID+"/note/adopt", "POST", map[string]any{"run_id": r.ID, "revision": 0}, 409)
+	// A task keeps several entries: drafts, manual notes and verified findings.
+	var manual Knowledge
+	json.Unmarshal(request(base, "POST", Knowledge{Title: "接线记录", Content: "USB 转串口接 COM5。", Status: "verified", Source: "manual"}, 201), &manual)
+	if manual.ID == "" || manual.Status != "verified" || manual.Source != "manual" || manual.Revision != 1 {
+		t.Fatal(manual)
+	}
+	request(base+"/"+manual.ID, "PUT", Knowledge{Title: "接线记录", Content: "USB 转串口接 COM3。", Status: "verified", Revision: 1}, 200)
+	request(base+"/"+manual.ID, "PUT", Knowledge{Title: "接线记录", Content: "并发覆盖", Revision: 1}, 409)
+	items = nil
+	json.Unmarshal(request(base, "GET", nil, 200), &items)
+	if len(items) != 2 {
+		t.Fatal(items)
+	}
+	body := string(request(base+"?download=1", "GET", nil, 200))
+	if !strings.Contains(body, "任务知识") || !strings.Contains(body, "接线记录") {
+		t.Fatal(body)
+	}
+	request(base+"/"+manual.ID, "DELETE", map[string]any{"revision": 1}, 409)
+	request(base+"/"+manual.ID, "DELETE", map[string]any{"revision": 2}, 200)
+	items = nil
+	json.Unmarshal(request(base, "GET", nil, 200), &items)
+	if len(items) != 1 {
+		t.Fatal(items)
+	}
+}
+
+func TestKnowledgeFromFinishedRunIsIdempotent(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	task := taskFor(t, a)
+	request := toolsClient(t, a)
+	base := "/api/tasks/" + task.ID + "/knowledge/from-run"
+	run := Run{ID: uid(), TaskID: task.ID, Kind: "chat", Status: "done", Result: "找到 RX 没接地的原因。", Created: now()}
+	a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,result,created) VALUES(?,?,'修复串口乱码','chat','web','done',?,?)", run.ID, task.ID, run.Result, run.Created)
+	var saved Knowledge
+	json.Unmarshal(request(base, "POST", map[string]string{"run_id": run.ID}, 200), &saved)
+	if saved.ID == "" || saved.Title != "修复串口乱码" || saved.Source != "run" || saved.Status != "observed" {
+		t.Fatal(saved)
+	}
+	var again Knowledge
+	json.Unmarshal(request(base, "POST", map[string]string{"run_id": run.ID}, 200), &again)
+	if again.ID != saved.ID {
+		t.Fatal("duplicate entry", again)
+	}
+	// Once settled, the entry stays even if the run record is later disturbed.
+	a.store.Exec("UPDATE runs SET status='running' WHERE id=?", run.ID)
+	request(base, "POST", map[string]string{"run_id": run.ID}, 200)
+	request(base, "POST", map[string]string{"run_id": "missing"}, 400)
+	if _, err := a.store.knowledgeFromRun(task.ID, "missing"); err == nil {
+		t.Fatal("missing run settled")
+	}
+	pending := Run{ID: uid(), TaskID: task.ID, Kind: "chat", Status: "queued", Created: now()}
+	a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,result,created) VALUES(?,?,'还没跑完','chat','web','queued','',?)", pending.ID, task.ID, pending.Created)
+	if _, err := a.store.knowledgeFromRun(task.ID, pending.ID); err == nil {
+		t.Fatal("unfinished run settled")
+	}
 }

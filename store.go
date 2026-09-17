@@ -89,9 +89,18 @@ func openStore(dir string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS events_task ON events(task_id,seq);
  CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id,created);
- CREATE TABLE IF NOT EXISTS notes(task_id TEXT PRIMARY KEY REFERENCES tasks(id),content TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),content TEXT NOT NULL,revision INTEGER NOT NULL,updated INTEGER NOT NULL);
- CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notes(task_id TEXT PRIMARY KEY REFERENCES tasks(id),content TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),content TEXT NOT NULL,revision INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS knowledge_entries(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),title TEXT NOT NULL DEFAULT '',content TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'observed',source TEXT NOT NULL DEFAULT 'manual',run_id TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS knowledge_entries_task ON knowledge_entries(task_id,updated);
+CREATE INDEX IF NOT EXISTS knowledge_entries_run ON knowledge_entries(task_id,run_id);
+-- The single markdown note was the first knowledge store. Import it once so a
+-- task keeps its history in the entry list instead of a hidden legacy table.
+INSERT INTO knowledge_entries(id,task_id,title,content,status,source,run_id,revision,created,updated)
+ SELECT lower(hex(randomblob(12))),task_id,'任务知识',content,'verified','migrated','',MAX(revision,1),updated,updated FROM notes
+ WHERE content<>'' AND NOT EXISTS(SELECT 1 FROM settings WHERE key='knowledge_entries_v1');
+INSERT OR IGNORE INTO settings VALUES('knowledge_entries_v1','1');
+CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),config TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS hardware_io(seq INTEGER PRIMARY KEY AUTOINCREMENT,hardware_id TEXT NOT NULL REFERENCES hardware(id) ON DELETE CASCADE,direction TEXT NOT NULL,data TEXT NOT NULL,created INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS hardware_io_device ON hardware_io(hardware_id,seq);
  CREATE TABLE IF NOT EXISTS task_hardware(task_id TEXT NOT NULL REFERENCES tasks(id),hardware_id TEXT NOT NULL REFERENCES hardware(id) ON DELETE CASCADE,PRIMARY KEY(task_id,hardware_id));
@@ -119,7 +128,51 @@ func openStore(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err = ensureColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db}, nil
+}
+
+// SQLite has no "ADD COLUMN IF NOT EXISTS", so long-lived installs get the new
+// sticky-note fields through an explicit column check.
+func ensureColumns(db *sql.DB) error {
+	for _, c := range []struct{ table, column, ddl string }{
+		{"scratch", "title", "TEXT NOT NULL DEFAULT ''"},
+		{"scratch", "status", "TEXT NOT NULL DEFAULT 'todo'"},
+		{"scratch", "due", "TEXT NOT NULL DEFAULT ''"},
+		{"scratch", "done_at", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		rows, err := db.Query("PRAGMA table_info(" + c.table + ")")
+		if err != nil {
+			return err
+		}
+		found := false
+		for rows.Next() {
+			var id, notNull, primary int
+			var name, kind string
+			var fallback sql.NullString
+			if err = rows.Scan(&id, &name, &kind, &notNull, &fallback, &primary); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == c.column {
+				found = true
+			}
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		if found {
+			continue
+		}
+		if _, err = db.Exec("ALTER TABLE " + c.table + " ADD COLUMN " + c.column + " " + c.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *Store) setting(key string) string {
 	var v string

@@ -56,7 +56,7 @@ func TestSearchAllSourcesLiteralKeywordsAndArchived(t *testing.T) {
 	request := toolsClient(t, a)
 	q := "串口 100%_ ' <script>"
 	a.store.Exec("UPDATE tasks SET title=? WHERE id=?", q, task.ID)
-	request("/api/tasks/"+task.ID+"/note", "PUT", Note{Content: q + " 知识"}, 200)
+	request("/api/tasks/"+task.ID+"/knowledge", "POST", Knowledge{Title: "串口知识", Content: q + " 知识"}, 201)
 	request("/api/tasks/"+task.ID+"/scratch", "POST", Scratch{Content: q + " 便签"}, 201)
 	a.store.event(task.ID, "", "assistant", strings.Repeat("前缀", 200)+q+" 对话")
 	a.store.event(task.ID, "", "tool", q+" 不搜索命令输出")

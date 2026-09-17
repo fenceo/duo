@@ -18,6 +18,24 @@
 
 .knowledge-preview{flex-shrink:0;border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:10px 12px;max-height:260px;overflow:auto}.knowledge-preview summary{cursor:pointer;color:var(--muted);font-size:12px}.knowledge-preview .content{line-height:1.7;overflow-wrap:anywhere;margin-top:10px}.knowledge-preview .content h1,.knowledge-preview .content h2,.knowledge-preview .content h3{font-size:14px;margin:12px 0 6px}.draft-banner{flex-wrap:wrap;gap:8px;flex-shrink:0}.draft-banner .actions{gap:5px}.draft-banner button{padding:6px 9px;font-size:12px}
 
+.knowledge-list{display:grid;gap:12px;margin-top:4px}
+.knowledge-card{border:1px solid var(--line);border-left:3px solid #6b7a4a;border-radius:10px;background:#1a2028;padding:14px 16px;display:flex;flex-direction:column;gap:9px}
+.knowledge-card[data-state="verified"]{border-left-color:#7fbf6a}
+.knowledge-card[data-state="stale"]{border-left-color:#a5765f;opacity:.85}
+.knowledge-card>header{display:flex;align-items:flex-start;gap:10px}
+.knowledge-card .knowledge-title{flex:1;min-width:0;text-align:left;border:0;background:transparent!important;padding:0;font-size:14px;font-weight:600;line-height:1.5;color:var(--ink)}
+.knowledge-card .knowledge-title:hover{color:var(--accent)}
+.knowledge-state{flex:none;font-size:10px;padding:3px 8px;border:1px solid var(--line);border-radius:99px;color:var(--muted)}
+.knowledge-card[data-state="verified"] .knowledge-state{color:#9fd68c;border-color:#4c6040}
+.knowledge-card[data-state="stale"] .knowledge-state{color:#d8a58f;border-color:#5e463c}
+.knowledge-body{line-height:1.75;overflow-wrap:anywhere;max-height:340px;overflow:auto}
+.knowledge-body>*:first-child{margin-top:0}.knowledge-body>*:last-child{margin-bottom:0}
+.knowledge-card footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.knowledge-card footer>span:first-child{min-width:0;overflow-wrap:anywhere}
+.knowledge-actions{display:flex;gap:4px;flex:none}
+.knowledge-actions button{padding:3px 7px;font-size:11px;background:transparent}
+#knowledge-body{font-family:Consolas,"Microsoft YaHei",monospace;font-size:13px;resize:vertical}
+
 #terminal-panel{display:flex;flex-direction:column;flex:1;min-height:0;padding:12px;gap:8px;overflow:hidden}.terminal-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.terminal-toolbar button,.terminal-keys button{font-size:12px;padding:6px 9px}.terminal-toolbar>span{font-size:12px;color:var(--accent);margin-right:auto;overflow-wrap:anywhere}#terminal-context{font-size:11px;margin:0;overflow-wrap:anywhere}#terminal-stage{flex:1;min-height:160px;position:relative;background:#101318;border:1px solid var(--line);border-radius:8px;overflow:hidden}#terminal-empty{color:var(--muted);padding:25px;font-size:13px}.task-terminal{position:absolute;inset:0;padding:6px}.task-terminal .xterm{height:100%;padding:0}.task-terminal .xterm textarea{box-shadow:none;border:0;min-height:0;width:0;padding:0;resize:none}.terminal-keys{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex-shrink:0}.terminal-keys small{font-size:10px;color:var(--muted);margin-left:auto}
 /* Local SSH discovery stays compact on desktop and narrow mobile dialogs. */
 .discovery-results{max-height:280px;overflow:auto;margin-top:12px}

@@ -8,6 +8,12 @@ assert.equal(conv.formatTokens(2300),'2.3K');assert.equal(conv.formatTokens(0),'
 assert.equal(conv.formatDuration(131000),'2分11秒');assert.equal(conv.formatDuration(-1),'0秒');
 const run={status:'done',created:1000,started:5000,finished:136000,usage:{input:2100,output:200,cached:2000,total:2300}};
 const footer=conv.runFooter(run);assert.match(footer,/用量 2.3K tok/);assert.match(footer,/用时 2分11秒/);assert.match(footer,/时间/);
+assert.doesNotMatch(footer,/run-knowledge/);
+globalThis.knowledgeForRun=()=>null;
+const settledFooter=conv.runFooter({...run,id:'r1'});assert.match(settledFooter,/data-knowledge-run="r1"/);assert.match(settledFooter,/沉淀为知识/);assert.doesNotMatch(settledFooter,/disabled/);
+globalThis.knowledgeForRun=()=>({id:'k1'});
+assert.match(conv.runFooter({...run,id:'r1'}),/disabled[^>]*>已沉淀/);
+delete globalThis.knowledgeForRun;
 assert.equal(conv.runFooter({...run,status:'running'}),'');assert.match(conv.runFooter({...run,usage:null}),/未提供/);assert.match(conv.runFooter({...run,started:0}),/包含排队时间/);
 const interval=globalThis.setInterval;globalThis.setInterval=()=>0;
 const sticky=await load('sticky.ts','parseAppearance');globalThis.setInterval=interval;
@@ -16,4 +22,35 @@ assert.equal(sticky.parseAppearance('{"sidebar":10}').sidebar,180);assert.equal(
 assert.equal(sticky.parseAppearance('{}').tool,42);assert.equal(sticky.parseAppearance('{"tool":5}').tool,22);assert.equal(sticky.parseAppearance('{"tool":900}').tool,75);
 const workflow=await load('workflow.ts','validateAttachmentFiles');
 assert.throws(()=>workflow.validateAttachmentFiles([{size:8*1024*1024+1}]));assert.throws(()=>workflow.validateAttachmentFiles([{size:1}],5));workflow.validateAttachmentFiles([{size:8*1024*1024}],4);
-console.log('PASS: per-turn real usage/duration, unavailable history, appearance bounds, attachment limits.');
+globalThis.localStorage={getItem:()=>null,setItem:()=>{}};
+globalThis.document={documentElement:{dataset:{}}};
+globalThis.chosen='a';globalThis.names={running:'运行中',queued:'排队中',done:'已完成'};
+const layout=await load('layout.ts','taskItemMenu,workspaceTaskList');
+const task=(id,extra={})=>({id,title:'任务 '+id,workspace:'/work/'+id,environment:{id:'e1',name:'WSL',type:'wsl',host:'',distro:'',user:''},status:'done',pinned:false,archived:false,...extra});
+const menu=layout.taskItemMenu(task('a'));
+for(const label of ['改名…','置顶','归档','删除会话…'])assert.match(menu,new RegExp(label));
+assert.match(menu,/data-task-action="rename" data-task-id="a"/);
+assert.match(menu,/data-task-action="pin" data-task-id="a">置顶</);
+assert.doesNotMatch(menu,/disabled/);
+assert.match(layout.taskItemMenu(task('a',{pinned:true})),/取消置顶/);
+const archived=layout.taskItemMenu(task('a',{archived:true}));
+assert.match(archived,/恢复任务/);assert.doesNotMatch(archived,/disabled/);
+// A running task keeps its history: archive and delete stay disabled, rename and pin stay usable.
+const busy=layout.taskItemMenu(task('a',{status:'running'}));
+assert.match(busy,/data-task-action="archive" data-task-id="a" disabled/);
+assert.match(busy,/data-task-action="trash" data-task-id="a" disabled/);
+assert.doesNotMatch(busy,/data-task-action="rename" data-task-id="a" disabled/);
+assert.match(layout.taskItemMenu(task('a',{status:'queued'})),/disabled/);
+// Rows carry the task button and its menu; grouping stays per environment and path.
+const list=layout.workspaceTaskList([task('a',{pinned:true}),task('b',{archived:true})]);
+assert.equal(list.match(/class="task-row"/g).length,2);
+assert.match(list,/class="task selected"[^>]*data-task="a"/);
+assert.doesNotMatch(list,/data-task="b"[^>]*selected/);
+assert.match(list,/↑ 任务 a/);
+assert.match(list,/<small class="task-state[^"]*">已归档<\/small>/);
+// Same environment and path share one group; a different machine keeps its own group.
+const grouped=layout.workspaceTaskList([task('a'),task('c',{workspace:'/work/a'}),{...task('d'),environment:{id:'e2',name:'Windows',type:'local',host:'',distro:'',user:''},workspace:'/other'}]);
+assert.equal(grouped.match(/class="workspace-group"/g).length,2);
+assert.equal(grouped.match(/class="task-row"/g).length,3);
+assert.match(grouped,/WSL/);assert.match(grouped,/Windows/);
+console.log('PASS: per-turn real usage/duration, unavailable history, appearance bounds, attachment limits, per-task sidebar menu.');

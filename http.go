@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	s.updateRoutes(m)
 	s.workspaceRoutes(m)
 	s.scratchRoutes(m)
+	s.knowledgeRoutes(m)
 	s.hardwareRoutes(m)
 	s.hardwareAIRoutes(m)
 	s.terminalRoutes(m)

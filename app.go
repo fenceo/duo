@@ -314,13 +314,23 @@ func (a *App) stop(id string) error {
 	return e
 }
 func (a *App) knowledge(id, source string) (Run, error) {
-	n, e := a.store.note(id)
+	items, e := a.store.knowledgeList(id)
 	if e != nil {
 		return Run{}, e
 	}
 	text := "请根据本任务已有对话整理可复用的任务知识，只返回 Markdown。包含问题、解决办法、实际验证结果和未解决事项；未验证的内容明确说明。不要调用工具，不修改项目文件。"
-	if n.Content != "" {
-		text += "\n\n已有知识，请合并保留有效内容：\n" + n.Content
+	if len(items) > 0 {
+		var b strings.Builder
+		b.WriteString(text)
+		b.WriteString("\n\n已有知识，请合并保留有效内容：")
+		for _, k := range items {
+			if b.Len() > 12000 {
+				b.WriteString("\n\n…（其余知识已省略，请只整理以上内容）")
+				break
+			}
+			b.WriteString("\n\n### " + k.Title + "（" + knowledgeStateLabel(k.Status) + "）\n" + k.Content)
+		}
+		text = b.String()
 	}
 	return a.submit(id, text, "knowledge", source)
 }

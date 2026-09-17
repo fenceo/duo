@@ -97,7 +97,7 @@ func (s *Store) search(ctx context.Context, query string) (SearchResult, error) 
 	rows, err := s.QueryContext(ctx, `SELECT d.task_id,t.title,d.kind,d.reference,d.content,COALESCE(p.archived,0)
  FROM (
  SELECT id task_id,'task' kind,id reference,title content,updated stamp FROM tasks
- UNION ALL SELECT task_id,'note','',content,updated FROM notes
+ UNION ALL SELECT task_id,'knowledge',id,title||char(10)||content,updated FROM knowledge_entries
  UNION ALL SELECT task_id,'scratch',id,content,updated FROM scratch
  UNION ALL SELECT task_id,'message',CAST(seq AS TEXT),text,created FROM events WHERE kind IN ('user','assistant')
  ) d JOIN tasks t ON t.id=d.task_id LEFT JOIN task_preferences p ON p.task_id=t.id

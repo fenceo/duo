@@ -1,4 +1,6 @@
 type ConversationFilter={tools:boolean;process:boolean};
+// Defined in app.ts. Guarded so this file also loads standalone in tests.
+declare function knowledgeForRun(runId:string):unknown;
 type ConversationCategory='message'|'tools'|'process'|'error';
 const conversationFilterKey='jianzuo-conversation-filter-v1';
 let conversationFilter:ConversationFilter={tools:false,process:false};
@@ -85,5 +87,8 @@ function runFooter(run:Run):string{
  if(!run.finished||['queued','running'].includes(run.status))return '';
  const usage=run.usage,usageTip=usage?`输入 ${usage.input} · 输出 ${usage.output} · 缓存读取 ${usage.cached||0} · 缓存写入 ${usage.cache_write||0}`:'此轮引擎未返回用量，历史记录不作估算';
  const durationTip=run.started?'从本轮实际开始执行计算':'旧记录未保存开始时间，包含排队时间';
- return `<span title="${escapeHTML(usageTip)}">用量 ${usage?formatTokens(usage.total)+' tok':'未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished-(run.started||run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}</time>`;
+ const runId=typeof run.id==='string'?run.id:'';
+ const settled=runId&&typeof knowledgeForRun==='function'?knowledgeForRun(runId):null;
+ const knowledge=runId?`<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled?'disabled':''} title="${settled?'这轮结果已经沉淀到任务知识':'把这轮结果存成一条任务知识'}">${settled?'已沉淀':'沉淀为知识'}</button>`:'';
+ return `<span title="${escapeHTML(usageTip)}">用量 ${usage?formatTokens(usage.total)+' tok':'未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished-(run.started||run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}</time>${knowledge}`;
 }
