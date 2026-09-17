@@ -31,12 +31,14 @@ try {
     & git push origin $tag
     if($LASTEXITCODE -ne 0){throw 'Tag push failed'}
     $zip=Join-Path $root 'dist\Jianzuo-portable-windows-x64.zip'
-    & $GitHubCLI release create $tag $zip ($zip+'.sha256') --repo $repo.nameWithOwner --verify-tag --draft --title ('简作 '+$tag) --notes-file $Notes
+    $installer=Join-Path $root 'dist\Jianzuo-Setup-User-x64.exe'
+    foreach($path in @($zip,($zip+'.sha256'),$installer,($installer+'.sha256'))){if(!(Test-Path -LiteralPath $path -PathType Leaf)){throw ('Release asset is missing: '+$path)}}
+    & $GitHubCLI release create $tag $zip ($zip+'.sha256') $installer ($installer+'.sha256') --repo $repo.nameWithOwner --verify-tag --draft --title ('简作 '+$tag) --notes-file $Notes
     if($LASTEXITCODE -ne 0){throw 'Draft upload failed; inspect the draft before retrying'}
     $releaseJSON=& $GitHubCLI release view $tag --repo $repo.nameWithOwner --json assets,isDraft
     if($LASTEXITCODE -ne 0){throw 'Cannot verify draft release'}
     $release=$releaseJSON | ConvertFrom-Json
-    foreach($path in @($zip,($zip+'.sha256'))){$file=Get-Item -LiteralPath $path;$asset=@($release.assets | Where-Object name -EQ $file.Name);if($asset.Count -ne 1 -or $asset[0].size -ne $file.Length){throw 'Uploaded asset size mismatch; draft left unpublished'}}
+    foreach($path in @($zip,($zip+'.sha256'),$installer,($installer+'.sha256'))){$file=Get-Item -LiteralPath $path;$asset=@($release.assets | Where-Object name -EQ $file.Name);if($asset.Count -ne 1 -or $asset[0].size -ne $file.Length){throw 'Uploaded asset size mismatch; draft left unpublished'}}
     & $GitHubCLI release edit $tag --repo $repo.nameWithOwner --draft=false --latest
     if($LASTEXITCODE -ne 0){throw 'Publish failed; draft remains available'}
     & $GitHubCLI release view $tag --repo $repo.nameWithOwner --json url,tagName,isDraft
