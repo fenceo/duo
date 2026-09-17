@@ -121,6 +121,54 @@ func TestUsageAndEngineModes(t *testing.T) {
 		t.Fatal("counted non-result usage", usage)
 	}
 }
+
+func TestRunsHydrateMetricsOptionsAndAttachments(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.Exec("INSERT INTO tasks(id,title,workspace,model,created,updated) VALUES('t','title','/tmp','',0,0)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES('r','t','prompt','chat','web','done',1)"); err != nil {
+		t.Fatal(err)
+	}
+	mode := WorkMode{ID: "review", Name: "审查", Permission: "read", Prompt: "检查边界"}
+	attachments := []Attachment{{ID: "f1", Name: "画面.png", Mime: "image/png", Size: 42}}
+	usage := RunUsage{Input: 100, Output: 200, Cached: 2000, Total: 2300}
+	modeJSON, _ := json.Marshal(mode)
+	attachmentJSON, _ := json.Marshal(attachments)
+	usageJSON, _ := json.Marshal(usage)
+	if _, err = s.Exec("INSERT INTO run_metrics(run_id,started,usage) VALUES('r',123,?)", string(usageJSON)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Exec("INSERT INTO run_options(run_id,mode,attachments) VALUES('r',?,?)", string(modeJSON), string(attachmentJSON)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES('legacy','t','old','chat','web','done',2)"); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := s.runs("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %#v", runs)
+	}
+	got := runs[0]
+	if got.Started != 123 || got.Usage == nil || *got.Usage != usage || got.Mode == nil || *got.Mode != mode {
+		t.Fatalf("hydrated run = %#v", got)
+	}
+	if len(got.Attachments) != 1 || got.Attachments[0] != attachments[0] {
+		t.Fatalf("attachments = %#v", got.Attachments)
+	}
+	if legacy := runs[1]; legacy.Started != 0 || legacy.Usage != nil || legacy.Mode != nil || legacy.Attachments != nil {
+		t.Fatalf("legacy defaults = %#v", legacy)
+	}
+}
+
 func TestTrashPreservesHistoryScratchAndWorkspace(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	task := taskFor(t, a)

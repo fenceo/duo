@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"golang.org/x/crypto/bcrypt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -31,6 +32,10 @@ type Server struct {
 	mu                   sync.Mutex
 	attempts             map[string]attempts
 	environmentDetection sync.Mutex
+	updateMu             sync.Mutex
+	updateRoot           string
+	launcherPID          int
+	shutdown             func()
 }
 
 func hash(s string) string { v := sha256.Sum256([]byte(s)); return hex.EncodeToString(v[:]) }
@@ -46,6 +51,11 @@ func body(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
 	d := json.NewDecoder(r.Body)
 	if d.Decode(v) != nil {
+		fail(w, 400, "请求内容无效")
+		return false
+	}
+	var extra any
+	if d.Decode(&extra) != io.EOF {
 		fail(w, 400, "请求内容无效")
 		return false
 	}

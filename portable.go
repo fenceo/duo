@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const version = "0.15.0-portable"
+const version = "0.16.0-portable"
 
 // Only the native launcher's first-run wizard uses this stdin-only operation.
 // Existing databases are never reset by initialization.

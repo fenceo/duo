@@ -26,6 +26,11 @@ func main() {
 	managed := flag.Bool("managed", false, "由托盘通过 stdin 管理生命周期")
 	showVersion := flag.Bool("version", false, "显示版本")
 	discover := flag.Bool("detect-environments", false, "只检测本机环境并输出 JSON，不创建数据目录")
+	updateHelper := flag.Bool("update-helper", false, "执行已准备的便携版替换并退出")
+	updateRoot := flag.String("update-root", "", "自动更新目标程序目录")
+	updateStage := flag.String("update-stage", "", "自动更新暂存目录")
+	updateVersion := flag.String("update-version", "", "自动更新版本")
+	launcherPID := flag.Int("launcher-pid", 0, "等待退出的便携版启动器进程")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -33,6 +38,12 @@ func main() {
 	}
 	if *discover {
 		if e := printDetectedEnvironments(); e != nil {
+			log.Fatal(e)
+		}
+		return
+	}
+	if *updateHelper {
+		if e := runUpdateHelper(*dir, *updateRoot, *updateStage, *updateVersion, *launcherPID); e != nil {
 			log.Fatal(e)
 		}
 		return
@@ -111,8 +122,24 @@ func main() {
 	go func() { defer a.wg.Done(); f.outboxLoop() }()
 	a.wg.Add(1)
 	go func() { defer a.wg.Done(); f.runCardsLoop() }()
-	server := &http.Server{Addr: address, Handler: (&Server{app: a}).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	done := make(chan os.Signal, 1)
+	handler := &Server{
+		app:         a,
+		updateRoot:  filepath.Dir(exe),
+		launcherPID: func() int {
+			if *managed {
+				return os.Getppid()
+			}
+			return 0
+		}(),
+		shutdown: func() {
+			select {
+			case done <- os.Interrupt:
+			default:
+			}
+		},
+	}
+	server := &http.Server{Addr: address, Handler: handler.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	signal.Notify(done, os.Interrupt)
 	if *managed {
 		go func() {

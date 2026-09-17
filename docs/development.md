@@ -34,6 +34,8 @@ node scripts/Test-Updates-Web.mjs
 
 `updates.go` 中的默认仓库指向正式上游。用户可在设置中覆盖为另一个公开 GitHub 仓库。
 
-检查由服务端请求 GitHub Releases API，超时 12 秒，结果短期缓存 30 秒。仅在用户点击检查时访问 GitHub；仓库输入与返回下载链接经过限定，不支持任意下载服务器或自动执行安装文件。检查状态包括有新版、已最新、本机较新、没有正式发布及网络失败。
+检查由服务端请求 GitHub Releases API，超时 12 秒，结果短期缓存 30 秒。仅在用户点击检查时访问 GitHub；仓库输入与返回下载链接经过限定，下载重定向也只允许 GitHub 发布资产域名。检查状态包括有新版、已最新、本机较新、没有正式发布及网络失败。
 
 发布资产固定名为 `Jianzuo-portable-windows-x64.zip` 及 `Jianzuo-portable-windows-x64.zip.sha256`。版本号按数值比较，不使用字符串排序。
+
+Windows 便携版通过受登录和 CSRF 保护的 `POST /api/updates/install` 自动安装。服务端重新检查 Release、校验 SHA-256、限制 ZIP 大小与固定文件白名单，再复制自身为更新助手。助手等待托盘启动器退出和数据锁释放，备份并替换四个发布文件，启动新版；新版启动失败时回滚。`data` 不参与替换，日志写入 `data/update.log`。其他平台只提供手动下载。

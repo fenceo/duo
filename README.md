@@ -18,13 +18,13 @@
 - 文件浏览、Git 差异、Windows / WSL / SSH 多终端。
 - 共享串口、TCP、Telnet、SSH 硬件资源，串口继电器控制，按任务授权 AI 使用硬件。
 - 局域网和 Tailscale 访问，密码登录，可调整主题和布局。
-- 设置中的“版本更新”检查本仓库最新正式 Release，查看说明和下载便携包。
+- 设置中的“版本更新”检查最新正式 Release；Windows 便携版可校验、替换并自动重启，手动下载仍可使用。
 
 ## 更新
 
-在“设置 → 版本更新”点击“检查更新”。下载新版后先退出简作，备份整个 `data` 文件夹，再替换程序文件并保留 `data`。版本检查不会自动停止任务或安装程序。
+在“设置 → 版本更新”点击“检查更新”。检测到新版后，Windows 便携版可点击“下载并自动安装”，程序会先校验 Release 提供的 SHA-256，再停止任务、替换程序并自动重启；`data` 文件夹不会被替换。其他运行方式仍可手动下载新版并保留 `data`。
 
-ZIP 附带 SHA-256 校验文件。PowerShell 可运行 `Get-FileHash .\Jianzuo-portable-windows-x64.zip -Algorithm SHA256` 比较校验值。
+ZIP 附带 SHA-256 校验文件。手动下载后可用 `Get-FileHash .\Jianzuo-portable-windows-x64.zip -Algorithm SHA256` 比较校验值。自动更新日志保存在 `data/update.log`。
 
 ## 数据与使用范围
 

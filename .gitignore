@@ -1,6 +1,8 @@
 /data/
 /build/
 *.log
+__pycache__/
+*.py[cod]
 /node_modules/
 /web/app.js
 /dist/

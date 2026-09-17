@@ -80,10 +80,23 @@ func (c *ConfigFile) save(v Config) error {
 	defer c.Unlock()
 	b, _ := json.MarshalIndent(v, "", "  ")
 	tmp := c.path + ".tmp"
-	if e := os.WriteFile(tmp, b, 0600); e != nil {
+	f, e := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if e != nil {
 		return e
 	}
-	if e := os.Rename(tmp, c.path); e != nil {
+	defer os.Remove(tmp)
+	if _, e = f.Write(b); e != nil {
+		_ = f.Close()
+		return e
+	}
+	if e = f.Sync(); e != nil {
+		_ = f.Close()
+		return e
+	}
+	if e = f.Close(); e != nil {
+		return e
+	}
+	if e = os.Rename(tmp, c.path); e != nil {
 		return e
 	}
 	c.value = v

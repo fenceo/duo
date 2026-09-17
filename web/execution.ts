@@ -3,7 +3,8 @@ type ModelListResponse={models:EngineModel[];modified:number;message?:string;sou
 type ModelPickerTarget='create'|'task';
 let createModels:EngineModel[]=[];
 let taskPickerModels:EngineModel[]=[];
-const modelsByEnv:Record<string,EngineModel[]>={};
+let taskPickerStatus='',taskModelRequest=0;
+const modelsByEnv:Record<string,{models:EngineModel[];message:string;expires:number}>={};
 const effortLabels:Record<string,string>={none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
 const defaultModelLabel='使用此工具的默认模型';
 const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:string;menu:string;search:string;list:string}>={
@@ -16,9 +17,6 @@ function effortLevels(engine:string,model?:EngineModel):string[]{
  return engine==='claude'?['low','medium','high','xhigh','max']:['low','medium','high','xhigh'];
 }
 function installExecution(){
- const grid=document.createElement('div');grid.className='form-grid';input('create-engine').previousElementSibling!.before(grid);
- for(const id of ['create-engine','create-effort']){const control=input(id),label=control.previousElementSibling!,column=document.createElement('div');column.append(label,control);grid.append(column)}
-
  input('create-engine').onchange=()=>void loadCreateEnvironment(true);
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
@@ -56,8 +54,21 @@ async function toggleModelMenu(target:ModelPickerTarget){
  const ids=modelPickers[target];if(!element(ids.root))return;
  if(!element(ids.menu).classList.contains('hidden')){closeModelMenu(target);return}
  closeModelMenu(target==='create'?'task':'create');
- if(target==='task'){if(!detail)return;taskPickerModels=await modelsForTask(detail.task)}
  input(ids.search).value='';
+ if(target==='task'){
+  if(!detail)return;
+  const request=++taskModelRequest,key=modelCacheKey(detail.task),cached=modelsByEnv[key];
+  taskPickerModels=cached?.models?.slice()||[];taskPickerStatus=cached?.message||'';
+  if(cached?.expires>Date.now()&&taskPickerModels.length){
+   renderModelMenu(target);element(ids.menu).classList.remove('hidden');button(ids.button).setAttribute('aria-expanded','true');input(ids.search).focus();
+  }else{
+   taskPickerStatus='正在读取模型列表…';
+  }
+  renderModelMenu(target);
+  element(ids.menu).classList.remove('hidden');button(ids.button).setAttribute('aria-expanded','true');input(ids.search).focus();
+  void loadTaskModels(request,detail.task);
+  return;
+ }
  renderModelMenu(target);
  element(ids.menu).classList.remove('hidden');
  button(ids.button).setAttribute('aria-expanded','true');
@@ -92,18 +103,32 @@ function renderModelMenu(target:ModelPickerTarget){
  // "" clears the override and hands the choice back to the tool, so an accidental
  // pick stays reversible.
  const efforts=levels.length?`<div class="model-efforts"><small>推理强度</small><div>${['',...levels].map(v=>`<button type="button" class="model-effort${(detail?.task.reasoning_effort||'')===v?' selected':''}" data-effort="${escapeHTML(v)}">${escapeHTML(v===''?'工具默认':(effortLabels[v]||v))}</button>`).join('')}</div></div>`:'<p class="model-empty">此模型不提供推理强度</p>';
- element(ids.list).innerHTML=body+efforts;
+ const status=taskPickerStatus?`<p class="model-empty">${escapeHTML(taskPickerStatus)}</p>`:'';
+ element(ids.list).innerHTML=body+status+efforts;
 }
-async function modelsForTask(task:Task):Promise<EngineModel[]>{
- const engine=task.engine||'codex',key=(task.environment?.id||'')+':'+engine;
- if(!(key in modelsByEnv)){
-  let list:EngineModel[]=[];
-  try{const result=await api<ModelListResponse>('environments/'+task.environment.id+'/models?engine='+engine);list=result.models||[]}catch{list=[]}
-  modelsByEnv[key]=list;
- }
- const models=[...modelsByEnv[key]];
- if(task.model&&!models.some(m=>m.id===task.model))models.unshift({id:task.model,name:task.model+'（当前）'});
+function modelCacheKey(task:Task){return (task.environment?.id||'')+':'+(task.engine||'codex')}
+function mergeTaskModels(task:Task,list:EngineModel[]):EngineModel[]{
+ const models=[...list],known=new Set(models.map(m=>m.id));
+ const configured=task.engine==='claude'?task.environment.claude_model:task.environment.model;
+ if(configured&&!known.has(configured)){models.unshift({id:configured,name:configured+'（环境默认）'});known.add(configured)}
+ if(task.model&&!known.has(task.model))models.unshift({id:task.model,name:task.model+'（当前）'});
  return models;
+}
+async function loadTaskModels(request:number,task:Task){
+ const engine=task.engine||'codex',key=modelCacheKey(task);
+ try{
+ const result=await api<ModelListResponse>('environments/'+task.environment.id+'/models?engine='+engine);
+  if(request!==taskModelRequest||detail?.task.id!==task.id)return;
+  const catalog=result.models||[],models=mergeTaskModels(task,catalog),message=result.message||result.source+(result.modified?' · '+new Date(result.modified).toLocaleString():'')||'';
+  taskPickerModels=models;taskPickerStatus=message;
+  if(catalog.length)modelsByEnv[key]={models,message,expires:Date.now()+30000};else delete modelsByEnv[key];
+ }catch(e){
+  if(request!==taskModelRequest||detail?.task.id!==task.id)return;
+  delete modelsByEnv[key];
+  taskPickerModels=mergeTaskModels(task,[]);
+  taskPickerStatus=(e as Error).message+'。可直接输入模型名称后按 Enter。';
+ }
+ if(!element('task-model-menu').classList.contains('hidden'))renderModelMenu('task');
 }
 async function chooseTaskModel(id:string){
  closeModelMenu('task');

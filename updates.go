@@ -21,32 +21,38 @@ var releaseRepository = "fenceo/jianzuo"
 const portableAssetName = "Jianzuo-portable-windows-x64.zip"
 
 type UpdateInfo struct {
-	Current     string `json:"current"`
-	Repository  string `json:"repository"`
-	State       string `json:"state"`
-	Message     string `json:"message"`
-	Latest      string `json:"latest,omitempty"`
-	Published   string `json:"published,omitempty"`
-	Checked     int64  `json:"checked,omitempty"`
-	Notes       string `json:"notes,omitempty"`
-	ReleasesURL string `json:"releases_url,omitempty"`
-	ReleaseURL  string `json:"release_url,omitempty"`
-	DownloadURL string `json:"download_url,omitempty"`
-	ChecksumURL string `json:"checksum_url,omitempty"`
-	Digest      string `json:"digest,omitempty"`
-	Size        int64  `json:"size,omitempty"`
+	Current          string `json:"current"`
+	Repository       string `json:"repository"`
+	State            string `json:"state"`
+	Message          string `json:"message"`
+	Latest           string `json:"latest,omitempty"`
+	Published        string `json:"published,omitempty"`
+	Checked          int64  `json:"checked,omitempty"`
+	Notes            string `json:"notes,omitempty"`
+	ReleasesURL      string `json:"releases_url,omitempty"`
+	ReleaseURL       string `json:"release_url,omitempty"`
+	DownloadURL      string `json:"download_url,omitempty"`
+	ChecksumURL      string `json:"checksum_url,omitempty"`
+	Digest           string `json:"digest,omitempty"`
+	Size             int64  `json:"size,omitempty"`
+	InstallSupported bool   `json:"install_supported"`
+	InstallMessage   string `json:"install_message,omitempty"`
 }
 type UpdateChecker struct {
-	mu        sync.Mutex
-	client    *http.Client
-	cached    UpdateInfo
-	cachedErr error
+	mu             sync.Mutex
+	client         *http.Client
+	downloadClient *http.Client
+	cached         UpdateInfo
+	cachedErr      error
 }
 
 func newUpdateChecker() *UpdateChecker {
-	return &UpdateChecker{client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return errors.New("GitHub 仓库地址发生重定向，请检查更新源")
-	}}}
+	return &UpdateChecker{
+		client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("GitHub 仓库地址发生重定向，请检查更新源")
+		}},
+		downloadClient: newUpdateDownloadClient(),
+	}
 }
 
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$`)
@@ -255,7 +261,7 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 func (s *Server) updateRoutes(m *http.ServeMux) {
 	checker := newUpdateChecker()
 	m.HandleFunc("GET /api/updates", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		jsonOut(w, 200, checker.snapshot(s.app.store.updateRepository()))
+		jsonOut(w, 200, s.decorateUpdate(checker.snapshot(s.app.store.updateRepository())))
 	}))
 	m.HandleFunc("PUT /api/updates", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -273,7 +279,7 @@ func (s *Server) updateRoutes(m *http.ServeMux) {
 			fail(w, 500, err.Error())
 			return
 		}
-		jsonOut(w, 200, checker.snapshot(s.app.store.updateRepository()))
+		jsonOut(w, 200, s.decorateUpdate(checker.snapshot(s.app.store.updateRepository())))
 	}))
 	m.HandleFunc("POST /api/updates/check", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 13*time.Second)
@@ -283,6 +289,23 @@ func (s *Server) updateRoutes(m *http.ServeMux) {
 			fail(w, 502, err.Error())
 			return
 		}
-		jsonOut(w, 200, v)
+		jsonOut(w, 200, s.decorateUpdate(v))
+	}))
+	m.HandleFunc("POST /api/updates/install", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		result, err := s.installUpdate(r.Context(), checker)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		jsonOut(w, 202, result)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		if s.shutdown != nil {
+			go func() {
+				time.Sleep(700 * time.Millisecond)
+				s.shutdown()
+			}()
+		}
 	}))
 }

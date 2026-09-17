@@ -58,17 +58,18 @@ static class Portable {
 }
 
 sealed class ServiceHost:IDisposable {
-    Process process;readonly StringBuilder errors=new StringBuilder();
+    Process process;readonly StringBuilder errors=new StringBuilder();volatile bool updateRequested;
     public bool Running { get { return process!=null&&!process.HasExited; } }
+    public bool UpdateRequested { get { return updateRequested; } }
     public void Start(){
         if(Running)return;
         if(!Portable.FreePort(Portable.Port))throw new Exception("端口 "+Portable.Port+" 已被占用，未启动第二份服务。\n若旧版简作正在运行，可继续使用旧版，或退出旧版后再启动本便携版。\n要并行运行，请在本便携版 data/config.json 中设置不同的 listen 端口。");
         process=new Process();process.StartInfo=Portable.StartInfo("--data "+Portable.Q(Portable.Data)+" --managed");
         process.ErrorDataReceived+=(s,e)=>{if(e.Data!=null)lock(errors){if(errors.Length<16000)errors.AppendLine(e.Data);}};
-        process.OutputDataReceived+=(s,e)=>{};process.Start();process.BeginErrorReadLine();process.BeginOutputReadLine();
+        process.OutputDataReceived+=(s,e)=>{if(e.Data!=null&&e.Data.StartsWith("JIANZUO_UPDATE ",StringComparison.Ordinal))updateRequested=true;};process.Start();process.BeginErrorReadLine();process.BeginOutputReadLine();
         for(int i=0;i<80;i++){
             if(process.HasExited)throw new Exception("服务启动失败：\n"+errors+"\n日志："+Path.Combine(Portable.Data,"service.log"));
-            try{var req=(HttpWebRequest)WebRequest.Create(Portable.URL+"healthz");req.Proxy=null;req.Timeout=350;using(var res=req.GetResponse())using(var reader=new StreamReader(res.GetResponseStream())){var obj=Portable.Json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());if(Convert.ToString(obj["app"])=="jianzuo"&&Convert.ToString(obj["version"])=="0.15.0-portable")return;}}catch(WebException){}
+            try{var req=(HttpWebRequest)WebRequest.Create(Portable.URL+"healthz");req.Proxy=null;req.Timeout=350;using(var res=req.GetResponse())using(var reader=new StreamReader(res.GetResponseStream())){var obj=Portable.Json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());if(Convert.ToString(obj["app"])=="jianzuo"&&!String.IsNullOrEmpty(Convert.ToString(obj["version"])))return;}}catch(WebException){}
             Thread.Sleep(150);
         }
         if(Running){process.StandardInput.Close();process.WaitForExit(20000);}throw new Exception("启动超时，请查看 data/service.log。");
@@ -94,7 +95,10 @@ sealed class TrayApp:ApplicationContext,IDisposable {
         menu.Items.Add("退出简作",null,(s,e)=>Safe(()=>{if(ConfirmStop("退出")){host.Stop();icon.Visible=false;ExitThread();}}));
         icon=new NotifyIcon{Icon=SystemIcons.Application,Text="简作 · 本地任务工作台",ContextMenuStrip=menu,Visible=true};
         icon.DoubleClick+=(s,e)=>Safe(()=>Portable.Open(Portable.URL));
-        timer=new System.Windows.Forms.Timer{Interval=2000};timer.Tick+=(s,e)=>{status.Text=host.Running?"简作 · 正在运行":"服务已停止 · 请查看日志";icon.Text=status.Text;};timer.Start();
+        timer=new System.Windows.Forms.Timer{Interval=500};timer.Tick+=(s,e)=>{
+            if(host.UpdateRequested&&!host.Running){timer.Stop();status.Text="简作 · 正在自动更新";icon.Text=status.Text;icon.Visible=false;ExitThread();return;}
+            status.Text=host.UpdateRequested?"简作 · 正在准备自动更新":(host.Running?"简作 · 正在运行":"服务已停止 · 请查看日志");icon.Text=status.Text;
+        };timer.Start();
         if(!background)Portable.Open(Portable.URL);
     }
     bool ConfirmStop(string action){return MessageBox.Show(action+"会停止正在执行的任务并断开硬件连接。是否继续？","简作",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;}

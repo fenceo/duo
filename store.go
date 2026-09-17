@@ -221,7 +221,13 @@ func (s *Store) task(id string) (Task, error) {
 	return t, e
 }
 func (s *Store) runs(id string) ([]Run, error) {
-	rows, e := s.Query("SELECT id,task_id,input,kind,source,status,result,error,created,finished FROM runs WHERE task_id=? ORDER BY created,id", id)
+	rows, e := s.Query(`SELECT runs.id,runs.task_id,runs.input,runs.kind,runs.source,runs.status,runs.result,runs.error,runs.created,runs.finished,
+COALESCE(run_metrics.started,0),COALESCE(run_metrics.usage,''),COALESCE(run_options.mode,''),COALESCE(run_options.attachments,'')
+FROM runs
+LEFT JOIN run_metrics ON run_metrics.run_id=runs.id
+LEFT JOIN run_options ON run_options.run_id=runs.id
+WHERE runs.task_id=?
+ORDER BY runs.created,runs.id`, id)
 	if e != nil {
 		return nil, e
 	}
@@ -229,21 +235,22 @@ func (s *Store) runs(id string) ([]Run, error) {
 	out := []Run{}
 	for rows.Next() {
 		var r Run
-		if e = rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished); e != nil {
+		var usageJSON, modeJSON, filesJSON string
+		if e = rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON); e != nil {
 			return nil, e
+		}
+		if usageJSON != "" {
+			_ = json.Unmarshal([]byte(usageJSON), &r.Usage)
+		}
+		if modeJSON != "" {
+			_ = json.Unmarshal([]byte(modeJSON), &r.Mode)
+		}
+		if filesJSON != "" {
+			_ = json.Unmarshal([]byte(filesJSON), &r.Attachments)
 		}
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-	for i := range out {
-		if err := s.hydrateRun(&out[i]); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
+	return out, rows.Err()
 }
 func (s *Store) events(id string, after int64) ([]Event, error) {
 	rows, e := s.Query("SELECT seq,run_id,kind,text,created FROM events WHERE task_id=? AND seq>? ORDER BY seq LIMIT 500", id, after)
