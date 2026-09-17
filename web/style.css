@@ -47,3 +47,10 @@
 .filter-presets{display:flex;gap:3px}.filter-presets button{font-size:12px;padding:5px 9px;background:transparent}.filter-presets button.selected{background:#2c3427;color:var(--accent);border-color:#54613b}
 .conversation-filter label{display:flex;align-items:center;gap:5px;margin:0;font-size:12px;color:var(--muted);cursor:pointer}.conversation-filter input{width:14px;height:14px;margin:0;accent-color:var(--accent)}.conversation-filter small{font-size:11px;margin-left:auto}.conversation .progress.error{color:#ffad9f}
 @media(max-width:760px){.conversation-filter{padding:8px 14px;gap:8px}.conversation-filter .filter-title{display:none}.conversation-filter small{font-size:10px}}
+
+/* Session visibility: resumed context and foreign agent instruction files. */
+.session-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 22px;border-bottom:1px solid var(--line);flex-shrink:0;font-size:12px;color:var(--muted);background:#191f27}
+.session-banner .session-text{flex:1;min-width:180px}
+.session-banner .session-warning{color:#e8c07d;background:#33291a;border:1px solid #6b5527;border-radius:6px;padding:3px 9px;font-size:11px;cursor:help}
+.session-banner button{font-size:12px;padding:4px 11px;flex-shrink:0}
+@media(max-width:760px){.session-banner{padding:8px 14px}}

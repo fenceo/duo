@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -246,6 +247,38 @@ func (s *Server) Handler() http.Handler {
 		}
 		jsonOut(w, 202, v)
 	}))
+	m.HandleFunc("POST /api/tasks/{id}/session/reset", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		task, e := s.app.store.task(id)
+		if e != nil {
+			fail(w, 404, "任务不存在")
+			return
+		}
+		if task.Status == "running" {
+			fail(w, 409, "任务正在执行，停止后再新建会话")
+			return
+		}
+		if _, e = s.app.store.Exec("UPDATE tasks SET session='',updated=? WHERE id=?", now(), id); e != nil {
+			fail(w, 500, e.Error())
+			return
+		}
+		s.app.changed()
+		if updated, e := s.app.store.task(id); e == nil {
+			jsonOut(w, 200, updated)
+			return
+		}
+		jsonOut(w, 200, map[string]bool{"ok": true})
+	}))
+	m.HandleFunc("GET /api/tasks/{id}/context", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		task, e := s.app.store.task(r.PathValue("id"))
+		if e != nil {
+			fail(w, 404, "任务不存在")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		jsonOut(w, 200, map[string]any{"files": externalContextFiles(ctx, task)})
+	}))
 	m.HandleFunc("GET /api/tasks/{id}/note", s.secure(s.note))
 	m.HandleFunc("PUT /api/tasks/{id}/note", s.secure(s.note))
 	m.HandleFunc("POST /api/environments/discover", s.secure(s.detectEnvironments))
@@ -405,7 +438,10 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	}
 	var chat string
 	_ = s.app.store.QueryRow("SELECT chat_id FROM bindings WHERE task_id=?", id).Scan(&chat)
-	jsonOut(w, 200, map[string]any{"task": t, "runs": runs, "events": events, "chat": chat})
+	// The task view shows how long the engine has been carrying this session
+	// and which foreign instruction files sit in the working directory, so a
+	// reply that follows old context is explainable instead of surprising.
+	jsonOut(w, 200, map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session)})
 }
 func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
