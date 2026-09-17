@@ -151,6 +151,35 @@ func TestEngineCommandsAndModelMetadata(t *testing.T) {
 		t.Fatal(models, err)
 	}
 }
+func TestCodexSandboxNetworkModes(t *testing.T) {
+	networkArg := "sandbox_workspace_write.network_access=true"
+	offline := false
+
+	defaultArgs := strings.Join(codexArgs(Config{}, Task{Workspace: "/work"}), "|")
+	if !strings.Contains(defaultArgs, `sandbox_mode="workspace-write"`) || !strings.Contains(defaultArgs, networkArg) {
+		t.Fatal(defaultArgs)
+	}
+
+	workspaceArgs := strings.Join(codexArgs(Config{}, Task{Workspace: "/work", Mode: &WorkMode{Permission: "workspace", AllowNetwork: &offline}}), "|")
+	if !strings.Contains(workspaceArgs, `sandbox_mode="workspace-write"`) || strings.Contains(workspaceArgs, networkArg) {
+		t.Fatal(workspaceArgs)
+	}
+
+	readArgs := strings.Join(codexArgs(Config{}, Task{Workspace: "/work", Mode: &WorkMode{Permission: "read"}}), "|")
+	if !strings.Contains(readArgs, `sandbox_mode="read-only"`) || strings.Contains(readArgs, networkArg) {
+		t.Fatal(readArgs)
+	}
+
+	fullArgs := strings.Join(codexArgs(Config{}, Task{Workspace: "/work", Mode: &WorkMode{Permission: "full"}}), "|")
+	if !strings.Contains(fullArgs, `sandbox_mode="danger-full-access"`) || strings.Contains(fullArgs, networkArg) {
+		t.Fatal(fullArgs)
+	}
+
+	claudeFullArgs := strings.Join(claudeArgs(Task{Mode: &WorkMode{Permission: "full"}}), "|")
+	if !strings.Contains(claudeFullArgs, "--permission-mode|bypassPermissions") {
+		t.Fatal(claudeFullArgs)
+	}
+}
 func TestClaudeStreamErrorsAndSessionIsolation(t *testing.T) {
 	emit := func(string, string) {}
 	s := claudeStream{session: "root"}

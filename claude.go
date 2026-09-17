@@ -45,8 +45,13 @@ func claudeArgs(t Task) []string {
 	// Headless runs keep normal tool permissions. acceptEdits allows workspace
 	// edits; commands needing authorization must already be allowed by the user.
 	permission := "acceptEdits"
-	if t.Mode != nil && t.Mode.Permission == "read" {
-		permission = "plan"
+	if t.Mode != nil {
+		switch t.Mode.Permission {
+		case "read":
+			permission = "plan"
+		case "full":
+			permission = "bypassPermissions"
+		}
 	}
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", permission}
 	if permission == "plan" {

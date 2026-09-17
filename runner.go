@@ -52,10 +52,25 @@ for pid in sorted(children,reverse=True):
 
 func codexArgs(c Config, t Task) []string {
 	sandbox := "workspace-write"
-	if t.Mode != nil && t.Mode.Permission == "read" {
-		sandbox = "read-only"
+	network := true
+	if t.Mode != nil {
+		switch t.Mode.Permission {
+		case "read":
+			sandbox = "read-only"
+			network = false
+		case "full":
+			sandbox = "danger-full-access"
+			network = false
+		default:
+			if t.Mode.AllowNetwork != nil {
+				network = *t.Mode.AllowNetwork
+			}
+		}
 	}
 	args := []string{"-a", "never", "-C", t.Workspace, "-c", "sandbox_mode=" + strconv.Quote(sandbox)}
+	if sandbox == "workspace-write" && network {
+		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
+	}
 	if h := c.HardwareAI; h != nil {
 		args = append(args, "-c", "mcp_servers.jianzuo_hardware.url="+strconv.Quote(h.URL), "-c", `mcp_servers.jianzuo_hardware.bearer_token_env_var="JIANZUO_HARDWARE_TOKEN"`, "-c", `mcp_servers.jianzuo_hardware.required=true`, "-c", `mcp_servers.jianzuo_hardware.default_tools_approval_mode="approve"`, "-c", `mcp_servers.jianzuo_hardware.tool_timeout_sec=95`)
 	}

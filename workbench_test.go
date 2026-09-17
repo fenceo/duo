@@ -80,6 +80,80 @@ func TestWorkbenchModeQueueSnapshotAndMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkbenchNetworkModeValidationAndUpgrade(t *testing.T) {
+	s, err := openStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	outdated := WorkMode{ID: "work", Name: "old", Permission: "workspace", Builtin: true, AllowNetwork: boolPtr(false)}
+	got, err := s.resolveMode("", &outdated)
+	if err != nil || got.ID != "work" || got.AllowNetwork == nil || !*got.AllowNetwork {
+		t.Fatalf("builtin mode was not upgraded: %#v %v", got, err)
+	}
+
+	oldPlan := WorkMode{ID: "plan", Name: "old", Permission: "workspace", Builtin: true, AllowNetwork: boolPtr(true)}
+	plan, err := s.resolveMode("", &oldPlan)
+	if err != nil || plan.ID != "plan" || plan.Permission != "read" || plan.AllowNetwork == nil || *plan.AllowNetwork {
+		t.Fatalf("plan mode fallback was not upgraded: %#v %v", plan, err)
+	}
+
+	oldFull := WorkMode{ID: "full", Name: "old", Permission: "workspace", Builtin: true, AllowNetwork: boolPtr(false)}
+	fullMode, err := s.resolveMode("", &oldFull)
+	if err != nil || fullMode.ID != "full" || fullMode.Permission != "full" || fullMode.AllowNetwork == nil || !*fullMode.AllowNetwork {
+		t.Fatalf("full mode fallback was not upgraded: %#v %v", fullMode, err)
+	}
+
+	read := WorkCatalog{Modes: []WorkMode{{ID: "read", Name: "read", Permission: "read", AllowNetwork: boolPtr(true)}}}
+	if err = validateCatalog(&read); err == nil {
+		t.Fatal("read-only mode accepted network access")
+	}
+
+	full := WorkCatalog{Modes: []WorkMode{{ID: "admin", Name: "admin", Permission: "full", AllowNetwork: boolPtr(false)}}}
+	if err = validateCatalog(&full); err != nil {
+		t.Fatal(err)
+	}
+	if full.Modes[0].AllowNetwork == nil || !*full.Modes[0].AllowNetwork {
+		t.Fatal(full)
+	}
+
+	reserved := WorkCatalog{Modes: []WorkMode{{ID: "full", Name: "duplicate", Permission: "workspace"}}}
+	if err = validateCatalog(&reserved); err == nil {
+		t.Fatal("custom mode reused a builtin ID")
+	}
+}
+
+func TestTaskCreationPersistsSelectedMode(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	c := a.config.get()
+	rawResponse := toolsClient(t, a)("/api/tasks", "POST", map[string]any{
+		"title":      "network mode",
+		"workspace":  c.Workspaces[0],
+		"model":      c.Model,
+		"mode_id":    "work",
+	}, 201)
+	var response struct{ Task Task }
+	if err := json.Unmarshal(rawResponse, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Task.Mode == nil || response.Task.Mode.ID != "work" || response.Task.Mode.AllowNetwork == nil || !*response.Task.Mode.AllowNetwork {
+		t.Fatal(response.Task)
+	}
+	var rawMode string
+	if err := a.store.QueryRow("SELECT mode FROM task_options WHERE task_id=?", response.Task.ID).Scan(&rawMode); err != nil {
+		t.Fatal(err)
+	}
+	var saved WorkMode
+	if err := json.Unmarshal([]byte(rawMode), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID != "work" || saved.AllowNetwork == nil || !*saved.AllowNetwork {
+		t.Fatal(saved)
+	}
+}
+
 func TestUsageAndEngineModes(t *testing.T) {
 	c := parseUsage("codex", json.RawMessage(`{"input_tokens":2100,"output_tokens":200,"cached_input_tokens":2000}`))
 	if c == nil || c.Total != 2300 {

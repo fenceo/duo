@@ -17,7 +17,7 @@ let sequence=0,selection=0,dirty=false,sending=false,polling=false,authenticated
 let taskContext:ContextFile[]=[];
 const drafts=new Map<string,string>();
 let editingEnvironments:Environment[]=[],editingID="",modelRequest=0;
-let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'='auto';
+let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'|'full'='auto';
 function notify(text:string){element('notice').textContent=text;element('notice').classList.add('show');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>element('notice').classList.remove('show'),6500)}
 async function api<T=any>(path:string,method='GET',data?:unknown):Promise<T>{
  const response=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
