@@ -1,0 +1,8 @@
+{
+ "name":"jianzuo",
+ "version":"0.12.0",
+ "private":true,
+ "type":"module",
+ "scripts":{"check":"tsc --noEmit","build":"node scripts/build.mjs"},
+ "devDependencies":{"typescript":"7.0.2"}
+}

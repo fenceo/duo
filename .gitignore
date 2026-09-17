@@ -1,0 +1,34 @@
+/data/
+/build/
+*.log
+/node_modules/
+/web/app.js
+/dist/
+/_testdata/
+/_backups/
+
+# Local toolchain downloads (GitHub CLI, portable Go) are not part of the source.
+/.tools/
+
+# Local deployment/acceptance artifacts are not part of the public source.
+/work-tools-preview/
+/参考产品调研.md
+/docs/*
+!/docs/releases/
+!/docs/development.md
+/scripts/Check-Local-Deployment.py
+/scripts/Restore-Local-Hardware.py
+/scripts/Update-Local-Service.ps1
+/scripts/Preview-Portable.py
+/scripts/Test-Workbench-Preview.py
+/scripts/Test-Workspace-WSL.py
+/scripts/Test-Hardware-Networking.py
+/scripts/Smoke-Claude.py
+/scripts/Smoke-Hardware-AI.py
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
+.env
+.env.*

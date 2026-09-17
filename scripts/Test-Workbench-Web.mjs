@@ -1,0 +1,18 @@
+import {readFile} from 'node:fs/promises';
+import {stripTypeScriptTypes} from 'node:module';
+import assert from 'node:assert/strict';
+const load=async(name,exports)=>import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(await readFile(new URL('../web/'+name,import.meta.url),'utf8'),{mode:'transform'})+'\nexport {'+exports+'};').toString('base64'));
+globalThis.escapeHTML=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const conv=await load('conversation.ts','formatTokens,formatDuration,runFooter');
+assert.equal(conv.formatTokens(2300),'2.3K');assert.equal(conv.formatTokens(0),'0');assert.equal(conv.formatTokens(2500000),'2.5M');
+assert.equal(conv.formatDuration(131000),'2分11秒');assert.equal(conv.formatDuration(-1),'0秒');
+const run={status:'done',created:1000,started:5000,finished:136000,usage:{input:2100,output:200,cached:2000,total:2300}};
+const footer=conv.runFooter(run);assert.match(footer,/用量 2.3K tok/);assert.match(footer,/用时 2分11秒/);assert.match(footer,/时间/);
+assert.equal(conv.runFooter({...run,status:'running'}),'');assert.match(conv.runFooter({...run,usage:null}),/未提供/);assert.match(conv.runFooter({...run,started:0}),/包含排队时间/);
+const interval=globalThis.setInterval;globalThis.setInterval=()=>0;
+const sticky=await load('sticky.ts','parseAppearance');globalThis.setInterval=interval;
+assert.equal(sticky.parseAppearance('{"font":99,"sidebar":10,"width":5000,"accent":"injection","theme":"x"}').font,18);
+assert.equal(sticky.parseAppearance('{"sidebar":10}').sidebar,210);assert.equal(sticky.parseAppearance('null').theme,'light');assert.equal(sticky.parseAppearance('{"notes":false}').notes,false);
+const workflow=await load('workflow.ts','validateAttachmentFiles');
+assert.throws(()=>workflow.validateAttachmentFiles([{size:8*1024*1024+1}]));assert.throws(()=>workflow.validateAttachmentFiles([{size:1}],5));workflow.validateAttachmentFiles([{size:8*1024*1024}],4);
+console.log('PASS: per-turn real usage/duration, unavailable history, appearance bounds, attachment limits.');
