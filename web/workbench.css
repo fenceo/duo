@@ -58,3 +58,41 @@ body.resizing-x *,body.resizing-y *{user-select:none!important}
 #hardware-resizer::before{left:0;right:0;top:4px;height:2px}
 #hardware-panel[data-sized="1"] #hardware-send-details{height:var(--hardware-height,auto);max-height:none}
 @media(max-width:760px){.panel-resizer{display:none}}
+/* Free three-column layout: the sticky board and the tool dock each pick a column, drag them by the grip. */
+#workspace>.dock{position:relative;flex:0 1 var(--tool-width);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--canvas)}
+#workspace>#dock-left{border-right:1px solid var(--line)}
+#workspace>#dock-right{border-left:1px solid var(--line)}
+#chat-column>#dock-bottom{flex:none;min-height:0;max-height:46vh;padding:0 20px 6px}
+#tool-dock{flex:1;width:auto;min-width:0;min-height:0;border-left:0;background:var(--canvas)}
+#workspace>.dock>#sticky-board{flex:1;min-height:0;max-height:none;border-top:0;padding:10px 12px 4px}
+#workspace>.dock>#sticky-board[data-sized="1"]{height:auto}
+#workspace>.dock>#sticky-board>#sticky-resizer{display:none}
+#workspace.tool-full>.dock{flex:0 0 auto;border:0}
+#workspace.tool-full>.dock[data-dock-panels~="tools"]{flex:1 1 auto;min-width:0}
+#workspace.tool-full>.dock[data-dock-panels~="tools"]>#sticky-board{display:none}
+#dock-left-resizer,#dock-right-resizer{position:absolute;top:0;bottom:0;width:9px;cursor:col-resize;z-index:6}
+#dock-left-resizer{right:-4px}
+#dock-right-resizer{left:-4px}
+#dock-left-resizer::before,#dock-right-resizer::before{top:0;bottom:0;width:2px}
+#dock-left-resizer::before{right:3px}
+#dock-right-resizer::before{left:3px}
+.dock-grip{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:18px;border-radius:5px;color:var(--muted);font-size:12px;line-height:1;cursor:grab;user-select:none;-webkit-user-select:none}
+.dock-grip:hover,.dock-grip:focus-visible{background:var(--raised);color:var(--accent);outline:none}
+.tool-dock-head{gap:8px}
+.tool-dock-head>strong{margin-right:auto}
+body.dock-dragging,body.dock-dragging *{cursor:grabbing!important;user-select:none!important}
+.dock-over{outline:2px dashed var(--accent);outline-offset:-4px;background:#d8f38312}
+body.dock-dragging .dock.dock-target.hidden{display:flex!important;align-items:center;justify-content:center;flex:0 0 84px;width:84px;min-width:84px;margin:8px 0;border:1px dashed var(--accent);border-radius:10px;background:#d8f38310}
+body.dock-dragging #chat-column>#dock-bottom.dock-target.hidden{flex:0 0 auto;width:auto;min-width:0;height:74px;margin:6px 20px 0;padding:0}
+body.dock-dragging .dock.dock-target.hidden::after{content:"拖到此处";color:var(--accent);font-size:11px;letter-spacing:2px;writing-mode:vertical-rl}
+body.dock-dragging #chat-column>#dock-bottom.dock-target.hidden::after{writing-mode:horizontal-tb;letter-spacing:3px}
+#appearance-form .dock-layout-section{margin-top:20px;border-top:1px solid var(--line);padding-top:4px}
+#appearance-form .dock-layout-section .section-title{border:0;margin-top:6px;padding-top:0}
+#appearance-form .dock-layout-section p{margin:10px 0 0}
+@media(max-width:760px){
+ #workspace>.dock{flex:1 1 auto;width:auto;min-width:0;border:0}
+ #workspace.tool-full>.dock[data-dock-panels~="tools"]{flex:1 1 auto}
+ #tool-dock{width:100%;min-width:0;border:0}
+ #chat-column>#dock-bottom{padding:0 12px 6px;max-height:40vh}
+ body.dock-dragging .dock.dock-target.hidden{display:none!important}
+}

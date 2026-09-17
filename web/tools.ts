@@ -21,10 +21,13 @@ let toolFullscreen=false;
 function installWorkspace(){
  const main=element('conversation').parentElement!;
  const workspace=document.createElement('div');workspace.id='workspace';
+ const left=document.createElement('aside');left.id='dock-left';left.className='dock hidden';left.setAttribute('aria-label','左侧工具区');
+ const right=document.createElement('aside');right.id='dock-right';right.className='dock hidden';right.setAttribute('aria-label','右侧工具区');
  const chat=document.createElement('div');chat.id='chat-column';
+ const bottom=document.createElement('div');bottom.id='dock-bottom';bottom.className='dock-bottom dock hidden';bottom.setAttribute('aria-label','对话下方工具区');
  const dock=document.createElement('aside');dock.id='tool-dock';dock.className='hidden';dock.setAttribute('aria-label','任务工具');
  dock.innerHTML='<div id="tool-resizer" role="separator" tabindex="0" aria-label="调整工具宽度" aria-orientation="vertical" aria-valuemin="22" aria-valuemax="75"></div><header class="tool-dock-head"><strong id="tool-title">任务工具</strong><div class="actions"><button id="tool-expand" title="展开工具面板">全屏</button><button id="tool-close" aria-label="关闭工具面板">✕</button></div></header><div id="tool-body"></div>';
- main.append(workspace);workspace.append(chat,dock);chat.append(element('conversation'),element('composer-wrap'));for(const id of ['notebook','scratch-panel','hardware-panel'])element('tool-body').append(element(id));
+ main.append(workspace);workspace.append(left,chat,right);right.append(dock);chat.append(element('conversation'),bottom,element('composer-wrap'));for(const id of ['notebook','scratch-panel','hardware-panel'])element('tool-body').append(element(id));
  button('chat-tab').textContent='对话';button('tool-close').onclick=()=>switchTab('chat');button('tool-expand').onclick=()=>{toolFullscreen=!toolFullscreen;workspace.classList.toggle('tool-full',toolFullscreen);button('tool-expand').textContent=toolFullscreen?'分屏':'全屏'};
 }
 
