@@ -292,16 +292,23 @@ func TestWorkbenchAttachmentAPIAndStaging(t *testing.T) {
 		t.Fatal("oversize", code)
 	}
 	task.Environment = &Environment{Type: "windows"}
-	files, e := a.stageAttachments(context.Background(), task, []Attachment{file})
+	files, cleanup, e := a.stageAttachments(context.Background(), task, []Attachment{file})
 	if e != nil || len(files) != 1 {
 		t.Fatal(files, e)
 	}
+	defer func() { cleanup() }()
 	b, e := os.ReadFile(files[0].Path)
 	if e != nil || !bytes.HasPrefix(b, []byte("\x89PNG")) {
 		t.Fatal(e)
 	}
 	if !strings.HasPrefix(files[0].Path, filepath.Join(filepath.Dir(a.config.path), "attachments")) {
 		t.Fatal(files)
+	}
+	stageRoot := filepath.Dir(files[0].Path)
+	cleanup()
+	cleanup = func() {}
+	if _, e = os.Stat(stageRoot); !os.IsNotExist(e) {
+		t.Fatal("attachment staging was not cleaned", e)
 	}
 	task.Engine = "claude"
 	task.Files = files

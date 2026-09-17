@@ -183,3 +183,22 @@ func TestTaskExecutionAPI(t *testing.T) {
 	req("/api/tasks", "POST", map[string]any{"title": "bad", "workspace": "/work", "engine": "claude", "reasoning_effort": "ultra"}, 400)
 	req(fmt.Sprintf("/api/environments/%s/models?engine=claude", a.config.get().DefaultEnvironment), "GET", nil, 200)
 }
+
+func TestTaskCreationRollsBackWhenModeWriteFails(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	if _, err := a.store.Exec("CREATE TRIGGER reject_task_mode BEFORE INSERT ON task_options BEGIN SELECT RAISE(ABORT,'reject mode'); END"); err != nil {
+		t.Fatal(err)
+	}
+	req := toolsClient(t, a)
+	c := a.config.get()
+	req("/api/tasks", "POST", map[string]any{"title": "atomic", "workspace": c.Workspaces[0], "model": c.Model, "mode_id": "plan"}, 400)
+	for _, table := range []string{"tasks", "task_environments", "task_execution", "task_options"} {
+		var count int
+		if err := a.store.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s kept %d rows after rollback", table, count)
+		}
+	}
+}

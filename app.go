@@ -51,6 +51,9 @@ func (a *App) createWithReasoning(title, workspace, model, reasoning string, env
 	return a.createWithExecution(title, workspace, model, "", reasoning, environmentID...)
 }
 func (a *App) createWithExecution(title, workspace, model, engine, reasoning string, environmentID ...string) (Task, error) {
+	return a.createWithExecutionAndMode(title, workspace, model, engine, reasoning, nil, environmentID...)
+}
+func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reasoning string, mode *WorkMode, environmentID ...string) (Task, error) {
 	c := a.config.get()
 	id := ""
 	if len(environmentID) > 0 {
@@ -106,9 +109,19 @@ func (a *App) createWithExecution(title, workspace, model, engine, reasoning str
 	if e != nil {
 		return Task{}, e
 	}
-	e = tx.Commit()
+	if mode != nil {
+		selected := *mode
+		raw, _ := json.Marshal(selected)
+		if _, e = tx.Exec("INSERT INTO task_options(task_id,mode) VALUES(?,?)", t.ID, string(raw)); e != nil {
+			return Task{}, e
+		}
+		t.Mode = &selected
+	}
+	if e = tx.Commit(); e != nil {
+		return Task{}, e
+	}
 	a.changed()
-	return t, e
+	return t, nil
 }
 
 type SubmitOptions struct {
@@ -238,9 +251,14 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		if err == nil && task.Environment == nil {
 			err = errors.New("任务缺少固定的执行环境，请检查迁移结果")
 		}
+		cleanupAttachments := func() {}
 		if err == nil {
 			cfg := runtimeConfig(a.config.get(), *task.Environment)
-			task.Files, err = a.stageAttachments(ctx, task, r.Attachments)
+			var stagedCleanup func()
+			task.Files, stagedCleanup, err = a.stageAttachments(ctx, task, r.Attachments)
+			if err == nil {
+				cleanupAttachments = stagedCleanup
+			}
 			var release = func() {}
 			if err == nil && (task.Mode == nil || task.Mode.Permission != "read") {
 				cfg.HardwareAI, release, err = a.prepareHardwareAI(ctx, task, r.ID, cfg)
@@ -262,6 +280,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			}
 			release()
 		}
+		cleanupAttachments()
 		<-a.slots
 		a.finish(id, r, session, result, err)
 	}

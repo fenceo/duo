@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	cb "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
@@ -198,5 +199,28 @@ func TestKnowledgeFromFinishedRunIsIdempotent(t *testing.T) {
 	a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,result,created) VALUES(?,?,'还没跑完','chat','web','queued','',?)", pending.ID, task.ID, pending.Created)
 	if _, err := a.store.knowledgeFromRun(task.ID, pending.ID); err == nil {
 		t.Fatal("unfinished run settled")
+	}
+}
+
+func TestKnowledgeTruncationPreservesUTF8AndLimit(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	task := taskFor(t, a)
+	content := strings.Repeat("😀", 100000)
+	run := Run{ID: uid(), TaskID: task.ID, Kind: "chat", Status: "done", Result: content, Created: now()}
+	if _, err := a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,result,created) VALUES(?,?,'大结果','chat','web','done',?,?)", run.ID, task.ID, content, run.Created); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := a.store.knowledgeFromRun(task.ID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Content) > knowledgeMaxBytes {
+		t.Fatalf("knowledge is %d bytes, limit is %d", len(saved.Content), knowledgeMaxBytes)
+	}
+	if !utf8.ValidString(saved.Content) {
+		t.Fatal("truncated knowledge is not valid UTF-8")
+	}
+	if !strings.HasSuffix(saved.Content, knowledgeTruncatedNotice) {
+		t.Fatal("truncated knowledge is missing its notice")
 	}
 }

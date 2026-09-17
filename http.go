@@ -143,18 +143,11 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, e.Error())
 			return
 		}
-		t, e := s.app.createWithExecution(v.Title, v.Workspace, v.Model, v.Engine, v.ReasoningEffort, v.EnvironmentID)
+		t, e := s.app.createWithExecutionAndMode(v.Title, v.Workspace, v.Model, v.Engine, v.ReasoningEffort, &mode, v.EnvironmentID)
 		if e != nil {
 			fail(w, 400, e.Error())
 			return
 		}
-		modeJSON, _ := json.Marshal(mode)
-		_, e = s.app.store.Exec("INSERT INTO task_options(task_id,mode) VALUES(?,?)", t.ID, string(modeJSON))
-		if e != nil {
-			fail(w, 500, e.Error())
-			return
-		}
-		t.Mode = &mode
 		if strings.TrimSpace(v.Input) != "" {
 			if _, e = s.app.submitWithOptions(t.ID, v.Input, "chat", "web", v.SubmitOptions); e != nil {
 				jsonOut(w, 201, map[string]any{"task": t, "start_error": e.Error()})

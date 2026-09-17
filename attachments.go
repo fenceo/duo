@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -109,30 +110,59 @@ func attachmentFileName(f Attachment) string {
 	return f.ID + ext
 }
 
-const stageAttachmentScript = `import sys,json,base64,tempfile,os
+const stageAttachmentScript = `import sys,json,base64,tempfile,os,shutil
 items=json.load(sys.stdin)
-root=tempfile.mkdtemp(prefix='jianzuo-attachments-')
-paths=[]
-for item in items:
- name=item['name']
- if os.path.basename(name)!=name or name in ('.','..'): raise ValueError('invalid attachment name')
- p=os.path.join(root,name)
- fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
- with os.fdopen(fd,'wb') as out: out.write(base64.b64decode(item['data'],validate=True))
- paths.append(p)
-print(json.dumps(paths))
+root=None
+try:
+ root=tempfile.mkdtemp(prefix='jianzuo-attachments-')
+ paths=[]
+ for item in items:
+  name=item['name']
+  if os.path.basename(name)!=name or name in ('.','..'): raise ValueError('invalid attachment name')
+  p=os.path.join(root,name)
+  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+  with os.fdopen(fd,'wb') as out: out.write(base64.b64decode(item['data'],validate=True))
+  paths.append(p)
+ print(json.dumps({'root':root,'paths':paths}))
+except Exception:
+ if root is not None: shutil.rmtree(root,ignore_errors=True)
+ raise
 `
 
-func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) ([]RuntimeAttachment, error) {
+const cleanupAttachmentScript = `import sys,shutil
+shutil.rmtree(sys.argv[1],ignore_errors=True)
+`
+
+func validAttachmentStageRoot(root string) bool {
+	if root == "" || root != path.Clean(root) || !strings.HasPrefix(root, "/") || strings.ContainsAny(root, "\x00\r\n") {
+		return false
+	}
+	name := path.Base(root)
+	return strings.HasPrefix(name, "jianzuo-attachments-") && len(name) > len("jianzuo-attachments-")
+}
+
+func attachmentPathInStage(root, value string) bool {
+	return value != root && strings.HasPrefix(value, strings.TrimSuffix(root, "/")+"/") &&
+		path.Clean(value) == value && !strings.ContainsAny(value, "\x00\r\n")
+}
+
+func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) ([]RuntimeAttachment, func(), error) {
 	result := []RuntimeAttachment{}
 	if len(files) == 0 {
-		return result, nil
+		return result, func() {}, nil
 	}
+	cleanup := func() {}
+	complete := false
+	defer func() {
+		if !complete {
+			cleanup()
+		}
+	}()
 	var payload []map[string]string
 	for _, f := range files {
 		var data []byte
 		if err := a.store.QueryRow("SELECT data FROM attachments WHERE id=? AND task_id=?", f.ID, t.ID).Scan(&data); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		result = append(result, RuntimeAttachment{Attachment: f, Data: data})
 		payload = append(payload, map[string]string{"name": attachmentFileName(f), "data": base64.StdEncoding.EncodeToString(data)})
@@ -140,17 +170,18 @@ func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) 
 	if t.Environment.Type == "windows" {
 		base := filepath.Join(filepath.Dir(a.config.path), "attachments")
 		if err := os.MkdirAll(base, 0700); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		dir, err := os.MkdirTemp(base, t.ID+"-")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		cleanup = func() { _ = os.RemoveAll(dir) }
 		for i := range result {
 			f := &result[i]
 			f.Path = filepath.Join(dir, attachmentFileName(f.Attachment))
 			if err = os.WriteFile(f.Path, f.Data, 0600); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	} else {
@@ -167,20 +198,34 @@ func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) 
 		cmd.Stdout = out
 		cmd.Stderr = errout
 		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("附件传入执行环境失败：%s (%v)", errout.String(), err)
+			return nil, nil, fmt.Errorf("附件传入执行环境失败：%s (%v)", errout.String(), err)
 		}
-		var paths []string
-		if err := json.Unmarshal(out.Bytes(), &paths); err != nil || len(paths) != len(result) {
-			return nil, errors.New("附件路径返回异常")
+		var staged struct {
+			Root  string   `json:"root"`
+			Paths []string `json:"paths"`
 		}
-		for i, p := range paths {
-			if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\x00\r\n") {
-				return nil, errors.New("附件路径无效")
+		if err := json.Unmarshal(out.Bytes(), &staged); err != nil || !validAttachmentStageRoot(staged.Root) || len(staged.Paths) != len(result) {
+			return nil, nil, errors.New("附件路径返回异常")
+		}
+		root := staged.Root
+		cleanup = func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			probe := environmentProbeCommand(*t.Environment, "python3", "-c", cleanupAttachmentScript, root)
+			remove := exec.CommandContext(cleanupCtx, probe.Path, probe.Args[1:]...)
+			remove.WaitDelay = time.Second
+			hideCommand(remove)
+			_ = remove.Run()
+		}
+		for i, p := range staged.Paths {
+			if !attachmentPathInStage(root, p) {
+				return nil, nil, errors.New("附件路径无效")
 			}
 			result[i].Path = p
 		}
 	}
-	return result, nil
+	complete = true
+	return result, cleanup, nil
 }
 func isImageAttachment(f Attachment) bool {
 	return f.Mime == "image/png" || f.Mime == "image/jpeg" || f.Mime == "image/webp" || f.Mime == "image/gif"

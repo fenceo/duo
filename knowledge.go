@@ -27,6 +27,7 @@ type Knowledge struct {
 }
 
 const knowledgeMaxBytes = 200000
+const knowledgeTruncatedNotice = "\n\n（内容过长，已截断，请在面板里补充）"
 
 func knowledgeState(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -133,6 +134,21 @@ func prepareKnowledge(v *Knowledge) error {
 	return nil
 }
 
+func truncateKnowledgeContent(content string) string {
+	if len(content) <= knowledgeMaxBytes {
+		return content
+	}
+	limit := knowledgeMaxBytes - len(knowledgeTruncatedNotice)
+	cut := 0
+	for index := range content {
+		if index > limit {
+			break
+		}
+		cut = index
+	}
+	return content[:cut] + knowledgeTruncatedNotice
+}
+
 func (s *Store) writeKnowledge(v Knowledge, create bool) error {
 	tx, err := s.Begin()
 	if err != nil {
@@ -218,9 +234,7 @@ func (s *Store) knowledgeFromRun(taskID, runID string) (Knowledge, error) {
 	if status != "done" || strings.TrimSpace(result) == "" {
 		return Knowledge{}, errors.New("这次执行还没有可沉淀的结果")
 	}
-	if len(result) > knowledgeMaxBytes {
-		result = string([]rune(result)[:knowledgeMaxBytes/3]) + "\n\n（内容过长，已截断，请在面板里补充）"
-	}
+	result = truncateKnowledgeContent(result)
 	k := Knowledge{ID: uid(), TaskID: taskID, Title: runKnowledgeTitle(kind, input, created), Content: result, Status: "observed", Source: "run", RunID: runID, Revision: 1, Created: now(), Updated: now()}
 	if err := s.writeKnowledge(k, true); err != nil {
 		return Knowledge{}, err
