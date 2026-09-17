@@ -12,7 +12,10 @@ func TestConfigSaveReloadsAndRemovesTemporaryFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := c.get()
-	v.Model = "saved-model"
+	if len(v.Environments) == 0 {
+		t.Fatal("expected a normalized default environment")
+	}
+	v.Environments[0].Model = "saved-model"
 	if err = c.save(v); err != nil {
 		t.Fatal(err)
 	}
@@ -25,5 +28,8 @@ func TestConfigSaveReloadsAndRemovesTemporaryFile(t *testing.T) {
 	}
 	if got := loaded.get().Model; got != "saved-model" {
 		t.Fatalf("model = %q, want saved-model", got)
+	}
+	if got := loaded.get().Environments[0].Model; got != "saved-model" {
+		t.Fatalf("environment model = %q, want saved-model", got)
 	}
 }
