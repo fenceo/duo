@@ -34,6 +34,8 @@ foreach ($contract in @(
     'static bool IsFilesystemRoot',
     'IsFilesystemRoot(options.InstallDir)',
     'IsFilesystemRoot(installDir)',
+    'Path.GetPathRoot(fullRoot)',
+    'Path.GetPathRoot(fullCandidate)',
     'static bool IsJianzuoTask',
     'new string(''\\'', trailingBackslashes * 2)'
 )) {
@@ -56,16 +58,19 @@ if ($expectedHash -ne $actualHash) {
     throw "Installer checksum mismatch: expected $expectedHash, got $actualHash"
 }
 
-if ($Full) {
-    $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('JianzuoInstallerTest-' + [Guid]::NewGuid().ToString('N'))
-    $installDir = Join-Path $testRoot 'program'
-    $dataDir = Join-Path $testRoot 'data'
-    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+function Invoke-InstallerRoundTrip {
+    param(
+        [string]$Label,
+        [string]$InstallDir,
+        [string]$DataDir
+    )
+
+    New-Item -ItemType Directory -Force -Path $InstallDir,$DataDir | Out-Null
     try {
         $install = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
             '--quiet',
-            '--install-dir', $installDir,
-            '--data', $dataDir,
+            '--install-dir', $InstallDir,
+            '--data', $DataDir,
             '--no-shortcuts',
             '--no-desktop',
             '--no-registry',
@@ -73,34 +78,68 @@ if ($Full) {
             '--no-launch'
         )
         if ($install.ExitCode -ne 0) {
-            throw "Full installer test failed with exit code $($install.ExitCode)."
+            throw "$Label installer test failed with exit code $($install.ExitCode)."
         }
-        $uninstaller = Join-Path $installDir '卸载简作.exe'
+        $uninstaller = Join-Path $InstallDir '卸载简作.exe'
         foreach ($path in @(
-            (Join-Path $installDir '简作.exe'),
-            (Join-Path $installDir 'jianzuo-service.exe'),
+            (Join-Path $InstallDir '简作.exe'),
+            (Join-Path $InstallDir 'jianzuo-service.exe'),
             $uninstaller
         )) {
             if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
-                throw "Full installer test did not create: $path"
+                throw "$Label installer test did not create: $path"
             }
         }
         $uninstall = Start-Process -FilePath $uninstaller -Wait -PassThru -ArgumentList @(
             '--quiet',
             '--uninstall',
-            '--install-dir', $installDir,
-            '--data', $dataDir
+            '--install-dir', $InstallDir,
+            '--data', $DataDir
         )
         if ($uninstall.ExitCode -ne 0) {
-            throw "Full uninstall test failed with exit code $($uninstall.ExitCode)."
+            throw "$Label uninstall test failed with exit code $($uninstall.ExitCode)."
         }
-        for ($i = 0; $i -lt 40 -and (Test-Path -LiteralPath $installDir); $i++) {
+        for ($i = 0; $i -lt 40 -and (Test-Path -LiteralPath $InstallDir); $i++) {
             Start-Sleep -Milliseconds 250
         }
+        Write-Output ("PASS: $Label install and uninstall round trip.")
+    } finally {
+        if (Test-Path -LiteralPath $InstallDir) {
+            Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $DataDir) {
+            Remove-Item -LiteralPath $DataDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+if ($Full) {
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('JianzuoInstallerTest-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        Invoke-InstallerRoundTrip -Label 'same-volume' `
+            -InstallDir (Join-Path $testRoot 'program') `
+            -DataDir (Join-Path $testRoot 'data')
     } finally {
         if (Test-Path -LiteralPath $testRoot) {
             Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    $tempVolume = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($testRoot))
+    $projectVolume = [IO.Path]::GetPathRoot($root)
+    if (![string]::Equals($tempVolume, $projectVolume, [StringComparison]::OrdinalIgnoreCase)) {
+        $crossRoot = Join-Path $root ('.installer-test-' + [Guid]::NewGuid().ToString('N'))
+        try {
+            Invoke-InstallerRoundTrip -Label 'cross-volume' `
+                -InstallDir (Join-Path $testRoot 'cross-program') `
+                -DataDir (Join-Path $crossRoot 'data')
+        } finally {
+            if (Test-Path -LiteralPath $crossRoot) {
+                Remove-Item -LiteralPath $crossRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } else {
+        Write-Output 'SKIP: cross-volume test requires a second local temporary volume.'
     }
 }
 

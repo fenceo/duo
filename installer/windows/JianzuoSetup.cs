@@ -240,16 +240,17 @@ static class Program
 
     static string RelativePath(string root, string candidate)
     {
-        string basePath = Path.GetFullPath(root)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        string target = Path.GetFullPath(candidate);
-        Uri baseUri = new Uri(basePath, UriKind.Absolute);
-        Uri targetUri = new Uri(target, UriKind.Absolute);
-        if (!string.Equals(baseUri.Scheme, targetUri.Scheme, StringComparison.OrdinalIgnoreCase))
+        string fullRoot = Path.GetFullPath(root);
+        string fullCandidate = Path.GetFullPath(candidate);
+        if (!string.Equals(Path.GetPathRoot(fullRoot), Path.GetPathRoot(fullCandidate), StringComparison.OrdinalIgnoreCase))
         {
             return "..";
         }
+        string basePath = fullRoot
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        Uri baseUri = new Uri(basePath, UriKind.Absolute);
+        Uri targetUri = new Uri(fullCandidate, UriKind.Absolute);
         string relative = Uri.UnescapeDataString(baseUri.MakeRelativeUri(targetUri).ToString())
             .Replace('/', Path.DirectorySeparatorChar);
         return relative.Length == 0 ? "." : relative;
@@ -1271,15 +1272,17 @@ sealed class SetupForm : Form
 
     static string RelativePath(string root, string candidate)
     {
-        string basePath = Path.GetFullPath(root)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        Uri baseUri = new Uri(basePath, UriKind.Absolute);
-        Uri targetUri = new Uri(Path.GetFullPath(candidate), UriKind.Absolute);
-        if (!string.Equals(baseUri.Scheme, targetUri.Scheme, StringComparison.OrdinalIgnoreCase))
+        string fullRoot = Path.GetFullPath(root);
+        string fullCandidate = Path.GetFullPath(candidate);
+        if (!string.Equals(Path.GetPathRoot(fullRoot), Path.GetPathRoot(fullCandidate), StringComparison.OrdinalIgnoreCase))
         {
             return "..";
         }
+        string basePath = fullRoot
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        Uri baseUri = new Uri(basePath, UriKind.Absolute);
+        Uri targetUri = new Uri(fullCandidate, UriKind.Absolute);
         string relative = Uri.UnescapeDataString(baseUri.MakeRelativeUri(targetUri).ToString())
             .Replace('/', Path.DirectorySeparatorChar);
         return relative.Length == 0 ? "." : relative;

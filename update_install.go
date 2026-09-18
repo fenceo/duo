@@ -90,6 +90,13 @@ func (s *Server) installSupport() (bool, string) {
 
 func (s *Server) decorateUpdate(v UpdateInfo) UpdateInfo {
 	v.InstallSupported, v.InstallMessage = s.installSupport()
+	if v.State == "available" && v.DownloadURL != "" {
+		if v.InstallSupported {
+			v.Message = "发现新版本，可以直接下载并自动安装。"
+		} else {
+			v.Message = "发现新版本，可以下载便携包。"
+		}
+	}
 	return v
 }
 
