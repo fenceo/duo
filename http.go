@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/app.js web/style.css web/workbench.css web/vendor
+//go:embed web/index.html web/app.js web/app.optimized.js web/style.css web/workbench.css web/vendor
 var assets embed.FS
 
 type attempts struct {

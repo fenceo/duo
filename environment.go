@@ -28,6 +28,10 @@ type Environment struct {
 	DefaultEngine string   `json:"default_engine"`
 	Model         string   `json:"model"`
 	ModelCache    string   `json:"model_cache"`
+	// Models contains user-defined model IDs for this environment. They are
+	// merged with the CLI's discovered catalog and are intentionally just
+	// aliases/labels; credentials remain owned by the target CLI.
+	Models        []ModelOption `json:"models,omitempty"`
 	Workspaces    []string `json:"workspaces"`
 }
 
@@ -126,6 +130,10 @@ func normalizeEnvironments(c *Config) error {
 			c.Codex = e.Codex
 			c.Workspaces = append([]string{}, e.Workspaces...)
 			c.Model = e.Model
+		}
+		e.Models = mergeConfiguredModels(nil, e.Models)
+		if len(e.Models) > modelProbeMaxModels {
+			return errors.New("每个环境最多配置 24 个自定义模型")
 		}
 	}
 	if !found {
@@ -493,8 +501,8 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 	if e.Type == "windows" {
 		candidates := modelCacheCandidates(e.ModelCache)
 		models, used, modified, note := readModelCaches(candidates)
-		out.Models, out.Modified = models, modified
-		if len(models) > 0 {
+		out.Models, out.Modified = mergeConfiguredModels(models, e.Models), modified
+		if len(out.Models) > 0 {
 			out.Source = "Codex 模型目录 · " + strings.Join(used, " + ")
 		} else {
 			out.Message = "没有读到模型目录，请先在该环境登录并运行一次 Codex。" + note
@@ -527,10 +535,41 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 		if len(candidate.Models) == 0 && index+1 < len(environmentProbeVariants(e)) {
 			continue
 		}
+		candidate.Models = mergeConfiguredModels(candidate.Models, e.Models)
 		return candidate, nil
 	}
 	if lastDiagnostic == "" {
 		lastDiagnostic = "环境命令执行失败"
 	}
 	return out, fmt.Errorf("读取该环境模型失败：%s", lastDiagnostic)
+}
+
+func mergeConfiguredModels(discovered, configured []ModelOption) []ModelOption {
+	out := make([]ModelOption, 0, len(discovered)+len(configured))
+	seen := make(map[string]bool, len(discovered)+len(configured))
+	for _, model := range append(discovered, configured...) {
+		model.ID = strings.TrimSpace(model.ID)
+		if model.ID == "" || seen[model.ID] {
+			continue
+		}
+		model.Name = strings.TrimSpace(model.Name)
+		if model.Name == "" {
+			model.Name = model.ID
+		}
+		levels := make([]string, 0, len(model.ReasoningLevels))
+		levelSeen := map[string]bool{}
+		for _, level := range model.ReasoningLevels {
+			if validReasoning(level) && !levelSeen[level] {
+				levelSeen[level] = true
+				levels = append(levels, level)
+			}
+		}
+		model.ReasoningLevels = levels
+		if !validReasoning(model.DefaultReasoning) {
+			model.DefaultReasoning = ""
+		}
+		seen[model.ID] = true
+		out = append(out, model)
+	}
+	return out
 }

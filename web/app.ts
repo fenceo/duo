@@ -1,5 +1,6 @@
 /// <reference path="./codex-approvals.ts" />
-type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;workspaces:string[]};
+type EnvironmentModel={id:string;name:string;reasoning_levels?:string[];default_reasoning?:string};
+type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
 type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number};
@@ -220,7 +221,7 @@ async function loadCreateEnvironment(keepWorkspace=false){
  if(!keepWorkspace)input('create-engine').value=env.default_engine||'codex';
  const engine=input('create-engine').value,defaultModel=engine==='claude'?(env.claude_model||''):env.model;setCreatePermission(createPermission);
  input('create-effort').value='';
- const directories=[...new Set([...env.workspaces,...tasks.filter(t=>t.environment?.id===env.id).map(t=>t.workspace)])];element('workspace-options').innerHTML=directories.map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');if(!keepWorkspace)input('create-workspace').value=env.workspaces[0]||'';setCreateModelsLoading();button('create-submit').disabled=true;element('models-hint').textContent='读取 '+env.name+' 的模型列表…';
+ const directories=[...new Set([...env.workspaces,...tasks.filter(t=>t.environment?.id===env.id).map(t=>t.workspace)])];const workspaceOptions=element<HTMLDataListElement>('workspace-options');if(workspaceOptions)workspaceOptions.innerHTML=directories.map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');if(!keepWorkspace)input('create-workspace').value=env.workspaces[0]||'';setCreateModelsLoading();button('create-submit').disabled=true;element('models-hint').textContent='读取 '+env.name+' 的模型列表…';
  let models:EngineModel[]=[],hint='';
  try{const result=await api<{models:EngineModel[];modified:number;message?:string;source:string}>('environments/'+env.id+'/models?engine='+engine);models=result.models||[];hint=result.message||result.source+(result.modified?' · '+new Date(result.modified).toLocaleString():'')}
  catch(e){hint=(e as Error).message+'。可以选择默认模型或手动指定。'}
@@ -284,7 +285,7 @@ function environmentPickers(defaultID?:string){
 }
 function loadEnvironmentEditor(){
  const e=editingEnvironments.find(e=>e.id===editingID);if(!e)return;
- input('environment-name').value=e.name;input('environment-type').value=e.type;input('setting-distro').value=e.distro||'';input('setting-user').value=e.user||'';input('setting-host').value=e.host||'';input('setting-port').value=String(e.port||22);input('setting-identity').value=e.identity||'';input('setting-claude').value=e.claude||'';input('setting-claude-model').value=e.claude_model||'';input('setting-engine').value=e.default_engine||'codex';input('setting-codex').value=e.codex;input('setting-model').value=e.model;input('setting-workspaces').value=e.workspaces.join('\n');element('check-result').textContent='';showEnvironmentFields();
+ input('environment-name').value=e.name;input('environment-type').value=e.type;input('setting-distro').value=e.distro||'';input('setting-user').value=e.user||'';input('setting-host').value=e.host||'';input('setting-port').value=String(e.port||22);input('setting-identity').value=e.identity||'';input('setting-claude').value=e.claude||'';input('setting-claude-model').value=e.claude_model||'';input('setting-engine').value=e.default_engine||'codex';input('setting-codex').value=e.codex;input('setting-model').value=e.model;input('setting-workspaces').value=e.workspaces.join('\n');element('check-result').textContent='';showEnvironmentFields();renderConfiguredModels?.();
 }
 function showEnvironmentFields(){
  const type=input('environment-type').value;element('wsl-fields').classList.toggle('hidden',type!=='wsl');element('ssh-fields').classList.toggle('hidden',type!=='ssh');element('linux-user').classList.toggle('hidden',type==='windows');input('setting-port').disabled=type!=='ssh';
@@ -294,7 +295,7 @@ function storeEnvironmentEditor(){
  Object.assign(e,{name:input('environment-name').value.trim(),type:input('environment-type').value,distro:input('setting-distro').value.trim(),user:input('setting-user').value.trim(),host:input('setting-host').value.trim(),port:Number(input('setting-port').value)||22,identity:input('setting-identity').value.trim(),claude:input('setting-claude').value.trim(),claude_model:input('setting-claude-model').value.trim(),default_engine:input('setting-engine').value,codex:input('setting-codex').value.trim(),model:input('setting-model').value.trim(),workspaces:input('setting-workspaces').value.split('\n').map(s=>s.trim()).filter(Boolean)});
 }
 function addEnvironment(type:Environment['type']){
- storeEnvironmentEditor();const id='env_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,6);const e:Environment={id,name:type==='ssh'?'新 SSH 环境':type==='wsl'?'新 WSL 环境':'新 Windows 环境',type,distro:'',user:'',host:'',port:22,identity:'',codex:type==='windows'?'codex.exe':'codex',model:'',model_cache:'',workspaces:[]};editingEnvironments.push(e);editingID=id;environmentPickers();loadEnvironmentEditor();input('environment-name').focus();
+ storeEnvironmentEditor();const id='env_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,6);const e:Environment={id,name:type==='ssh'?'新 SSH 环境':type==='wsl'?'新 WSL 环境':'新 Windows 环境',type,distro:'',user:'',host:'',port:22,identity:'',codex:type==='windows'?'codex.exe':'codex',model:'',model_cache:'',models:[],workspaces:[]};editingEnvironments.push(e);editingID=id;environmentPickers();loadEnvironmentEditor();input('environment-name').focus();
 }
 function removeEnvironment(){
  if(editingEnvironments.length<2)return;if(!confirm('删除这个环境配置？已有任务仍使用各自保存的环境。'))return;editingEnvironments=editingEnvironments.filter(e=>e.id!==editingID);editingID=editingEnvironments[0].id;environmentPickers();loadEnvironmentEditor();

@@ -51,7 +51,7 @@ Go 回归测试通过模拟 app-server 子进程验证，不使用真实付费�
 
 - `go test ./...` 全套通过（约 31 秒）；新增审批、权限、原生协议和取消流程回归。
 - TypeScript 检查、全部 `Test-*-Web.mjs` 脚本通过。
-- 独立修复版 `build/jianzuo-codex-native.exe` 已生成；原 `build/jianzuo.exe` 保留不变，嵌入的 `web/app.js` 已重新构建。
+- 独立修复版 `build/jianzuo-codex-native.exe` 已生成；原 `build/jianzuo.exe` 保留不变，嵌入的 `web/app.optimized.js` 已重新构建。
 - 隔离临时数据库、随机测试密码和回环端口验收通过：登录、CSRF、权限目录、过期审批拒绝及嵌入页面资源均正常。
 - Windows Codex 0.153.4、WSL Ubuntu-22.04 Codex 0.155.1 的 `initialize`、`initialized`、`configRequirements/read` 检查通过，未发现 managed requirements。
 - 未发送真实模型 turn，未进行 SSH 远端任务或实体硬件操作，未替换日常安装。真实账号自动审批可用性及 WSL 完整任务仍需验收。

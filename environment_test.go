@@ -62,6 +62,19 @@ func TestModelCatalogNestedFormats(t *testing.T) {
 	}
 }
 
+func TestConfiguredModelsMergeAndNormalize(t *testing.T) {
+	models := mergeConfiguredModels(
+		[]ModelOption{{ID: "gpt", Name: "GPT"}},
+		[]ModelOption{{ID: " gpt ", Name: "override"}, {ID: "custom", Name: "", ReasoningLevels: []string{"low", "invalid", "low"}, DefaultReasoning: "bad"}},
+	)
+	if len(models) != 2 || models[0].ID != "gpt" || models[1].ID != "custom" || models[1].Name != "custom" {
+		t.Fatalf("unexpected merged models: %#v", models)
+	}
+	if len(models[1].ReasoningLevels) != 1 || models[1].ReasoningLevels[0] != "low" || models[1].DefaultReasoning != "" {
+		t.Fatalf("unexpected normalized model: %#v", models[1])
+	}
+}
+
 func TestWSLProbeVariantsUseConfiguredThenDefaultUser(t *testing.T) {
 	variants := environmentProbeVariants(Environment{Type: "wsl", Distro: "Ubuntu-22.04", User: "dev"})
 	if len(variants) != 2 || variants[0].User != "dev" || variants[1].User != "" {

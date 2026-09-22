@@ -3,7 +3,7 @@
 ## 项目结构
 
 - 根目录 Go：HTTP、SQLite、任务队列、Codex / Claude CLI、飞书、终端、硬件和版本检查。
-- `web/`：TypeScript 和 CSS；`scripts/build.mjs` 生成供 Go 嵌入的 app.js。
+- `web/`：TypeScript 和 CSS；`scripts/build.mjs` 生成供 Go 嵌入的 `app.optimized.js`。
 - `portable/Launcher.cs`：Windows 托盘、首次配置、启动与退出。
 - `installer/windows/JianzuoSetup.cs`：Windows 当前用户安装器、快捷方式、数据目录和计划任务。
 - `scripts/Build-Portable.ps1`：检查、测试、构建便携包和安装器，并生成 SHA-256 校验文件。

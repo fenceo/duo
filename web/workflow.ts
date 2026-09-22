@@ -34,7 +34,11 @@ function installWorkflow(){
  const browse=document.createElement('button');browse.type='button';browse.id='create-browse';browse.className='create-browse';browse.title='浏览文件夹';browse.setAttribute('aria-label','浏览工作目录');browse.textContent='浏览';
  workspaceControl.append(workspace,browse);
  const workspaceField=document.createElement('div');workspaceField.className='create-field create-context-field create-workspace-field';workspaceField.innerHTML='<span>目录</span>';workspaceField.append(workspaceControl);
- context.append(environmentField,workspaceField,element('workspace-options'));
+ // Older portable builds may have already moved the datalist while the
+ // workflow shell is being enhanced. Always recreate it instead of leaving a
+ // literal "null" node in the form (which used to break model loading).
+ const workspaceOptions=element('workspace-options')||Object.assign(document.createElement('datalist'),{id:'workspace-options'});
+ context.append(environmentField,workspaceField,workspaceOptions);
  const inputLabel=input('create-input').previousElementSibling!;
  inputLabel.classList.add('sr-only');inputLabel.textContent='任务要求';input('create-input').required=false;
  const createComposer=document.createElement('div');createComposer.className='create-composer';

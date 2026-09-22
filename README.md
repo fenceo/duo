@@ -53,6 +53,6 @@ npm ci
 .\scripts\Build-Portable.ps1
 ```
 
-生成 `dist/Jianzuo-portable-windows-x64.zip`、`dist/Jianzuo-Setup-User-x64.exe` 及各自的 `.sha256` 校验文件。脚本会检查 TypeScript、运行前后端测试，再构建服务、托盘启动器和当前用户安装器。仓库不跟踪生成的 `web/app.js`，直接运行 Go 前先执行 `npm run build`。
+生成 `dist/Jianzuo-portable-windows-x64.zip`、`dist/Jianzuo-Setup-User-x64.exe` 及各自的 `.sha256` 校验文件。脚本会检查 TypeScript、运行前后端测试，再构建服务、托盘启动器和当前用户安装器。前端构建会生成供 Go 嵌入的 `web/app.optimized.js`，直接运行 Go 前先执行 `npm run build`。
 
 第三方组件及原始许可文本包含在发布包的 `THIRD-PARTY-NOTICES.txt` 中。
