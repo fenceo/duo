@@ -108,18 +108,19 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 				args = append(args, claudeHardwareArgs(c.HardwareAI)...)
 			}
 			base := []string{"python3", "-u", "-c", hardwareLauncher, t.Workspace, binary}
-			return command(c, append(base, args...)...), nil
+			return command(c, withEngineEnv(append(base, args...), c.EngineEnv)...), nil
 		}
 		base := []string{"python3", "-u", "-c", launch}
 		if engine == "claude" {
 			base = append(base, t.Workspace)
 		}
-		return command(c, append(append(base, binary), args...)...), nil
+		return command(c, withEngineEnv(append(append(base, binary), args...), c.EngineEnv)...), nil
 	}
 	if engine == "claude" && c.HardwareAI != nil {
 		args = append(args, claudeHardwareArgs(c.HardwareAI)...)
 	}
 	cmd := command(c, append([]string{binary}, args...)...)
+	applyEngineEnv(cmd, c.EngineEnv)
 	if engine == "claude" {
 		cmd.Dir = t.Workspace
 	}

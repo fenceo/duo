@@ -21,9 +21,14 @@ __pycache__/
 /docs/*
 !/docs/releases/
 !/docs/development.md
+!/docs/codex-native.md
+!/docs/engine-platform.md
 /scripts/Check-Local-Deployment.py
 /scripts/Restore-Local-Hardware.py
 /scripts/Update-Local-Service.ps1
+/build/jianzuo-engine-platform-test/
+/.demo/
+/.demo-data/
 /scripts/Preview-Portable.py
 /scripts/Test-Workbench-Preview.py
 /scripts/Test-Workspace-WSL.py

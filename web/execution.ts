@@ -1,9 +1,11 @@
 type EngineModel={id:string;name:string;reasoning_levels?:string[]|null;default_reasoning?:string};
 type ModelListResponse={models:EngineModel[];modified:number;message?:string;source:string};
+type ModelProbeResult={model:string;status:'available'|'unavailable'|'timeout';message:string;duration_ms:number};
+type ModelProbeResponse={engine:string;workspace:string;results:ModelProbeResult[]};
 type ModelPickerTarget='create'|'task';
 let createModels:EngineModel[]=[];
 let taskPickerModels:EngineModel[]=[];
-let taskPickerStatus='',taskModelRequest=0;
+let taskPickerStatus='',taskModelRequest=0,modelTestRequest=0;
 const modelsByEnv:Record<string,{models:EngineModel[];message:string;expires:number}>={};
 const effortLabels:Record<string,string>={none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
 const defaultModelLabel='使用此工具的默认模型';
@@ -18,12 +20,37 @@ function effortLevels(engine:string,model?:EngineModel):string[]{
 }
 function installExecution(){
  input('create-engine').onchange=()=>void loadCreateEnvironment(true);
+ button('test-models').onclick=()=>void testCreateModels();
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
  element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
  button('check-codex').textContent='检查 Codex';
  button('check-codex').insertAdjacentHTML('afterend',' <button type="button" id="check-claude">检查 Claude</button>');
  button('check-claude').onclick=async()=>{button('check-claude').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'claude'});element('check-result').textContent=(r.ok?'Claude 已配置\n':'Claude 检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-claude').disabled=false}};
+}
+async function testCreateModels(){
+ const request=++modelTestRequest,environmentID=input('create-environment').value,engine=input('create-engine').value;
+ const models=[...new Set(createModels.map(model=>model.id).filter(Boolean))];
+ if(!environmentID||!models.length){element('model-test-result').textContent='没有可测试的模型，请先重读模型列表。';return}
+ button('test-models').disabled=true;element('model-test-result').textContent='正在逐个测试模型，请稍候…';
+ try{
+  const result=await api<ModelProbeResponse>('environments/'+environmentID+'/models/test','POST',{engine,workspace:input('create-workspace').value,models});
+  if(request!==modelTestRequest)return;
+  renderModelTestResult(result);
+ }catch(e){
+  if(request===modelTestRequest)element('model-test-result').textContent=(e as Error).message;
+ }finally{
+  if(request===modelTestRequest)button('test-models').disabled=false;
+ }
+}
+function renderModelTestResult(result:ModelProbeResponse){
+ const available=result.results.filter(item=>item.status==='available').length;
+ const lines=[`可用 ${available}/${result.results.length}`];
+ for(const item of result.results){
+  const label=item.model||'默认模型',duration=item.duration_ms?` · ${(item.duration_ms/1000).toFixed(1)} 秒`:'';
+  lines.push(`${item.status==='available'?'✓':item.status==='timeout'?'…':'×'} ${label}：${item.message}${duration}`);
+ }
+ element('model-test-result').textContent=lines.join('\n');
 }
 // Model choice follows the Codex IDE extension: click the current model, then
 // filter the list or type a name that is not listed yet.
@@ -164,14 +191,15 @@ function updateCreateModelLabel(){
  label.textContent=value==='__custom__'?(input('custom-model').value.trim()||'自定义模型…'):(value||defaultModelLabel);
 }
 function setCreateModelsLoading(){
+ modelTestRequest++;
  createModels=[];input('create-model').value='';input('custom-model').value='';input('custom-model').classList.add('hidden');
  element('model-picker-label').textContent='正在读取模型列表…';
- button('model-picker-button').disabled=true;closeModelMenu('create');updateReasoning();
+ button('model-picker-button').disabled=true;button('test-models').disabled=true;element('model-test-result').textContent='';closeModelMenu('create');updateReasoning();
 }
 function setCreateModels(models:EngineModel[],defaultModel:string){
  createModels=models;input('create-model').value=defaultModel||'';
  element('model-picker-label').textContent=defaultModel||defaultModelLabel;
- button('model-picker-button').disabled=false;updateReasoning();
+ button('model-picker-button').disabled=false;button('test-models').disabled=models.length===0;element('model-test-result').textContent='';updateReasoning();
 }
 function updateReasoning(){
  const engine=input('create-engine').value,id=input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value;

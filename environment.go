@@ -221,46 +221,95 @@ type ModelList struct {
 }
 
 func parseModels(raw []byte) ([]ModelOption, error) {
-	var cache struct {
-		Models []struct {
-			Slug       string `json:"slug"`
-			Name       string `json:"display_name"`
-			Visibility string `json:"visibility"`
-			Reasoning  []struct {
-				Effort string `json:"effort"`
-			} `json:"supported_reasoning_levels"`
-			DefaultReasoning string `json:"default_reasoning_level"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(raw, &cache); err != nil {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, errors.New("模型缓存格式无效")
 	}
-	out := []ModelOption{}
-	for _, m := range cache.Models {
-		if m.Slug != "" && (m.Visibility == "list" || m.Visibility == "") {
-			name := m.Name
-			if name == "" {
-				name = m.Slug
-			}
-			var levels []string
-			if m.Reasoning != nil {
-				levels = []string{}
-			}
-			for _, level := range m.Reasoning {
-				if level.Effort != "" && validReasoning(level.Effort) {
-					levels = append(levels, level.Effort)
+	records := []map[string]any{}
+	var collect func(any)
+	collect = func(value any) {
+		switch current := value.(type) {
+		case []any:
+			for _, item := range current {
+				if record, ok := item.(map[string]any); ok {
+					if _, hasSlug := record["slug"]; hasSlug {
+						records = append(records, record)
+					} else if _, hasID := record["id"]; hasID {
+						records = append(records, record)
+					} else {
+						collect(record)
+					}
 				}
 			}
-			out = append(out, ModelOption{ID: m.Slug, Name: name, ReasoningLevels: levels, DefaultReasoning: m.DefaultReasoning})
+		case map[string]any:
+			if models, ok := current["models"]; ok {
+				collect(models)
+			}
+			for _, key := range []string{"data", "catalog", "model_catalog"} {
+				if nested, ok := current[key]; ok {
+					collect(nested)
+				}
+			}
 		}
 	}
+	collect(value)
+	out := []ModelOption{}
+	for _, record := range records {
+		slug := stringValue(record, "slug")
+		if slug == "" {
+			slug = stringValue(record, "id")
+		}
+		visibility := stringValue(record, "visibility")
+		if slug == "" || visibility != "" && visibility != "list" {
+			continue
+		}
+		name := stringValue(record, "display_name")
+		if name == "" {
+			name = stringValue(record, "name")
+		}
+		if name == "" {
+			name = slug
+		}
+		var levels []string
+		for _, key := range []string{"supported_reasoning_levels", "reasoning_levels"} {
+			if values, ok := record[key].([]any); ok {
+				levels = []string{}
+				for _, value := range values {
+					if level, ok := value.(map[string]any); ok {
+						effort := stringValue(level, "effort")
+						if effort != "" && validReasoning(effort) {
+							levels = append(levels, effort)
+						}
+					} else if effort, ok := value.(string); ok && validReasoning(effort) {
+						levels = append(levels, effort)
+					}
+				}
+				break
+			}
+		}
+		out = append(out, ModelOption{
+			ID:               slug,
+			Name:             name,
+			ReasoningLevels:  levels,
+			DefaultReasoning: stringValue(record, "default_reasoning_level"),
+		})
+	}
 	return out, nil
+}
+
+func stringValue(values map[string]any, key string) string {
+	value, ok := values[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 const readRemoteModels = `import pathlib,sys,json
 import os,re
 allowed={'none','minimal','low','medium','high','xhigh','max','ultra'}
-root=pathlib.Path.home()/'.codex'
+configured_home=os.environ.get('CODEX_HOME','').strip()
+root=pathlib.Path(configured_home).expanduser() if configured_home else pathlib.Path.home()/'.codex'
 cands=[sys.argv[1]] if sys.argv[1] else []
 try:
  cfg=root/'config.toml'
@@ -269,25 +318,36 @@ try:
   if match: cands.append(match.group(1) if os.path.isabs(match.group(1)) else str(root/match.group(1)))
 except OSError: pass
 cands+= [str(root/'models_cache.json'),str(root/'model_catalog.json'),str(root/'cockpit-model-catalog.json')]
-models=[];used=[];seen=set();modified=0
+models=[];used=[];checked=[];seen=set();modified=0
 for c in cands:
  p=pathlib.Path(c).expanduser()
+ checked.append(str(p))
  try:
   if not p.is_file() or p.stat().st_size>4194304: continue
-  d=json.loads(p.read_text(encoding='utf-8'))
+  d=json.loads(p.read_text(encoding='utf-8',errors='replace'))
  except (OSError,ValueError): continue
  found=0
- for m in d.get('models',[]):
-  slug=m.get('slug')
-  if not slug or slug in seen or m.get('visibility','list') not in ('list',''): continue
-  levels=m.get('supported_reasoning_levels')
-  seen.add(slug);found+=1
-  models.append({'id':slug,'name':m.get('display_name') or slug,'reasoning_levels':[r['effort'] for r in levels if isinstance(r,dict) and r.get('effort') in allowed] if isinstance(levels,list) else None,'default_reasoning':m.get('default_reasoning_level','')})
+ containers=[]
+ if isinstance(d,list): containers.append(d)
+ if isinstance(d,dict):
+  containers.append(d.get('models',[]))
+  for key in ('data','catalog','model_catalog'):
+   nested=d.get(key)
+   if isinstance(nested,dict): containers.append(nested.get('models',[]))
+ for items in containers:
+  if not isinstance(items,list): continue
+  for m in items:
+   if not isinstance(m,dict): continue
+   slug=m.get('slug') or m.get('id')
+   if not slug or slug in seen or m.get('visibility','list') not in ('list',''): continue
+   levels=m.get('supported_reasoning_levels')
+   seen.add(slug);found+=1
+   models.append({'id':slug,'name':m.get('display_name') or m.get('name') or slug,'reasoning_levels':[r['effort'] for r in levels if isinstance(r,dict) and r.get('effort') in allowed] if isinstance(levels,list) else [],'default_reasoning':m.get('default_reasoning_level','')})
  if found: used.append(p.name)
  modified=max(modified,int(p.stat().st_mtime*1000))
 out={'models':models,'modified':modified}
 if models: out['source']='该环境的 Codex 模型目录 · '+' + '.join(used)
-else: out['message']='此环境还没有模型缓存，请先登录并运行一次 Codex。'
+else: out['message']='此环境还没有模型缓存，请先登录并运行一次 Codex。已检查：'+'、'.join(checked)
 print(json.dumps(out,ensure_ascii=False))
 `
 
@@ -296,9 +356,34 @@ print(json.dumps(out,ensure_ascii=False))
 // that file. Read every known location so those models show up too.
 var modelCacheFileNames = []string{"models_cache.json", "model_catalog.json", "cockpit-model-catalog.json"}
 
-func codexHome() string {
+func codexHomes() []string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex")
+	roots := []string{}
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		clean := filepath.Clean(path)
+		for _, existing := range roots {
+			if existing == clean {
+				return
+			}
+		}
+		roots = append(roots, clean)
+	}
+	add(os.Getenv("CODEX_HOME"))
+	if home != "" {
+		add(filepath.Join(home, ".codex"))
+	}
+	return roots
+}
+
+func codexHome() string {
+	roots := codexHomes()
+	if len(roots) == 0 {
+		return ".codex"
+	}
+	return roots[0]
 }
 
 func catalogFromConfig(path string) string {
@@ -314,7 +399,7 @@ func catalogFromConfig(path string) string {
 }
 
 func modelCacheCandidates(explicit string) []string {
-	home := codexHome()
+	roots := codexHomes()
 	out := []string{}
 	add := func(path string) {
 		if strings.TrimSpace(path) == "" {
@@ -328,16 +413,26 @@ func modelCacheCandidates(explicit string) []string {
 		}
 		out = append(out, clean)
 	}
-	if catalog := catalogFromConfig(filepath.Join(home, "config.toml")); catalog != "" {
-		if filepath.IsAbs(catalog) {
-			add(catalog)
-		} else {
-			add(filepath.Join(home, catalog))
+	for _, home := range roots {
+		if catalog := catalogFromConfig(filepath.Join(home, "config.toml")); catalog != "" {
+			if filepath.IsAbs(catalog) {
+				add(catalog)
+			} else {
+				add(filepath.Join(home, catalog))
+			}
 		}
 	}
-	add(explicit)
-	for _, name := range modelCacheFileNames {
-		add(filepath.Join(home, name))
+	if filepath.IsAbs(explicit) {
+		add(explicit)
+	} else {
+		for _, home := range roots {
+			add(filepath.Join(home, explicit))
+		}
+	}
+	for _, home := range roots {
+		for _, name := range modelCacheFileNames {
+			add(filepath.Join(home, name))
+		}
 	}
 	return out
 }
@@ -349,7 +444,9 @@ func readModelCaches(paths []string) ([]ModelOption, []string, int64, string) {
 	seen := map[string]bool{}
 	var modified int64
 	note := ""
+	checked := []string{}
 	for _, path := range paths {
+		checked = append(checked, path)
 		stat, err := os.Stat(path)
 		if err != nil || stat.IsDir() {
 			continue
@@ -382,6 +479,12 @@ func readModelCaches(paths []string) ([]ModelOption, []string, int64, string) {
 			modified = stamp
 		}
 	}
+	if len(models) == 0 && len(checked) > 0 {
+		note = strings.TrimSpace(strings.Join([]string{
+			note,
+			"已检查：" + strings.Join(checked, "、"),
+		}, " "))
+	}
 	return models, used, modified, note
 }
 
@@ -400,18 +503,34 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	cmd := command(runtimeConfig(Config{}, e), "python3", "-c", readRemoteModels, e.ModelCache)
-	bounded := commandWithContext(ctx, cmd)
-	hideCommand(bounded)
-	raw, err := bounded.CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("读取该环境模型失败：%s", strings.TrimSpace(string(raw)))
+	var lastDiagnostic string
+	for index, variant := range environmentProbeVariants(e) {
+		stdout, stderr, _, err := runEnvironmentCommand(ctx, variant, "python3", "-c", readRemoteModels, variant.ModelCache)
+		if err != nil {
+			lastDiagnostic = strings.TrimSpace(string(stderr))
+			if lastDiagnostic == "" {
+				lastDiagnostic = err.Error()
+			}
+			continue
+		}
+		candidate := ModelList{Models: []ModelOption{}}
+		if err = json.Unmarshal(stdout, &candidate); err != nil {
+			lastDiagnostic = "环境返回的模型数据无效，请检查 Python 3 和 SSH 登录输出"
+			continue
+		}
+		if candidate.Source == "" {
+			candidate.Source = "该环境的 Codex 模型缓存"
+		}
+		// A stale saved WSL user can still run Python successfully while
+		// pointing at a home without Codex's cache. Retry with the distro's
+		// default user before returning an empty catalog.
+		if len(candidate.Models) == 0 && index+1 < len(environmentProbeVariants(e)) {
+			continue
+		}
+		return candidate, nil
 	}
-	if err = json.Unmarshal(raw, &out); err != nil {
-		return out, errors.New("环境返回的模型数据无效，请检查 Python 3 和 SSH 登录输出")
+	if lastDiagnostic == "" {
+		lastDiagnostic = "环境命令执行失败"
 	}
-	if out.Source == "" {
-		out.Source = "该环境的 Codex 模型缓存"
-	}
-	return out, nil
+	return out, fmt.Errorf("读取该环境模型失败：%s", lastDiagnostic)
 }

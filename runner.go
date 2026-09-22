@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +52,8 @@ for pid in sorted(children,reverse=True):
  except ProcessLookupError: pass
 `
 
+// Legacy exec helper retained for compatibility tests. Production Codex runs
+// use app-server; this one-way transport cannot service interactive approvals.
 func codexArgs(c Config, t Task) []string {
 	sandbox := "workspace-write"
 	network := true
@@ -69,9 +72,7 @@ func codexArgs(c Config, t Task) []string {
 		}
 	}
 	args := []string{"-a", "never", "-C", t.Workspace, "-c", "sandbox_mode=" + strconv.Quote(sandbox)}
-	if sandbox == "workspace-write" && network {
-		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
-	}
+	args = append(args, "-c", "sandbox_workspace_write.network_access="+strconv.FormatBool(network))
 	if h := c.HardwareAI; h != nil {
 		args = append(args, "-c", "mcp_servers.jianzuo_hardware.url="+strconv.Quote(h.URL), "-c", `mcp_servers.jianzuo_hardware.bearer_token_env_var="JIANZUO_HARDWARE_TOKEN"`, "-c", `mcp_servers.jianzuo_hardware.required=true`, "-c", `mcp_servers.jianzuo_hardware.default_tools_approval_mode="approve"`, "-c", `mcp_servers.jianzuo_hardware.tool_timeout_sec=95`)
 	}
@@ -142,6 +143,45 @@ func wslCommand(args ...string) *exec.Cmd {
 	return cmd
 }
 
+func engineEnvPairs(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for key, value := range env {
+		if key != "" && value != "" {
+			keys = append(keys, key+"="+value)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func applyEngineEnv(cmd *exec.Cmd, env map[string]string) {
+	if cmd == nil || len(env) == 0 {
+		return
+	}
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = append(append([]string{}, base...), engineEnvPairs(env)...)
+}
+
+// Linux targets are launched without a shell. Prefixing with env keeps profile
+// values out of the engine argv while working for both WSL and SSH.
+func withEngineEnv(args []string, env map[string]string) []string {
+	pairs := engineEnvPairs(env)
+	if len(pairs) == 0 {
+		return args
+	}
+	out := make([]string, 0, len(args)+len(pairs)+1)
+	out = append(out, "env")
+	out = append(out, pairs...)
+	out = append(out, args...)
+	return out
+}
+
 func commandWithContext(ctx context.Context, base *exec.Cmd) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, base.Path, base.Args[1:]...)
 	cmd.Env = base.Env
@@ -152,6 +192,9 @@ func commandWithContext(ctx context.Context, base *exec.Cmd) *exec.Cmd {
 func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (string, string, error) {
 	if ctx.Err() != nil {
 		return t.Session, "", ctx.Err()
+	}
+	if t.Engine == "" || t.Engine == "codex" {
+		return runCodexAppServer(ctx, c, t, input, emit)
 	}
 	cmd, commandErr := engineCommand(c, t)
 	if commandErr != nil {
@@ -168,6 +211,7 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 				return t.Session, "", err
 			}
 			cmd.Env = append(os.Environ(), "JIANZUO_HARDWARE_TOKEN="+c.HardwareAI.Token)
+			applyEngineEnv(cmd, c.EngineEnv)
 		}
 		emit("progress", "已为本轮配置任务授权的硬件工具")
 	}

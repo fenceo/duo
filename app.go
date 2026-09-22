@@ -16,6 +16,7 @@ type worker struct {
 	stopping bool
 }
 type App struct {
+	codexRequests   *CodexRequests
 	hardwareAI      *HardwareAI
 	hardwareAddress string
 	discovery       *SSHDiscovery
@@ -36,7 +37,7 @@ type App struct {
 
 func newApp(s *Store, c *ConfigFile, r Runner) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{hardwareAI: newHardwareAI(), hardwareAddress: c.get().Listen, discovery: newSSHDiscovery(), terminals: newTerminals(), hardware: newHardware(s), store: s, config: c, runner: r, workers: map[string]*worker{}, slots: make(chan struct{}, 2), ctx: ctx, cancel: cancel, notify: make(chan struct{}, 1)}
+	return &App{codexRequests: newCodexRequests(), hardwareAI: newHardwareAI(), hardwareAddress: c.get().Listen, discovery: newSSHDiscovery(), terminals: newTerminals(), hardware: newHardware(s), store: s, config: c, runner: r, workers: map[string]*worker{}, slots: make(chan struct{}, 2), ctx: ctx, cancel: cancel, notify: make(chan struct{}, 1)}
 }
 func (a *App) changed() {
 	select {
@@ -74,6 +75,9 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 	}
 	if !validEngineReasoning(engine, reasoning) {
 		return Task{}, errors.New("此 AI 工具不支持所选推理强度")
+	}
+	if engine == "claude" && mode != nil && mode.Approval == "auto" {
+		return Task{}, errors.New("原生自动审批仅支持 Codex，请为 Claude Code 选择其它工作模式")
 	}
 	workspace = strings.TrimSpace(workspace)
 	valid := strings.HasPrefix(workspace, "/")
@@ -156,6 +160,12 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if e != nil {
 		return Run{}, e
 	}
+	if kind == "knowledge" {
+		mode = WorkMode{ID: "plan", Name: "只读总结", Permission: "read", Approval: "never", AllowNetwork: boolPtr(false)}
+	}
+	if task.Engine == "claude" && mode.Approval == "auto" {
+		return Run{}, errors.New("原生自动审批仅支持 Codex，请为 Claude Code 选择其它工作模式")
+	}
 	attachments, e := a.store.messageAttachments(id, options.AttachmentIDs)
 	if e != nil {
 		return Run{}, e
@@ -191,8 +201,10 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if _, e = tx.Exec("INSERT INTO run_options(run_id,mode,attachments) VALUES(?,?,?)", r.ID, string(modeJSON), string(attachmentJSON)); e != nil {
 		return r, e
 	}
-	if _, e = tx.Exec("INSERT INTO task_options(task_id,mode) VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET mode=excluded.mode", id, string(modeJSON)); e != nil {
-		return r, e
+	if kind != "knowledge" {
+		if _, e = tx.Exec("INSERT INTO task_options(task_id,mode) VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET mode=excluded.mode", id, string(modeJSON)); e != nil {
+			return r, e
+		}
 	}
 	if _, e = tx.Exec("INSERT INTO run_metrics(run_id) VALUES(?)", r.ID); e != nil {
 		return r, e
@@ -246,6 +258,10 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		if err == nil {
 			err = a.store.hydrateRun(&r)
 			task.Mode = r.Mode
+			// Summaries must not inherit a full-access or hardware-enabled mode.
+			if r.Kind == "knowledge" {
+				task.Mode = &WorkMode{ID: "plan", Name: "只读总结", Permission: "read", Approval: "never", AllowNetwork: boolPtr(false)}
+			}
 		}
 		var session, result string
 		if err == nil && task.Environment == nil {
@@ -254,6 +270,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		cleanupAttachments := func() {}
 		if err == nil {
 			cfg := runtimeConfig(a.config.get(), *task.Environment)
+			cfg.EngineEnv = a.activeEngineEnvironment(task)
 			var stagedCleanup func()
 			task.Files, stagedCleanup, err = a.stageAttachments(ctx, task, r.Attachments)
 			if err == nil {
@@ -264,7 +281,11 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				cfg.HardwareAI, release, err = a.prepareHardwareAI(ctx, task, r.ID, cfg)
 			}
 			if err == nil {
-				session, result, err = a.runner.Run(ctx, cfg, task, executionInput(task, r.Input), func(kind, text string) {
+				runCtx, cancelRun := context.WithCancel(ctx)
+				runCtx = withCodexInteraction(runCtx, func(requestCtx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+					return a.requestCodexInteraction(requestCtx, id, r.ID, method, params)
+				})
+				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, r.Input), func(kind, text string) {
 					if kind == "usage" {
 						_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
 						a.changed()
@@ -277,6 +298,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					_ = a.store.event(id, r.ID, kind, text)
 					a.changed()
 				})
+				cancelRun()
 			}
 			release()
 		}

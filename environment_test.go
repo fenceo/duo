@@ -55,6 +55,24 @@ func TestSSHArgumentsAndModelFiltering(t *testing.T) {
 	}
 }
 
+func TestModelCatalogNestedFormats(t *testing.T) {
+	models, err := parseModels([]byte(`{"data":{"models":[{"id":"nested","name":"Nested","visibility":"","reasoning_levels":["low","bad"]},{"slug":"hidden","visibility":"hide"}]}}`))
+	if err != nil || len(models) != 1 || models[0].ID != "nested" || models[0].Name != "Nested" || len(models[0].ReasoningLevels) != 1 || models[0].ReasoningLevels[0] != "low" {
+		t.Fatalf("unexpected nested catalog: %#v (%v)", models, err)
+	}
+}
+
+func TestWSLProbeVariantsUseConfiguredThenDefaultUser(t *testing.T) {
+	variants := environmentProbeVariants(Environment{Type: "wsl", Distro: "Ubuntu-22.04", User: "dev"})
+	if len(variants) != 2 || variants[0].User != "dev" || variants[1].User != "" {
+		t.Fatalf("unexpected WSL probe variants: %#v", variants)
+	}
+	unchanged := environmentProbeVariants(Environment{Type: "ssh", Host: "host.test", User: "dev"})
+	if len(unchanged) != 1 || unchanged[0].User != "dev" {
+		t.Fatalf("non-WSL environment should not fall back: %#v", unchanged)
+	}
+}
+
 func TestLegacyPinIsIdempotent(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	task := taskFor(t, a)

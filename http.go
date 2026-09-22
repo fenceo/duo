@@ -33,6 +33,7 @@ type Server struct {
 	attempts             map[string]attempts
 	environmentDetection sync.Mutex
 	updateMu             sync.Mutex
+	modelProbeMu         sync.Mutex
 	updateRoot           string
 	launcherPID          int
 	shutdown             func()
@@ -95,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 	s.organizeRoutes(m)
 	s.workbenchRoutes(m)
 	s.updateRoutes(m)
+	s.engineRoutes(m)
 	s.workspaceRoutes(m)
 	s.scratchRoutes(m)
 	s.knowledgeRoutes(m)
@@ -102,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	s.hardwareAIRoutes(m)
 	s.terminalRoutes(m)
 	s.discoveryRoutes(m)
+	s.codexApprovalRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/note/adopt", s.secure(s.adoptKnowledge))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 200, map[string]string{"app": "jianzuo", "version": version})
@@ -300,6 +303,39 @@ func (s *Server) Handler() http.Handler {
 		}
 		jsonOut(w, 200, models)
 	}))
+	m.HandleFunc("POST /api/environments/{id}/models/test", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		var v ModelProbeRequest
+		if !body(w, r, &v) {
+			return
+		}
+		c := s.app.config.get()
+		env, e := c.environment(r.PathValue("id"))
+		if e != nil {
+			fail(w, 404, e.Error())
+			return
+		}
+		if v.Engine == "" {
+			v.Engine = "codex"
+		}
+		if !validEngine(v.Engine) {
+			fail(w, 400, "AI 工具无效")
+			return
+		}
+		if _, e = normalizeProbeModels(v.Models); e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+		s.modelProbeMu.Lock()
+		defer s.modelProbeMu.Unlock()
+		ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
+		defer cancel()
+		result, e := probeModels(ctx, runtimeConfig(c, env), env, v.Engine, v.Workspace, v.Models)
+		if e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+		jsonOut(w, 200, result)
+	}))
 	m.HandleFunc("PUT /api/settings", s.secure(s.settings))
 	m.HandleFunc("POST /api/check", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -445,7 +481,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	// The task view shows how long the engine has been carrying this session
 	// and which foreign instruction files sit in the working directory, so a
 	// reply that follows old context is explainable instead of surprising.
-	jsonOut(w, 200, map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session)})
+	jsonOut(w, 200, map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id)})
 }
 func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

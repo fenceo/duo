@@ -23,6 +23,7 @@ type WorkMode struct {
 	Prompt       string `json:"prompt"`
 	Builtin      bool   `json:"builtin"`
 	AllowNetwork *bool  `json:"allow_network,omitempty"`
+	Approval     string `json:"approval,omitempty"`
 }
 type QuickCommand struct {
 	ID      string `json:"id"`
@@ -36,13 +37,18 @@ type WorkCatalog struct {
 
 func builtinModes() []WorkMode {
 	return []WorkMode{
-		{ID: "work", Name: "直接执行", Permission: "workspace", Builtin: true, AllowNetwork: boolPtr(true)},
-		{ID: "plan", Name: "分析规划", Permission: "read", Builtin: true, AllowNetwork: boolPtr(false)},
-		{ID: "full", Name: "完全访问", Permission: "full", Builtin: true, AllowNetwork: boolPtr(true)},
+		{ID: "work", Name: "请求批准", Permission: "workspace", Approval: "request", Builtin: true, AllowNetwork: boolPtr(true)},
+		// ':' cannot appear in a user-created mode ID, avoiding collisions with
+		// existing custom modes (including a mode named "auto").
+		{ID: "codex:auto", Name: "Codex 自动审批", Permission: "workspace", Approval: "auto", Builtin: true, AllowNetwork: boolPtr(true)},
+		{ID: "plan", Name: "只读分析", Permission: "read", Approval: "never", Builtin: true, AllowNetwork: boolPtr(false)},
+		{ID: "full", Name: "完全访问", Permission: "full", Approval: "never", Builtin: true, AllowNetwork: boolPtr(true)},
 	}
 }
 func boolPtr(v bool) *bool { return &v }
-func isBuiltinMode(id string) bool { return id == "work" || id == "plan" || id == "full" }
+func isBuiltinMode(id string) bool {
+	return id == "work" || id == "codex:auto" || id == "plan" || id == "full"
+}
 func (s *Store) catalog() WorkCatalog {
 	var c WorkCatalog
 	_ = json.Unmarshal([]byte(s.setting("workbench_catalog")), &c)
@@ -56,7 +62,7 @@ func validateCatalog(c *WorkCatalog) error {
 	if len(c.Modes) > 20 || len(c.Commands) > 40 {
 		return errors.New("最多 20 个自定义模式和 40 个指令")
 	}
-	seen := map[string]bool{"work": true, "plan": true, "full": true}
+	seen := map[string]bool{"work": true, "codex:auto": true, "plan": true, "full": true}
 	for i := range c.Modes {
 		m := &c.Modes[i]
 		m.Name = strings.TrimSpace(m.Name)
@@ -64,14 +70,23 @@ func validateCatalog(c *WorkCatalog) error {
 		if !safeWorkbenchID(m.ID) || seen[m.ID] || m.Name == "" || len([]rune(m.Name)) > 30 || len(m.Prompt) > 16000 || (m.Permission != "read" && m.Permission != "workspace" && m.Permission != "full") {
 			return errors.New("模式名称、权限或内容无效")
 		}
+		if m.Approval != "" && m.Approval != "request" && m.Approval != "auto" && m.Approval != "never" {
+			return errors.New("审批方式无效")
+		}
 		switch m.Permission {
 		case "read":
 			if m.AllowNetwork != nil && *m.AllowNetwork {
 				return errors.New("只读模式不能开启联网")
 			}
 			m.AllowNetwork = boolPtr(false)
+			m.Approval = "never"
 		case "full":
 			m.AllowNetwork = boolPtr(true)
+			m.Approval = "never"
+		default:
+			if m.Approval == "" {
+				m.Approval = "request"
+			}
 		}
 		seen[m.ID] = true
 	}

@@ -15,6 +15,10 @@ import (
 // A real child process exercises stdin, cwd, streaming, resume and cancellation
 // without making a paid AI request or loading a user's CLI configuration.
 func TestMain(m *testing.M) {
+	if os.Getenv("JIANZUO_TEST_CODEX_APP_SERVER") == "1" && len(os.Args) > 1 && os.Args[len(os.Args)-1] == "app-server" {
+		runCodexAppServerFixture()
+		os.Exit(0)
+	}
 	if os.Getenv("JIANZUO_TEST_CLAUDE") == "1" && len(os.Args) > 1 && os.Args[1] == "-p" {
 		input, _ := io.ReadAll(os.Stdin)
 		cwd, _ := os.Getwd()
@@ -161,7 +165,7 @@ func TestCodexSandboxNetworkModes(t *testing.T) {
 	}
 
 	workspaceArgs := strings.Join(codexArgs(Config{}, Task{Workspace: "/work", Mode: &WorkMode{Permission: "workspace", AllowNetwork: &offline}}), "|")
-	if !strings.Contains(workspaceArgs, `sandbox_mode="workspace-write"`) || strings.Contains(workspaceArgs, networkArg) {
+	if !strings.Contains(workspaceArgs, `sandbox_mode="workspace-write"`) || !strings.Contains(workspaceArgs, "sandbox_workspace_write.network_access=false") || strings.Contains(workspaceArgs, networkArg) {
 		t.Fatal(workspaceArgs)
 	}
 

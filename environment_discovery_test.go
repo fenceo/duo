@@ -24,6 +24,17 @@ func TestDecodeWSLDistros(t *testing.T) {
 		t.Fatalf("UTF8: %q", got)
 	}
 }
+
+func TestDecodeWSLDiagnosticWithBinaryPrefix(t *testing.T) {
+	text := "错误代码: Wsl/Service/E_ACCESSDENIED\r\n"
+	encoded := []byte{0xd2, 0x62, 0xdd, 0x7e, 0xbf, 0x8b, 0xee, 0x95, 0x02, 0x30}
+	for _, u := range utf16.Encode([]rune(text)) {
+		encoded = binary.LittleEndian.AppendUint16(encoded, u)
+	}
+	if got := decodeWSLText(encoded); got != text {
+		t.Fatalf("diagnostic = %q, want %q", got, text)
+	}
+}
 func TestDetectedAuthConservative(t *testing.T) {
 	for _, c := range []struct {
 		path, out string

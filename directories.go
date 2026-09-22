@@ -48,21 +48,23 @@ func browseDirectories(ctx context.Context, env Environment, p string) (Director
 		}
 		ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		defer cancel()
-		original := environmentProbeCommand(env, "python3", "-c", directoryScript, p)
-		cmd := commandWithContext(ctx, original)
-		hideCommand(cmd)
-		cmd.WaitDelay = time.Second
-		data := &cappedOutput{limit: 512 * 1024}
-		diagnostic := &cappedOutput{limit: 2048}
-		cmd.Stdout = data
-		cmd.Stderr = diagnostic
-		if err := cmd.Run(); err != nil {
-			return out, errors.New("无法读取远端目录，请检查路径、连接及 Python 3：" + diagnostic.String())
+		data, diagnostic, _, err := runEnvironmentCommand(ctx, env, "python3", "-c", directoryScript, p)
+		if err != nil && env.Type == "wsl" && p != "" && ctx.Err() == nil {
+			// A saved workspace can belong to an old WSL user. Show the
+			// active user's home so the picker can recover without editing JSON.
+			data, diagnostic, _, err = runEnvironmentCommand(ctx, env, "python3", "-c", directoryScript, "")
 		}
-		if data.truncated {
+		if err != nil {
+			message := strings.TrimSpace(string(diagnostic))
+			if message == "" {
+				message = err.Error()
+			}
+			return out, errors.New("无法读取远端目录，请检查发行版、用户、路径及 Python 3：" + message)
+		}
+		if len(data) >= 512*1024 {
 			return out, errors.New("目录信息过大，请输入更具体的路径")
 		}
-		err := json.Unmarshal(data.Bytes(), &out)
+		err = json.Unmarshal(data, &out)
 		return out, err
 	}
 	if p == "" {

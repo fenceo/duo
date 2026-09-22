@@ -72,7 +72,7 @@ function applyConversationFilter(){
  }
  for(const [id,turn] of conversationTurns){
   const count=counts.get(id)||0,run=detail?.runs.find(r=>r.id===id);turn.process.classList.toggle('hidden',count===0);
-  const label=run?.status==='running'?'正在执行':run?.status==='queued'?'排队中':'执行记录';
+  const label=detail?.approvals?.some(request=>request.run_id===id)?'等待你处理':run?.status==='running'?'正在执行':run?.status==='queued'?'排队中':'执行记录';
   const text=label+' · '+count+' 条';
   if(turn.summary.textContent!==text)turn.summary.textContent=text;
   const footer=run?runFooter(run):'';if(turn.footer.innerHTML!==footer)turn.footer.innerHTML=footer;

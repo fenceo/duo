@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -32,6 +33,70 @@ type environmentDiscovery struct {
 }
 type environmentProbe func(context.Context, Environment, ...string) (string, error)
 
+func environmentProbeVariants(env Environment) []Environment {
+	variants := []Environment{env}
+	if env.Type == "wsl" && strings.TrimSpace(env.User) != "" {
+		fallback := env
+		fallback.User = ""
+		variants = append(variants, fallback)
+	}
+	return variants
+}
+
+// WSL user names are configuration hints, not a hard dependency. A distro can
+// be imported under a different Linux user, so retry with its configured
+// default user before reporting a connection failure.
+func runEnvironmentCommand(ctx context.Context, env Environment, args ...string) ([]byte, []byte, Environment, error) {
+	var lastStdout, lastStderr []byte
+	lastEnv := env
+	var lastErr error
+	diagnostics := []string{}
+	for _, variant := range environmentProbeVariants(env) {
+		lastEnv = variant
+		cmd := environmentProbeCommand(variant, args...)
+		bounded := commandWithContext(ctx, cmd)
+		bounded.WaitDelay = time.Second
+		hideCommand(bounded)
+		stdout := &cappedOutput{limit: 512 * 1024}
+		stderr := &cappedOutput{limit: 4096}
+		bounded.Stdout = stdout
+		bounded.Stderr = stderr
+		err := bounded.Run()
+		lastStdout = stdout.Bytes()
+		lastStderr = stderr.Bytes()
+		if err == nil {
+			return lastStdout, []byte(commandDiagnosticText(variant, lastStderr)), variant, nil
+		}
+		lastErr = err
+		output := strings.TrimSpace(strings.Join([]string{
+			commandDiagnosticText(variant, lastStdout),
+			commandDiagnosticText(variant, lastStderr),
+		}, "\n"))
+		if text := strings.TrimSpace(output); text != "" {
+			user := variant.User
+			if user == "" {
+				user = "发行版默认用户"
+			}
+			diagnostics = append(diagnostics, user+"： "+text)
+		}
+		if env.Type == "wsl" && strings.Contains(output, "Wsl/Service/E_ACCESSDENIED") {
+			break
+		}
+		if ctx.Err() != nil {
+			return lastStdout, []byte(strings.Join(diagnostics, "\n")), variant, ctx.Err()
+		}
+	}
+	if len(diagnostics) > 0 {
+		lastStderr = []byte(strings.Join(diagnostics, "\n"))
+	} else {
+		lastStderr = []byte(commandDiagnosticText(lastEnv, lastStderr))
+	}
+	if lastErr == nil {
+		lastErr = errors.New("环境命令执行失败")
+	}
+	return lastStdout, []byte(friendlyEnvironmentDiagnostic(lastEnv, string(lastStderr))), lastEnv, lastErr
+}
+
 // Detection returns short states, never raw CLI auth output or account details.
 func detectedAuth(path, output string, err error) detectedTool {
 	if path == "" {
@@ -50,15 +115,11 @@ func detectedAuth(path, output string, err error) detectedTool {
 func probeEnvironment(ctx context.Context, env Environment, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
 	defer cancel()
-	base := environmentProbeCommand(env, args...)
-	cmd := commandWithContext(ctx, base)
-	cmd.WaitDelay = time.Second
-	hideCommand(cmd)
-	data, err := cmd.CombinedOutput()
+	stdout, stderr, _, err := runEnvironmentCommand(ctx, env, args...)
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	return string(data), err
+	return string(append(stdout, stderr...)), err
 }
 func environmentProbeCommand(env Environment, args ...string) *exec.Cmd {
 	if env.Type == "wsl" {
@@ -72,15 +133,65 @@ func environmentProbeCommand(env Environment, args ...string) *exec.Cmd {
 	}
 	return command(runtimeConfig(Config{}, env), args...)
 }
-func decodeWSLList(text string) []string {
-	data := []byte(text)
+
+func commandDiagnosticText(env Environment, data []byte) string {
+	if env.Type != "wsl" {
+		return string(data)
+	}
+	return decodeWSLText(data)
+}
+
+func friendlyEnvironmentDiagnostic(env Environment, text string) string {
+	text = strings.TrimSpace(text)
+	if env.Type != "wsl" || text == "" {
+		return text
+	}
+	if strings.Contains(text, "Wsl/Service/E_ACCESSDENIED") {
+		return text + "；Windows 当前启动进程没有访问 WSL 服务的权限，请从开始菜单、资源管理器或安装版的 Jianzuo User 任务启动简作"
+	}
+	return text
+}
+
+func decodeWSLText(data []byte) string {
+	best := ""
+	for offset := 0; offset+1 < len(data) && offset < 64; offset++ {
+		units := make([]uint16, 0, (len(data)-offset)/2)
+		for i := offset; i+1 < len(data); i += 2 {
+			units = append(units, binary.LittleEndian.Uint16(data[i:i+2]))
+		}
+		text := string(utf16.Decode(units))
+		if strings.Contains(text, "Wsl/") || strings.Contains(text, "WSL/") || strings.Contains(text, "Service/") {
+			// wsl.exe can prefix UTF-16 diagnostics with a short binary
+			// record. Prefer the first readable diagnostic marker.
+			if index := strings.Index(text, "错误代码"); index >= 0 {
+				return text[index:]
+			}
+			for _, marker := range []string{"Wsl/", "WSL/", "Service/"} {
+				if index := strings.Index(text, marker); index >= 0 {
+					text = text[index:]
+					break
+				}
+			}
+			if best == "" || len(text) < len(best) {
+				best = text
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
 	if len(data) > 1 && (data[1] == 0 || (data[0] == 0xff && data[1] == 0xfe)) {
 		units := make([]uint16, 0, len(data)/2)
 		for i := 0; i+1 < len(data); i += 2 {
 			units = append(units, binary.LittleEndian.Uint16(data[i:i+2]))
 		}
-		text = string(utf16.Decode(units))
+		return string(utf16.Decode(units))
 	}
+	return string(data)
+}
+
+func decodeWSLList(text string) []string {
+	text = decodeWSLText([]byte(text))
 	var names []string
 	seen := map[string]bool{}
 	for _, line := range strings.Split(text, "\n") {

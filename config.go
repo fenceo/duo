@@ -9,21 +9,24 @@ import (
 )
 
 type Config struct {
-	HardwareAI         *HardwareRuntime `json:"-"`
-	Access             AccessConfig     `json:"access"`
-	Environments       []Environment    `json:"environments"`
-	DefaultEnvironment string           `json:"default_environment"`
-	SSHHost            string           `json:"-"`
-	SSHPort            int              `json:"-"`
-	SSHKey             string           `json:"-"`
-	Listen             string           `json:"listen"`
-	Distro             string           `json:"distro"`
-	User               string           `json:"user"`
-	Codex              string           `json:"codex"`
-	Claude             string           `json:"-"`
-	Workspaces         []string         `json:"workspaces"`
-	Model              string           `json:"model"`
-	Feishu             FeishuConfig     `json:"feishu"`
+	HardwareAI *HardwareRuntime `json:"-"`
+	// EngineEnv is populated for one run from the selected external profile.
+	// It is never serialized to config.json or returned by the settings API.
+	EngineEnv          map[string]string `json:"-"`
+	Access             AccessConfig      `json:"access"`
+	Environments       []Environment     `json:"environments"`
+	DefaultEnvironment string            `json:"default_environment"`
+	SSHHost            string            `json:"-"`
+	SSHPort            int               `json:"-"`
+	SSHKey             string            `json:"-"`
+	Listen             string            `json:"listen"`
+	Distro             string            `json:"distro"`
+	User               string            `json:"user"`
+	Codex              string            `json:"codex"`
+	Claude             string            `json:"-"`
+	Workspaces         []string          `json:"workspaces"`
+	Model              string            `json:"model"`
+	Feishu             FeishuConfig      `json:"feishu"`
 }
 type FeishuConfig struct {
 	Enabled bool   `json:"enabled"`

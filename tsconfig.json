@@ -1,4 +1,4 @@
 {
  "compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ES2022","DOM"],"strict":true,"noEmit":true},
- "include":["web/updates.ts","web/conversation.ts","web/workflow.ts","web/sticky.ts","web/layout.ts","web/environments.ts","web/execution.ts","web/discovery.ts","web/hardware.ts","web/app.ts","web/tools.ts","web/productivity.ts","web/terminal.ts","web/panels.ts"]
+ "include":["web/updates.ts","web/conversation.ts","web/workflow.ts","web/sticky.ts","web/layout.ts","web/environments.ts","web/execution.ts","web/discovery.ts","web/hardware.ts","web/app.ts","web/tools.ts","web/engines.ts","web/productivity.ts","web/terminal.ts","web/panels.ts"]
 }
