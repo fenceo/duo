@@ -14,25 +14,28 @@ import (
 )
 
 type Environment struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Type          string   `json:"type"`
-	Distro        string   `json:"distro"`
-	User          string   `json:"user"`
-	Host          string   `json:"host"`
-	Port          int      `json:"port"`
-	Identity      string   `json:"identity"`
-	Codex         string   `json:"codex"`
-	Claude        string   `json:"claude"`
-	ClaudeModel   string   `json:"claude_model"`
-	DefaultEngine string   `json:"default_engine"`
-	Model         string   `json:"model"`
-	ModelCache    string   `json:"model_cache"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Distro          string `json:"distro"`
+	User            string `json:"user"`
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	Identity        string `json:"identity"`
+	Codex           string `json:"codex"`
+	Claude          string `json:"claude"`
+	Harness         string `json:"harness"`
+	HarnessModel    string `json:"harness_model"`
+	HarnessProvider string `json:"harness_provider"`
+	ClaudeModel     string `json:"claude_model"`
+	DefaultEngine   string `json:"default_engine"`
+	Model           string `json:"model"`
+	ModelCache      string `json:"model_cache"`
 	// Models contains user-defined model IDs for this environment. They are
 	// merged with the CLI's discovered catalog and are intentionally just
 	// aliases/labels; credentials remain owned by the target CLI.
-	Models        []ModelOption `json:"models,omitempty"`
-	Workspaces    []string `json:"workspaces"`
+	Models     []ModelOption `json:"models,omitempty"`
+	Workspaces []string      `json:"workspaces"`
 }
 
 func legacyEnvironment(c Config) Environment {
@@ -74,7 +77,7 @@ func normalizeEnvironments(c *Config) error {
 			e.DefaultEngine = "codex"
 		}
 		if !validEngine(e.DefaultEngine) {
-			return errors.New("AI 工具必须是 Codex 或 Claude Code")
+			return errors.New("AI 工具必须是 Codex、Claude Code 或 DeepSeek Harness")
 		}
 		if e.Codex == "" {
 			e.Codex = "codex"
@@ -84,6 +87,18 @@ func normalizeEnvironments(c *Config) error {
 		}
 		if e.Claude == "" {
 			e.Claude = claudeBinary(e.Type)
+		}
+		if e.Harness == "" {
+			e.Harness = "dsh"
+			if e.Type == "windows" {
+				e.Harness = "dsh.cmd"
+			}
+		}
+		if strings.TrimSpace(e.HarnessModel) == "" {
+			e.HarnessModel = "deepseek-flash"
+		}
+		if strings.TrimSpace(e.HarnessProvider) == "" {
+			e.HarnessProvider = "deepseek-official"
 		}
 		if strings.TrimSpace(e.Name) == "" || strings.TrimSpace(e.Codex) == "" || len(e.Workspaces) == 0 {
 			return errors.New("每个环境都需要名称、Codex 程序和工作目录")
@@ -157,6 +172,9 @@ func runtimeConfig(c Config, e Environment) Config {
 	c.User = e.User
 	c.Codex = e.Codex
 	c.Claude = e.Claude
+	c.Harness = e.Harness
+	c.HarnessModel = e.HarnessModel
+	c.HarnessProvider = e.HarnessProvider
 	if c.Claude == "" {
 		c.Claude = claudeBinary(e.Type)
 	}

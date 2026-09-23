@@ -24,6 +24,9 @@ type Config struct {
 	User               string            `json:"user"`
 	Codex              string            `json:"codex"`
 	Claude             string            `json:"-"`
+	Harness            string            `json:"-"`
+	HarnessModel       string            `json:"-"`
+	HarnessProvider    string            `json:"-"`
 	Workspaces         []string          `json:"workspaces"`
 	Model              string            `json:"model"`
 	Feishu             FeishuConfig      `json:"feishu"`

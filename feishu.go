@@ -264,8 +264,13 @@ func (f *Feishu) handle(chat, text string) (string, error) {
 		}
 		c := a.config.get()
 		model := c.Model
-		if env, err := c.environment(""); err == nil && env.DefaultEngine == "claude" {
-			model = env.ClaudeModel
+		if env, err := c.environment(""); err == nil {
+			switch env.DefaultEngine {
+			case "claude":
+				model = env.ClaudeModel
+			case "deepseek-harness":
+				model = env.HarnessModel
+			}
 		}
 		t, e := a.create(strings.TrimSpace(title), c.Workspaces[0], model)
 		if e != nil {

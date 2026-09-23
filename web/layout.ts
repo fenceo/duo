@@ -59,7 +59,7 @@ function installLayout(){
  document.addEventListener('click',e=>{if(!(e.target as HTMLElement).closest('.task-item-menu'))closeTaskMenus()});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTaskMenus()});
  element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';
- element('conversation').querySelector('.empty')!.innerHTML='<div class="empty-mark">简</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex 或 Claude，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
+ element('conversation').querySelector('.empty')!.innerHTML='<div class="empty-mark">简</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
 // Apply before authentication to avoid a dark login screen flashing first.
 try{document.documentElement.dataset.theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{document.documentElement.dataset.theme='light'}

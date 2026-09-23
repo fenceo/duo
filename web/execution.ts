@@ -7,14 +7,18 @@ let createModels:EngineModel[]=[];
 let taskPickerModels:EngineModel[]=[];
 let taskPickerStatus='',taskModelRequest=0,modelTestRequest=0;
 const modelsByEnv:Record<string,{models:EngineModel[];message:string;expires:number}>={};
-const effortLabels:Record<string,string>={none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
+const effortLabels:Record<string,string>={off:'关闭',none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
 const defaultModelLabel='使用此工具的默认模型';
 const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:string;menu:string;search:string;list:string}>={
  create:{root:'model-picker',button:'model-picker-button',label:'model-picker-label',menu:'model-menu',search:'model-search',list:'model-list'},
  task:{root:'task-model',button:'task-model-button',label:'task-model-label',menu:'task-model-menu',search:'task-model-search',list:'task-model-list'}
 };
-function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':'Codex'}
+function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
+function engineDefaultModel(env:Environment,engine:string){return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
+const harnessSessionHint='Harness 在同一个运行进程中连续对话；闲置 30 分钟会结束运行进程，停止任务或重启服务后不能恢复原会话。更换模型、provider 或权限请新建任务。';
+const harnessKnowledgeHint='Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
+ if(engine==='deepseek-harness')return ['off','low','high','max'];
  if(model&&Array.isArray(model.reasoning_levels))return model.reasoning_levels;
  return engine==='claude'?['low','medium','high','xhigh','max']:['low','medium','high','xhigh'];
 }
@@ -23,10 +27,12 @@ function installExecution(){
  button('test-models').onclick=()=>void testCreateModels();
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
- element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+ element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
  button('check-codex').textContent='检查 Codex';
  button('check-codex').insertAdjacentHTML('afterend',' <button type="button" id="check-claude">检查 Claude</button>');
  button('check-claude').onclick=async()=>{button('check-claude').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'claude'});element('check-result').textContent=(r.ok?'Claude 已配置\n':'Claude 检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-claude').disabled=false}};
+ button('check-claude').insertAdjacentHTML('afterend',' <button type="button" id="check-harness">检查 Harness</button>');
+ button('check-harness').onclick=async()=>{button('check-harness').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'deepseek-harness'});element('check-result').textContent=(r.ok?'Harness 基础检查通过（不代表模型调用成功）\n':'Harness 检查失败\n')+r.output+'\n检查使用已保存的环境配置；可在新建任务中测试模型调用。'}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-harness').disabled=false}};
 }
 async function testCreateModels(){
  const request=++modelTestRequest,environmentID=input('create-environment').value,engine=input('create-engine').value;
@@ -84,6 +90,7 @@ async function toggleModelMenu(target:ModelPickerTarget){
  input(ids.search).value='';
  if(target==='task'){
   if(!detail)return;
+  if(detail.task.engine==='deepseek-harness'){notify(harnessSessionHint);return}
   const request=++taskModelRequest,key=modelCacheKey(detail.task),cached=modelsByEnv[key];
   taskPickerModels=cached?.models?.slice()||[];taskPickerStatus=cached?.message||'';
   if(cached?.expires>Date.now()&&taskPickerModels.length){
@@ -136,7 +143,7 @@ function renderModelMenu(target:ModelPickerTarget){
 function modelCacheKey(task:Task){return (task.environment?.id||'')+':'+(task.engine||'codex')}
 function mergeTaskModels(task:Task,list:EngineModel[]):EngineModel[]{
  const models=[...list],known=new Set(models.map(m=>m.id));
- const configured=task.engine==='claude'?task.environment.claude_model:task.environment.model;
+ const configured=engineDefaultModel(task.environment,task.engine||'codex');
  if(configured&&!known.has(configured)){models.unshift({id:configured,name:configured+'（环境默认）'});known.add(configured)}
  if(task.model&&!known.has(task.model))models.unshift({id:task.model,name:task.model+'（当前）'});
  return models;
@@ -168,6 +175,7 @@ async function chooseTaskEffort(effort:string){
  await applyTaskModel(detail.task.model,effort);
 }
 async function applyTaskModel(model:string,effort:string|undefined){
+ if(detail?.task.engine==='deepseek-harness'){notify(harnessSessionHint);return}
  const id=chosen,body:Record<string,string>={model:model==='__custom__'?'':model};
  if(effort!==undefined)body.reasoning_effort=effort;
  try{await api('tasks/'+id,'PATCH',body);if(id===chosen)await poll();notify('已更新此任务'+(effort===undefined?'的模型':'的推理强度'))}
@@ -204,10 +212,10 @@ function setCreateModels(models:EngineModel[],defaultModel:string){
 function updateReasoning(){
  const engine=input('create-engine').value,id=input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value;
  const model=createModels.find(m=>m.id===id),known=model?.reasoning_levels;
- const levels=known??effortLevels(engine);
+ const levels=engine==='deepseek-harness'?effortLevels(engine):known??effortLevels(engine);
  const previous=input('create-effort').value;
  input('create-effort').innerHTML='<option value="">工具默认'+(model?.default_reasoning?' · '+escapeHTML(effortLabels[model.default_reasoning]||model.default_reasoning):'')+'</option>'+levels.map(v=>`<option value="${escapeHTML(v)}">${escapeHTML(effortLabels[v]||v)} · ${escapeHTML(v)}</option>`).join('');
  input('create-effort').value=levels.includes(previous)?previous:'';
  input('create-effort').disabled=levels.length===0;
- element('effort-hint').textContent=known?.length===0?'此模型不提供推理强度选择。':known==null?'默认沿用工具设置；手动选择需模型支持。':'';
+ element('effort-hint').textContent=engine==='deepseek-harness'?'Harness 支持 off / low / high / max，模型及 provider 需支持所选值。'+harnessSessionHint:known?.length===0?'此模型不提供推理强度选择。':known==null?'默认沿用工具设置；手动选择需模型支持。':'';
 }

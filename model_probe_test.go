@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -82,5 +83,53 @@ func TestModelProbeAPI(t *testing.T) {
 		if result.Status != "available" || result.Message != "调用成功" {
 			t.Fatalf("unexpected model result: %#v", result)
 		}
+	}
+}
+
+func TestPublicProbeErrorDistinguishesUnsupportedReasoning(t *testing.T) {
+	for _, message := range []string{
+		"UNSUPPORTED_REASONING_EFFORT",
+		`provider "custom" model "demo" does not support reasoning effort "off"`,
+		"Harness initialize [UNSUPPORTED_REASONING_EFFORT]：" + harnessUnsupportedReasoningMessage,
+	} {
+		if got := publicProbeError(errors.New(message)); got != harnessUnsupportedReasoningMessage {
+			t.Errorf("unsupported effort misclassified: %q => %q", message, got)
+		}
+	}
+	if got := publicProbeError(errors.New("MISSING_CREDENTIAL alongside UNSUPPORTED_REASONING_EFFORT")); !strings.Contains(got, "缺少 AI 凭据") {
+		t.Fatalf("missing credential precedence changed: %q", got)
+	}
+}
+
+func TestPublicProbeErrorClassifiesCredentialsBeforeModelErrors(t *testing.T) {
+	for _, message := range []string{
+		"Harness turn error [MISSING_CREDENTIAL]: invalid model configuration",
+		"MISSING_CREDENTIAL: API key not found for model deepseek-flash",
+		"missing API key: unsupported model",
+	} {
+		got := publicProbeError(errors.New(message))
+		if !strings.Contains(got, "缺少 AI 凭据") || !strings.Contains(got, "对应执行环境") || strings.Contains(got, "模型不受") {
+			t.Errorf("missing credentials misclassified: %q => %q", message, got)
+		}
+	}
+	for _, message := range []string{
+		"invalid provider configuration", "invalid model configuration", "configuration file not found",
+		"unsupported SDK method", "model invocation failed", "invalid response from model service",
+		"MODEL_CONFIGURATION_NOT_FOUND", "invalid_model_configuration",
+	} {
+		if got := publicProbeError(errors.New(message)); got != "调用失败，请检查该环境的登录状态和网络配置" {
+			t.Errorf("generic failure misclassified: %q => %q", message, got)
+		}
+	}
+	for _, message := range []string{
+		"MODEL_NOT_FOUND", "UNSUPPORTED_MODEL", "invalid_model", "unsupported model: demo",
+		"model not found", "model 'demo' does not exist", "model `demo` is not supported",
+	} {
+		if got := publicProbeError(errors.New(message)); got != "模型不受当前服务支持" {
+			t.Errorf("explicit model error misclassified: %q => %q", message, got)
+		}
+	}
+	if got := publicProbeError(&exec.Error{Name: "dsh", Err: exec.ErrNotFound}); got != "找不到 AI 工具程序" {
+		t.Fatalf("executable lookup failure misclassified: %q", got)
 	}
 }

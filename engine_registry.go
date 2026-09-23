@@ -87,12 +87,12 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
-			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 开源代理运行时",
-			Transport: "headless_json_rpc", Runnable: false,
+			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 原生 SDK；同一运行时支持连续对话，停止或服务重启后不能恢复；暂不支持交互审批、图片和硬件工具",
+			Transport: "sdk_jsonrpc", Runnable: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"stream", "resume", "plugins", "sandbox"},
-			CredentialKinds:    []string{"native", "env_file"},
-			InstallDescription: "开发预览版：先在目标环境安装并验证 headless/SDK 协议，再接入 Jianzuo。",
+			Capabilities:       []string{"stream", "live_session", "cancel", "sandbox"},
+			CredentialKinds:    []string{"native", "dsh_home"},
+			InstallDescription: "使用 dsh --profile sdk 的 JSON-RPC 接口；请在目标环境安装 Harness 并完成 provider 配置。Windows 默认使用 npm 的 dsh.cmd 入口。",
 			DocumentationURL:   "https://github.com/deepseek-ai/deepseek-harness",
 		},
 		{
@@ -216,7 +216,7 @@ func validateEngineProfile(profile EngineCredentialProfile, environments []Envir
 	if profile.Reference == "" || strings.ContainsAny(profile.Reference, "\x00\r\n") || len(profile.Reference) > 4096 {
 		return errors.New("账号/API 配置需要填写外部配置引用")
 	}
-	if profile.Kind == "codex_home" || profile.Kind == "claude_home" {
+	if profile.Kind == "codex_home" || profile.Kind == "claude_home" || profile.Kind == "dsh_home" {
 		if target.Type == "windows" {
 			if !filepath.IsAbs(profile.Reference) {
 				return errors.New("Windows 账号目录需要绝对路径")
@@ -237,6 +237,8 @@ func engineProfileEnv(profile EngineCredentialProfile) map[string]string {
 		return map[string]string{"CODEX_HOME": profile.Reference}
 	case "claude_home":
 		return map[string]string{"CLAUDE_CONFIG_DIR": profile.Reference}
+	case "dsh_home":
+		return map[string]string{"DSH_HOME": profile.Reference}
 	default:
 		// env_file is intentionally metadata-only for now. Reading arbitrary
 		// secret files belongs in the target adapter, not the HTTP process.
@@ -275,6 +277,8 @@ func engineInstallPlan(env Environment, engineID string) (EngineInstallPlan, err
 			plan.Executable = env.Codex
 		} else if engineID == "claude" {
 			plan.Executable = env.Claude
+		} else if engineID == "deepseek-harness" {
+			plan.Executable = env.Harness
 		}
 		return plan, nil
 	}

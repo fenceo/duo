@@ -24,7 +24,7 @@
 1. Codex：继续使用原生 app-server，完整保留 thread/resume、审批、interrupt 和流式事件。
 2. Claude Code：保留 CLI `stream-json`，补充稳定的取消/审批映射和 profile 检查。
 3. Harness：优先 headless JSON 事件流或 SDK，不抓桌面 UI；固定一个版本并记录协议版本。
-4. Kimi / MiMo：优先 ACP/CLI，桌面端仅作为人工兜底。适配器必须实现统一的 `start/resume/send/interrupt/approve` 生命周期后，才把 `Runnable` 打开。
+4. Kimi / MiMo：优先 ACP/CLI，桌面端仅作为人工兜底。适配器具备可验证的启动、发送和停止链路后才开放运行；恢复与审批按真实能力分别声明，不使用统一接口掩盖缺失能力。
 
 ## 升级流程
 
@@ -39,3 +39,52 @@
 - 更新完成后用 `/healthz` 校验服务版本，再清理备份。
 
 后续可在此基础上增加“后台下载 → 用户确认重启 → 一键回滚上一版”，但不能绕过校验或静默执行目标环境安装。
+
+## Harness SDK 接入（2026-09-23）
+
+当前适配本机 `@deepseek-ai/dsh 0.1.5-rc.2` 的 SDK stdio JSON-RPC，
+不是此版本并不支持的 `headless --json`。模型通过 `initialize` 的
+`provider/model/reasoningEffort` 传入。默认路由为 `deepseek-official/deepseek-flash`，
+支持自定义模型 ID；推理为工具默认或 `off/low/high/max`。
+
+- Windows npm 入口使用 `dsh.cmd`，内部解析为 Node + npm 入口，不通过 cmd 拼接任务。
+- WSL/SSH 使用目标环境的 `dsh`，默认路径缺失时查找该用户的 `~/.local/bin/dsh`。
+- 账号由执行环境管理：`native` 继承本地默认配置，`dsh_home` 设置 `DSH_HOME`。
+  简作不读取、复制或返回凭据文件。切换账号后请新建 Harness 任务。
+- 同进程连续对话、已提交的正文/工具事件、token 统计及终止进程树已接入。
+  这不是逐 token 输出，也不具备 Codex 的交互审批或自动风险评审。
+- 一个会话保持一个进程，最多 16 个；闲置 30 分钟释放。停止、服务重启、
+  闲置回收后不能原生恢复，必须新建任务，网页旧记录保留。禁止静默重放历史冒充恢复。
+- 每次启动追加临时策略 patch：固定只读/工作区/完全访问边界，越界审批拒绝，
+  不允许保存的原生 permission preset 覆盖。完全访问只能由用户显式选择。
+  原生 Windows ACL 沙箱是有限边界，不等于强隔离虚拟机。
+- `harness:read` 是明确可联网的只读模式，不改变原 `plan` 的离线语义。
+  不支持离线保证、附件、自动知识总结或简作硬件授权时明确拒绝，普通笔记仍可使用。
+- 启动时关闭可选 telemetry 和 session-log-deepseek 上传，不修改用户原生配置。
+
+验证：Go 子进程 fixture 覆盖双轮、取消、错误、子会话隔离、回执乱序及策略；
+HTTP 成品验收覆盖登录、CSRF、创建和模型配置约束；前端测试覆盖模型和模式选择。
+本机 WSL 已通过真实 `initialize + shutdown`（隔离配置，无模型请求）。
+本机 Windows 官方 SDK 在有/无策略 patch 时均未完成握手，仍需排查，不能视为可用。
+经用户授权，已使用 WSL 原生配置完成两轮真实最小文字验收：第一轮返回指定标记，
+第二轮未再次提供标记仍准确复述；同一 native session、同一 SDK worker，零工具事件。
+测试工作目录独立于用户项目。仅验证所选路线，不代表其它模型/账号都可用。
+验收同时发现并修复两类配置误判：应使用原生实际 provider/model，不能把网关路线
+当作官方直连；没有声明推理档位的路线必须省略 reasoningEffort，而不是传入 `off`。
+基础检查仍然只做 SDK 握手，不代表密钥、余额和模型调用已验证。
+SSH 真机和硬件操作尚未验证。
+
+可选原生检查：设置 `JIANZUO_TEST_HARNESS_NATIVE=1`，WSL 再设置
+`JIANZUO_TEST_HARNESS_WSL_DISTRO=Ubuntu-22.04`，运行
+`go test -run TestHarnessSDKNativeHandshake -v`。它使用临时配置和虚拟凭据，
+不会发送 `session/prompt`。仅验证 WSL 时使用子测试选择器
+`-run TestHarnessSDKNativeHandshake/wsl`。
+
+真实双轮验收另有 `TestHarnessSDKPaidWSLRoundTrip`，默认跳过。只有获得用户
+明确授权后，设置 `JIANZUO_TEST_HARNESS_PAID_WSL=1`、
+`JIANZUO_TEST_HARNESS_WSL_DISTRO`、`JIANZUO_TEST_HARNESS_WSL_USER`、
+`JIANZUO_TEST_HARNESS_PROVIDER` 和 `JIANZUO_TEST_HARNESS_MODEL` 才运行。
+它使用隔离的临时工作目录和原生凭据；第一轮失败立即终止，不切换模型重试。
+凭据应在对应执行环境的 Harness 原生配置中设置，不要填写到任务或上传到 Git。
+通用 provider 未声明推理档位时必须选择“工具默认”（不发送 reasoningEffort），
+不能把 `off` 当作对所有路线都通用的默认值。

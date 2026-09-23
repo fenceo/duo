@@ -138,6 +138,10 @@ async function installNewVersion() {
         setUpdateBusy(false);
     }
 }
+const harnessAttachmentHint = 'Harness 当前不支持附件。请切换到 Codex / Claude Code，或手动移除附件后继续；已选附件不会自动删除。';
+function validateEngineAttachments(engine, count) {
+    if (engine === 'deepseek-harness' && count > 0) throw new Error(harnessAttachmentHint);
+}
 let workCatalog = {
     modes: [],
     commands: []
@@ -145,11 +149,9 @@ let workCatalog = {
 const attachmentDrafts = new Map(), uploadingTasks = new Set();
 let renameTaskID = '', trashTaskID = '', stoppingTask = '', presetType = 'modes', presetID = '', directoryEnvironment = '', directoryPath = '', directoryParent = '', directoryRequest = 0, workspacePicked = null;
 function modeOptions(select, snapshot) {
-    const previous = select.value, items = [
-        ...workCatalog.modes
-    ], engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine;
+    const previous = select.value, engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine, items = workCatalog.modes.filter((m)=>m.id !== 'harness:read' || engine === 'deepseek-harness');
     if (snapshot?.id && !items.some((m)=>m.id === snapshot.id)) items.push(snapshot);
-    select.innerHTML = items.map((m)=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m, engine) ? '' : ' disabled'}>${escapeHTML(modeLabel(m))}${modeSupportsEngine(m, engine) ? '' : '（仅 Codex）'}</option>`).join('');
+    select.innerHTML = items.map((m)=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m, engine) ? '' : ' disabled'}>${escapeHTML(modeLabel(m))}${modeSupportsEngine(m, engine) ? '' : '（当前引擎不支持）'}</option>`).join('');
     const preferred = previous || snapshot?.id || 'work';
     select.value = items.some((m)=>m.id === preferred && modeSupportsEngine(m, engine)) ? preferred : items.find((m)=>m.id === 'work' && modeSupportsEngine(m, engine))?.id || items.find((m)=>modeSupportsEngine(m, engine))?.id || '';
 }
@@ -157,7 +159,7 @@ function modeApproval(mode) {
     return mode.approval || (mode.permission === 'workspace' ? 'request' : 'never');
 }
 function modeSupportsEngine(mode, engine) {
-    return engine !== 'claude' || modeApproval(mode) !== 'auto';
+    return (mode.id !== 'harness:read' || engine === 'deepseek-harness') && (engine === 'codex' || modeApproval(mode) !== 'auto') && (engine !== 'deepseek-harness' || mode.allow_network !== false);
 }
 function modeLabel(mode) {
     const access = mode.permission === 'read' ? '只读' : mode.permission === 'full' ? '完全访问' : mode.allow_network === false ? '工作区 · 离线' : '工作区 · 联网';
@@ -344,6 +346,7 @@ function installWorkflow() {
     button('mode-manage').onclick = ()=>openPresetEditor('modes');
     button('command-open').onclick = openCommands;
     button('stop').onclick = async ()=>{
+        if (detail?.task.engine === 'deepseek-harness' && !confirm('停止会关闭 Harness 运行进程，原会话无法恢复；网页里的消息记录仍然保留。确定停止？')) return;
         const id = chosen;
         stoppingTask = id;
         renderWorkflow();
@@ -401,34 +404,46 @@ function installWorkflow() {
     };
     button('trash-close').onclick = ()=>element('trash-dialog').close();
 }
-function modeForPermission(permission) {
+function modeForPermission(permission, engine = 'codex') {
+    if (engine === 'deepseek-harness' && permission === 'read') return workCatalog.modes.find((mode)=>mode.id === 'harness:read' && mode.permission === 'read' && modeApproval(mode) === 'never' && mode.allow_network === true);
     const wanted = permission === 'read' ? 'read' : permission === 'full' ? 'full' : 'workspace', preferred = permission === 'read' ? 'plan' : permission === 'request' ? 'work' : permission === 'auto' ? 'codex:auto' : permission, approval = permission === 'read' || permission === 'full' ? 'never' : permission;
-    const matches = (mode)=>mode.permission === wanted && modeApproval(mode) === approval;
+    const matches = (mode)=>mode.permission === wanted && modeApproval(mode) === approval && modeSupportsEngine(mode, engine);
     return workCatalog.modes.find((m)=>m.id === preferred && matches(m)) || workCatalog.modes.find(matches);
 }
 function setCreatePermission(permission) {
-    const codex = input('create-engine')?.value !== 'claude';
+    const engine = input('create-engine')?.value || 'codex', codex = engine === 'codex', harness = engine === 'deepseek-harness';
     if (permission === 'auto' && !codex) permission = 'request';
+    const requested = modeForPermission(permission, engine);
+    if (harness && (!requested || !modeSupportsEngine(requested, engine))) permission = 'request';
     createPermission = permission;
-    const selected = modeForPermission(permission), mode = input('create-mode');
+    const selected = modeForPermission(permission, engine), mode = input('create-mode');
     if (mode) mode.value = selected?.id || '';
     element('create-permission-options')?.querySelectorAll('[data-create-permission]').forEach((b)=>{
-        const on = b.dataset.createPermission === permission;
+        const value = b.dataset.createPermission, candidate = modeForPermission(value, engine), on = value === permission;
         b.classList.toggle('selected', on);
         b.setAttribute('aria-pressed', String(on));
-        b.disabled = b.dataset.createPermission === 'auto' && !codex;
-        if (b.dataset.createPermission === 'request') {
-            b.textContent = codex ? '请求批准' : 'CLI 预授权';
-            b.title = codex ? '工作区内执行，需要提升权限时请求批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
+        b.disabled = value === 'auto' && !codex || harness && (!candidate || !modeSupportsEngine(candidate, engine));
+        if (value === 'request') {
+            b.textContent = harness ? '工作区边界' : codex ? '请求批准' : 'CLI 预授权';
+            b.title = harness ? '仅允许边界内操作；超出权限直接拒绝，不弹出审批' : codex ? '工作区内执行，需要提升权限时请求批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
+        }
+        if (value === 'read') {
+            b.textContent = harness ? '只读·可联网' : '只读规划';
+            b.title = harness ? b.disabled ? '当前服务未提供 Harness 只读联网模式，请更新服务' : '不修改工作区，但不限制网络；这不是离线模式' : '只读规划，不修改工作区';
         }
     });
-    const hint = permission === 'read' ? '只读分析规划，不允许修改工作区' : permission === 'request' ? codex ? '允许工作区内执行与联网；需要提升权限时请求批准' : '允许工作区内执行，遵循 Claude CLI 预授权规则' : permission === 'full' ? '跳过工作区边界且不请求批准，请确认任务来源可信' : 'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
-    if (element('create-permission-hint')) element('create-permission-hint').textContent = hint + (codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+    const hint = permission === 'read' ? harness ? '只读分析，不允许修改工作区；允许联网，不提供离线保证' : '只读分析规划，不允许修改工作区' : permission === 'request' ? harness ? '仅在工作区权限边界内执行，越界请求直接拒绝' : codex ? '允许工作区内执行与联网；需要提升权限时请求批准' : '允许工作区内执行，遵循 Claude CLI 预授权规则' : permission === 'full' ? '跳过工作区边界且不请求批准，请确认任务来源可信' : 'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
+    if (element('create-permission-hint')) element('create-permission-hint').textContent = hint + (harness ? '。Harness 无交互审批及独立网络开关，网络由原生策略和执行环境控制；当前离线模式不可选。' : codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+    renderCreateFiles();
 }
 function renderCreateFiles() {
     const target = element('create-attachment-drafts');
     if (!target) return;
-    target.innerHTML = createFiles.map((file, index)=>`<span class="attachment-chip" title="${escapeHTML(file.name)}">${escapeHTML(file.name)} <button type="button" data-remove-create-file="${index}" aria-label="移除附件 ${escapeHTML(file.name)}">×</button></span>`).join('');
+    const harness = input('create-engine').value === 'deepseek-harness';
+    button('create-attach').disabled = harness;
+    button('create-attach').title = harness ? harnessAttachmentHint : '添加附件';
+    input('create-files').disabled = harness;
+    target.innerHTML = createFiles.map((file, index)=>`<span class="attachment-chip" title="${escapeHTML(file.name)}">${escapeHTML(file.name)} <button type="button" data-remove-create-file="${index}" aria-label="移除附件 ${escapeHTML(file.name)}">×</button></span>`).join('') + (harness && createFiles.length ? `<p class="error" role="alert">${escapeHTML(harnessAttachmentHint)}</p>` : '');
     target.querySelectorAll('[data-remove-create-file]').forEach((b)=>b.onclick = ()=>{
             createFiles.splice(Number(b.dataset.removeCreateFile), 1);
             renderCreateFiles();
@@ -438,6 +453,7 @@ function renderCreateFiles() {
 function addCreateFiles(files) {
     if (!files.length) return;
     try {
+        validateEngineAttachments(input('create-engine').value, files.length);
         validateAttachmentFiles(files, createFiles.length);
         createFiles.push(...files);
         element('create-error').textContent = '';
@@ -526,17 +542,20 @@ async function selectWorkspace() {
 function renderWorkflow() {
     if (!element('message-mode')) return;
     if (detail) {
-        const control = element('message-mode'), key = chosen + '|' + detail.task.engine;
+        const control = element('message-mode'), key = chosen + '|' + detail.task.engine, harness = detail.task.engine === 'deepseek-harness';
         if (control.dataset.task !== key) {
             control.dataset.task = key;
             control.value = '';
             modeOptions(control, detail.task.mode);
         }
-        control.disabled = detail.task.archived;
+        control.disabled = detail.task.archived || harness;
         const hint = element('mode-engine-hint');
-        hint.textContent = 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
-        hint.classList.toggle('hidden', detail.task.engine !== 'claude');
-        control.title = detail.task.engine === 'claude' ? hint.textContent : '本轮 Codex 工作模式与原生审批方式';
+        hint.textContent = harness ? harnessSessionHint + ' 无交互审批，网络由原生策略和执行环境控制。' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.classList.toggle('hidden', detail.task.engine === 'codex');
+        control.title = harness || detail.task.engine === 'claude' ? hint.textContent : '本轮 Codex 工作模式与原生审批方式';
+        button('task-model-button').title = harness ? harnessSessionHint : '本任务使用的 AI 工具、模型和推理强度';
+        const footnote = element('composer-wrap').querySelector('.footnote');
+        if (footnote) footnote.textContent = harness ? 'Harness SDK 会话 · 仅当前运行进程内可续聊' : '在服务所在电脑执行 · 保留所选工具的原生会话';
     }
     const active = detail?.runs.some((r)=>[
             'queued',
@@ -552,7 +571,10 @@ function renderWorkflow() {
     button('send').title = sending ? '正在开始' : active ? '追加要求并排队' : '开始执行';
     button('send').setAttribute('aria-label', button('send').title);
     button('send').disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || !input('message').value.trim() && !files.length;
-    button('attach-open').disabled = !!detail?.task.archived || uploadingTasks.has(chosen);
+    const attachmentsBlocked = detail?.task.engine === 'deepseek-harness';
+    button('attach-open').disabled = attachmentsBlocked || !!detail?.task.archived || uploadingTasks.has(chosen);
+    button('attach-open').title = attachmentsBlocked ? harnessAttachmentHint : '添加文件或图片，也可以拖放、粘贴图片';
+    input('attachment-input').disabled = attachmentsBlocked;
     button('command-open').disabled = !!detail?.task.archived;
     const html = files.map((f)=>`<span class="attachment-chip" title="${escapeHTML(f.name)}">${escapeHTML(f.name)} <button type="button" data-remove-attachment="${f.id}" aria-label="移除附件 ${escapeHTML(f.name)}">×</button></span>`).join('') + (uploadingTasks.has(chosen) ? '<small>正在上传…</small>' : '');
     const target = element('attachment-drafts');
@@ -591,6 +613,8 @@ async function addAttachments(files, task = chosen) {
         return;
     }
     try {
+        const engine = detail?.task.id === task ? detail.task.engine : tasks.find((item)=>item.id === task)?.engine;
+        validateEngineAttachments(engine, files.length);
         validateAttachmentFiles(files, (attachmentDrafts.get(task) || []).length);
         uploadingTasks.add(task);
         renderWorkflow();
@@ -653,14 +677,16 @@ function editPreset(id) {
     button('preset-delete').disabled = builtin || !presetID;
     element('preset-error').textContent = builtin ? '内置模式可直接选择；需要调整时新增一个模式。' : '';
 }
+function presetNetworkForPermission(permission, id, current) {
+    return permission === 'read' ? id === 'harness:read' : permission === 'full' ? true : current;
+}
 function syncPresetNetwork() {
     const permission = input('preset-permission').value, network = input('preset-network'), approval = input('preset-approval');
-    if (permission === 'read') network.checked = false;
-    if (permission === 'full') network.checked = true;
+    network.checked = presetNetworkForPermission(permission, presetID, network.checked);
     if (permission !== 'workspace') approval.value = 'never';
     network.disabled = network.dataset.builtin === '1' || permission !== 'workspace';
     approval.disabled = network.dataset.builtin === '1' || permission !== 'workspace';
-    element('preset-network-wrap').title = permission === 'workspace' ? '关闭后工作区模式不能下载依赖或访问 GitHub' : '该执行方式由系统确定网络权限';
+    element('preset-network-wrap').title = presetID === 'harness:read' ? '只读但不限制联网；此模式仅适用于 Harness' : permission === 'workspace' ? '关闭后工作区模式不能下载依赖或访问 GitHub' : '该执行方式由系统确定网络权限';
 }
 async function savePreset(e) {
     e.preventDefault();
@@ -1661,7 +1687,7 @@ function installLayout() {
     });
     element('task-title').textContent = '今天，从哪件事开始？';
     element('task-workspace').textContent = 'Windows · WSL · SSH';
-    element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">简</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex 或 Claude，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
+    element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">简</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
 try {
     document.documentElement.dataset.theme = localStorage.getItem('jianzuo-theme') === 'dark' ? 'dark' : 'light';
@@ -1710,7 +1736,7 @@ function installEnvironmentDiscovery() {
     input('search').placeholder = '搜索任务和记录';
     const modelManager = document.createElement('section');
     modelManager.className = 'model-manager';
-    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前执行环境添加自定义模型 ID。它会出现在新建任务的模型选择器中，并原样交给 Codex 或 Claude Code。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><div class="model-add-row"><input id="custom-model-id" maxlength="120" placeholder="模型 ID，例如 deepseek-chat"><input id="custom-model-name" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
+    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前执行环境添加自定义模型 ID。它会出现在新建任务的模型选择器中，并交给所选的 Codex、Claude Code 或 DeepSeek Harness；实际可用性由对应引擎和 provider 配置决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><div class="model-add-row"><input id="custom-model-id" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
     section.append(modelManager);
     button('custom-model-add').onclick = ()=>{
         const id = input('custom-model-id').value.trim(), name = input('custom-model-name').value.trim() || id;
@@ -2703,6 +2729,7 @@ let taskPickerModels = [];
 let taskPickerStatus = '', taskModelRequest = 0, modelTestRequest = 0;
 const modelsByEnv = {};
 const effortLabels = {
+    off: '关闭',
     none: '关闭',
     minimal: '极低',
     low: '低',
@@ -2732,9 +2759,20 @@ const modelPickers = {
     }
 };
 function taskEngineName(engine) {
-    return engine === 'claude' ? 'Claude Code' : 'Codex';
+    return engine === 'claude' ? 'Claude Code' : engine === 'deepseek-harness' ? 'DeepSeek Harness' : 'Codex';
 }
+function engineDefaultModel(env, engine) {
+    return engine === 'claude' ? env.claude_model || '' : engine === 'deepseek-harness' ? env.harness_model || 'deepseek-flash' : env.model;
+}
+const harnessSessionHint = 'Harness 在同一个运行进程中连续对话；闲置 30 分钟会结束运行进程，停止任务或重启服务后不能恢复原会话。更换模型、provider 或权限请新建任务。';
+const harnessKnowledgeHint = 'Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine, model) {
+    if (engine === 'deepseek-harness') return [
+        'off',
+        'low',
+        'high',
+        'max'
+    ];
     if (model && Array.isArray(model.reasoning_levels)) return model.reasoning_levels;
     return engine === 'claude' ? [
         'low',
@@ -2754,7 +2792,7 @@ function installExecution() {
     button('test-models').onclick = ()=>void testCreateModels();
     installModelPicker();
     element('setting-model').previousElementSibling.textContent = 'Codex 默认模型（可留空）';
-    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
     button('check-codex').textContent = '检查 Codex';
     button('check-codex').insertAdjacentHTML('afterend', ' <button type="button" id="check-claude">检查 Claude</button>');
     button('check-claude').onclick = async ()=>{
@@ -2769,6 +2807,21 @@ function installExecution() {
             element('check-result').textContent = e.message;
         } finally{
             button('check-claude').disabled = false;
+        }
+    };
+    button('check-claude').insertAdjacentHTML('afterend', ' <button type="button" id="check-harness">检查 Harness</button>');
+    button('check-harness').onclick = async ()=>{
+        button('check-harness').disabled = true;
+        try {
+            const r = await api('check', 'POST', {
+                environment_id: editingID,
+                engine: 'deepseek-harness'
+            });
+            element('check-result').textContent = (r.ok ? 'Harness 基础检查通过（不代表模型调用成功）\n' : 'Harness 检查失败\n') + r.output + '\n检查使用已保存的环境配置；可在新建任务中测试模型调用。';
+        } catch (e) {
+            element('check-result').textContent = e.message;
+        } finally{
+            button('check-harness').disabled = false;
         }
     };
 }
@@ -2857,6 +2910,10 @@ async function toggleModelMenu(target) {
     input(ids.search).value = '';
     if (target === 'task') {
         if (!detail) return;
+        if (detail.task.engine === 'deepseek-harness') {
+            notify(harnessSessionHint);
+            return;
+        }
         const request = ++taskModelRequest, key = modelCacheKey(detail.task), cached = modelsByEnv[key];
         taskPickerModels = cached?.models?.slice() || [];
         taskPickerStatus = cached?.message || '';
@@ -2919,7 +2976,7 @@ function mergeTaskModels(task, list) {
     const models = [
         ...list
     ], known = new Set(models.map((m)=>m.id));
-    const configured = task.engine === 'claude' ? task.environment.claude_model : task.environment.model;
+    const configured = engineDefaultModel(task.environment, task.engine || 'codex');
     if (configured && !known.has(configured)) {
         models.unshift({
             id: configured,
@@ -2966,6 +3023,10 @@ async function chooseTaskEffort(effort) {
     await applyTaskModel(detail.task.model, effort);
 }
 async function applyTaskModel(model, effort) {
+    if (detail?.task.engine === 'deepseek-harness') {
+        notify(harnessSessionHint);
+        return;
+    }
     const id = chosen, body = {
         model: model === '__custom__' ? '' : model
     };
@@ -3023,12 +3084,12 @@ function setCreateModels(models, defaultModel) {
 function updateReasoning() {
     const engine = input('create-engine').value, id = input('create-model').value === '__custom__' ? input('custom-model').value.trim() : input('create-model').value;
     const model = createModels.find((m)=>m.id === id), known = model?.reasoning_levels;
-    const levels = known ?? effortLevels(engine);
+    const levels = engine === 'deepseek-harness' ? effortLevels(engine) : known ?? effortLevels(engine);
     const previous = input('create-effort').value;
     input('create-effort').innerHTML = '<option value="">工具默认' + (model?.default_reasoning ? ' · ' + escapeHTML(effortLabels[model.default_reasoning] || model.default_reasoning) : '') + '</option>' + levels.map((v)=>`<option value="${escapeHTML(v)}">${escapeHTML(effortLabels[v] || v)} · ${escapeHTML(v)}</option>`).join('');
     input('create-effort').value = levels.includes(previous) ? previous : '';
     input('create-effort').disabled = levels.length === 0;
-    element('effort-hint').textContent = known?.length === 0 ? '此模型不提供推理强度选择。' : known == null ? '默认沿用工具设置；手动选择需模型支持。' : '';
+    element('effort-hint').textContent = engine === 'deepseek-harness' ? 'Harness 支持 off / low / high / max，模型及 provider 需支持所选值。' + harnessSessionHint : known?.length === 0 ? '此模型不提供推理强度选择。' : known == null ? '默认沿用工具设置；手动选择需模型支持。' : '';
 }
 let discoveryEpoch = 0, discoveryID = '', discoveryTimer, discoveryPick = null;
 function installDiscovery() {
@@ -4026,15 +4087,30 @@ function installEngineSettings() {
             }
         }));
     button('engine-profile-save').onclick = ()=>void saveEngineProfile();
+    input('engine-profile-reference').nextElementSibling.textContent = '这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
 }
 function engineTargetName(id) {
     return settings.config.environments.find((e)=>e.id === id)?.name || id;
+}
+function engineCredentialLabel(kind) {
+    return ({
+        native: '继承目标环境默认配置',
+        dsh_home: 'Harness 配置目录（DSH_HOME）',
+        codex_home: 'Codex 配置目录（CODEX_HOME）',
+        claude_home: 'Claude 配置目录（CLAUDE_CONFIG_DIR）',
+        env_file: '环境文件引用（仅记录，尚未应用）'
+    })[kind] || kind;
+}
+function engineProfileActivationMessage(profile) {
+    if (profile?.kind === 'env_file') return '引用已选中，但环境文件尚未应用到运行进程；请在目标环境中配置。';
+    if (profile?.engine === 'deepseek-harness') return profile.kind === 'native' ? '新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。' : '新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
+    return '账号/API 配置已切换，下一次运行生效。';
 }
 function renderEngineCatalog() {
     if (!engineCatalog) return;
     const profiles = engineCatalog.profiles;
     element('engine-catalog').innerHTML = engineCatalog.engines.map((e)=>{
-        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(p.kind)}: ${escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
+        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
         const active = Object.entries(engineCatalog.active_profile).filter(([key])=>key.endsWith(':' + e.id)).map(([, value])=>value);
         return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable ? '可执行' : '待接入适配器'}</small></div><span>${active.length ? '已配置' : '未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="muted">${escapeHTML(e.install_description || '')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/检查计划</button>${e.documentation_url ? `<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>` : ''}</div>${rows || '<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
     }).join('');
@@ -4055,11 +4131,22 @@ function populateEngineProfileForm() {
     const engines = element('engine-profile-engine'), envs = element('engine-profile-environment');
     engines.innerHTML = engineCatalog.engines.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
     envs.innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
+    const kinds = element('engine-profile-kind'), reference = input('engine-profile-reference');
+    const refreshReference = ()=>{
+        const native = kinds.value === 'native';
+        reference.disabled = native;
+        reference.placeholder = kinds.value === 'dsh_home' ? '目标环境中的 Harness 配置目录绝对路径' : native ? '自动继承目标环境默认配置' : '目标环境可访问的配置目录或外部引用';
+        if (native) reference.value = 'default';
+        else if (reference.value === 'default') reference.value = '';
+        reference.title = native ? '不是命名 profile；使用目标环境默认配置。' : '不填写 API key。';
+    };
     const refresh = ()=>{
         const e = engineCatalog.engines.find((x)=>x.id === engines.value);
-        element('engine-profile-kind').innerHTML = (e?.credential_kinds || []).map((k)=>`<option value="${escapeHTML(k)}">${escapeHTML(k)}</option>`).join('');
+        kinds.innerHTML = (e?.credential_kinds || []).filter((k)=>e?.id !== 'deepseek-harness' || k !== 'env_file').map((k)=>`<option value="${escapeHTML(k)}">${escapeHTML(engineCredentialLabel(k))}</option>`).join('');
+        refreshReference();
     };
     engines.onchange = refresh;
+    kinds.onchange = refreshReference;
     refresh();
 }
 async function showEnginePlan(engine) {
@@ -4090,7 +4177,7 @@ async function saveEngineProfile() {
     };
     try {
         await api('engine-profiles', 'PUT', profile);
-        element('engine-profile-result').textContent = '已保存；点击对应配置的“切换”后对下一次运行生效。';
+        element('engine-profile-result').textContent = profile.kind === 'env_file' ? '已保存引用；环境文件目前仅记录，不会应用到运行进程。' : profile.engine === 'deepseek-harness' ? '已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。' : '已保存；点击对应配置的“切换”后对下一次运行生效。';
         await loadEngineSettings();
     } catch (e) {
         element('engine-profile-result').textContent = e.message;
@@ -4099,7 +4186,7 @@ async function saveEngineProfile() {
 async function activateEngineProfile(id) {
     try {
         await api(`engine-profiles/${encodeURIComponent(id)}/activate`, 'POST', {});
-        notify('账号/API 配置已切换，下一次运行生效。');
+        notify(engineProfileActivationMessage(engineCatalog?.profiles.find((p)=>p.id === id)));
         await loadEngineSettings();
     } catch (e) {
         notify(e.message);
@@ -4223,7 +4310,7 @@ async function boot() {
 function renderShell() {
     lastList = '';
     element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">简</div><div><strong>简作</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
- <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
+ <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
  <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行简作的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
  <dialog id="bind-dialog"><h2>在飞书继续这个任务</h2><p id="bind-status"></p><p>连接后，从网页或飞书发来的要求进入同一个任务；该任务的完成结果会发送到此私聊。</p><div class="dialog-footer"><button data-close="bind-dialog">关闭</button><button id="bind-setup">扫码创建并绑定当前任务</button><button id="unbind">断开当前任务</button><button class="primary" id="bind">连接此任务</button></div></dialog>
  <dialog id="setup-dialog"><h2>扫码连接飞书</h2><p>确认后将创建“简作助手”，绑定扫码账号，初始化“我的任务、整理知识”菜单并提交发布，最后发送一条绑定通知。已有机器人不会被修改。</p><p>请在飞书官方页面审阅并确认权限；企业审批可能影响发布。</p><div id="setup-display"><p>点击下方按钮生成二维码。</p></div><div class="dialog-footer"><button id="setup-close">关闭</button><button id="setup-cancel" class="hidden">取消等待</button><button class="primary" id="setup-start">生成飞书二维码</button></div></dialog><dialog id="knowledge-dialog"><form id="knowledge-form"><h2>任务知识</h2><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" placeholder="例如：继电器上电顺序与验证方法"><label for="knowledge-state">状态</label><select id="knowledge-state"><option value="observed">待验证</option><option value="verified">已验证</option><option value="stale">已过时</option></select><label for="knowledge-body">内容</label><textarea id="knowledge-body" rows="12" maxlength="200000" aria-label="知识内容" placeholder="结论、命令、解决办法和验证结果…"></textarea><p id="knowledge-error" class="error"></p><div class="dialog-footer"><button type="button" id="knowledge-cancel">取消</button><button class="primary" id="knowledge-save">保存知识</button></div></form></dialog>`;
@@ -4284,6 +4371,10 @@ function renderShell() {
     };
     button('save-draft').onclick = ()=>void saveRunKnowledge();
     button('summarize').onclick = async ()=>{
+        if (detail?.task.engine === 'deepseek-harness') {
+            notify(harnessKnowledgeHint);
+            return;
+        }
         switchTab('note');
         button('summarize').disabled = true;
         try {
@@ -4293,7 +4384,7 @@ function renderShell() {
         } catch (e) {
             notify(e.message);
         } finally{
-            if (button('summarize')) button('summarize').disabled = false;
+            if (button('summarize')) button('summarize').disabled = detail?.task.engine === 'deepseek-harness';
         }
     };
     button('adopt-draft').onclick = ()=>editKnowledgeFromRun();
@@ -4565,6 +4656,11 @@ function renderSessionBanner() {
         hour12: false
     }) : '';
     const foreign = taskContext.length ? `<span class="session-warning" title="${escapeHTML(taskContext.map((f)=>f.label + ' · ' + f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map((f)=>f.name).join('、'))}</span>` : '';
+    if (detail.task.engine === 'deepseek-harness') {
+        banner.innerHTML = `<span class="session-text">${escapeHTML(harnessSessionHint)}</span>${foreign}`;
+        banner.classList.remove('hidden');
+        return;
+    }
     banner.innerHTML = `<span class="session-text">本任务在续用 ${started ? escapeHTML(started) + ' 开始的历史会话' : '历史会话'}，换模型或 AI 工具都不会清空它。</span>${foreign}<button type="button" id="session-reset" class="subtle">新建会话</button>`;
     banner.classList.remove('hidden');
     button('session-reset').onclick = ()=>void resetSession();
@@ -4639,6 +4735,18 @@ function renderTask() {
     button('send').disabled = sending || t.archived;
     button('summarize').disabled = active || t.archived;
     if (t.archived) element('run-status').textContent = '任务已归档，记录保留；恢复后可以继续执行。';
+    const harness = t.engine === 'deepseek-harness';
+    button('summarize').disabled = active || t.archived || harness;
+    button('summarize').title = harness ? harnessKnowledgeHint : '根据任务记录生成知识草稿';
+    let knowledgeHint = element('harness-knowledge-hint');
+    if (!knowledgeHint) {
+        knowledgeHint = document.createElement('p');
+        knowledgeHint.id = 'harness-knowledge-hint';
+        knowledgeHint.className = 'muted';
+        element('notebook').querySelector('.note-head').after(knowledgeHint);
+    }
+    knowledgeHint.textContent = harnessKnowledgeHint;
+    knowledgeHint.classList.toggle('hidden', !harness);
     renderWorkflow();
     renderCodexApprovals(detail);
     renderTerminal();
@@ -4774,7 +4882,7 @@ async function loadCreateEnvironment(keepWorkspace = false) {
     const token = ++modelRequest, env = settings.config.environments.find((e)=>e.id === input('create-environment').value);
     if (!env) return;
     if (!keepWorkspace) input('create-engine').value = env.default_engine || 'codex';
-    const engine = input('create-engine').value, defaultModel = engine === 'claude' ? env.claude_model || '' : env.model;
+    const engine = input('create-engine').value, defaultModel = engineDefaultModel(env, engine);
     setCreatePermission(createPermission);
     input('create-effort').value = '';
     const directories = [
@@ -4816,8 +4924,9 @@ async function createTask(e) {
         ...createFiles
     ];
     try {
+        validateEngineAttachments(input('create-engine').value, files.length);
         validateAttachmentFiles(files);
-        const mode = modeForPermission(createPermission);
+        const mode = modeForPermission(createPermission, input('create-engine').value);
         if (!mode || !modeSupportsEngine(mode, input('create-engine').value)) throw new Error('所选审批模式暂不可用，请刷新工作台或重新选择。');
         const r = await api('tasks', 'POST', {
             engine: input('create-engine').value,
@@ -4877,6 +4986,12 @@ async function send(text, clear) {
         ...attachmentDrafts.get(chosen) || []
     ];
     if (!chosen || !detail || sending || uploadingTasks.has(chosen) || !text.trim() && !files.length) return;
+    try {
+        validateEngineAttachments(detail.task.engine, files.length);
+    } catch (e) {
+        notify(e.message);
+        return;
+    }
     const id = chosen, original = input('message').value, mode = selectedMessageMode();
     sending = true;
     renderTask();
@@ -5052,6 +5167,9 @@ function loadEnvironmentEditor() {
     input('setting-identity').value = e.identity || '';
     input('setting-claude').value = e.claude || '';
     input('setting-claude-model').value = e.claude_model || '';
+    input('setting-harness').value = e.harness || (e.type === 'windows' ? 'dsh.cmd' : 'dsh');
+    input('setting-harness-model').value = e.harness_model || 'deepseek-flash';
+    input('setting-harness-provider').value = e.harness_provider || 'deepseek-official';
     input('setting-engine').value = e.default_engine || 'codex';
     input('setting-codex').value = e.codex;
     input('setting-model').value = e.model;
@@ -5080,6 +5198,9 @@ function storeEnvironmentEditor() {
         identity: input('setting-identity').value.trim(),
         claude: input('setting-claude').value.trim(),
         claude_model: input('setting-claude-model').value.trim(),
+        harness: input('setting-harness').value.trim(),
+        harness_model: input('setting-harness-model').value.trim(),
+        harness_provider: input('setting-harness-provider').value.trim(),
         default_engine: input('setting-engine').value,
         codex: input('setting-codex').value.trim(),
         model: input('setting-model').value.trim(),
@@ -5099,6 +5220,9 @@ function addEnvironment(type) {
         port: 22,
         identity: '',
         codex: type === 'windows' ? 'codex.exe' : 'codex',
+        harness: type === 'windows' ? 'dsh.cmd' : 'dsh',
+        harness_model: 'deepseek-flash',
+        harness_provider: 'deepseek-official',
         model: '',
         model_cache: '',
         models: [],

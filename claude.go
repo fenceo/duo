@@ -12,16 +12,28 @@ import (
 	"time"
 )
 
-func validEngine(engine string) bool { return engine == "codex" || engine == "claude" }
+func validEngine(engine string) bool {
+	return engine == "codex" || engine == "claude" || engine == "deepseek-harness"
+}
 func engineName(engine string) string {
 	if engine == "claude" {
 		return "Claude Code"
+	}
+	if engine == "deepseek-harness" {
+		return "DeepSeek Harness"
 	}
 	return "Codex"
 }
 func validEngineReasoning(engine, effort string) bool {
 	if engine == "codex" {
 		return validReasoning(effort)
+	}
+	if engine == "deepseek-harness" {
+		switch effort {
+		case "", "off", "low", "high", "max":
+			return true
+		}
+		return false
 	}
 	switch effort {
 	case "", "low", "medium", "high", "xhigh", "max":
@@ -87,6 +99,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	if !validEngine(engine) || !validEngineReasoning(engine, t.ReasoningEffort) {
 		return nil, errors.New("任务的 AI 工具或推理强度无效")
 	}
+	if engine == "deepseek-harness" {
+		return nil, errors.New("DeepSeek Harness 必须通过 SDK 运行")
+	}
 	args := codexArgs(c, t)
 	binary := c.Codex
 	launch := launcher
@@ -130,6 +145,17 @@ func modelsForEngine(ctx context.Context, env Environment, engine string) (Model
 	if engine == "" || engine == "codex" {
 		return modelsForEnvironment(ctx, env)
 	}
+	if engine == "deepseek-harness" {
+		models := mergeConfiguredModels([]ModelOption{{ID: "deepseek-flash", Name: "DeepSeek Flash"}}, env.Models)
+		for i := range models {
+			// Harness has its own effort vocabulary; do not use Codex's levels.
+			models[i].ReasoningLevels = []string{"off", "low", "high", "max"}
+			if !validEngineReasoning(engine, models[i].DefaultReasoning) {
+				models[i].DefaultReasoning = ""
+			}
+		}
+		return ModelList{Source: "DeepSeek Harness SDK 模型", Message: "模型 ID 通过 SDK 传给此环境配置的 provider；可添加自定义模型 ID，实际可用性以 provider 为准。", Models: models}, nil
+	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")
 	}
@@ -143,12 +169,15 @@ func checkEngine(c Config, engine string) (string, error) {
 	if engine == "codex" {
 		return checkEnvironment(c)
 	}
+	if engine == "deepseek-harness" {
+		return checkHarness(c)
+	}
 	if engine != "claude" {
 		return "", errors.New("AI 工具无效")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := command(c, c.Claude, "auth", "status", "--text")
+	cmd := engineCheckCommand(c, c.Claude, "auth", "status", "--text")
 	bounded := commandWithContext(ctx, cmd)
 	hideCommand(bounded)
 	b, err := bounded.CombinedOutput()

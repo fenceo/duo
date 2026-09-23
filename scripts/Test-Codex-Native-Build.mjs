@@ -37,12 +37,24 @@ try{
  assert.equal(catalog.modes.find(m=>m.id==='work').approval,'request');
  assert.equal(catalog.modes.find(m=>m.id==='codex:auto').approval,'auto');
  assert.equal(catalog.modes.find(m=>m.id==='plan').permission,'read');
+ assert.equal(catalog.modes.find(m=>m.id==='harness:read').allow_network,true);
+ const headers={Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base};
+ const engines=await fetch(base+'/api/engines',{headers}).then(r=>r.json());
+ assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'sdk_jsonrpc');
+ const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
+ assert.equal((await createHarness('plan')).status,400,'Harness must not promise network isolation');
+ const created=await createHarness('harness:read');assert.equal(created.status,201);
+ const {task}=await created.json();assert.equal(task.engine,'deepseek-harness');
+ assert.equal((await fetch(base+'/api/tasks/'+task.id,{method:'PATCH',headers,body:JSON.stringify({model:'other-model'})})).status,409,'SDK task model is immutable');
  const noCSRF=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(noCSRF.status,403);
  const expired=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(expired.status,409);
- const source=await fetch(base+'/app.js').then(r=>r.text());
+ const html=await fetch(base+'/').then(r=>r.text());
+ const asset=html.match(/<script type="module" src="([^"]+)"/)[1];
+ const source=await fetch(base+asset).then(r=>r.text());
  assert.ok(source.includes('renderCodexApprovals'),'built assets include approvals');
+ assert.ok(source.includes('setting-harness-provider'),'served entrypoint includes Harness configuration');
  console.log('PASS: isolated executable starts; login/CSRF, native mode catalog, stale approval rejection and embedded approval UI verified. No model turn sent.');
 }finally{
  child.stdin.end();

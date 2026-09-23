@@ -153,3 +153,27 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .task-item-menu button{display:block;width:100%;border:0;border-radius:5px;text-align:left;padding:8px 10px;margin:0;font-size:12px;background:transparent;color:var(--ink)}
 .task-item-menu button:hover{background:var(--raised)}
 .task-item-menu button.danger{color:#ffad9f}
+
+/* Keep narrow task/sidebar panels readable without constraining their resizers. */
+.sidebar,.task-list,.workspace-group,.workspace-tasks,.task-row{min-width:0}
+.task-list{overflow-x:hidden}
+.workspace-tasks{grid-template-columns:minmax(0,1fr);width:100%}
+.task-row>.task{flex:1 1 0%;width:auto;max-width:100%}
+.task-list .task strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-heading .folder-arrow{flex:none}
+.workspace-heading .folder-name{flex:1;min-width:0;max-width:none}
+.workspace-heading small{flex:0 1 auto;min-width:0;max-width:45%}
+.task-list .task-state{max-width:38%;overflow:hidden;text-overflow:ellipsis}
+
+/* The title/count/actions occupy one row; filters get their own shrinkable row.
+   Explicit placement also accommodates the dock grip inserted by layout.ts. */
+.sticky-board{min-width:0}
+.sticky-board>header{display:grid;grid-template-columns:16px minmax(0,1fr) minmax(0,1fr) auto;align-items:center;gap:6px;flex:none;min-width:0}
+.sticky-board>header>.dock-grip{grid-column:1;grid-row:1}
+.sticky-board>header>strong{grid-column:2;grid-row:1;white-space:nowrap}
+#sticky-count{grid-column:3;grid-row:1;min-width:0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sticky-new{grid-column:4;grid-row:1;white-space:nowrap}
+.sticky-board>header select{width:100%;min-width:0;max-width:100%;margin-left:0;white-space:nowrap;text-overflow:ellipsis}
+#sticky-filter{grid-column:1 / 3;grid-row:2}
+#sticky-scope{grid-column:3 / 5;grid-row:2}
+.sticky-list{min-width:0;min-height:0}

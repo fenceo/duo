@@ -76,8 +76,16 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 	if !validEngineReasoning(engine, reasoning) {
 		return Task{}, errors.New("此 AI 工具不支持所选推理强度")
 	}
-	if engine == "claude" && mode != nil && mode.Approval == "auto" {
-		return Task{}, errors.New("原生自动审批仅支持 Codex，请为 Claude Code 选择其它工作模式")
+	if engine != "codex" && mode != nil && mode.Approval == "auto" {
+		return Task{}, errors.New("原生自动风险评审目前仅支持 Codex，请为当前引擎选择其它工作模式")
+	}
+	if mode != nil && mode.ID == "harness:read" && engine != "deepseek-harness" {
+		return Task{}, errors.New("只读·可联网模式仅适用于 Harness")
+	}
+	if engine == "deepseek-harness" {
+		if _, err := harnessPolicy(Task{Mode: mode, Workspace: workspace}); err != nil {
+			return Task{}, err
+		}
 	}
 	workspace = strings.TrimSpace(workspace)
 	valid := strings.HasPrefix(workspace, "/")
@@ -163,8 +171,29 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if kind == "knowledge" {
 		mode = WorkMode{ID: "plan", Name: "只读总结", Permission: "read", Approval: "never", AllowNetwork: boolPtr(false)}
 	}
-	if task.Engine == "claude" && mode.Approval == "auto" {
-		return Run{}, errors.New("原生自动审批仅支持 Codex，请为 Claude Code 选择其它工作模式")
+	if task.Engine != "codex" && mode.Approval == "auto" {
+		return Run{}, errors.New("原生自动风险评审目前仅支持 Codex，请为当前引擎选择其它工作模式")
+	}
+	if mode.ID == "harness:read" && task.Engine != "deepseek-harness" {
+		return Run{}, errors.New("只读·可联网模式仅适用于 Harness")
+	}
+	if task.Engine == "deepseek-harness" {
+		if kind == "knowledge" {
+			return Run{}, errors.New("Harness 暂不支持独立的只读知识总结，请使用 Codex；仍可手动编辑笔记")
+		}
+		if len(options.AttachmentIDs) > 0 {
+			return Run{}, errors.New("Harness 当前暂不支持附件，请发送文字或选择其它引擎")
+		}
+		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {
+			return Run{}, err
+		}
+		if task.Session != "" && task.Mode != nil {
+			previous, _ := json.Marshal(task.Mode)
+			next, _ := json.Marshal(mode)
+			if string(previous) != string(next) {
+				return Run{}, errors.New("Harness 运行会话不能切换权限，请新建任务")
+			}
+		}
 	}
 	attachments, e := a.store.messageAttachments(id, options.AttachmentIDs)
 	if e != nil {
@@ -341,14 +370,20 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 func (a *App) stop(id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, e := a.store.task(id); e != nil {
+	task, e := a.store.task(id)
+	if e != nil {
 		return e
 	}
-	_, e := a.store.Exec("UPDATE runs SET status='interrupted',error='已取消排队',finished=? WHERE task_id=? AND status='queued'", now(), id)
+	_, e = a.store.Exec("UPDATE runs SET status='interrupted',error='已取消排队',finished=? WHERE task_id=? AND status='queued'", now(), id)
 	if w := a.workers[id]; w != nil {
 		w.stopping = true
 		w.cancel()
 	} else {
+		if task.Engine == "deepseek-harness" {
+			if err := closeIdleHarnessSession(task.Session); err != nil {
+				return err
+			}
+		}
 		_, _ = a.store.Exec("UPDATE tasks SET status='interrupted' WHERE id=?", id)
 	}
 	a.changed()
@@ -384,6 +419,7 @@ func (a *App) close() {
 		a.feishu.shutdown()
 	}
 	a.wg.Wait()
+	closeHarnessRuntimes()
 }
 func (a *App) bind(chat, id string) error {
 	task, e := a.store.task(id)

@@ -42,12 +42,13 @@ func builtinModes() []WorkMode {
 		// existing custom modes (including a mode named "auto").
 		{ID: "codex:auto", Name: "Codex 自动审批", Permission: "workspace", Approval: "auto", Builtin: true, AllowNetwork: boolPtr(true)},
 		{ID: "plan", Name: "只读分析", Permission: "read", Approval: "never", Builtin: true, AllowNetwork: boolPtr(false)},
+		{ID: "harness:read", Name: "只读·可联网", Permission: "read", Approval: "never", Builtin: true, AllowNetwork: boolPtr(true)},
 		{ID: "full", Name: "完全访问", Permission: "full", Approval: "never", Builtin: true, AllowNetwork: boolPtr(true)},
 	}
 }
 func boolPtr(v bool) *bool { return &v }
 func isBuiltinMode(id string) bool {
-	return id == "work" || id == "codex:auto" || id == "plan" || id == "full"
+	return id == "work" || id == "codex:auto" || id == "plan" || id == "harness:read" || id == "full"
 }
 func (s *Store) catalog() WorkCatalog {
 	var c WorkCatalog
@@ -62,7 +63,7 @@ func validateCatalog(c *WorkCatalog) error {
 	if len(c.Modes) > 20 || len(c.Commands) > 40 {
 		return errors.New("最多 20 个自定义模式和 40 个指令")
 	}
-	seen := map[string]bool{"work": true, "codex:auto": true, "plan": true, "full": true}
+	seen := map[string]bool{"work": true, "codex:auto": true, "plan": true, "harness:read": true, "full": true}
 	for i := range c.Modes {
 		m := &c.Modes[i]
 		m.Name = strings.TrimSpace(m.Name)
@@ -144,8 +145,20 @@ func parseUsage(engine string, raw json.RawMessage) *RunUsage {
 		return nil
 	}
 	fields := map[string]int64{}
+	harnessKeys := map[string]string{
+		"input_tokens": "inputTokens", "output_tokens": "outputTokens",
+		"cache_read_input_tokens": "cacheReadTokens", "cache_creation_input_tokens": "cacheWriteTokens",
+	}
 	for _, key := range []string{"input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
-		if value, ok := values[key]; ok {
+		wireKey := key
+		if engine == "deepseek-harness" {
+			var supported bool
+			wireKey, supported = harnessKeys[key]
+			if !supported {
+				continue
+			}
+		}
+		if value, ok := values[wireKey]; ok {
 			var n int64
 			if string(value) == "null" || json.Unmarshal(value, &n) != nil {
 				return nil
@@ -159,7 +172,9 @@ func parseUsage(engine string, raw json.RawMessage) *RunUsage {
 		return nil
 	}
 	u := &RunUsage{Input: in, Output: out}
-	if engine == "claude" {
+	if engine == "claude" || engine == "deepseek-harness" {
+		// Harness TokenUsage uses disjoint uncached input, cache reads,
+		// cache writes and output. Reasoning is already part of output.
 		u.Cached = fields["cache_read_input_tokens"]
 		u.CacheWrite = fields["cache_creation_input_tokens"]
 		u.Total = in + out + u.Cached + u.CacheWrite

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -155,22 +157,34 @@ func probeOneModel(parent context.Context, c Config, engine, workspace, model st
 	return ModelProbeResult{Model: model, Status: "unavailable", Message: publicProbeError(err), DurationMS: duration}
 }
 
+var unsupportedProbeModel = regexp.MustCompile("(?i)\\b(?:model_not_found|unsupported_model|invalid_model|model_not_supported)\\b|\\b(?:unsupported|unknown) model\\b|\\binvalid model (?:id|name)\\b|\\bmodel(?:\\s+['\"`][^'\"`\\r\\n]{1,120}['\"`])?\\s+(?:is\\s+)?(?:not found|not supported|does not exist)\\b")
+
 func publicProbeError(err error) string {
 	if err == nil {
 		return "调用失败"
 	}
 	message := strings.ToLower(err.Error())
+	var executableError *exec.Error
 	switch {
+	case strings.Contains(message, "missing_credential"), strings.Contains(message, "missing credential"),
+		strings.Contains(message, "missing api key"), strings.Contains(message, "no api key"),
+		strings.Contains(message, "api key not found"), strings.Contains(message, "api key is not set"),
+		strings.Contains(message, "缺少凭据"):
+		return "缺少 AI 凭据，请在对应执行环境配置该引擎的原生凭据后重试"
+	case isHarnessUnsupportedReasoning(message):
+		return harnessUnsupportedReasoningMessage
 	case strings.Contains(message, "401"), strings.Contains(message, "403"),
 		strings.Contains(message, "auth"), strings.Contains(message, "login"),
-		strings.Contains(message, "permission"), strings.Contains(message, "unauthorized"):
+		strings.Contains(message, "permission"), strings.Contains(message, "unauthorized"),
+		strings.Contains(message, "invalid api key"), strings.Contains(message, "invalid_api_key"),
+		strings.Contains(message, "invalid credential"):
 		return "认证或访问权限被拒绝"
-	case strings.Contains(message, "not found"), strings.Contains(message, "找不到"),
-		strings.Contains(message, "executable"), strings.Contains(message, "cannot start"):
-		return "找不到 AI 工具程序"
-	case strings.Contains(message, "model"), strings.Contains(message, "unsupported"),
-		strings.Contains(message, "invalid"):
+	case unsupportedProbeModel.MatchString(message):
 		return "模型不受当前服务支持"
+	case errors.As(err, &executableError), strings.Contains(message, "executable file not found"),
+		strings.Contains(message, "cannot find executable"), strings.Contains(message, "找不到 harness 程序"),
+		strings.Contains(message, "找不到 ai 工具程序"):
+		return "找不到 AI 工具程序"
 	default:
 		return "调用失败，请检查该环境的登录状态和网络配置"
 	}

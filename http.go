@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/app.js web/app.optimized.js web/style.css web/workbench.css web/vendor
+//go:embed web/index.html web/app.optimized.js web/style.css web/workbench.css web/vendor
 var assets embed.FS
 
 type attempts struct {
@@ -179,6 +179,10 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, "没有需要修改的内容")
 			return
 		}
+		if task.Engine == "deepseek-harness" && (v.Model != nil || v.ReasoningEffort != nil) {
+			fail(w, 409, "Harness 任务的模型和推理配置固定，请新建任务")
+			return
+		}
 		if v.Title != nil {
 			title := strings.TrimSpace(*v.Title)
 			if title == "" || len([]rune(title)) > 180 {
@@ -329,7 +333,9 @@ func (s *Server) Handler() http.Handler {
 		defer s.modelProbeMu.Unlock()
 		ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
 		defer cancel()
-		result, e := probeModels(ctx, runtimeConfig(c, env), env, v.Engine, v.Workspace, v.Models)
+		runtime := runtimeConfig(c, env)
+		runtime.EngineEnv = s.app.activeEngineEnvironment(Task{Engine: v.Engine, Environment: &env})
+		result, e := probeModels(ctx, runtime, env, v.Engine, v.Workspace, v.Models)
 		if e != nil {
 			fail(w, 400, e.Error())
 			return
@@ -358,7 +364,12 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, "AI 工具无效")
 			return
 		}
-		output, e := checkEngine(runtimeConfig(c, env), v.Engine)
+		runtime := runtimeConfig(c, env)
+		runtime.EngineEnv = s.app.activeEngineEnvironment(Task{Engine: v.Engine, Environment: &env})
+		output, e := checkEngine(runtime, v.Engine)
+		if e != nil && output == "" {
+			output = e.Error()
+		}
 		jsonOut(w, 200, map[string]any{"ok": e == nil, "output": output})
 	}))
 	m.HandleFunc("POST /api/feishu/pair", s.secure(func(w http.ResponseWriter, r *http.Request) {

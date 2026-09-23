@@ -196,6 +196,9 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 	if t.Engine == "" || t.Engine == "codex" {
 		return runCodexAppServer(ctx, c, t, input, emit)
 	}
+	if t.Engine == "deepseek-harness" {
+		return runHarnessSDK(ctx, c, t, input, emit)
+	}
 	cmd, commandErr := engineCommand(c, t)
 	if commandErr != nil {
 		return t.Session, "", commandErr
@@ -420,10 +423,19 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 	}
 	return session, result, nil
 }
+func engineCheckCommand(c Config, args ...string) *exec.Cmd {
+	if c.Distro != "" || c.SSHHost != "" {
+		return command(c, withEngineEnv(args, c.EngineEnv)...)
+	}
+	cmd := command(c, args...)
+	applyEngineEnv(cmd, c.EngineEnv)
+	return cmd
+}
+
 func checkEnvironment(c Config) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := command(c, c.Codex, "login", "status")
+	cmd := engineCheckCommand(c, c.Codex, "login", "status")
 	bounded := commandWithContext(ctx, cmd)
 	hideCommand(bounded)
 	b, e := bounded.CombinedOutput()
