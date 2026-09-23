@@ -72,16 +72,10 @@ try {
     New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
     & npm.cmd run check
     if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed' }
-    & node scripts/Test-Hardware-Web.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Hardware web tests failed' }
-    & node scripts/Test-Conversation-Web.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Conversation web tests failed' }
-    & node scripts/Test-Workspace-Web.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Workspace web tests failed' }
-    & node scripts/Test-Workbench-Web.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Workbench web tests failed' }
-    & node scripts/Test-Updates-Web.mjs
-    if ($LASTEXITCODE -ne 0) { throw 'Update web tests failed' }
+    foreach ($test in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '.') -Filter 'Test-*-Web.mjs' -File | Sort-Object Name) {
+        & node $test.FullName
+        if ($LASTEXITCODE -ne 0) { throw ('Web regression failed: ' + $test.Name) }
+    }
     & node scripts/build.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Web build failed' }
     & $Go test ./... -count=1

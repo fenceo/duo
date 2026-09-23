@@ -11,6 +11,8 @@ try {
     if(!(Test-Path -LiteralPath $Notes)){throw 'Release notes are required'}
     $status=& git status --porcelain
     if($LASTEXITCODE -ne 0 -or $status){throw 'Commit source changes before publishing'}
+    $sourceHead=& git rev-parse HEAD
+    if($LASTEXITCODE -ne 0){throw 'Cannot resolve source commit'}
     $repoJSON=& $GitHubCLI repo view --json nameWithOwner,isPrivate
     if($LASTEXITCODE -ne 0){throw 'GitHub authentication or repository lookup failed'}
     $repo=$repoJSON | ConvertFrom-Json
@@ -21,7 +23,15 @@ try {
     if($LASTEXITCODE -eq 0){throw 'Release already exists; use a new version instead of overwriting'}
     & scripts/Build-Portable.ps1 -Go $Go
     if($LASTEXITCODE -ne 0){throw 'Build failed'}
+    $builtStatus=& git status --porcelain
+    if($LASTEXITCODE -ne 0 -or $builtStatus){throw 'Build changed source or generated assets; review and commit them before publishing'}
+    $service=Join-Path $root 'dist\Jianzuo-portable-windows-x64\jianzuo-service.exe'
+    $serviceVersion=& $service --version
+    if($LASTEXITCODE -ne 0 -or $serviceVersion.Trim() -ne ($package.version+'-portable')){throw 'Packaged service version differs from release version'}
+    & node scripts/Test-Codex-Native-Build.mjs $service
+    if($LASTEXITCODE -ne 0){throw 'Packaged HTTP acceptance failed; no release created'}
     $head=& git rev-parse HEAD
+    if($LASTEXITCODE -ne 0 -or $head -ne $sourceHead){throw 'Source commit changed during build; retry from a stable checkout'}
     $branch=& git branch --show-current
     if(!$branch){throw 'A named branch is required'}
     & git push origin $branch
@@ -41,5 +51,11 @@ try {
     foreach($path in @($zip,($zip+'.sha256'),$installer,($installer+'.sha256'))){$file=Get-Item -LiteralPath $path;$asset=@($release.assets | Where-Object name -EQ $file.Name);if($asset.Count -ne 1 -or $asset[0].size -ne $file.Length){throw 'Uploaded asset size mismatch; draft left unpublished'}}
     & $GitHubCLI release edit $tag --repo $repo.nameWithOwner --draft=false --latest
     if($LASTEXITCODE -ne 0){throw 'Publish failed; draft remains available'}
-    & $GitHubCLI release view $tag --repo $repo.nameWithOwner --json url,tagName,isDraft
+    $publishedJSON=& $GitHubCLI release view $tag --repo $repo.nameWithOwner --json url,tagName,isDraft,isPrerelease
+    if($LASTEXITCODE -ne 0){throw 'Cannot verify published release'}
+    $published=$publishedJSON | ConvertFrom-Json
+    if($published.isDraft -or $published.isPrerelease -or $published.tagName -ne $tag){throw 'Release is not a stable published version'}
+    $latest=& $GitHubCLI api ('repos/'+$repo.nameWithOwner+'/releases/latest') --jq .tag_name
+    if($LASTEXITCODE -ne 0 -or $latest -ne $tag){throw 'Release was published but latest-version verification failed'}
+    $publishedJSON
 } finally { Pop-Location }

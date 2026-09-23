@@ -27,6 +27,7 @@ static class Program
     const string UninstallerName = "卸载简作.exe";
     const string NoticesName = "THIRD-PARTY-NOTICES.txt";
     const string InstructionsName = "使用说明.md";
+    const string InstallMarkerName = ".jianzuo-install";
 
     static readonly string[] PayloadFiles =
     {
@@ -38,6 +39,7 @@ static class Program
 
     static readonly HashSet<string> PayloadFileSet =
         new HashSet<string>(PayloadFiles, StringComparer.OrdinalIgnoreCase);
+    static readonly string[] InstallationFiles = PayloadFiles.Concat(new[] { UninstallerName, InstallMarkerName }).ToArray();
 
     [STAThread]
     static int Main(string[] args)
@@ -231,6 +233,69 @@ static class Program
             string.Equals(TrimDirectory(value), TrimDirectory(root), StringComparison.OrdinalIgnoreCase);
     }
 
+    static bool SamePath(string first, string second)
+    {
+        try { return !string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second) &&
+            string.Equals(NormalizeDirectory(first), NormalizeDirectory(second), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
+    }
+
+    static void RejectReparsePath(string path)
+    {
+        for (DirectoryInfo directory = new DirectoryInfo(Path.GetFullPath(path)); directory != null; directory = directory.Parent)
+        {
+            if (directory.Exists && (directory.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new Exception("安装目录不能包含符号链接或目录联接。");
+        }
+    }
+
+    static string InstallMarker(string installDir)
+    {
+        return "Jianzuo installer ownership v1\n" + NormalizeDirectory(installDir);
+    }
+
+    static bool RegistryOwned(string keyName, string pathName, string installDir)
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyName))
+            return key != null && SamePath(Convert.ToString(key.GetValue(pathName)), installDir);
+    }
+
+    static bool OwnedInstallation(string installDir)
+    {
+        string marker = Path.Combine(installDir, InstallMarkerName);
+        if (File.Exists(marker))
+            return (File.GetAttributes(marker) & FileAttributes.ReparsePoint) == 0 &&
+                string.Equals(File.ReadAllText(marker, Encoding.UTF8), InstallMarker(installDir), StringComparison.OrdinalIgnoreCase);
+        // Preserve upgrades from releases predating the local ownership marker.
+        return RegistryOwned(SettingsKey, "InstallDir", installDir) &&
+            RegistryOwned(UninstallKey, "InstallLocation", installDir) &&
+            File.Exists(Path.Combine(installDir, UninstallerName));
+    }
+
+    static bool OwnedExecutable(string installDir, string executable)
+    {
+        return new[] { LauncherName, ServiceName, UninstallerName }.Any(name => SamePath(Path.Combine(installDir, name), executable));
+    }
+
+    static void ValidateInstallDestination(string installDir)
+    {
+        RejectReparsePath(installDir);
+        bool owned = OwnedInstallation(installDir);
+        foreach (string name in InstallationFiles)
+        {
+            string path = Path.Combine(installDir, name);
+            if (Directory.Exists(path) || (File.Exists(path) && (!owned || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)))
+                throw new Exception("安装目录中存在非本安装所有的同名文件，请选择专用目录：" + path);
+        }
+    }
+
+    static void ValidateRegistryOwner(string keyName, string pathName, string installDir)
+    {
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyName))
+            if (key != null && !SamePath(Convert.ToString(key.GetValue(pathName)), installDir))
+                throw new Exception("已有另一个安装目录注册了简作，请先卸载原安装或继续使用原目录。");
+    }
+
     static bool PathWithin(string root, string candidate)
     {
         string relative = RelativePath(root, candidate);
@@ -347,6 +412,13 @@ static class Program
     static void Install(Options options, bool quiet)
     {
         ValidateOptions(options);
+        ValidateInstallDestination(options.InstallDir);
+        if (options.WriteRegistry)
+        {
+            ValidateRegistryOwner(SettingsKey, "InstallDir", options.InstallDir);
+            ValidateRegistryOwner(UninstallKey, "InstallLocation", options.InstallDir);
+        }
+        if (options.EnableStartup) ValidateStartupOwner(options.InstallDir);
         string version = ReadVersion();
         string temp = NewTempDirectory();
         string backup = Path.Combine(options.InstallDir, ".setup-backup-" + Guid.NewGuid().ToString("N"));
@@ -358,7 +430,7 @@ static class Program
             Directory.CreateDirectory(options.DataDir);
 
             StopInstalledProcesses(options.InstallDir);
-            StopOwnedTask(options.InstallDir, true);
+            if (options.EnableStartup) StopOwnedTask(options.InstallDir);
             PrepareBackup(options.InstallDir, backup);
             try
             {
@@ -367,6 +439,7 @@ static class Program
                     File.Copy(Path.Combine(temp, name), Path.Combine(options.InstallDir, name), true);
                 }
                 File.Copy(Application.ExecutablePath, Path.Combine(options.InstallDir, UninstallerName), true);
+                File.WriteAllText(Path.Combine(options.InstallDir, InstallMarkerName), InstallMarker(options.InstallDir), new UTF8Encoding(false));
             }
             catch
             {
@@ -384,11 +457,7 @@ static class Program
             {
                 RegisterStartupTask(options, launcher);
             }
-            else
-            {
-                StopOwnedTask(options.InstallDir, true);
-            }
-            DeleteLegacyRunEntry();
+            if (options.EnableStartup && options.WriteRegistry) DeleteLegacyRunEntry(options.InstallDir);
             if (options.WriteRegistry)
             {
                 SaveInstallation(options, version, launcher, uninstaller);
@@ -425,7 +494,7 @@ static class Program
     {
         TryDeleteDirectory(backup);
         Directory.CreateDirectory(backup);
-        foreach (string name in PayloadFiles.Concat(new[] { UninstallerName }))
+        foreach (string name in InstallationFiles)
         {
             string source = Path.Combine(installDir, name);
             if (File.Exists(source))
@@ -441,7 +510,7 @@ static class Program
         {
             return;
         }
-        foreach (string name in PayloadFiles.Concat(new[] { UninstallerName }))
+        foreach (string name in InstallationFiles)
         {
             string saved = Path.Combine(backup, name);
             string destination = Path.Combine(installDir, name);
@@ -533,14 +602,12 @@ static class Program
                 options.InstallDir,
                 launcher);
         }
-        else
-        {
-            TryDeleteFile(Path.Combine(desktop, ProductName + ".lnk"));
-        }
     }
 
     static void CreateShortcut(string path, string target, string arguments, string workingDirectory, string icon)
     {
+        if (File.Exists(path) && !ShortcutOwned(path, workingDirectory))
+            throw new Exception("已有快捷方式指向另一个目录，不会覆盖：" + path);
         Directory.CreateDirectory(Path.GetDirectoryName(path));
         Type shellType = Type.GetTypeFromProgID("WScript.Shell");
         if (shellType == null)
@@ -565,6 +632,28 @@ static class Program
         }
     }
 
+    static bool ShortcutOwned(string path, string installDir)
+    {
+        if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+        object shell = null, shortcut = null;
+        try
+        {
+            Type type = Type.GetTypeFromProgID("WScript.Shell");
+            if (type == null) return false;
+            shell = Activator.CreateInstance(type);
+            shortcut = Invoke(shell, "CreateShortcut", path);
+            return OwnedExecutable(installDir, Convert.ToString(Get(shortcut, "TargetPath")));
+        }
+        catch { return false; }
+        finally { Release(shortcut); Release(shell); }
+    }
+
+    static void RemoveOwnedRegistry(string keyName, string pathName, string installDir)
+    {
+        if (RegistryOwned(keyName, pathName, installDir))
+            Registry.CurrentUser.DeleteSubKeyTree(keyName, false);
+    }
+
     static void Uninstall(Options options, bool quiet)
     {
         string installDir;
@@ -584,30 +673,20 @@ static class Program
         {
             throw new Exception("拒绝卸载文件系统根目录。");
         }
-
+        RejectReparsePath(installDir);
+        if (!OwnedInstallation(installDir)) throw new Exception("无法确认安装目录属于简作，拒绝删除。");
         StopInstalledProcesses(installDir);
-        StopOwnedTask(installDir, true);
-        RemoveShortcuts(installDir);
-        try
+        if (options.EnableStartup) StopOwnedTask(installDir);
+        if (options.CreateShortcuts) RemoveShortcuts(installDir, options.CreateDesktopShortcut);
+        // Migrate a verified legacy install before removing its registry ownership evidence.
+        File.WriteAllText(Path.Combine(installDir, InstallMarkerName), InstallMarker(installDir), new UTF8Encoding(false));
+        if (options.WriteRegistry)
         {
-            Registry.CurrentUser.DeleteSubKeyTree(SettingsKey, false);
+            RemoveOwnedRegistry(SettingsKey, "InstallDir", installDir);
+            RemoveOwnedRegistry(UninstallKey, "InstallLocation", installDir);
+            if (options.EnableStartup) DeleteLegacyRunEntry(installDir);
         }
-        catch
-        {
-        }
-        try
-        {
-            Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false);
-        }
-        catch
-        {
-        }
-
-        string executable = Application.ExecutablePath;
-        if (PathWithin(installDir, executable))
-        {
-            ScheduleDirectoryRemoval(installDir);
-        }
+        ScheduleOwnedFileRemoval(installDir);
         if (!quiet)
         {
             MessageBox.Show(
@@ -617,18 +696,48 @@ static class Program
         }
     }
 
-    static void RemoveShortcuts(string installDir)
+    static void RemoveShortcuts(string installDir, bool desktopShortcut)
     {
         string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-        TryDeleteDirectory(Path.Combine(programs, ProductName));
+        string group = Path.Combine(programs, ProductName);
+        foreach (string name in new[] { ProductName + ".lnk", "卸载 " + ProductName + ".lnk" })
+        {
+            string path = Path.Combine(group, name);
+            if (ShortcutOwned(path, installDir)) TryDeleteFile(path);
+        }
+        TryDeleteEmptyDirectory(group);
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        TryDeleteFile(Path.Combine(desktop, ProductName + ".lnk"));
+        string desktopLink = Path.Combine(desktop, ProductName + ".lnk");
+        if (desktopShortcut && ShortcutOwned(desktopLink, installDir)) TryDeleteFile(desktopLink);
     }
 
-    static void ScheduleDirectoryRemoval(string directory)
+    static string PowerShellLiteral(string value) { return "'" + value.Replace("'", "''") + "'"; }
+
+    static string OwnedFileRemovalScript(string directory, int parentProcessId)
     {
-        string command = "/d /c ping 127.0.0.1 -n 3 >nul & rmdir /s /q " + Quote(directory);
-        ProcessStartInfo info = new ProcessStartInfo("cmd.exe", command)
+        // No cmd quoting, globs or recursive removal: user files in a shared directory survive.
+        return "$ErrorActionPreference='Stop'; Wait-Process -Id " + parentProcessId +
+            " -ErrorAction SilentlyContinue; $target=" + PowerShellLiteral(directory) + "; " +
+            "$marker=Join-Path $target " + PowerShellLiteral(InstallMarkerName) + "; " +
+            "if (!(Test-Path -LiteralPath $marker -PathType Leaf)) { exit 1 }; " +
+            "if (((Get-Item -LiteralPath $marker -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 }; " +
+            "if ([IO.File]::ReadAllText($marker) -cne " + PowerShellLiteral(InstallMarker(directory)) + ") { exit 1 }; " +
+            "$dir=Get-Item -LiteralPath $target; for($p=$dir; $null -ne $p; $p=$p.Parent) { " +
+            "if (($p.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 } }; " +
+            "$names=@(" + string.Join(",", InstallationFiles.Select(PowerShellLiteral)) + "); " +
+            "foreach($name in $names) { $path=Join-Path $target $name; " +
+            "if (Test-Path -LiteralPath $path) { $item=Get-Item -LiteralPath $path -Force; " +
+            "if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { exit 1 }; " +
+            "Remove-Item -LiteralPath $path -Force } }; " +
+            "if (@(Get-ChildItem -LiteralPath $target -Force).Count -eq 0) { [IO.Directory]::Delete($target, $false) }";
+    }
+
+    static void ScheduleOwnedFileRemoval(string directory)
+    {
+        string script = OwnedFileRemovalScript(directory, Process.GetCurrentProcess().Id);
+        string executable = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        string command = "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        ProcessStartInfo info = new ProcessStartInfo(executable, command)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -656,7 +765,7 @@ static class Program
                 try
                 {
                     string path = process.MainModule.FileName;
-                    if (!PathWithin(installDir, path))
+                    if (!OwnedExecutable(installDir, path))
                     {
                         continue;
                     }
@@ -683,6 +792,7 @@ static class Program
 
     static void RegisterStartupTask(Options options, string launcher)
     {
+        ValidateStartupOwner(options.InstallDir);
         string identity = WindowsIdentity.GetCurrent().Name;
         string arguments = "--data " + Quote(options.DataDir) + " --background";
         object service = null;
@@ -731,7 +841,34 @@ static class Program
         }
     }
 
-    static void StopOwnedTask(string installDir, bool removeAnyJianzuo)
+    static void ValidateStartupOwner(string installDir)
+    {
+        object service = null, root = null, task = null;
+        try
+        {
+            Type type = Type.GetTypeFromProgID("Schedule.Service");
+            if (type == null) throw new Exception("当前系统没有 Windows 任务计划服务。");
+            service = Activator.CreateInstance(type); Invoke(service, "Connect");
+            root = Invoke(service, "GetFolder", "\\");
+            try { task = Invoke(root, "GetTask", TaskName); }
+            catch (Exception error)
+            {
+                if (IsMissingTaskError(error)) return;
+                throw;
+            }
+            if (!OwnedExecutable(installDir, TaskExecutable(task)) || !IsJianzuoTask(task, TaskExecutable(task)))
+                throw new Exception("已有启动任务属于另一个安装，不会覆盖。请先卸载原安装或使用原目录。");
+        }
+        finally { Release(task); Release(root); Release(service); }
+    }
+
+    static bool IsMissingTaskError(Exception error)
+    {
+        while (error is TargetInvocationException && error.InnerException != null) error = error.InnerException;
+        return error != null && error.HResult == unchecked((int)0x80070002);
+    }
+
+    static void StopOwnedTask(string installDir)
     {
         object service = null;
         object root = null;
@@ -755,9 +892,9 @@ static class Program
                 return;
             }
             string executable = TaskExecutable(task);
-            bool ownedPath = !string.IsNullOrWhiteSpace(executable) && PathWithin(installDir, executable);
+            bool ownedPath = OwnedExecutable(installDir, executable);
             bool jianzuoTask = IsJianzuoTask(task, executable);
-            if (ownedPath || (removeAnyJianzuo && jianzuoTask))
+            if (ownedPath && jianzuoTask)
             {
                 try
                 {
@@ -874,7 +1011,7 @@ static class Program
         return end > start ? arguments.Substring(start, end - start) : "";
     }
 
-    static void DeleteLegacyRunEntry()
+    static void DeleteLegacyRunEntry(string installDir)
     {
         try
         {
@@ -882,7 +1019,10 @@ static class Program
             {
                 if (key != null)
                 {
-                    key.DeleteValue(LegacyRunName, false);
+                    string command = Convert.ToString(key.GetValue(LegacyRunName)).Trim();
+                    string executable = command.StartsWith("\"", StringComparison.Ordinal)
+                        ? command.Substring(1).Split('"')[0] : command.Split(' ')[0];
+                    if (OwnedExecutable(installDir, executable)) key.DeleteValue(LegacyRunName, false);
                 }
             }
         }
@@ -957,7 +1097,8 @@ static class Program
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) &&
+                (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
             {
                 File.Delete(path);
             }
@@ -969,16 +1110,26 @@ static class Program
 
     static void TryDeleteDirectory(string path)
     {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
         try
         {
-            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
-            {
-                Directory.Delete(path, true);
-            }
+            RejectReparsePath(path);
+            foreach (string name in InstallationFiles) TryDeleteFile(Path.Combine(path, name));
+            TryDeleteEmptyDirectory(path);
         }
         catch
         {
         }
+    }
+
+    static void TryDeleteEmptyDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0 &&
+                !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path, false);
+        }
+        catch { }
     }
 
     static string Quote(string value)

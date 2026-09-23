@@ -97,7 +97,7 @@ if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $setup -PathType Leaf)) {
     throw 'Installer build failed.'
 }
 
-$verify = Start-Process -FilePath $setup -ArgumentList '--verify' -Wait -PassThru
+$verify = Start-Process -FilePath $setup -ArgumentList '--verify' -WindowStyle Hidden -Wait -PassThru
 if ($verify.ExitCode -ne 0) {
     throw "Installer payload verification failed with exit code $($verify.ExitCode)."
 }
