@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -111,8 +112,7 @@ func startWindowsPTY(args []string, dir string) (*windowsPTY, error) {
 		return failure(err)
 	}
 	defer attrs.Delete()
-	// HPCON is an opaque pointer value, not the address of a HANDLE variable.
-	if err = attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(p.console), unsafe.Sizeof(p.console)); err != nil {
+	if err = setPseudoConsoleAttribute(attrs, p.console); err != nil {
 		return failure(err)
 	}
 	// Zero standard handles prevent inheriting the service's redirected pipes.
@@ -171,6 +171,25 @@ func startWindowsPTY(args []string, dir string) (*windowsPTY, error) {
 		close(p.output)
 	}()
 	return p, nil
+}
+
+// HPCON is an opaque Windows handle passed by value, unlike attributes that
+// point at Go data. Do not convert it to an unsafe.Pointer and retain it in the
+// x/sys attribute container's GC-visible pointers slice.
+// https://learn.microsoft.com/windows/console/creating-a-pseudoconsole-session
+func setPseudoConsoleAttribute(attrs *windows.ProcThreadAttributeListContainer, console windows.Handle) error {
+	result, _, err := windows.NewLazySystemDLL("kernel32.dll").NewProc("UpdateProcThreadAttribute").Call(
+		uintptr(unsafe.Pointer(attrs.List())), 0, windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+		uintptr(console), unsafe.Sizeof(console), 0, 0,
+	)
+	runtime.KeepAlive(attrs)
+	if result == 0 {
+		if err == windows.ERROR_SUCCESS {
+			err = windows.ERROR_GEN_FAILURE
+		}
+		return fmt.Errorf("UpdateProcThreadAttribute: %w", err)
+	}
+	return nil
 }
 
 func (p *windowsPTY) Write(b []byte) (int, error) { return p.in.Write(b) }

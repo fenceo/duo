@@ -64,6 +64,7 @@ function installHardware(){
  element('hardware-panel').querySelectorAll<HTMLButtonElement>('[data-hardware-key]').forEach(b=>b.onclick=()=>{const key=b.dataset.hardwareKey!;const data=key==='enter'?hardwareEnter():({tab:'\t',up:'\x1b[A',down:'\x1b[B','ctrl-c':'\x03',esc:'\x1b'} as Record<string,string>)[key];queueHardwareInput(new TextEncoder().encode(data));hardwareView?.term.focus()});
  clearInterval(hardwarePollTimer);hardwarePollTimer=setInterval(()=>void pollDevice(),100);
  clearInterval(hardwareOverviewTimer);hardwareOverviewTimer=setInterval(()=>{if(authenticated&&chosen&&!document.hidden&&!hardwareOverviewLoading&&!hardwareAISaving&&(toolsTab==='hardware'||element<HTMLDialogElement>('hardware-library-dialog')?.open))void loadDevices(true)},4000);
+ disposeWithShell(()=>{clearInterval(hardwarePollTimer);clearInterval(hardwareOverviewTimer)});
 }
 function hardwareEnter(){return ({cr:'\r',lf:'\n',crlf:'\r\n'} as Record<string,string>)[input('hardware-enter').value]||'\r'}
 function hardwareKeyEvent(e:KeyboardEvent,selected:string,enter:string,backspace:string,send:(bytes:Uint8Array)=>void){
@@ -84,7 +85,7 @@ function deviceFields(){const relay=input('device-kind').value==='relay';element
 async function refreshHardwarePorts(){
  const request=++hardwarePortsRequest;button('device-refresh-ports').disabled=true;
  try{const ports=await api<SerialPortInfo[]>('hardware/serial-ports');if(request!==hardwarePortsRequest)return;const current=input('device-portname').value;
-  input('device-serial-choice').innerHTML='<option value="">选择串口…</option>'+ports.map(p=>`<option value="${escapeHTML(p.name)}">${escapeHTML(p.name+' · '+(p.product||[p.vid,p.pid].filter(Boolean).join(':')||'串口')+(p.busy?'（简作内已占用）':''))}</option>`).join('')+'<option value="__manual__">手动填写 / 未检测到的端口…</option>';
+  input('device-serial-choice').innerHTML='<option value="">选择串口…</option>'+ports.map(p=>`<option value="${escapeHTML(p.name)}">${escapeHTML(p.name+' · '+(p.product||[p.vid,p.pid].filter(Boolean).join(':')||'串口')+(p.busy?'（Duo内已占用）':''))}</option>`).join('')+'<option value="__manual__">手动填写 / 未检测到的端口…</option>';
   input('device-serial-choice').value=ports.some(p=>p.name===current)?current:current||!ports.length?'__manual__':'';
   input('device-portname').classList.toggle('hidden',input('device-serial-choice').value!=='__manual__');
   element('device-ports').innerHTML=ports.map(p=>`<option value="${escapeHTML(p.name)}">${escapeHTML(p.product)}</option>`).join('');

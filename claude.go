@@ -141,9 +141,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	}
 	return cmd, nil
 }
-func modelsForEngine(ctx context.Context, env Environment, engine string) (ModelList, error) {
+func modelsForEngine(ctx context.Context, env Environment, engine string, profileEnv ...map[string]string) (ModelList, error) {
 	if engine == "" || engine == "codex" {
-		return modelsForEnvironment(ctx, env)
+		return modelsForEnvironment(ctx, env, profileEnv...)
 	}
 	if engine == "deepseek-harness" {
 		models := mergeConfiguredModels([]ModelOption{{ID: "deepseek-flash", Name: "DeepSeek Flash"}}, env.Models)
@@ -243,7 +243,7 @@ func (s *claudeStream) consume(line string, emit func(string, string)) {
 					if server.Status == "connected" {
 						emit("progress", "Claude 已连接任务硬件工具")
 					} else {
-						emit("error", "Claude 未连接任务硬件工具，请检查执行环境到简作的网络和 CLI 配置")
+						emit("error", "Claude 未连接任务硬件工具，请检查执行环境到Duo的网络和 CLI 配置")
 					}
 				}
 			}

@@ -76,6 +76,8 @@ globalThis.mayLeave=()=>true;
 globalThis.creatingTask=true;
 globalThis.createSubmitting=false;
 globalThis.modelRequest=0;
+globalThis.shellEpoch=0;
+globalThis.shellCurrent=epoch=>epoch===globalThis.shellEpoch;
 globalThis.button=()=>({disabled:false});
 globalThis.setCreateSubmitState=()=>{};
 globalThis.validateEngineAttachments=workflow.validateEngineAttachments;

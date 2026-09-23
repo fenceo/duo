@@ -102,7 +102,7 @@ function installModelPicker(){
   };
  }
  input('custom-model').oninput=()=>{invalidateModelTest();updateCreateModelLabel();updateReasoning()};
- document.addEventListener('click',e=>{const node=e.target as HTMLElement;for(const target of Object.keys(modelPickers) as ModelPickerTarget[])if(!node.closest('#'+modelPickers[target].root))closeModelMenu(target)});
+ listenWithShell(document,'click',e=>{const node=e.target as HTMLElement;for(const target of Object.keys(modelPickers) as ModelPickerTarget[])if(!node.closest('#'+modelPickers[target].root))closeModelMenu(target)});
 }
 async function toggleModelMenu(target:ModelPickerTarget){
  const ids=modelPickers[target];if(!element(ids.root))return;

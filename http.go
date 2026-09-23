@@ -87,6 +87,10 @@ func (s *Server) secure(next http.HandlerFunc) http.HandlerFunc {
 				fail(w, 403, "登录校验已失效，请刷新页面")
 				return
 			}
+			if s.app.updating.Load() {
+				fail(w, http.StatusConflict, errUpdateBusy.Error())
+				return
+			}
 		}
 		next(w, r)
 	}
@@ -108,7 +112,10 @@ func (s *Server) Handler() http.Handler {
 	s.codexApprovalRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/note/adopt", s.secure(s.adoptKnowledge))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		jsonOut(w, 200, map[string]string{"app": "jianzuo", "version": version})
+		// v0.18.x update helpers expect the historical -portable health version
+		// exactly. Keep this wire field while exposing the actual release version.
+		release := strings.TrimSuffix(version, "-portable")
+		jsonOut(w, 200, map[string]string{"app": "jianzuo", "product": "Duo", "version": release + "-portable", "release_version": release})
 	})
 	m.HandleFunc("GET /api/auth", func(w http.ResponseWriter, r *http.Request) {
 		_, csrf := s.identity(r)
@@ -298,7 +305,12 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 404, e.Error())
 			return
 		}
-		models, e := modelsForEngine(r.Context(), env, r.URL.Query().Get("engine"))
+		engine := r.URL.Query().Get("engine")
+		if engine == "" {
+			engine = "codex"
+		}
+		profileEnv := s.app.activeEngineEnvironment(Task{Engine: engine, Environment: &env})
+		models, e := modelsForEngine(r.Context(), env, engine, profileEnv)
 		if e != nil {
 			fail(w, 400, e.Error())
 			return
@@ -327,8 +339,15 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, e.Error())
 			return
 		}
-		s.modelProbeMu.Lock()
+		if !s.modelProbeMu.TryLock() {
+			fail(w, http.StatusConflict, "已有模型测试或更新正在进行，请稍后重试")
+			return
+		}
 		defer s.modelProbeMu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, http.StatusConflict, errUpdateBusy.Error())
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
 		defer cancel()
 		runtime := runtimeConfig(c, env)

@@ -64,7 +64,7 @@ func scanTargets(cidr string, ports []int, networks []LANNetwork) ([]netip.Addr,
 		}
 	}
 	if !allowed {
-		return nil, nil, errors.New("只能扫描简作所在电脑直接连接的局域网网段")
+		return nil, nil, errors.New("只能扫描Duo所在电脑直接连接的局域网网段")
 	}
 	if len(ports) == 0 {
 		ports = []int{22, 2222}

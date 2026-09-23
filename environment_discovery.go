@@ -147,7 +147,7 @@ func friendlyEnvironmentDiagnostic(env Environment, text string) string {
 		return text
 	}
 	if strings.Contains(text, "Wsl/Service/E_ACCESSDENIED") {
-		return text + "；Windows 当前启动进程没有访问 WSL 服务的权限，请从开始菜单、资源管理器或安装版的 Jianzuo User 任务启动简作"
+		return text + "；Windows 当前启动进程没有访问 WSL 服务的权限，请从开始菜单、资源管理器或安装版的启动入口打开 Duo"
 	}
 	return text
 }
@@ -265,7 +265,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		_, payload, ok := strings.Cut(out, "__JIANZUO_ENV__\n")
 		parts := strings.Split(strings.ReplaceAll(payload, "\r\n", "\n"), "\n")
 		if err != nil || !ok || len(parts) < 8 || !strings.HasPrefix(parts[1], "/") {
-			result.Message = "未完成 WSL 检测。请确认所选发行版和用户可用；当前进程可能位于 Codex/受限沙箱，请从资源管理器、开始菜单或普通快捷方式启动简作，再到高级设置手动配置。"
+			result.Message = "未完成 WSL 检测。请确认所选发行版和用户可用；当前进程可能位于 Codex/受限沙箱，请从资源管理器、开始菜单或普通快捷方式启动Duo，再到高级设置手动配置。"
 			result.Codex = detectedTool{State: "unknown", Label: "未完成检测"}
 			result.Claude = result.Codex
 			return result

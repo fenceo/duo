@@ -30,7 +30,7 @@ type EngineDefinition struct {
 // EngineCredentialProfile is a pointer to an environment-owned login/profile,
 // not a secret. Reference is a path or a native profile name and is never
 // returned with file contents. This lets Windows, WSL, and SSH keep credentials
-// in their own native stores while Jianzuo only switches the active reference.
+// in their own native stores while Duo only switches the active reference.
 type EngineCredentialProfile struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -74,7 +74,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "interrupt", "image_input"},
 			CredentialKinds:    []string{"native", "codex_home"},
-			InstallDescription: "请在目标环境安装并登录 Codex CLI；Jianzuo 不复制令牌。",
+			InstallDescription: "请在目标环境安装并登录 Codex CLI；Duo 不复制令牌。",
 			DocumentationURL:   "https://developers.openai.com/docs/app-server",
 		},
 		{
@@ -83,7 +83,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "mcp"},
 			CredentialKinds:    []string{"native", "claude_home"},
-			InstallDescription: "请在目标环境安装并登录 Claude Code；Jianzuo 不复制令牌。",
+			InstallDescription: "请在目标环境安装并登录 Claude Code；Duo 不复制令牌。",
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
@@ -187,6 +187,42 @@ func (s *Store) activateEngineProfile(environmentID, engine, profileID string) e
 		}
 	}
 	return errors.New("账号/API 配置不存在或不属于此环境")
+}
+
+var errEngineProfileNotFound = errors.New("账号/API 配置不存在")
+
+func (s *Store) removeEngineProfile(id string) error {
+	profiles := s.engineProfiles()
+	kept := make([]EngineCredentialProfile, 0, len(profiles))
+	var removed *EngineCredentialProfile
+	for _, profile := range profiles {
+		if profile.ID == id {
+			copy := profile
+			removed = &copy
+		} else {
+			kept = append(kept, profile)
+		}
+	}
+	if removed == nil {
+		return errEngineProfileNotFound
+	}
+	raw, err := json.Marshal(kept)
+	if err != nil {
+		return err
+	}
+	tx, err := s.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", engineProfilesSetting, string(raw)); err != nil {
+		return err
+	}
+	// Deleting an inactive profile must not switch a different active account.
+	if _, err = tx.Exec("DELETE FROM settings WHERE key=? AND value=?", engineProfileKey(removed.EnvironmentID, removed.Engine), removed.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func validateEngineProfile(profile EngineCredentialProfile, environments []Environment) error {
@@ -329,6 +365,12 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.app.mu.Lock()
+		defer s.app.mu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, http.StatusConflict, errUpdateBusy.Error())
+			return
+		}
 		profiles := s.app.store.engineProfiles()
 		for i := range profiles {
 			if profiles[i].ID == profile.ID {
@@ -353,6 +395,12 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 		jsonOut(w, http.StatusCreated, profile)
 	}))
 	m.HandleFunc("POST /api/engine-profiles/{id}/activate", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		s.app.mu.Lock()
+		defer s.app.mu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, http.StatusConflict, errUpdateBusy.Error())
+			return
+		}
 		var profile *EngineCredentialProfile
 		for _, candidate := range s.app.store.engineProfiles() {
 			if candidate.ID == r.PathValue("id") {
@@ -372,22 +420,18 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 		jsonOut(w, http.StatusOK, map[string]any{"ok": true, "profile": profile})
 	}))
 	m.HandleFunc("DELETE /api/engine-profiles/{id}", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		profiles := s.app.store.engineProfiles()
-		kept := profiles[:0]
-		removed := false
-		for _, profile := range profiles {
-			if profile.ID == r.PathValue("id") {
-				removed = true
-				_ = s.app.store.activateEngineProfile(profile.EnvironmentID, profile.Engine, "")
-				continue
-			}
-			kept = append(kept, profile)
+		s.app.mu.Lock()
+		defer s.app.mu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, http.StatusConflict, errUpdateBusy.Error())
+			return
 		}
-		if !removed {
+		err := s.app.store.removeEngineProfile(r.PathValue("id"))
+		if errors.Is(err, errEngineProfileNotFound) {
 			fail(w, http.StatusNotFound, "账号/API 配置不存在")
 			return
 		}
-		if err := s.app.store.saveEngineProfiles(kept); err != nil {
+		if err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}

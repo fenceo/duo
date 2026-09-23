@@ -56,7 +56,7 @@ for address in [payload['url']]+(payload.get('fallback_urls') or []):
  try:
   request=urllib.request.Request(address,data=json.dumps(message).encode(),headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream','Authorization':'Bearer '+payload['token']})
   with client.open(request,timeout=4) as response: result=json.load(response)
-  if result.get('result',{}).get('serverInfo',{}).get('name')!='jianzuo-hardware': raise ValueError('not a Jianzuo hardware endpoint')
+  if result.get('result',{}).get('serverInfo',{}).get('name')!='jianzuo-hardware': raise ValueError('not a Duo hardware endpoint')
   selected=address;break
  except Exception as error: failures.append(address+': '+str(error))
 if selected is None:
@@ -412,7 +412,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				continue
 			}
 			if answer.Err != nil {
-				err = write(map[string]any{"id": p.ID, "error": map[string]any{"code": -32000, "message": "简作未授权此请求：" + redact(answer.Err.Error())}})
+				err = write(map[string]any{"id": p.ID, "error": map[string]any{"code": -32000, "message": "Duo未授权此请求：" + redact(answer.Err.Error())}})
 			} else if !json.Valid(answer.Result) {
 				return session, result, errors.New("无效的 Codex 审批响应，已停止执行")
 			} else {
@@ -556,7 +556,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			}
 			if len(m.ID) > 0 && string(m.ID) != "null" {
 				if foreign || !codexSupportedInteraction(m.Method) || stopping || len(pending) >= 64 || turnID == "" || session == "" || p.ThreadID == "" || (p.TurnID == "" && m.Method != "mcpServer/elicitation/request") {
-					_ = writeContext(context.Background(), map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "简作不支持或不能授权此请求"}})
+					_ = writeContext(context.Background(), map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "Duo不支持或不能授权此请求"}})
 					if !foreign && !stopping {
 						return session, result, fmt.Errorf("Codex 请求 %s 不受当前适配器支持，已停止", m.Method)
 					}

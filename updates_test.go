@@ -46,8 +46,8 @@ func TestReleaseVersionComparison(t *testing.T) {
 	}
 }
 func TestUpdateRepositoryAndLinks(t *testing.T) {
-	canonical := "https://github.com/Owner/Jianzuo/releases/tag/v1.0.0"
-	if releaseLink(canonical, "owner/jianzuo", "/releases/tag/v1.0.0") != canonical {
+	canonical := "https://github.com/Owner/Duo/releases/tag/v1.0.0"
+	if releaseLink(canonical, "owner/duo", "/releases/tag/v1.0.0") != canonical {
 		t.Fatal("GitHub repository names are case insensitive")
 	}
 	for _, in := range []string{"owner/jianzuo", "https://github.com/owner/jianzuo/", "https://github.com/owner/jianzuo.git"} {

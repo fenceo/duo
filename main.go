@@ -124,8 +124,8 @@ func main() {
 	go func() { defer a.wg.Done(); f.runCardsLoop() }()
 	done := make(chan os.Signal, 1)
 	handler := &Server{
-		app:         a,
-		updateRoot:  filepath.Dir(exe),
+		app:        a,
+		updateRoot: filepath.Dir(exe),
 		launcherPID: func() int {
 			if *managed {
 				return os.Getppid()
@@ -159,7 +159,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	}()
-	log.Printf("简作 %s：http://%s", version, address)
+	log.Printf("Duo %s：http://%s", version, address)
 	e = server.Serve(listener)
 	a.close()
 	if e != nil && e != http.ErrServerClosed {

@@ -16,27 +16,41 @@ import (
 )
 
 // The public upstream repository used as the default update source.
-var releaseRepository = "fenceo/jianzuo"
+var releaseRepository = "fenceo/duo"
 
-const portableAssetName = "Jianzuo-portable-windows-x64.zip"
+const portableAssetName = "Duo-portable-windows-x64.zip"
+const installerAssetName = "Duo-Setup-User-x64.exe"
+
+type updateAsset struct {
+	URL, ChecksumURL, Digest string
+	Size                     int64
+}
 
 type UpdateInfo struct {
-	Current          string `json:"current"`
-	Repository       string `json:"repository"`
-	State            string `json:"state"`
-	Message          string `json:"message"`
-	Latest           string `json:"latest,omitempty"`
-	Published        string `json:"published,omitempty"`
-	Checked          int64  `json:"checked,omitempty"`
-	Notes            string `json:"notes,omitempty"`
-	ReleasesURL      string `json:"releases_url,omitempty"`
-	ReleaseURL       string `json:"release_url,omitempty"`
-	DownloadURL      string `json:"download_url,omitempty"`
-	ChecksumURL      string `json:"checksum_url,omitempty"`
-	Digest           string `json:"digest,omitempty"`
-	Size             int64  `json:"size,omitempty"`
-	InstallSupported bool   `json:"install_supported"`
-	InstallMessage   string `json:"install_message,omitempty"`
+	Current              string `json:"current"`
+	Repository           string `json:"repository"`
+	State                string `json:"state"`
+	Message              string `json:"message"`
+	Latest               string `json:"latest,omitempty"`
+	Published            string `json:"published,omitempty"`
+	Checked              int64  `json:"checked,omitempty"`
+	Notes                string `json:"notes,omitempty"`
+	ReleasesURL          string `json:"releases_url,omitempty"`
+	ReleaseURL           string `json:"release_url,omitempty"`
+	DownloadURL          string `json:"download_url,omitempty"`
+	ChecksumURL          string `json:"checksum_url,omitempty"`
+	Digest               string `json:"digest,omitempty"`
+	Size                 int64  `json:"size,omitempty"`
+	InstallSupported     bool   `json:"install_supported"`
+	InstallMessage       string `json:"install_message,omitempty"`
+	InstallationMode     string `json:"installation_mode"`
+	PackageKind          string `json:"package_kind,omitempty"`
+	InstallerDownloadURL string `json:"installer_download_url,omitempty"`
+	InstallerChecksumURL string `json:"installer_checksum_url,omitempty"`
+	PortableDownloadURL  string `json:"portable_download_url,omitempty"`
+	PortableChecksumURL  string `json:"portable_checksum_url,omitempty"`
+	installer            updateAsset
+	portable             updateAsset
 }
 type UpdateChecker struct {
 	mu             sync.Mutex
@@ -74,6 +88,9 @@ func normalizeRepository(value string) (string, error) {
 }
 func (s *Store) updateRepository() string {
 	if value := s.setting("update_repository"); value != "" {
+		if strings.EqualFold(value, "fenceo/jianzuo") {
+			return "fenceo/duo"
+		}
 		return value
 	}
 	return releaseRepository
@@ -82,7 +99,7 @@ func updateBase(repo string) UpdateInfo {
 	v := UpdateInfo{Current: version, Repository: repo, State: "unchecked", Message: "点击检查更新，获取 GitHub 最新正式版本。"}
 	if repo == "" {
 		v.State = "unconfigured"
-		v.Message = "先填写发布简作版本的 GitHub 仓库。"
+		v.Message = "先填写发布Duo版本的 GitHub 仓库。"
 	} else {
 		v.ReleasesURL = "https://github.com/" + repo + "/releases"
 	}
@@ -166,11 +183,11 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 		return v, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "Jianzuo/"+version)
+	request.Header.Set("User-Agent", "Duo/"+version)
 	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
 	response, err := c.client.Do(request)
 	if err != nil {
-		return v, errors.New("无法连接 GitHub，请检查运行简作电脑的网络后重试")
+		return v, errors.New("无法连接 GitHub，请检查运行Duo电脑的网络后重试")
 	}
 	defer response.Body.Close()
 	if response.StatusCode == 404 {
@@ -229,7 +246,7 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 	v.Message = "当前已是最新正式版本。"
 	if comparison > 0 {
 		v.State = "available"
-		v.Message = "发现新版本，可以下载便携包。"
+		v.Message = "发现新版本，可以查看更新说明。"
 	} else if comparison < 0 {
 		v.State = "ahead"
 		v.Message = "本机版本高于仓库最新正式版本。"
@@ -242,17 +259,29 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 		if link == "" {
 			continue
 		}
-		if a.Name == portableAssetName {
-			v.DownloadURL = link
-			v.Size = a.Size
-			if regexp.MustCompile(`^sha256:[a-fA-F0-9]{64}$`).MatchString(a.Digest) {
-				v.Digest = a.Digest
-			}
+		var asset *updateAsset
+		switch a.Name {
+		case portableAssetName, portableAssetName + ".sha256":
+			asset = &v.portable
+		case installerAssetName, installerAssetName + ".sha256":
+			asset = &v.installer
+		default:
+			continue
 		}
-		if a.Name == portableAssetName+".sha256" {
-			v.ChecksumURL = link
+		if !strings.HasSuffix(a.Name, ".sha256") {
+			asset.URL = link
+			asset.Size = a.Size
+			if regexp.MustCompile(`^sha256:[a-fA-F0-9]{64}$`).MatchString(a.Digest) {
+				asset.Digest = a.Digest
+			}
+		} else {
+			asset.ChecksumURL = link
 		}
 	}
+	v.InstallerDownloadURL, v.InstallerChecksumURL = v.installer.URL, v.installer.ChecksumURL
+	v.PortableDownloadURL, v.PortableChecksumURL = v.portable.URL, v.portable.ChecksumURL
+	// Keep the old checker contract for callers; decoration selects the installed asset.
+	v.DownloadURL, v.ChecksumURL, v.Digest, v.Size = v.portable.URL, v.portable.ChecksumURL, v.portable.Digest, v.portable.Size
 	if v.State == "available" && v.DownloadURL == "" {
 		v.Message = "发现新版本，便携包尚未上传，可先查看更新说明。"
 	}
@@ -294,7 +323,11 @@ func (s *Server) updateRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/updates/install", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		result, err := s.installUpdate(r.Context(), checker)
 		if err != nil {
-			fail(w, 400, err.Error())
+			status := http.StatusBadRequest
+			if errors.Is(err, errUpdateBusy) {
+				status = http.StatusConflict
+			}
+			fail(w, status, err.Error())
 			return
 		}
 		jsonOut(w, 202, result)

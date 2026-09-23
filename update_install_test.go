@@ -53,8 +53,8 @@ func validPortableZip(t *testing.T) []byte {
 	t.Helper()
 	pe := testPEFile()
 	return testPortableZip(t, []testZipEntry{
-		{name: "简作.exe", data: pe},
-		{name: "jianzuo-service.exe", data: pe},
+		{name: "Duo.exe", data: pe},
+		{name: "duo-service.exe", data: pe},
 		{name: "使用说明.md", data: []byte("portable")},
 		{name: "THIRD-PARTY-NOTICES.txt", data: []byte("notices")},
 	})
@@ -195,10 +195,10 @@ func TestExtractPortableArchiveValidation(t *testing.T) {
 	for name, raw := range map[string][]byte{
 		"path traversal": testPortableZip(t, []testZipEntry{{name: "../evil.exe", data: []byte("x")}}),
 		"duplicate": testPortableZip(t, []testZipEntry{
-			{name: "简作.exe", data: testPEFile()},
-			{name: "简作.exe", data: testPEFile()},
+			{name: "Duo.exe", data: testPEFile()},
+			{name: "Duo.exe", data: testPEFile()},
 		}),
-		"missing": testPortableZip(t, []testZipEntry{{name: "简作.exe", data: testPEFile()}}),
+		"missing": testPortableZip(t, []testZipEntry{{name: "Duo.exe", data: testPEFile()}}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := extractPortableArchive(writeArchive(t, raw), t.TempDir()); err == nil {
@@ -208,8 +208,8 @@ func TestExtractPortableArchiveValidation(t *testing.T) {
 	}
 
 	badPE := testPortableZip(t, []testZipEntry{
-		{name: "简作.exe", data: testPEFile()},
-		{name: "jianzuo-service.exe", data: []byte("not a PE")},
+		{name: "Duo.exe", data: testPEFile()},
+		{name: "duo-service.exe", data: []byte("not a PE")},
 		{name: "使用说明.md", data: []byte("portable")},
 		{name: "THIRD-PARTY-NOTICES.txt", data: []byte("notices")},
 	})
@@ -276,9 +276,9 @@ func TestPortableFileReplacementAndRollback(t *testing.T) {
 
 func TestPortableHealthURL(t *testing.T) {
 	tests := map[string]string{
-		`{"listen":"0.0.0.0:8789"}`:  "http://127.0.0.1:8789/healthz",
-		`{"listen":":18789"}`:        "http://127.0.0.1:18789/healthz",
-		`{"listen":"[::]:8789"}`:     "http://[::1]:8789/healthz",
+		`{"listen":"0.0.0.0:8789"}`:   "http://127.0.0.1:8789/healthz",
+		`{"listen":":18789"}`:         "http://127.0.0.1:18789/healthz",
+		`{"listen":"[::]:8789"}`:      "http://[::1]:8789/healthz",
 		`{"listen":"127.0.0.1:9000"}`: "http://127.0.0.1:9000/healthz",
 	}
 	for raw, expected := range tests {

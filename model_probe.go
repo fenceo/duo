@@ -94,7 +94,7 @@ func probeModels(ctx context.Context, c Config, e Environment, engine, workspace
 		return ModelProbeResponse{}, err
 	}
 	if len(models) == 0 {
-		catalog, catalogErr := modelsForEngine(ctx, e, engine)
+		catalog, catalogErr := modelsForEngine(ctx, e, engine, c.EngineEnv)
 		if catalogErr != nil {
 			return ModelProbeResponse{}, catalogErr
 		}

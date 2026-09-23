@@ -29,11 +29,12 @@ type terminalLink struct {
 	Cancel context.CancelFunc `json:"-"`
 }
 type Terminals struct {
-	mu      sync.Mutex
-	tickets map[string]terminalTicket
-	links   map[string]terminalLink
-	closed  bool
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	tickets  map[string]terminalTicket
+	links    map[string]terminalLink
+	closed   bool
+	updating bool
+	wg       sync.WaitGroup
 }
 
 func newTerminals() *Terminals {
@@ -123,6 +124,10 @@ func (s *Server) terminalRoutes(mux *http.ServeMux) {
 				delete(m.tickets, id)
 			}
 		}
+		if m.updating {
+			fail(w, 409, errUpdateBusy.Error())
+			return
+		}
 		if m.closed || len(m.links) >= 8 || len(m.tickets) >= 32 {
 			fail(w, 409, "终端已达上限，请先关闭不用的终端")
 			return
@@ -143,6 +148,11 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("ticket")
 	m := s.app.terminals
 	m.mu.Lock()
+	if m.updating {
+		m.mu.Unlock()
+		fail(w, 409, errUpdateBusy.Error())
+		return
+	}
 	ticket, ok := m.tickets[id]
 	if !ok || ticket.Owner != owner || time.Now().After(ticket.Expires) {
 		m.mu.Unlock()

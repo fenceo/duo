@@ -129,10 +129,10 @@ func TestTaskCreationPersistsSelectedMode(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	c := a.config.get()
 	rawResponse := toolsClient(t, a)("/api/tasks", "POST", map[string]any{
-		"title":      "network mode",
-		"workspace":  c.Workspaces[0],
-		"model":      c.Model,
-		"mode_id":    "work",
+		"title":     "network mode",
+		"workspace": c.Workspaces[0],
+		"model":     c.Model,
+		"mode_id":   "work",
 	}, 201)
 	var response struct{ Task Task }
 	if err := json.Unmarshal(rawResponse, &response); err != nil {

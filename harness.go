@@ -150,7 +150,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		return nil, errors.New("Harness 推理强度无效")
 	}
 	if c.HardwareAI != nil {
-		return nil, errors.New("Harness 暂未接入简作硬件工具，请取消硬件授权或选择 Codex/Claude Code")
+		return nil, errors.New("Harness 暂未接入Duo硬件工具，请取消硬件授权或选择 Codex/Claude Code")
 	}
 	if len(t.Files) > 0 {
 		return nil, errors.New("Harness 当前接入暂不支持附件，请使用文字任务或其它引擎")
@@ -521,7 +521,7 @@ func runHarnessSDK(ctx context.Context, c Config, t Task, input string, emit fun
 		return session, "", err
 	}
 	if len(t.Files) > 0 || c.HardwareAI != nil {
-		return session, "", errors.New("Harness 暂不支持简作附件或硬件授权，请使用文字任务或其它引擎")
+		return session, "", errors.New("Harness 暂不支持Duo附件或硬件授权，请使用文字任务或其它引擎")
 	}
 	harnessRuntimes.Lock()
 	w := harnessRuntimes.workers[session]

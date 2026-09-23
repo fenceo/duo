@@ -20,7 +20,7 @@ function fixture(){
  const values={'create-input':'keep my task','create-engine':'codex','create-effort':'','create-environment':'test-env','create-workspace':'/test','create-model':'test-model'};
  Object.entries(values).forEach(([id,value])=>node(id).value=value);
  const ctx=createContext({
-  input:node,button:node,element:node,createFiles:[],createSubmitting:false,creatingTask:true,createPermission:'request',createReturnTask:'',modelRequest:0,
+  input:node,button:node,element:node,createFiles:[],createSubmitting:false,creatingTask:true,createPermission:'request',createReturnTask:'',modelRequest:0,shellEpoch:0,shellCurrent:epoch=>epoch===ctx.shellEpoch,
   sessionResetTask:'',chosen:'',selection:0,detail:null,sending:false,dirty:false,tasks:[],drafts:new Map(),attachmentDrafts:new Map(),pendingUploadFiles:new Map(),uploadingTasks:new Set(),
   validateEngineAttachments(){},validateAttachmentFiles(){},modeForPermission:()=>({id:'work'}),modeSupportsEngine:()=>true,createTaskTitle:text=>text,
   renderCreateFiles(){},setCreatePageVisible(){},renderTask(){},renderWorkflow(){},notify:text=>notices.push(text),confirm:()=>true,poll:async()=>{},selectedMessageMode:()=> 'work',
@@ -32,6 +32,15 @@ function fixture(){
  return {ctx,node,calls,notices};
 }
 const event={preventDefault(){}};
+{
+ const {ctx,calls,node}=fixture(),gate=deferred();ctx.createFiles=[{name:'retained.txt'}];
+ ctx.api=async(path,method,data)=>{calls.push({path,method,data});return gate.promise};
+ const pending=ctx.createTask(event);ctx.shellEpoch++;ctx.chosen='new-login-task';node('create-input').value='new login draft';
+ gate.resolve({task:{id:'created',engine:'codex'}});await pending;
+ assert.equal(calls.length,1,'a stale creation response must not start uploads or a model run');
+ assert.equal(ctx.chosen,'new-login-task');assert.equal(node('create-input').value,'new login draft');
+ assert.equal(ctx.drafts.get('created'),'keep my task');assert.equal(ctx.pendingUploadFiles.get('created')[0].name,'retained.txt');
+}
 {
  const {ctx,calls,node}=fixture(),gate=deferred();
  ctx.api=async(path,method,data)=>{calls.push({path,method,data});return path==='tasks'?gate.promise:{}};

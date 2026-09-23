@@ -7,17 +7,25 @@ function parseAppearance(raw:string|null):Appearance{
 }
 function installStickyBoard(){
  try{stickyScope=localStorage.getItem('jianzuo-sticky-scope')||'all';stickyFilter=localStorage.getItem('jianzuo-sticky-filter')||'open'}catch{}
- element('task-list').insertAdjacentHTML('afterend','<section id="sticky-board" class="sticky-board"><header><strong>待办</strong><span id="sticky-count" class="muted"></span><select id="sticky-filter" aria-label="待办筛选"><option value="open">未完成</option><option value="all">全部</option><option value="done">已完成</option></select><select id="sticky-scope" aria-label="待办范围"><option value="all">全部任务</option><option value="task">本任务</option></select><button id="sticky-new" title="新建待办">＋</button></header><div id="sticky-list" class="sticky-list"></div></section>');
+ element('task-list').insertAdjacentHTML('afterend','<section id="sticky-board" class="sticky-board"><header><strong>待办</strong><span id="sticky-count" class="muted"></span><button id="sticky-expand" type="button" aria-expanded="false" aria-controls="sticky-list sticky-filter sticky-scope" aria-label="展开待办和筛选">展开</button><select id="sticky-filter" aria-label="待办筛选"><option value="open">未完成</option><option value="all">全部</option><option value="done">已完成</option></select><select id="sticky-scope" aria-label="待办范围"><option value="all">全部任务</option><option value="task">本任务</option></select><button id="sticky-new" title="新建待办">＋</button></header><div id="sticky-list" class="sticky-list"></div></section>');
+ button('sticky-expand').onclick=()=>{const board=element('sticky-board');board.dataset.mobileExpanded=board.dataset.mobileExpanded==='true'?'false':'true';syncStickyCompact(board.dataset.empty==='true')};
  input('sticky-scope').value=stickyScope;input('sticky-scope').onchange=()=>{stickyScope=input('sticky-scope').value;try{localStorage.setItem('jianzuo-sticky-scope',stickyScope)}catch{}renderStickyBoard()};
  input('sticky-filter').value=stickyFilter;input('sticky-filter').onchange=()=>{stickyFilter=input('sticky-filter').value;try{localStorage.setItem('jianzuo-sticky-filter',stickyFilter)}catch{}renderStickyBoard()};
  button('sticky-new').onclick=()=>{if(!chosen){notify('先选择一个任务，便签会保存在该任务中。');return}editScratch(null)};
  button('scratch-tab').classList.add('hidden');stickyLast='';void loadStickyBoard();
 }
-async function loadStickyBoard(){if(!authenticated||!element('sticky-list')||stickyLoading)return;stickyLoading=true;const request=++stickyRequest;try{const items=await api<ScratchItem[]>('scratch');if(request!==stickyRequest)return;stickyItems=items;renderStickyBoard()}catch(e){if(element('sticky-list')&&!stickyItems.length)element('sticky-list').textContent=(e as Error).message}finally{stickyLoading=false}}
+async function loadStickyBoard(){if(!authenticated||!element('sticky-list')||stickyLoading)return;stickyLoading=true;const request=++stickyRequest;try{const items=await api<ScratchItem[]>('scratch');if(request!==stickyRequest)return;stickyItems=items;renderStickyBoard()}catch(e){if(element('sticky-list')&&!stickyItems.length){syncStickyCompact(false);element('sticky-list').textContent=(e as Error).message}}finally{stickyLoading=false}}
+function syncStickyCompact(empty:boolean){
+ const board=element('sticky-board'),toggle=element('sticky-expand');if(!board||!toggle)return;
+ board.dataset.empty=String(empty);
+ const expanded=!empty||board.dataset.mobileExpanded==='true';
+ toggle.setAttribute('aria-expanded',String(expanded));toggle.setAttribute('aria-label',expanded?'收起空待办和筛选':'展开待办和筛选');toggle.textContent=expanded?'收起':'展开';
+}
 function renderStickyBoard(){
  if(!element('sticky-list'))return;
  const scoped=stickyItems.filter(n=>stickyScope!=='task'||n.task_id===chosen);
  const items=scoped.filter(n=>{const s=scratchStatus(n);return stickyFilter==='all'||(stickyFilter==='open'?s!=='done':s==='done')});
+ syncStickyCompact(items.length===0);
  const html=items.map(n=>scratchCardHTML(n,'all')).join('')||`<p class="muted">${stickyFilter==='done'?'还没有完成的待办。':'点 ＋ 记下一步要做的事，勾选即可完成。'}</p>`;
  if(element('sticky-count'))element('sticky-count').textContent=scoped.filter(n=>scratchStatus(n)!=='done').length+' 项未完成';
  if(html===stickyLast)return;stickyLast=html;element('sticky-list').innerHTML=html;

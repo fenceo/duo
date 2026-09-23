@@ -425,7 +425,10 @@ func catalogFromConfig(path string) string {
 }
 
 func modelCacheCandidates(explicit string) []string {
-	roots := codexHomes()
+	return modelCacheCandidatesForHomes(explicit, codexHomes())
+}
+
+func modelCacheCandidatesForHomes(explicit string, roots []string) []string {
 	out := []string{}
 	add := func(path string) {
 		if strings.TrimSpace(path) == "" {
@@ -514,10 +517,19 @@ func readModelCaches(paths []string) ([]ModelOption, []string, int64, string) {
 	return models, used, modified, note
 }
 
-func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error) {
+func modelsForEnvironment(ctx context.Context, e Environment, profileEnv ...map[string]string) (ModelList, error) {
 	out := ModelList{Models: []ModelOption{}, Source: "Codex 本地模型缓存"}
+	var selected map[string]string
+	if len(profileEnv) > 0 {
+		selected = profileEnv[0]
+	}
 	if e.Type == "windows" {
-		candidates := modelCacheCandidates(e.ModelCache)
+		var candidates []string
+		if home := selected["CODEX_HOME"]; home != "" {
+			candidates = modelCacheCandidatesForHomes(e.ModelCache, []string{home})
+		} else {
+			candidates = modelCacheCandidates(e.ModelCache)
+		}
 		models, used, modified, note := readModelCaches(candidates)
 		out.Models, out.Modified = mergeConfiguredModels(models, e.Models), modified
 		if len(out.Models) > 0 {
@@ -531,7 +543,8 @@ func modelsForEnvironment(ctx context.Context, e Environment) (ModelList, error)
 	defer cancel()
 	var lastDiagnostic string
 	for index, variant := range environmentProbeVariants(e) {
-		stdout, stderr, _, err := runEnvironmentCommand(ctx, variant, "python3", "-c", readRemoteModels, variant.ModelCache)
+		args := withEngineEnv([]string{"python3", "-c", readRemoteModels, variant.ModelCache}, selected)
+		stdout, stderr, _, err := runEnvironmentCommand(ctx, variant, args...)
 		if err != nil {
 			lastDiagnostic = strings.TrimSpace(string(stderr))
 			if lastDiagnostic == "" {

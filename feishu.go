@@ -186,7 +186,7 @@ func (f *Feishu) receive(messageID, sender, chat, text string) error {
 		if e := f.app.store.set("feishu_chat", chat); e != nil {
 			return e
 		}
-		return f.enqueue(chat, "已配对简作。发送 /任务 查看网页任务；发送 /新建 标题 | 要求 创建任务。")
+		return f.enqueue(chat, "已配对Duo。发送 /任务 查看网页任务；发送 /新建 标题 | 要求 创建任务。")
 	}
 	if c.Feishu.Owner != sender {
 		return nil

@@ -98,7 +98,7 @@ func (f *Feishu) setupUpdate(id string, update func(*FeishuSetup)) {
 
 func (f *Feishu) runSetup(ctx context.Context, id string) {
 	preset := false
-	opts := &registration.Options{CreateOnly: true, AppPreset: &registration.AppPreset{Name: "简作助手", Desc: "本地 Codex 任务与知识工作台"}, Addons: &registration.AppAddons{Preset: &preset,
+	opts := &registration.Options{CreateOnly: true, AppPreset: &registration.AppPreset{Name: "Duo助手", Desc: "本地 Codex 任务与知识工作台"}, Addons: &registration.AppAddons{Preset: &preset,
 		Callbacks: registration.AppAddonsCallbacks{Items: []string{"card.action.trigger"}},
 		Scopes:    registration.AppAddonsScopes{Tenant: []string{"im:message.p2p_msg:readonly", "im:message:send_as_bot", "application:application:patch"}},
 		Events:    registration.AppAddonsEvents{Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1", "application.bot.menu_v6"}}}}}
@@ -229,7 +229,7 @@ func initializeFeishuMenu(ctx context.Context, c FeishuConfig) error {
 	if !ability.Success() {
 		return fmt.Errorf("menu rejected: %d", ability.Code)
 	}
-	published, err := client.Application.V7.ApplicationPublish.Create(ctx, appv7.NewCreateApplicationPublishReqBuilder().AppId(c.AppID).Body(appv7.NewCreateApplicationPublishReqBodyBuilder().MobileDefaultAbility("bot").PcDefaultAbility("bot").Remark("简作首次初始化").Changelog("启用私聊任务与机器人菜单").Build()).Build())
+	published, err := client.Application.V7.ApplicationPublish.Create(ctx, appv7.NewCreateApplicationPublishReqBuilder().AppId(c.AppID).Body(appv7.NewCreateApplicationPublishReqBodyBuilder().MobileDefaultAbility("bot").PcDefaultAbility("bot").Remark("Duo首次初始化").Changelog("启用私聊任务与机器人菜单").Build()).Build())
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func initializeFeishuMenu(ctx context.Context, c FeishuConfig) error {
 	return nil
 }
 func welcomeFeishu(ctx context.Context, c FeishuConfig, id string) (string, error) {
-	content, _ := json.Marshal(map[string]string{"text": "已绑定简作。发送 /任务 查看任务，或使用下方菜单。网页绑定当前任务后可直接发消息继续。"})
+	content, _ := json.Marshal(map[string]string{"text": "已绑定Duo。发送 /任务 查看任务，或使用下方菜单。网页绑定当前任务后可直接发消息继续。"})
 	r, err := lark.NewClient(c.AppID, c.Secret).Im.Message.Create(ctx, im.NewCreateMessageReqBuilder().ReceiveIdType("open_id").Body(im.NewCreateMessageReqBodyBuilder().ReceiveId(c.Owner).MsgType("text").Content(string(content)).Uuid(id).Build()).Build())
 	if err != nil {
 		return "", err

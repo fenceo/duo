@@ -60,6 +60,7 @@ type Hardware struct {
 	links    map[string]*hardwareLink
 	store    *Store
 	closed   bool
+	updating bool
 	wg       sync.WaitGroup
 	notifyMu sync.Mutex
 	notify   chan struct{}
@@ -126,6 +127,9 @@ func (h *Hardware) connectOwned(c HardwareConfig, password, task string) error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.updating {
+		return errUpdateBusy
+	}
 	if h.closed {
 		return errors.New("服务正在关闭")
 	}

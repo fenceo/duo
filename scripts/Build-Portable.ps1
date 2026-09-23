@@ -64,9 +64,14 @@ function Use-GoEnvironment([string]$GoPath, [string]$Root) {
 
 $Go = Resolve-Go $Go $projectRoot
 Use-GoEnvironment $Go $projectRoot
-$packageDir = Join-Path $projectRoot 'dist\Jianzuo-portable-windows-x64'
+$packageDir = Join-Path $projectRoot 'dist\Duo-portable-windows-x64'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework 4.x C# compiler is required to build the launcher.' }
+$innoCompiler = if ($env:JIANZUO_INNO_COMPILER) { $env:JIANZUO_INNO_COMPILER } else { Join-Path (Split-Path $projectRoot) '.tools\inno-6.7.3\ISCC.exe' }
+$innoLicense = Join-Path (Split-Path $innoCompiler) 'license.txt'
+if (!(Test-Path -LiteralPath $innoCompiler -PathType Leaf) -or !(Test-Path -LiteralPath $innoLicense -PathType Leaf)) {
+    throw 'Prepare the Inno Setup toolchain with scripts/Setup-InnoToolchain.ps1, or set JIANZUO_INNO_COMPILER.'
+}
 Push-Location $projectRoot
 try {
     New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
@@ -80,21 +85,25 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Web build failed' }
     & $Go test ./... -count=1
     if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
-    & $Go build -buildvcs=false -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $packageDir 'jianzuo-service.exe') .
+    & $Go build -buildvcs=false -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $packageDir 'duo-service.exe') .
     if ($LASTEXITCODE -ne 0) { throw 'Service build failed' }
     # csc.exe parses its command line through the system ANSI code page, so a non-ASCII /out: path
     # turns into a mangled name (CS2021). Compile to an ASCII temp name and rename afterwards.
-    $launcher = Join-Path $packageDir 'jianzuo-launcher.exe'
+    $launcher = Join-Path $packageDir 'duo-launcher.exe'
     Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
     & $compiler /nologo /target:winexe /platform:x64 /utf8output /codepage:65001 ("/out:"+$launcher) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll portable\Launcher.cs
     if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
-    Move-Item -LiteralPath $launcher -Destination (Join-Path $packageDir '简作.exe') -Force
+    & (Join-Path $PSScriptRoot 'Test-Launcher.ps1') -Launcher $launcher
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher startup regression failed' }
+    Move-Item -LiteralPath $launcher -Destination (Join-Path $packageDir 'Duo.exe') -Force
     Copy-Item -LiteralPath 'portable\使用说明.md' -Destination $packageDir -Force
     $notices = [System.Text.StringBuilder]::new()
-    [void]$notices.AppendLine('Jianzuo portable - Third-party notices')
+    [void]$notices.AppendLine('Duo - Third-party notices')
     [void]$notices.AppendLine('Original license texts for the Go runtime and Go module dependencies follow.')
     [void]$notices.AppendLine("`r`n=== xterm.js 6.0.0 (MIT) ===")
     [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $projectRoot 'web\vendor\xterm.LICENSE')))
+    [void]$notices.AppendLine("`r`n=== Inno Setup (Windows installer) ===")
+    [void]$notices.AppendLine([IO.File]::ReadAllText($innoLicense))
     $goRoot = & $Go env GOROOT
     if ($LASTEXITCODE -ne 0) { throw 'Cannot locate Go runtime license' }
     [void]$notices.AppendLine("`r`n=== Go runtime ===")
@@ -112,8 +121,8 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $packageDir 'THIRD-PARTY-NOTICES.txt'),$notices.ToString(),[Text.UTF8Encoding]::new($false))
     # Explicit allowlist: no data, auth files, local paths, or logs are included.
-    $files = @('简作.exe','jianzuo-service.exe','使用说明.md','THIRD-PARTY-NOTICES.txt') | ForEach-Object { Join-Path $packageDir $_ }
-    $zip = Join-Path $projectRoot 'dist\Jianzuo-portable-windows-x64.zip'
+    $files = @('Duo.exe','duo-service.exe','使用说明.md','THIRD-PARTY-NOTICES.txt') | ForEach-Object { Join-Path $packageDir $_ }
+    $zip = Join-Path $projectRoot 'dist\Duo-portable-windows-x64.zip'
     Compress-Archive -LiteralPath $files -DestinationPath $zip -Force
     Get-Item -LiteralPath $zip | Select-Object FullName,Length
     $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()

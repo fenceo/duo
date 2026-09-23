@@ -28,16 +28,16 @@ const (
 )
 
 var portableArchiveFiles = []string{
-	"简作.exe",
-	"jianzuo-service.exe",
+	"Duo.exe",
+	"duo-service.exe",
 	"使用说明.md",
 	"THIRD-PARTY-NOTICES.txt",
 }
 
 var portableArchiveFileSet = map[string]bool{
-	"简作.exe":                 true,
-	"jianzuo-service.exe":    true,
-	"使用说明.md":               true,
+	"Duo.exe":                 true,
+	"duo-service.exe":         true,
+	"使用说明.md":                 true,
 	"THIRD-PARTY-NOTICES.txt": true,
 }
 
@@ -73,29 +73,46 @@ func updateDownloadHost(host string) bool {
 
 func (s *Server) installSupport() (bool, string) {
 	if runtime.GOOS != "windows" {
-		return false, "自动安装仅支持 Windows 便携版；请使用手动下载。"
+		return false, "自动更新仅支持 Windows；当前平台请手动部署。"
 	}
-	if strings.TrimSpace(s.updateRoot) == "" || s.launcherPID <= 0 {
-		return false, "请通过 简作.exe 启动便携版后再自动更新；也可手动下载。"
+	if _, err := s.currentInstallation(); err != nil {
+		return false, err.Error()
 	}
-	exe, err := os.Executable()
-	if err != nil || !strings.EqualFold(filepath.Base(exe), "jianzuo-service.exe") {
-		return false, "当前不是便携版服务进程；请使用手动下载。"
+	if s.launcherPID <= 0 || s.shutdown == nil {
+		return false, "请通过 Duo.exe 启动后再自动更新；也可下载安装包手动升级。"
 	}
-	if _, err = os.Stat(filepath.Join(s.updateRoot, "简作.exe")); err != nil {
-		return false, "便携版启动器不存在；请使用手动下载。"
+	if info, err := os.Lstat(filepath.Join(s.updateRoot, "Duo.exe")); err != nil || !info.Mode().IsRegular() {
+		return false, "Duo启动器不存在或类型无效；请使用安装包修复。"
 	}
 	return true, ""
 }
 
 func (s *Server) decorateUpdate(v UpdateInfo) UpdateInfo {
+	mode, _ := s.currentInstallation()
+	v = selectUpdateAsset(v, mode)
 	v.InstallSupported, v.InstallMessage = s.installSupport()
+	if mode == "installed" && v.Latest != "" && !innoReleaseSupported(v.Latest) {
+		v.InstallSupported = false
+		v.InstallMessage = "该版本使用旧安装器，不支持应用内安装升级，请下载安装包手动处理。"
+	}
 	if v.State == "available" && v.DownloadURL != "" {
-		if v.InstallSupported {
-			v.Message = "发现新版本，可以直接下载并自动安装。"
-		} else {
-			v.Message = "发现新版本，可以下载便携包。"
+		if v.ChecksumURL == "" && v.Digest == "" {
+			v.InstallSupported = false
+			if v.InstallMessage == "" {
+				v.InstallMessage = "该版本缺少 SHA-256 校验，不能自动安装。"
+			}
 		}
+		if v.InstallSupported {
+			v.Message = "发现新版本，空闲时可更新并重启；任务、配置和数据将保留。"
+		} else {
+			v.Message = "发现新版本，可以手动下载更新包。"
+		}
+	} else if v.State == "available" {
+		v.InstallSupported = false
+		if v.InstallMessage == "" {
+			v.InstallMessage = "该版本尚未上传适用于当前安装方式的更新包。"
+		}
+		v.Message = "发现新版本，更新包尚未就绪，可先查看更新说明。"
 	}
 	return v
 }
@@ -105,10 +122,28 @@ func (s *Server) installUpdate(ctx context.Context, checker *UpdateChecker) (Upd
 	if !supported {
 		return UpdateInstallResult{}, errors.New(reason)
 	}
+	return s.prepareUpdate(ctx, checker)
+}
+
+func (s *Server) prepareUpdate(ctx context.Context, checker *UpdateChecker) (UpdateInstallResult, error) {
+	if !s.modelProbeMu.TryLock() {
+		return UpdateInstallResult{}, fmt.Errorf("%w：模型测试仍在进行，请等待结束，不会中断模型调用", errUpdateBusy)
+	}
+	defer s.modelProbeMu.Unlock()
 	if !s.updateMu.TryLock() {
-		return UpdateInstallResult{}, errors.New("已有更新正在准备，请稍候")
+		return UpdateInstallResult{}, errUpdateBusy
 	}
 	defer s.updateMu.Unlock()
+	releaseGate, err := s.app.beginUpdate()
+	if err != nil {
+		return UpdateInstallResult{}, err
+	}
+	scheduled := false
+	defer func() {
+		if !scheduled {
+			releaseGate()
+		}
+	}()
 
 	root := filepath.Clean(s.updateRoot)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -126,8 +161,12 @@ func (s *Server) installUpdate(ctx context.Context, checker *UpdateChecker) (Upd
 	if stableVersionPattern.FindStringSubmatch(info.Latest) == nil {
 		return UpdateInstallResult{}, errors.New("更新版本号无效")
 	}
+	info = s.decorateUpdate(info)
+	if !info.InstallSupported {
+		return UpdateInstallResult{}, errors.New(info.InstallMessage)
+	}
 	if info.DownloadURL == "" {
-		return UpdateInstallResult{}, errors.New("该版本尚未上传便携包，请先查看更新说明")
+		return UpdateInstallResult{}, errors.New("该版本尚未上传适用的更新包，请先查看更新说明")
 	}
 
 	archive, err := downloadPortableArchive(ctx, checker, info)
@@ -146,10 +185,29 @@ func (s *Server) installUpdate(ctx context.Context, checker *UpdateChecker) (Upd
 			_ = os.RemoveAll(stage)
 		}
 	}()
-	if err = extractPortableArchive(archive, stage); err != nil {
-		return UpdateInstallResult{}, err
+	plan := updatePlan{Mode: info.InstallationMode, Version: info.Latest}
+	if info.InstallationMode == "installed" {
+		if err = validateInnoInstaller(archive); err != nil {
+			return UpdateInstallResult{}, err
+		}
+		destination := filepath.Join(stage, installerAssetName)
+		if err = copyUpdateFile(archive, destination); err != nil {
+			return UpdateInstallResult{}, err
+		}
+		plan.Digest, err = fileSHA256(destination)
+		if err != nil {
+			return UpdateInstallResult{}, err
+		}
+	} else {
+		if err = extractPortableArchive(archive, stage); err != nil {
+			return UpdateInstallResult{}, err
+		}
+		if err = validatePortableStaging(stage); err != nil {
+			return UpdateInstallResult{}, err
+		}
 	}
-	if err = validatePortableStaging(stage); err != nil {
+	rawPlan, _ := json.Marshal(plan)
+	if err = os.WriteFile(filepath.Join(stage, "update-plan.json"), rawPlan, 0600); err != nil {
 		return UpdateInstallResult{}, err
 	}
 	helper, err := copyUpdateHelper()
@@ -179,11 +237,12 @@ func (s *Server) installUpdate(ctx context.Context, checker *UpdateChecker) (Upd
 	_ = helperProcess.Release()
 	helperStarted = true
 	keepStage = true
+	scheduled = true
 	fmt.Printf("JIANZUO_UPDATE %s\n", info.Latest)
 	return UpdateInstallResult{
 		State:   "scheduled",
 		Version: info.Latest,
-		Message: "更新已准备完成，简作将停止任务、替换程序并自动重启。",
+		Message: "更新已准备完成，即将更新程序并重启；任务、配置和数据将保留。失败详情写入数据目录的 update.log。",
 	}, nil
 }
 
@@ -213,7 +272,7 @@ func downloadPortableArchive(ctx context.Context, checker *UpdateChecker, info U
 		return "", errors.New("更新包下载地址无效")
 	}
 	req.Header.Set("Accept", "application/octet-stream")
-	req.Header.Set("User-Agent", "Jianzuo/"+version)
+	req.Header.Set("User-Agent", "Duo/"+version)
 	if checker.downloadClient == nil {
 		checker.downloadClient = newUpdateDownloadClient()
 	}
@@ -229,7 +288,7 @@ func downloadPortableArchive(ctx context.Context, checker *UpdateChecker, info U
 		return "", errors.New("更新包超过自动安装允许的大小")
 	}
 
-	file, err := os.CreateTemp("", "jianzuo-update-*.zip")
+	file, err := os.CreateTemp("", "jianzuo-update-*.package")
 	if err != nil {
 		return "", errors.New("无法创建更新包临时文件")
 	}
@@ -281,7 +340,7 @@ func updateArchiveDigest(ctx context.Context, checker *UpdateChecker, info Updat
 	if err != nil {
 		return "", errors.New("校验文件地址无效")
 	}
-	req.Header.Set("User-Agent", "Jianzuo/"+version)
+	req.Header.Set("User-Agent", "Duo/"+version)
 	if checker.downloadClient == nil {
 		checker.downloadClient = newUpdateDownloadClient()
 	}
@@ -349,9 +408,9 @@ func extractPortableArchive(archivePath, destination string) error {
 
 func portableFileLimit(name string) uint64 {
 	switch name {
-	case "jianzuo-service.exe":
+	case "duo-service.exe":
 		return 256 << 20
-	case "简作.exe":
+	case "Duo.exe":
 		return 64 << 20
 	default:
 		return 8 << 20
@@ -484,11 +543,14 @@ func runUpdateHelper(dataDir, root, stage, release string, launcherPID int) erro
 		logUpdate(dataDir, "invalid version %q", release)
 		return errors.New("更新助手收到无效版本")
 	}
-	if !pathWithin(root, stage) {
+	if !filepath.IsAbs(root) || !filepath.IsAbs(dataDir) || !pathWithin(root, stage) || filepath.Dir(stage) != root || !strings.HasPrefix(filepath.Base(stage), ".jianzuo-update-") {
 		logUpdate(dataDir, "stage is outside program directory")
 		return errors.New("更新暂存目录无效")
 	}
-	if err := waitForProcessExit(launcherPID, 8*time.Second); err != nil {
+	if err := validateUpdateStage(root, stage); err != nil {
+		return err
+	}
+	if err := waitForProcessExit(launcherPID, 90*time.Second); err != nil {
 		logUpdate(dataDir, "launcher did not exit: %v", err)
 		return err
 	}
@@ -505,6 +567,19 @@ func runUpdateHelper(dataDir, root, stage, release string, launcherPID int) erro
 		}
 	}
 	defer unlock()
+	plan, err := readUpdatePlan(stage, release)
+	if err != nil {
+		logUpdate(dataDir, "invalid update plan: %v", err)
+		return err
+	}
+	mode, err := installationMode(root, filepath.Join(root, "duo-service.exe"))
+	if err != nil || mode != plan.Mode {
+		logUpdate(dataDir, "installation ownership changed: %v", err)
+		return errors.New("安装方式或所有权已变化，取消更新")
+	}
+	if mode == "installed" {
+		return runInstalledUpdate(dataDir, root, stage, release, unlock)
+	}
 
 	if err = validatePortableStaging(stage); err != nil {
 		unlock()
@@ -529,19 +604,24 @@ func runUpdateHelper(dataDir, root, stage, release string, launcherPID int) erro
 			return fmt.Errorf("新版启动失败，且回滚未完成：%w", rollbackErr)
 		}
 		launchPortableAndRelease(root, dataDir)
-		return fmt.Errorf("新版启动失败，已回滚：%w", err)
+		return fmt.Errorf("新版启动器未能启动，已恢复旧程序文件；数据未参与替换：%w", err)
 	}
-	if err = waitForPortableRestart(dataDir, release, 45*time.Second); err != nil {
+	return finishPortableUpdate(dataDir, stage, backup, release, launcher, func() error {
+		return waitForPortableRestart(dataDir, release, 45*time.Second)
+	})
+}
+
+func finishPortableUpdate(dataDir, stage, backup, release string, launcher *os.Process, check func() error) error {
+	if launcher != nil {
+		defer launcher.Release()
+	}
+	if err := check(); err != nil {
 		logUpdate(dataDir, "new service health check failed: %v", err)
-		stopPortable(launcher, dataDir)
-		if rollbackErr := rollbackPortableFiles(root, backup); rollbackErr != nil {
-			logUpdate(dataDir, "rollback failed: %v", rollbackErr)
-			return fmt.Errorf("新版启动后未通过检查，且回滚未完成：%w", rollbackErr)
-		}
-		launchPortableAndRelease(root, dataDir)
-		return fmt.Errorf("新版启动后未通过检查，已回滚：%w", err)
+		// The new service may already have migrated data or accepted work.
+		// Do not kill it or replace its files simply because health polling failed.
+		logUpdate(dataDir, "new process left running; no program/data rollback; previous program files retained at %s", backup)
+		return fmt.Errorf("新版启动后未通过检查：%w；未强制停止或回退程序/数据，旧程序备份保留在 %s，请检查日志后手动处理", err, backup)
 	}
-	_ = launcher.Release()
 	_ = os.RemoveAll(backup)
 	_ = os.RemoveAll(stage)
 	logUpdate(dataDir, "update %s completed", release)
@@ -613,7 +693,7 @@ func rollbackPortableFiles(root, backup string) error {
 }
 
 func launchPortable(root, dataDir string) (*os.Process, error) {
-	launcher := filepath.Join(root, "简作.exe")
+	launcher := filepath.Join(root, "Duo.exe")
 	if _, err := os.Stat(launcher); err != nil {
 		return nil, err
 	}
@@ -636,7 +716,7 @@ func waitForPortableRestart(dataDir, release string, timeout time.Duration) erro
 		Timeout:   750 * time.Millisecond,
 		Transport: &http.Transport{Proxy: nil},
 	}
-	expected := strings.TrimPrefix(strings.TrimSpace(release), "v") + "-portable"
+	expected := strings.TrimPrefix(strings.TrimSpace(release), "v")
 	if err = waitForPortableHealth(client, healthURL, expected, timeout); err != nil {
 		return err
 	}
@@ -692,7 +772,7 @@ func waitForPortableHealth(client *http.Client, healthURL, expectedVersion strin
 						Version string `json:"version"`
 					}
 					if json.Unmarshal(body, &status) == nil && status.App == "jianzuo" {
-						if status.Version == expectedVersion {
+						if strings.TrimSuffix(status.Version, "-portable") == strings.TrimSuffix(expectedVersion, "-portable") {
 							return nil
 						}
 						err = fmt.Errorf("服务版本为 %s，预期 %s", status.Version, expectedVersion)
@@ -712,25 +792,6 @@ func waitForPortableHealth(client *http.Client, healthURL, expectedVersion strin
 			return fmt.Errorf("新版服务未通过健康检查：%w", lastErr)
 		}
 		time.Sleep(400 * time.Millisecond)
-	}
-}
-
-func stopPortable(process *os.Process, dataDir string) {
-	if process != nil {
-		_ = process.Kill()
-		_, _ = process.Wait()
-	}
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		release, err := lockData(dataDir)
-		if err == nil {
-			release()
-			return
-		}
-		if time.Now().After(deadline) {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
 	}
 }
 

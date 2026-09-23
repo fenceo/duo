@@ -311,7 +311,7 @@ func (s *Server) adoptKnowledge(w http.ResponseWriter, r *http.Request) {
 
 func knowledgeMarkdown(task Task, items []Knowledge) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s · 任务知识\n\n> 由简作导出 · %s\n", task.Title, time.Now().Format("2006-01-02 15:04"))
+	fmt.Fprintf(&b, "# %s · 任务知识\n\n> 由Duo导出 · %s\n", task.Title, time.Now().Format("2006-01-02 15:04"))
 	if len(items) == 0 {
 		b.WriteString("\n还没有沉淀知识。\n")
 		return b.String()

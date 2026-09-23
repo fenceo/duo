@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type worker struct {
@@ -33,6 +34,7 @@ type App struct {
 	wg              sync.WaitGroup
 	notify          chan struct{}
 	feishu          *Feishu
+	updating        atomic.Bool
 }
 
 func newApp(s *Store, c *ConfigFile, r Runner) *App {
@@ -147,6 +149,9 @@ func (a *App) submit(id, input, kind, source string) (Run, error) {
 func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOptions) (Run, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.updating.Load() {
+		return Run{}, errUpdateBusy
+	}
 	if a.ctx.Err() != nil {
 		return Run{}, errors.New("服务正在关闭")
 	}

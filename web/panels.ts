@@ -132,7 +132,7 @@ function installHardwareResizer(){
  if(!handle){handle=panelHandle('hardware-resizer','调整发送区高度','上下拖动调整发送区高度','horizontal');details.before(handle)}
  const sync=()=>handle!.classList.toggle('hidden',details.classList.contains('hidden')||!details.open);
  details.addEventListener('toggle',sync);
- new MutationObserver(sync).observe(details,{attributes:true,attributeFilter:['class']});
+ const observer=new MutationObserver(sync);observer.observe(details,{attributes:true,attributeFilter:['class']});disposeWithShell(()=>observer.disconnect());
  sync();
  const apply=(value:number,save:boolean)=>{
   const limit=Math.max(hardwareLimits.min,Math.round(panel.getBoundingClientRect().height-190));
@@ -279,9 +279,9 @@ function installDockLayout(){
  dockLayout=loadDockLayout();installDockUI();applyDockLayout(false);
  for(const id of ['sticky-board','tool-dock']){
   const node=element(id);
-  new MutationObserver(()=>syncDocks()).observe(node,{attributes:true,attributeFilter:['class']});
+  const observer=new MutationObserver(()=>syncDocks());observer.observe(node,{attributes:true,attributeFilter:['class']});disposeWithShell(()=>observer.disconnect());
  }
- dockNarrow.addEventListener('change',()=>applyDockLayout(false));
+ listenWithShell(dockNarrow,'change',()=>applyDockLayout(false));
 }
 function installPanelLayout(){
  installSidebarResizer();installDockResizers();installStickyResizer();installHardwareResizer();installDockLayout();

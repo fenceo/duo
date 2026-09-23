@@ -32,10 +32,10 @@ try {
     if($LASTEXITCODE -ne 0){throw 'Build failed'}
     $builtStatus=& git status --porcelain
     if($LASTEXITCODE -ne 0 -or $builtStatus){throw 'Build changed source or generated assets; review and commit them before publishing'}
-    $service=Join-Path $root 'dist\Jianzuo-portable-windows-x64\jianzuo-service.exe'
+    $service=Join-Path $root 'dist\Duo-portable-windows-x64\duo-service.exe'
     # windowsgui executables do not reliably attach stdout to a PowerShell
     # expression; explicitly pipe the child output for this release guard.
-    & node --input-type=module -e "import {spawnSync} from 'node:child_process'; const r=spawnSync(process.argv[1],['--version'],{encoding:'utf8',windowsHide:true}); if(r.error||r.status!==0||r.stdout.trim()!==process.argv[2]){console.error('Packaged service version differs from release version');process.exit(1)} console.log('Packaged service version: '+r.stdout.trim());" $service ($package.version+'-portable')
+    & node --input-type=module -e "import {spawnSync} from 'node:child_process'; const r=spawnSync(process.argv[1],['--version'],{encoding:'utf8',windowsHide:true}); if(r.error||r.status!==0||r.stdout.trim()!==process.argv[2]){console.error('Packaged service version differs from release version');process.exit(1)} console.log('Packaged service version: '+r.stdout.trim());" $service $package.version
     if($LASTEXITCODE -ne 0){throw 'Packaged service version validation failed'}
     & node scripts/Test-Codex-Native-Build.mjs $service
     if($LASTEXITCODE -ne 0){throw 'Packaged HTTP acceptance failed; no release created'}
@@ -46,13 +46,13 @@ try {
     & git push origin $branch
     if($LASTEXITCODE -ne 0){throw 'Push failed; no release created'}
     & git show-ref --verify --quiet ('refs/tags/'+$tag)
-    if($LASTEXITCODE -ne 0){& git tag -a $tag -m ('Jianzuo '+$tag);if($LASTEXITCODE -ne 0){throw 'Tag creation failed'}}else{$tagCommit=& git rev-parse ($tag+'^{commit}');if($LASTEXITCODE -ne 0 -or $tagCommit -ne $head){throw 'Tag refers to a different commit'}}
+    if($LASTEXITCODE -ne 0){& git tag -a $tag -m ('Duo '+$tag);if($LASTEXITCODE -ne 0){throw 'Tag creation failed'}}else{$tagCommit=& git rev-parse ($tag+'^{commit}');if($LASTEXITCODE -ne 0 -or $tagCommit -ne $head){throw 'Tag refers to a different commit'}}
     & git push origin $tag
     if($LASTEXITCODE -ne 0){throw 'Tag push failed'}
-    $zip=Join-Path $root 'dist\Jianzuo-portable-windows-x64.zip'
-    $installer=Join-Path $root 'dist\Jianzuo-Setup-User-x64.exe'
+    $zip=Join-Path $root 'dist\Duo-portable-windows-x64.zip'
+    $installer=Join-Path $root 'dist\Duo-Setup-User-x64.exe'
     foreach($path in @($zip,($zip+'.sha256'),$installer,($installer+'.sha256'))){if(!(Test-Path -LiteralPath $path -PathType Leaf)){throw ('Release asset is missing: '+$path)}}
-    & $GitHubCLI release create $tag $zip ($zip+'.sha256') $installer ($installer+'.sha256') --repo $repo.nameWithOwner --verify-tag --draft --title ('简作 '+$tag) --notes-file $Notes
+    & $GitHubCLI release create $tag $zip ($zip+'.sha256') $installer ($installer+'.sha256') --repo $repo.nameWithOwner --verify-tag --draft --title ('Duo '+$tag) --notes-file $Notes
     if($LASTEXITCODE -ne 0){throw 'Draft upload failed; inspect the draft before retrying'}
     $releaseJSON=& $GitHubCLI release view $tag --repo $repo.nameWithOwner --json assets,isDraft
     if($LASTEXITCODE -ne 0){throw 'Cannot verify draft release'}

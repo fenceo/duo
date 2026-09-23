@@ -285,7 +285,7 @@ func TestHTTPLoginCSRFNotesAndSecretRedaction(t *testing.T) {
 		t.Fatal("secret leaked")
 	}
 	_, b = request("/", "GET", nil, srv.URL)
-	if !strings.Contains(string(b), "简作") {
+	if !strings.Contains(string(b), "Duo") {
 		t.Fatal("independent frontend missing")
 	}
 }

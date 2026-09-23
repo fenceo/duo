@@ -1,89 +1,122 @@
-let updateLoading = false, updateInformation = null;
+let updateLoading = false, updateInformation = null, updatePhase = 'idle', updateExpectedVersion = '';
 function installUpdates() {
     const form = element('settings-form'), nav = form.querySelector('.settings-nav');
     nav.insertAdjacentHTML('beforeend', '<button type="button" data-settings="updates">版本更新</button>');
-    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-updates" class="settings-section hidden"><div class="update-version"><div><small>当前版本</small><strong id="update-current">正在读取…</strong></div><div class="update-actions"><button type="button" id="update-install" class="primary hidden">下载并自动安装</button><button type="button" id="update-check">检查更新</button></div></div><p id="update-result" role="status"></p><div id="update-links" class="update-links"></div><details id="update-notes" class="hidden"><summary>更新说明</summary><pre id="update-notes-content"></pre></details><details class="update-source"><summary>更新来源</summary><label for="update-repository">GitHub 公开仓库</label><input id="update-repository" placeholder="用户名/jianzuo" autocomplete="off"><p>留空使用官方仓库。只查询正式发布版本，不上传任务或账号信息。</p><button type="button" id="update-source-save">保存来源</button></details><p class="update-help">自动安装只替换程序和说明文件，不改动 data 数据目录；任务结束前请先停止正在执行的任务。仅在自动安装不可用时才需要手动下载便携包。</p></section>`);
-    nav.querySelectorAll('button').forEach((b)=>b.onclick = ()=>{
-            const page = b.dataset.settings;
-            nav.querySelectorAll('button').forEach((x)=>x.classList.toggle('selected', x === b));
-            for (const id of [
-                'environment',
-                'feishu',
-                'access',
-                'engines',
-                'updates'
-            ]){
-                const section = document.getElementById('settings-' + id);
-                if (section) section.classList.toggle('hidden', id !== page);
-            }
-            ;
-            button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines');
-            if (page === 'updates') void loadUpdateInformation();
-            if (page === 'engines') void loadEngineSettings();
-        });
+    element('settings-error').insertAdjacentHTML('beforebegin', '<section id="settings-updates" class="settings-section hidden"><div class="update-version"><div><small>当前版本</small><strong id="update-current">正在读取…</strong><span id="update-mode" class="update-mode">正在识别安装方式</span></div><div class="update-actions"><button type="button" id="update-install" class="primary hidden">下载并安装更新</button><button type="button" id="update-check">检查更新</button></div></div><ol class="update-steps" aria-label="更新流程"><li data-update-step="checking">检查版本</li><li data-update-step="preparing">下载与校验</li><li data-update-step="reconnecting">安装与重连</li><li data-update-step="complete">确认新版</li></ol><p id="update-result" role="status" aria-live="polite"></p><button type="button" id="update-reconnect" class="hidden">重新连接并确认版本</button><p id="update-support" class="update-support"></p><div id="update-links" class="update-links"></div><details id="update-notes" class="hidden"><summary>更新说明</summary><pre id="update-notes-content"></pre></details><details class="update-source"><summary>更新来源</summary><label for="update-repository">GitHub 公开仓库</label><input id="update-repository" placeholder="用户名/仓库" autocomplete="off"><p>留空使用官方仓库。只查询正式发布版本，不上传任务或账号信息。</p><button type="button" id="update-source-save">保存来源</button></details><p class="update-help">更新会短暂重启Duo，保留数据、任务记录、知识和配置。请先等待 AI 任务结束、关闭终端会话并完成硬件操作；有正在进行的工作时不会强停更新。安装版继续使用安装包升级，便携版保留便携更新方式。</p></section>');
     button('update-check').onclick = checkNewVersion;
     button('update-install').onclick = installNewVersion;
     button('update-source-save').onclick = saveUpdateSource;
+    button('update-reconnect').onclick = ()=>void reconnectAfterUpdate();
+    setUpdateBusy(updateLoading);
 }
 function safeUpdateLink(url, repo) {
     if (!url) return '';
     try {
-        const u = new URL(url), prefix = `/${repo}/releases`.toLowerCase(), path = u.pathname.toLowerCase();
+        const u = new URL(url), prefix = ('/' + repo + '/releases').toLowerCase(), path = u.pathname.toLowerCase();
         return u.protocol === 'https:' && u.host === 'github.com' && !u.username && !u.password && !u.search && !u.hash && (path === prefix || path.startsWith(prefix + '/')) ? u.href : '';
     } catch  {
         return '';
     }
 }
+function updateModeLabel(v) {
+    return v.installation_mode === 'installed' ? 'Windows 安装版' : v.installation_mode === 'portable' ? 'Windows 便携版' : '独立运行 · 手动安装';
+}
 function updateLinks(v) {
-    const links = [
-        [
-            '版本页面',
-            v.release_url || v.releases_url
-        ]
-    ];
-    if (v.download_url && !v.install_supported) links.unshift([
-        '手动下载便携版' + (v.size ? ' · ' + (v.size / 1024 / 1024).toFixed(1) + ' MB' : ''),
+    const portable = v.package_kind === 'portable' || v.installation_mode === 'portable';
+    const links = [];
+    if (v.download_url) links.push([
+        portable ? '手动下载便携版 ZIP' : '手动下载安装包 EXE',
         v.download_url
     ]);
+    else if (v.installer_download_url) links.push([
+        '下载安装包 EXE',
+        v.installer_download_url
+    ]);
+    if (v.installer_download_url && v.installer_download_url !== v.download_url) links.push([
+        '安装版 EXE（推荐）',
+        v.installer_download_url
+    ]);
+    if (v.portable_download_url && v.portable_download_url !== v.download_url) links.push([
+        '便携版 ZIP',
+        v.portable_download_url
+    ]);
     if (v.checksum_url) links.push([
-        '校验文件',
+        'SHA-256 校验文件',
         v.checksum_url
     ]);
+    links.push([
+        '版本页面',
+        v.release_url || v.releases_url
+    ]);
     return links;
+}
+function updateCanInstall() {
+    const v = updateInformation;
+    return !!(v?.state === 'available' && v.install_supported && safeUpdateLink(v.download_url, v.repository) && !updateExpectedVersion);
 }
 function setUpdateBusy(busy) {
     updateLoading = busy;
     for (const id of [
         'update-check',
-        'update-source-save'
-    ])button(id).disabled = busy;
-    button('update-install').disabled = busy || !updateInformation || updateInformation.state !== 'available' || !updateInformation.install_supported || !updateInformation.download_url;
-    input('update-repository').disabled = busy;
+        'update-source-save',
+        'update-reconnect'
+    ]){
+        const b = document.getElementById(id);
+        if (b) b.disabled = busy || id === 'update-source-save' && !!updateExpectedVersion;
+    }
+    const install = document.getElementById('update-install');
+    if (install) install.disabled = busy || !updateCanInstall();
+    const repository = document.getElementById('update-repository');
+    if (repository) repository.disabled = busy || !!updateExpectedVersion;
+}
+function setUpdatePhase(phase, message, error = false) {
+    updatePhase = phase;
+    const result = document.getElementById('update-result');
+    if (result) {
+        result.textContent = message;
+        result.classList.toggle('error', error);
+    }
+    document.querySelectorAll('[data-update-step]').forEach((step)=>{
+        const active = step.dataset.updateStep === phase || phase === 'timeout' && step.dataset.updateStep === 'reconnecting';
+        step.classList.toggle('active', active);
+        if (active) step.setAttribute('aria-current', 'step');
+        else step.removeAttribute('aria-current');
+    });
+    const retry = document.getElementById('update-reconnect');
+    if (retry) retry.classList.toggle('hidden', phase !== 'timeout');
+    const section = document.getElementById('settings-updates');
+    if (section) section.setAttribute('aria-busy', String([
+        'checking',
+        'preparing',
+        'reconnecting'
+    ].includes(phase)));
 }
 function renderUpdateInformation(v) {
     updateInformation = v;
+    if (!document.getElementById('settings-updates')) return;
     element('update-current').textContent = v.current;
+    element('update-mode').textContent = updateModeLabel(v);
     input('update-repository').value = v.repository;
-    element('update-result').classList.remove('error');
-    element('update-result').textContent = v.message + (v.latest ? ' ' + v.latest : '') + (v.checked ? ' · ' + new Date(v.checked).toLocaleTimeString('zh-CN', {
+    if (!updateExpectedVersion) setUpdatePhase('idle', v.message + (v.latest ? ' · ' + v.latest : '') + (v.checked ? ' · ' + new Date(v.checked).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit'
-    }) : '');
-    const links = updateLinks(v);
-    element('update-links').innerHTML = links.map(([label, url])=>{
+    }) : ''));
+    element('update-links').innerHTML = updateLinks(v).map(([label, url])=>{
         const href = safeUpdateLink(url, v.repository);
-        return href ? `<a target="_blank" rel="noopener noreferrer" href="${escapeHTML(href)}">${escapeHTML(label)} ↗</a>` : '';
+        return href ? '<a target="_blank" rel="noopener noreferrer" href="' + escapeHTML(href) + '">' + escapeHTML(label) + ' ↗</a>' : '';
     }).join('');
     element('update-notes').classList.toggle('hidden', !v.notes);
     element('update-notes-content').textContent = v.notes || '';
-    const install = button('update-install'), canInstall = !!(v.install_supported && v.download_url);
+    element('update-support').textContent = v.install_message || (v.installation_mode === 'installed' ? '使用安装包原位升级，保留现有安装位置和数据目录。' : v.installation_mode === 'portable' ? '在当前目录更新便携程序，数据目录保持不变。' : '此运行方式暂不支持自动安装，请下载 Windows 安装包或查看版本页面。');
+    const install = button('update-install');
     install.classList.toggle('hidden', v.state !== 'available');
-    install.disabled = updateLoading || !canInstall;
-    install.title = canInstall ? '' : v.install_message || '自动安装暂不可用，请使用手动下载。';
+    install.title = v.install_supported ? '' : v.install_message || '自动安装暂不可用，请手动下载。';
+    setUpdateBusy(updateLoading);
 }
 function updateFailure(e) {
-    element('update-result').textContent = e.message;
-    element('update-result').classList.add('error');
+    const error = e, message = error?.message || '连接失败，请稍后重试。';
+    const prefix = error.status === 401 ? '登录已过期，请重新登录后再试。' : error.status === 403 ? '请求未获授权，请刷新页面重新登录后再试。' : error.status === 409 ? '当前不能更新：请等待任务结束、关闭终端会话并完成硬件操作后重试。' : '';
+    setUpdatePhase(updateExpectedVersion ? 'timeout' : 'failed', prefix + (prefix ? ' ' : '') + message, true);
 }
 async function loadUpdateInformation() {
     if (updateLoading) return;
@@ -97,7 +130,7 @@ async function loadUpdateInformation() {
     }
 }
 async function saveUpdateSource() {
-    if (updateLoading) return;
+    if (updateLoading || updateExpectedVersion) return;
     setUpdateBusy(true);
     try {
         renderUpdateInformation(await api('updates', 'PUT', {
@@ -113,8 +146,7 @@ async function saveUpdateSource() {
 async function checkNewVersion() {
     if (updateLoading) return;
     setUpdateBusy(true);
-    element('update-result').classList.remove('error');
-    element('update-result').textContent = '正在连接 GitHub…';
+    if (!updateExpectedVersion) setUpdatePhase('checking', '正在检查 GitHub 正式发布版本…');
     try {
         renderUpdateInformation(await api('updates/check', 'POST', {}));
     } catch (e) {
@@ -123,20 +155,98 @@ async function checkNewVersion() {
         setUpdateBusy(false);
     }
 }
-async function installNewVersion() {
-    if (updateLoading) return;
-    if (!confirm('自动安装会停止正在运行的任务，然后替换程序并重启简作。是否继续？')) return;
+function normalizedUpdateVersion(value) {
+    return /^v?\d+\.\d+\.\d+(?:-portable)?$/.test(value) ? value.replace(/^v/, '').replace(/-portable$/, '') : '';
+}
+async function waitForUpdatedService(expected, timeoutMs = 180000, intervalMs = 2000) {
+    const target = normalizedUpdateVersion(expected);
+    if (!target) return {
+        matched: false,
+        lastVersion: ''
+    };
+    const deadline = Date.now() + timeoutMs;
+    let lastVersion = '';
+    while(Date.now() < deadline){
+        const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), Math.min(4000, Math.max(1, deadline - Date.now())));
+        try {
+            const response = await fetch('/healthz', {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            if (response.status === 401 || response.status === 403) return {
+                matched: false,
+                lastVersion,
+                status: response.status
+            };
+            if (response.ok) {
+                const health = await response.json();
+                if (health.app === 'jianzuo' && typeof health.version === 'string') {
+                    lastVersion = health.version;
+                    if (normalizedUpdateVersion(lastVersion) === target) return {
+                        matched: true,
+                        lastVersion
+                    };
+                }
+            }
+        } catch  {} finally{
+            clearTimeout(timer);
+        }
+        if (Date.now() < deadline) await new Promise((resolve)=>setTimeout(resolve, Math.min(intervalMs, deadline - Date.now())));
+    }
+    return {
+        matched: false,
+        lastVersion
+    };
+}
+async function reconnectAfterUpdate() {
+    if (updateLoading || !updateExpectedVersion) return;
     setUpdateBusy(true);
-    element('update-result').classList.remove('error');
-    element('update-result').textContent = '正在下载、校验并准备更新，请勿关闭电脑…';
+    setUpdatePhase('reconnecting', '更新已进入安装与重连等待，正在确认 ' + updateExpectedVersion + '。服务可能短暂离线；确认新版前不会显示成功。');
+    try {
+        const result = await waitForUpdatedService(updateExpectedVersion);
+        if (result.matched) {
+            updateExpectedVersion = '';
+            setUpdatePhase('complete', '已连接新版 ' + result.lastVersion + '，正在刷新工作台…');
+            location.reload();
+            return;
+        }
+        const reason = result.status === 401 ? '访问服务需要重新登录。' : result.status === 403 ? '当前连接没有访问权限，请检查登录或代理设置。' : result.lastVersion ? '服务仍返回版本 ' + result.lastVersion + '。' : '服务暂未恢复连接。';
+        setUpdatePhase('timeout', reason + ' 尚未确认更新成功；可再次连接，或在服务电脑上启动Duo并查看数据目录中的 update.log。请勿重复安装或删除数据。', true);
+    } catch (e) {
+        setUpdatePhase('timeout', '暂时无法确认更新结果。可重新连接，或查看数据目录中的 update.log；不要重复安装。', true);
+    } finally{
+        if (updatePhase !== 'complete') setUpdateBusy(false);
+    }
+}
+async function installNewVersion() {
+    if (updateLoading || !updateCanInstall()) return;
+    const expected = normalizedUpdateVersion(updateInformation?.latest || '');
+    if (!expected) {
+        updateFailure(new Error('缺少可验证的目标版本，请重新检查更新。'));
+        return;
+    }
+    if (!confirm('下载并安装 ' + expected + '？\n更新会短暂重启Duo并保留数据。请先等待 AI 任务结束、关闭终端会话并完成硬件操作；更新不会强停这些工作。')) return;
+    setUpdateBusy(true);
+    setUpdatePhase('preparing', '正在下载、校验并准备更新。完成前不会开始安装；请勿关闭服务电脑。');
     try {
         const result = await api('updates/install', 'POST', {});
-        element('update-result').textContent = `已安排更新到 ${result.version}。简作即将退出，替换完成后会自动重启。`;
-        notify('已安排自动更新，简作即将重启');
+        if (result.state !== 'scheduled' || !normalizedUpdateVersion(result.version)) throw Object.assign(new Error('服务未返回有效的安装安排，请重新检查更新。'), {
+            status: 502
+        });
+        updateExpectedVersion = result.version;
     } catch (e) {
-        updateFailure(e);
-        setUpdateBusy(false);
+        if (!e?.status) {
+            updateExpectedVersion = expected;
+            setUpdatePhase('reconnecting', '安装请求的连接已中断，正在确认服务版本；尚未确认更新成功。');
+        } else {
+            updateFailure(e);
+            setUpdateBusy(false);
+            return;
+        }
     }
+    setUpdateBusy(false);
+    await reconnectAfterUpdate();
 }
 const harnessAttachmentHint = 'Harness 当前不支持附件。请切换到 Codex / Claude Code，或手动移除附件后继续；已选附件不会自动删除。';
 function validateEngineAttachments(engine, count) {
@@ -824,7 +934,7 @@ async function confirmTrashTask() {
                 'task-actions',
                 'composer-wrap'
             ])element(name).classList.add('hidden');
-            element('task-title').textContent = '简作';
+            element('task-title').textContent = 'Duo';
             element('task-workspace').textContent = '';
             history.replaceState(null, '', '/');
             switchTab('chat');
@@ -936,7 +1046,12 @@ function installStickyBoard() {
         stickyScope = localStorage.getItem('jianzuo-sticky-scope') || 'all';
         stickyFilter = localStorage.getItem('jianzuo-sticky-filter') || 'open';
     } catch  {}
-    element('task-list').insertAdjacentHTML('afterend', '<section id="sticky-board" class="sticky-board"><header><strong>待办</strong><span id="sticky-count" class="muted"></span><select id="sticky-filter" aria-label="待办筛选"><option value="open">未完成</option><option value="all">全部</option><option value="done">已完成</option></select><select id="sticky-scope" aria-label="待办范围"><option value="all">全部任务</option><option value="task">本任务</option></select><button id="sticky-new" title="新建待办">＋</button></header><div id="sticky-list" class="sticky-list"></div></section>');
+    element('task-list').insertAdjacentHTML('afterend', '<section id="sticky-board" class="sticky-board"><header><strong>待办</strong><span id="sticky-count" class="muted"></span><button id="sticky-expand" type="button" aria-expanded="false" aria-controls="sticky-list sticky-filter sticky-scope" aria-label="展开待办和筛选">展开</button><select id="sticky-filter" aria-label="待办筛选"><option value="open">未完成</option><option value="all">全部</option><option value="done">已完成</option></select><select id="sticky-scope" aria-label="待办范围"><option value="all">全部任务</option><option value="task">本任务</option></select><button id="sticky-new" title="新建待办">＋</button></header><div id="sticky-list" class="sticky-list"></div></section>');
+    button('sticky-expand').onclick = ()=>{
+        const board = element('sticky-board');
+        board.dataset.mobileExpanded = board.dataset.mobileExpanded === 'true' ? 'false' : 'true';
+        syncStickyCompact(board.dataset.empty === 'true');
+    };
     input('sticky-scope').value = stickyScope;
     input('sticky-scope').onchange = ()=>{
         stickyScope = input('sticky-scope').value;
@@ -974,10 +1089,22 @@ async function loadStickyBoard() {
         stickyItems = items;
         renderStickyBoard();
     } catch (e) {
-        if (element('sticky-list') && !stickyItems.length) element('sticky-list').textContent = e.message;
+        if (element('sticky-list') && !stickyItems.length) {
+            syncStickyCompact(false);
+            element('sticky-list').textContent = e.message;
+        }
     } finally{
         stickyLoading = false;
     }
+}
+function syncStickyCompact(empty) {
+    const board = element('sticky-board'), toggle = element('sticky-expand');
+    if (!board || !toggle) return;
+    board.dataset.empty = String(empty);
+    const expanded = !empty || board.dataset.mobileExpanded === 'true';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', expanded ? '收起空待办和筛选' : '展开待办和筛选');
+    toggle.textContent = expanded ? '收起' : '展开';
 }
 function renderStickyBoard() {
     if (!element('sticky-list')) return;
@@ -986,6 +1113,7 @@ function renderStickyBoard() {
         const s = scratchStatus(n);
         return stickyFilter === 'all' || (stickyFilter === 'open' ? s !== 'done' : s === 'done');
     });
+    syncStickyCompact(items.length === 0);
     const html = items.map((n)=>scratchCardHTML(n, 'all')).join('') || `<p class="muted">${stickyFilter === 'done' ? '还没有完成的待办。' : '点 ＋ 记下一步要做的事，勾选即可完成。'}</p>`;
     if (element('sticky-count')) element('sticky-count').textContent = scoped.filter((n)=>scratchStatus(n) !== 'done').length + ' 项未完成';
     if (html === stickyLast) return;
@@ -1718,15 +1846,15 @@ function installLayout() {
     element('task-list').addEventListener('scroll', closeTaskMenus, {
         passive: true
     });
-    document.addEventListener('click', (e)=>{
+    listenWithShell(document, 'click', (e)=>{
         if (!e.target.closest('.task-item-menu')) closeTaskMenus();
     });
-    document.addEventListener('keydown', (e)=>{
+    listenWithShell(document, 'keydown', (e)=>{
         if (e.key === 'Escape') closeTaskMenus();
     });
     element('task-title').textContent = '今天，从哪件事开始？';
     element('task-workspace').textContent = 'Windows · WSL · SSH';
-    element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">简</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
+    element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">D</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
 try {
     document.documentElement.dataset.theme = localStorage.getItem('jianzuo-theme') === 'dark' ? 'dark' : 'light';
@@ -2078,6 +2206,10 @@ function installHardware() {
     hardwareOverviewTimer = setInterval(()=>{
         if (authenticated && chosen && !document.hidden && !hardwareOverviewLoading && !hardwareAISaving && (toolsTab === 'hardware' || element('hardware-library-dialog')?.open)) void loadDevices(true);
     }, 4000);
+    disposeWithShell(()=>{
+        clearInterval(hardwarePollTimer);
+        clearInterval(hardwareOverviewTimer);
+    });
 }
 function hardwareEnter() {
     return ({
@@ -2122,7 +2254,7 @@ async function refreshHardwarePorts() {
         input('device-serial-choice').innerHTML = '<option value="">选择串口…</option>' + ports.map((p)=>`<option value="${escapeHTML(p.name)}">${escapeHTML(p.name + ' · ' + (p.product || [
                 p.vid,
                 p.pid
-            ].filter(Boolean).join(':') || '串口') + (p.busy ? '（简作内已占用）' : ''))}</option>`).join('') + '<option value="__manual__">手动填写 / 未检测到的端口…</option>';
+            ].filter(Boolean).join(':') || '串口') + (p.busy ? '（Duo内已占用）' : ''))}</option>`).join('') + '<option value="__manual__">手动填写 / 未检测到的端口…</option>';
         input('device-serial-choice').value = ports.some((p)=>p.name === current) ? current : current || !ports.length ? '__manual__' : '';
         input('device-portname').classList.toggle('hidden', input('device-serial-choice').value !== '__manual__');
         element('device-ports').innerHTML = ports.map((p)=>`<option value="${escapeHTML(p.name)}">${escapeHTML(p.product)}</option>`).join('');
@@ -2988,7 +3120,7 @@ function installModelPicker() {
         updateCreateModelLabel();
         updateReasoning();
     };
-    document.addEventListener('click', (e)=>{
+    listenWithShell(document, 'click', (e)=>{
         const node = e.target;
         for (const target of Object.keys(modelPickers))if (!node.closest('#' + modelPickers[target].root)) closeModelMenu(target);
     });
@@ -3190,7 +3322,7 @@ let discoveryEpoch = 0, discoveryID = '', discoveryTimer, discoveryPick = null;
 function installDiscovery() {
     button('add-ssh').insertAdjacentHTML('afterend', '<button type="button" id="discover-environment">发现局域网 SSH</button>');
     element('device-protocol').insertAdjacentHTML('afterend', '<button type="button" id="discover-device" class="subtle">发现局域网 SSH</button>');
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="discovery-dialog"><h2>发现局域网 SSH</h2><p class="muted">从简作所在电脑扫描，选中后填入连接地址。</p><label for="discovery-network">本机网络</label><select id="discovery-network"></select><div class="form-grid"><div><label for="discovery-cidr">扫描网段</label><input id="discovery-cidr" placeholder="192.168.50.0/24"></div><div><label for="discovery-ports">端口</label><input id="discovery-ports" value="22,2222" placeholder="22,2222"></div></div><div class="actions"><button class="primary" id="discovery-start">开始扫描</button><button id="discovery-stop" disabled>停止</button></div><p id="discovery-status" role="status"></p><div id="discovery-results" class="discovery-results"></div><p class="muted">发现服务不代表已登录；用户名、密钥或密码仍需配置。</p><p class="error" id="discovery-error"></p><div class="dialog-footer"><button id="discovery-close">关闭</button></div></dialog>`);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="discovery-dialog"><h2>发现局域网 SSH</h2><p class="muted">从Duo所在电脑扫描，选中后填入连接地址。</p><label for="discovery-network">本机网络</label><select id="discovery-network"></select><div class="form-grid"><div><label for="discovery-cidr">扫描网段</label><input id="discovery-cidr" placeholder="192.168.50.0/24"></div><div><label for="discovery-ports">端口</label><input id="discovery-ports" value="22,2222" placeholder="22,2222"></div></div><div class="actions"><button class="primary" id="discovery-start">开始扫描</button><button id="discovery-stop" disabled>停止</button></div><p id="discovery-status" role="status"></p><div id="discovery-results" class="discovery-results"></div><p class="muted">发现服务不代表已登录；用户名、密钥或密码仍需配置。</p><p class="error" id="discovery-error"></p><div class="dialog-footer"><button id="discovery-close">关闭</button></div></dialog>`);
     button('discover-environment').onclick = ()=>void openDiscovery((endpoint)=>{
             if (input('environment-type').value !== 'ssh') addEnvironment('ssh');
             input('setting-host').value = endpoint.host;
@@ -4096,7 +4228,7 @@ function installSettingsSections() {
     const access = document.createElement('section');
     access.id = 'settings-access';
     access.className = 'settings-section hidden';
-    access.innerHTML = '<h3>从其他设备打开简作</h3><p>简作运行在这台电脑上，其他电脑或手机通过浏览器访问。远程访问前，请让两端连接同一 Tailscale 网络，并保持服务电脑开机。</p><label for="access-lan">局域网地址</label><input id="access-lan" type="url" placeholder="http://192.168.1.10:8789"><label for="access-tailscale">Tailscale 地址或域名</label><input id="access-tailscale" type="url" placeholder="http://100.100.100.10:8789"><p>保存后，新生成的飞书任务清单和详情卡片会显示这两个入口；详情入口会直接定位到对应任务。地址中不包含密码或登录令牌。</p><div id="access-preview" class="access-preview"></div><p>打开后仍需输入工作台密码。更换局域网、端口或设备后请更新地址。飞书内置浏览器打不开时，可复制地址到系统浏览器。</p>';
+    access.innerHTML = '<h3>从其他设备打开Duo</h3><p>Duo运行在这台电脑上，其他电脑或手机通过浏览器访问。远程访问前，请让两端连接同一 Tailscale 网络，并保持服务电脑开机。</p><label for="access-lan">局域网地址</label><input id="access-lan" type="url" placeholder="http://192.168.1.10:8789"><label for="access-tailscale">Tailscale 地址或域名</label><input id="access-tailscale" type="url" placeholder="http://100.100.100.10:8789"><p>保存后，新生成的飞书任务清单和详情卡片会显示这两个入口；详情入口会直接定位到对应任务。地址中不包含密码或登录令牌。</p><div id="access-preview" class="access-preview"></div><p>打开后仍需输入工作台密码。更换局域网、端口或设备后请更新地址。飞书内置浏览器打不开时，可复制地址到系统浏览器。</p>';
     form.insertBefore(tabs, error);
     form.insertBefore(environment, error);
     form.insertBefore(feishu, error);
@@ -4106,25 +4238,21 @@ function installSettingsSections() {
     saved.setAttribute('role', 'status');
     saved.style.color = 'var(--accent)';
     form.insertBefore(saved, footer);
-    tabs.querySelectorAll('button').forEach((b)=>b.onclick = ()=>{
-            const page = b.dataset.settings;
-            tabs.querySelectorAll('button').forEach((x)=>x.classList.toggle('selected', x === b));
-            for (const id of [
-                'environment',
-                'feishu',
-                'access',
-                'engines',
-                'updates'
-            ]){
-                const section = document.getElementById('settings-' + id);
-                if (section) section.classList.toggle('hidden', id !== page);
-            }
-            ;
-            button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines');
-        });
+    tabs.onclick = (e)=>{
+        const target = e.target.closest('button[data-settings]');
+        if (target && tabs.contains(target)) showSettingsSection(target.dataset.settings);
+    };
     input('access-lan').oninput = renderAccessPreview;
     input('access-tailscale').oninput = renderAccessPreview;
     footer.classList.add('settings-footer');
+}
+function showSettingsSection(page) {
+    const nav = element('settings-form').querySelector('.settings-nav');
+    nav.querySelectorAll('button[data-settings]').forEach((b)=>b.classList.toggle('selected', b.dataset.settings === page));
+    element('settings-form').querySelectorAll('.settings-section').forEach((section)=>section.classList.toggle('hidden', section.id !== 'settings-' + page));
+    button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines');
+    if (page === 'engines') void loadEngineSettings();
+    else if (page === 'updates') void loadUpdateInformation();
 }
 function loadAccessSettings() {
     input('access-lan').value = settings.config.access?.lan || '';
@@ -4159,28 +4287,11 @@ function renderAccessPreview() {
     }).join('');
 }
 let engineCatalog = null;
+let engineSettingsRequest = 0;
 function installEngineSettings() {
     const form = element('settings-form'), nav = form.querySelector('.settings-nav');
     nav.insertAdjacentHTML('beforeend', '<button type="button" data-settings="engines">AI 引擎</button>');
-    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>AI 引擎与账号</h3><p>引擎负责实际干活，执行环境负责在哪里干活；账号/API 只保存目标环境里的 profile 引用，不把密钥写进简作数据库。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
-    nav.querySelectorAll('button').forEach((b)=>b.addEventListener('click', ()=>{
-            if (b.dataset.settings === 'engines') {
-                nav.querySelectorAll('button').forEach((x)=>x.classList.toggle('selected', x === b));
-                for (const id of [
-                    'environment',
-                    'feishu',
-                    'access',
-                    'engines',
-                    'updates'
-                ]){
-                    const section = document.getElementById('settings-' + id);
-                    if (section) section.classList.toggle('hidden', id !== 'engines');
-                }
-                ;
-                button('settings-save').classList.add('hidden');
-                void loadEngineSettings();
-            }
-        }));
+    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>AI 引擎与账号</h3><p>引擎负责实际干活，执行环境负责在哪里干活；账号/API 只保存目标环境里的 profile 引用，不把密钥写进Duo数据库。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
     button('engine-profile-save').onclick = ()=>void saveEngineProfile();
     input('engine-profile-reference').nextElementSibling.textContent = '这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
 }
@@ -4213,12 +4324,15 @@ function renderEngineCatalog() {
     element('engine-catalog').querySelectorAll('[data-engine-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.engineActivate));
 }
 async function loadEngineSettings() {
+    const epoch = shellEpoch, request = ++engineSettingsRequest;
     try {
-        engineCatalog = await api('engines');
+        const catalog = await api('engines', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== engineSettingsRequest) return;
+        engineCatalog = catalog;
         renderEngineCatalog();
         populateEngineProfileForm();
     } catch (e) {
-        element('engine-catalog').textContent = e.message;
+        if (shellCurrent(epoch) && request === engineSettingsRequest) element('engine-catalog').textContent = e.message;
     }
 }
 function populateEngineProfileForm() {
@@ -4311,18 +4425,51 @@ let taskContext = [];
 const drafts = new Map();
 let editingEnvironments = [], editingID = "", modelRequest = 0;
 let createFiles = [], creatingTask = false, createReturnTask = '', createPermission = 'auto';
-let createSubmitting = false, sessionResetTask = '';
+let createSubmitting = false, sessionResetTask = '', settingsPolling = false;
+let shellEpoch = 0, shellController = new AbortController();
+let shellCleanups = [];
+function shellCurrent(epoch) {
+    return epoch === shellEpoch;
+}
+function disposeWithShell(cleanup) {
+    shellCleanups.push(cleanup);
+}
+function listenWithShell(target, type, listener, options = {}) {
+    target.addEventListener(type, listener, {
+        ...options,
+        signal: shellController.signal
+    });
+}
+function renewShellScope() {
+    shellController.abort();
+    for (const cleanup of shellCleanups.splice(0))try {
+        cleanup();
+    } catch  {}
+    shellController = new AbortController();
+    shellEpoch++;
+    selection++;
+    modelRequest++;
+    taskModelRequest++;
+    modelTestRequest++;
+    polling = false;
+    settingsPolling = false;
+    createSubmitting = false;
+    sending = false;
+    sessionResetTask = '';
+}
 function notify(text) {
     element('notice').textContent = text;
     element('notice').classList.add('show');
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(()=>element('notice').classList.remove('show'), 6500);
 }
-async function api(path, method = 'GET', data) {
+async function api(path, method = 'GET', data, signal) {
+    const epoch = shellEpoch;
     const response = await fetch('/api/' + path, {
         method,
         credentials: 'same-origin',
         cache: 'no-store',
+        signal,
         headers: {
             'Content-Type': 'application/json',
             'X-CSRF-Token': csrf
@@ -4333,7 +4480,7 @@ async function api(path, method = 'GET', data) {
             error: '服务返回内容异常'
         }));
     if (!response.ok) {
-        if (response.status === 401 && path !== 'login') {
+        if (response.status === 401 && path !== 'login' && shellCurrent(epoch)) {
             authenticated = false;
             showLogin();
         }
@@ -4356,6 +4503,7 @@ function markdown(text) {
         }).join('')).join('');
 }
 function showLogin() {
+    renewShellScope();
     closeHardwareView();
     closeDiscovery();
     closeTaskTerminals();
@@ -4364,35 +4512,41 @@ function showLogin() {
     chosen = '';
     detail = null;
     authenticated = false;
-    element('root').innerHTML = `<div class="login-shell"><form class="login" id="login"><div class="brand"><div class="logo">简</div><div><strong>简作</strong><small>LOCAL TASK WORKSPACE</small></div></div><h1>回来，接着做。</h1><p>你的任务、执行过程和解决办法，<br>都留在这里。</p><label for="password">访问密码</label><input id="password" type="password" autocomplete="current-password" required placeholder="输入工作台密码"><p id="login-error" class="error"></p><button class="primary" id="login-submit">进入工作台 →</button></form></div>`;
+    element('root').innerHTML = `<div class="login-shell"><form class="login" id="login"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><h1>回来，接着做。</h1><p>你的任务、执行过程和解决办法，<br>都留在这里。</p><label for="password">访问密码</label><input id="password" type="password" autocomplete="current-password" required placeholder="输入工作台密码"><p id="login-error" class="error"></p><button class="primary" id="login-submit">进入工作台 →</button></form></div>`;
     element('login').onsubmit = async (e)=>{
         e.preventDefault();
+        const epoch = shellEpoch;
         button('login-submit').disabled = true;
         try {
             const r = await api('login', 'POST', {
                 password: input('password').value
             });
+            if (!shellCurrent(epoch)) return;
             csrf = r.csrf;
             await boot();
         } catch (error) {
-            element('login-error').textContent = error.message;
+            if (shellCurrent(epoch) && element('login-error')) element('login-error').textContent = error.message;
         } finally{
-            if (element('login-submit')) button('login-submit').disabled = false;
+            if (shellCurrent(epoch) && element('login-submit')) button('login-submit').disabled = false;
         }
     };
 }
 async function boot() {
-    const status = await api('auth');
+    const epoch = shellEpoch, signal = shellController.signal;
+    const status = await api('auth', 'GET', undefined, signal);
+    if (!shellCurrent(epoch)) return;
     if (!status.authenticated) {
         showLogin();
         return;
     }
     csrf = status.csrf;
-    [tasks, settings, workCatalog] = await Promise.all([
-        api('tasks'),
-        api('settings'),
-        api('workbench')
+    const loaded = await Promise.all([
+        api('tasks', 'GET', undefined, signal),
+        api('settings', 'GET', undefined, signal),
+        api('workbench', 'GET', undefined, signal)
     ]);
+    if (!shellCurrent(epoch)) return;
+    [tasks, settings, workCatalog] = loaded;
     authenticated = true;
     renderShell();
     renderList();
@@ -4404,12 +4558,13 @@ async function boot() {
     }
 }
 function renderShell() {
+    renewShellScope();
     lastList = '';
-    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">简</div><div><strong>简作</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
+    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
  <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
- <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行简作的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
+ <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行Duo的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
  <dialog id="bind-dialog"><h2>在飞书继续这个任务</h2><p id="bind-status"></p><p>连接后，从网页或飞书发来的要求进入同一个任务；该任务的完成结果会发送到此私聊。</p><div class="dialog-footer"><button data-close="bind-dialog">关闭</button><button id="bind-setup">扫码创建并绑定当前任务</button><button id="unbind">断开当前任务</button><button class="primary" id="bind">连接此任务</button></div></dialog>
- <dialog id="setup-dialog"><h2>扫码连接飞书</h2><p>确认后将创建“简作助手”，绑定扫码账号，初始化“我的任务、整理知识”菜单并提交发布，最后发送一条绑定通知。已有机器人不会被修改。</p><p>请在飞书官方页面审阅并确认权限；企业审批可能影响发布。</p><div id="setup-display"><p>点击下方按钮生成二维码。</p></div><div class="dialog-footer"><button id="setup-close">关闭</button><button id="setup-cancel" class="hidden">取消等待</button><button class="primary" id="setup-start">生成飞书二维码</button></div></dialog><dialog id="knowledge-dialog"><form id="knowledge-form"><h2>任务知识</h2><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" placeholder="例如：继电器上电顺序与验证方法"><label for="knowledge-state">状态</label><select id="knowledge-state"><option value="observed">待验证</option><option value="verified">已验证</option><option value="stale">已过时</option></select><label for="knowledge-body">内容</label><textarea id="knowledge-body" rows="12" maxlength="200000" aria-label="知识内容" placeholder="结论、命令、解决办法和验证结果…"></textarea><p id="knowledge-error" class="error"></p><div class="dialog-footer"><button type="button" id="knowledge-cancel">取消</button><button class="primary" id="knowledge-save">保存知识</button></div></form></dialog>`;
+ <dialog id="setup-dialog"><h2>扫码连接飞书</h2><p>确认后将创建“Duo助手”，绑定扫码账号，初始化“我的任务、整理知识”菜单并提交发布，最后发送一条绑定通知。已有机器人不会被修改。</p><p>请在飞书官方页面审阅并确认权限；企业审批可能影响发布。</p><div id="setup-display"><p>点击下方按钮生成二维码。</p></div><div class="dialog-footer"><button id="setup-close">关闭</button><button id="setup-cancel" class="hidden">取消等待</button><button class="primary" id="setup-start">生成飞书二维码</button></div></dialog><dialog id="knowledge-dialog"><form id="knowledge-form"><h2>任务知识</h2><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" placeholder="例如：继电器上电顺序与验证方法"><label for="knowledge-state">状态</label><select id="knowledge-state"><option value="observed">待验证</option><option value="verified">已验证</option><option value="stale">已过时</option></select><label for="knowledge-body">内容</label><textarea id="knowledge-body" rows="12" maxlength="200000" aria-label="知识内容" placeholder="结论、命令、解决办法和验证结果…"></textarea><p id="knowledge-error" class="error"></p><div class="dialog-footer"><button type="button" id="knowledge-cancel">取消</button><button class="primary" id="knowledge-save">保存知识</button></div></form></dialog>`;
     installTools();
     installWorkspace();
     installConversationFilter();
@@ -4433,11 +4588,12 @@ function renderShell() {
     element('root').querySelectorAll('[data-close]').forEach((b)=>b.onclick = ()=>element(b.dataset.close).close());
     button('logout').onclick = async ()=>{
         if (!mayLeave()) return;
+        const epoch = shellEpoch;
         try {
             await api('logout', 'POST', {});
-            showLogin();
+            if (shellCurrent(epoch)) showLogin();
         } catch (e) {
-            notify(e.message);
+            if (shellCurrent(epoch)) notify(e.message);
         }
     };
     button('sidebar-close').onclick = ()=>element('sidebar').classList.remove('open');
@@ -4902,19 +5058,21 @@ function appendEvents(events) {
 async function poll() {
     if (!authenticated || polling || document.hidden || sessionResetTask === chosen && !!chosen) return;
     polling = true;
-    const id = chosen, token = selection, approvalRevision = codexApprovalRevision;
+    const epoch = shellEpoch, signal = shellController.signal, id = chosen, token = selection, approvalRevision = codexApprovalRevision;
     try {
         if (Date.now() - refreshList > 4000) {
-            tasks = await api('tasks');
+            const loaded = await api('tasks', 'GET', undefined, signal);
+            if (!shellCurrent(epoch)) return;
+            tasks = loaded;
             refreshList = Date.now();
             renderList();
         }
         if (id) {
             const [d, k] = await Promise.all([
-                api('tasks/' + id + '?after=' + sequence),
-                api('tasks/' + id + '/knowledge')
+                api('tasks/' + id + '?after=' + sequence, 'GET', undefined, signal),
+                api('tasks/' + id + '/knowledge', 'GET', undefined, signal)
             ]);
-            if (token !== selection || approvalRevision !== codexApprovalRevision) return;
+            if (!shellCurrent(epoch) || token !== selection || approvalRevision !== codexApprovalRevision) return;
             detail = d;
             if (k) storeKnowledge(k);
             appendEvents(d.events);
@@ -4922,15 +5080,18 @@ async function poll() {
         }
         if (element('connection')) element('connection').textContent = '本机服务已连接';
     } catch (e) {
-        if (element('connection')) element('connection').textContent = '连接中断，正在重试';
+        if (shellCurrent(epoch) && element('connection')) element('connection').textContent = '连接中断，正在重试';
     } finally{
-        polling = false;
+        if (shellCurrent(epoch)) polling = false;
     }
 }
 async function showCreate() {
     if (!mayLeave()) return;
+    const epoch = shellEpoch;
     try {
-        settings = await api('settings');
+        const loaded = await api('settings', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch)) return;
+        settings = loaded;
         if (!creatingTask) createReturnTask = chosen;
         creatingTask = true;
         chosen = '';
@@ -4963,7 +5124,7 @@ async function showCreate() {
         input('create-input').focus();
         await loadCreateEnvironment();
     } catch (e) {
-        notify(e.message);
+        if (shellCurrent(epoch)) notify(e.message);
     }
 }
 function createTaskTitle(text) {
@@ -5048,6 +5209,7 @@ async function createTask(e) {
         input('create-input').focus();
         return;
     }
+    const epoch = shellEpoch;
     createSubmitting = true;
     modelRequest++;
     setCreateSubmitState('starting');
@@ -5067,13 +5229,21 @@ async function createTask(e) {
             mode_id: mode.id
         });
         created = r.task.id;
-        tasks.unshift(r.task);
         drafts.set(created, text);
         attachmentDrafts.set(created, []);
+        if (!shellCurrent(epoch)) {
+            if (files.length) pendingUploadFiles.set(created, files);
+            return;
+        }
+        tasks.unshift(r.task);
         for (const file of files){
             const attachment = await uploadTaskFile(created, file);
             attachmentDrafts.get(created).push(attachment);
             uploadedCount++;
+            if (!shellCurrent(epoch)) {
+                if (uploadedCount < files.length) pendingUploadFiles.set(created, files.slice(uploadedCount));
+                return;
+            }
         }
         if (text.trim() || files.length) {
             await api('tasks/' + created + '/messages', 'POST', {
@@ -5084,6 +5254,7 @@ async function createTask(e) {
             drafts.delete(created);
             attachmentDrafts.delete(created);
         }
+        if (!shellCurrent(epoch)) return;
         dirty = false;
         creatingTask = false;
         createReturnTask = '';
@@ -5095,8 +5266,9 @@ async function createTask(e) {
         setCreateSubmitState('idle');
         await choose(created);
     } catch (error) {
+        if (created && uploadedCount < files.length) pendingUploadFiles.set(created, files.slice(uploadedCount));
+        if (!shellCurrent(epoch)) return;
         if (created) {
-            if (uploadedCount < files.length) pendingUploadFiles.set(created, files.slice(uploadedCount));
             dirty = false;
             creatingTask = false;
             createReturnTask = '';
@@ -5112,8 +5284,10 @@ async function createTask(e) {
             element('create-error').textContent = error.message;
         }
     } finally{
-        createSubmitting = false;
-        setCreateSubmitState('idle');
+        if (shellCurrent(epoch)) {
+            createSubmitting = false;
+            setCreateSubmitState('idle');
+        }
     }
 }
 async function send(text, clear) {
@@ -5135,7 +5309,7 @@ async function send(text, clear) {
         notify(e.message);
         return;
     }
-    const id = chosen, original = input('message').value, mode = selectedMessageMode();
+    const epoch = shellEpoch, id = chosen, original = input('message').value, mode = selectedMessageMode();
     sending = true;
     renderTask();
     try {
@@ -5147,14 +5321,16 @@ async function send(text, clear) {
         attachmentDrafts.set(id, (attachmentDrafts.get(id) || []).filter((f)=>!files.some((sent)=>sent.id === f.id)));
         if (clear) {
             if (drafts.get(id) === original) drafts.delete(id);
-            if (chosen === id && input('message').value === original) input('message').value = '';
+            if (shellCurrent(epoch) && chosen === id && input('message').value === original) input('message').value = '';
         }
-        await poll();
+        if (shellCurrent(epoch)) await poll();
     } catch (e) {
-        notify(e.message);
+        if (shellCurrent(epoch)) notify(e.message);
     } finally{
-        sending = false;
-        if (chosen === id) renderTask();
+        if (shellCurrent(epoch)) {
+            sending = false;
+            if (chosen === id) renderTask();
+        }
     }
 }
 async function loadKnowledge() {
@@ -5268,9 +5444,12 @@ function useKnowledge(k) {
     element('sidebar').classList.remove('open');
 }
 async function openSettings() {
+    const epoch = shellEpoch;
     element('settings-saved').textContent = '';
     try {
-        settings = await api('settings');
+        const loaded = await api('settings', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch)) return;
+        settings = loaded;
         const c = settings.config;
         loadAccessSettings();
         editingEnvironments = JSON.parse(JSON.stringify(c.environments));
@@ -5286,7 +5465,7 @@ async function openSettings() {
         element('settings-error').textContent = '';
         element('settings-dialog').showModal();
     } catch (e) {
-        notify(e.message);
+        if (shellCurrent(epoch)) notify(e.message);
     }
 }
 function environmentPickers(defaultID) {
@@ -5393,6 +5572,7 @@ function updateFeishuStatus() {
 }
 async function saveSettings(e) {
     e.preventDefault();
+    const epoch = shellEpoch;
     button('settings-save').disabled = true;
     element('settings-saved').textContent = '';
     storeEnvironmentEditor();
@@ -5411,16 +5591,43 @@ async function saveSettings(e) {
         }
     };
     try {
-        settings = await api('settings', 'PUT', c);
+        const saved = await api('settings', 'PUT', c);
+        if (!shellCurrent(epoch)) return;
+        settings = saved;
         input('feishu-secret').value = '';
         updateFeishuStatus();
         element('settings-error').textContent = '';
         element('settings-saved').textContent = '设置已保存';
         notify('设置已保存');
     } catch (e) {
-        element('settings-error').textContent = e.message;
+        if (shellCurrent(epoch)) element('settings-error').textContent = e.message;
     } finally{
-        button('settings-save').disabled = false;
+        if (shellCurrent(epoch)) button('settings-save').disabled = false;
+    }
+}
+async function pollSettingsStatus() {
+    if (!authenticated || settingsPolling || !element('settings-dialog')?.open) return;
+    const epoch = shellEpoch;
+    settingsPolling = true;
+    try {
+        const latest = await api('settings', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || !element('settings-dialog')?.open) return;
+        settings = {
+            ...settings,
+            feishu_status: latest.feishu_status,
+            secret_configured: latest.secret_configured,
+            chat: latest.chat,
+            config: {
+                ...settings.config,
+                feishu: {
+                    ...settings.config.feishu,
+                    owner: latest.config.feishu.owner
+                }
+            }
+        };
+        updateFeishuStatus();
+    } catch  {} finally{
+        if (shellCurrent(epoch)) settingsPolling = false;
     }
 }
 async function openBinding() {
@@ -5457,14 +5664,10 @@ document.addEventListener('visibilitychange', ()=>{
     if (!document.hidden) void poll();
 });
 setInterval(()=>void poll(), 1000);
-setInterval(async ()=>{
-    if (!authenticated || !element('settings-dialog')?.open) return;
-    try {
-        settings = await api('settings');
-        updateFeishuStatus();
-    } catch  {}
-}, 5000);
+setInterval(()=>void pollSettingsStatus(), 5000);
+const initialShellEpoch = shellEpoch;
 void boot().catch((e)=>{
+    if (!shellCurrent(initialShellEpoch)) return;
     element('root').innerHTML = '<div class="empty"><h2>暂时无法连接工作台</h2><p>' + escapeHTML(e.message) + '</p><button id="retry">重新连接</button></div>';
     button('retry').onclick = ()=>location.reload();
 });
@@ -5767,12 +5970,14 @@ function installHardwareResizer() {
     }
     const sync = ()=>handle.classList.toggle('hidden', details.classList.contains('hidden') || !details.open);
     details.addEventListener('toggle', sync);
-    new MutationObserver(sync).observe(details, {
+    const observer = new MutationObserver(sync);
+    observer.observe(details, {
         attributes: true,
         attributeFilter: [
             'class'
         ]
     });
+    disposeWithShell(()=>observer.disconnect());
     sync();
     const apply = (value, save)=>{
         const limit = Math.max(hardwareLimits.min, Math.round(panel.getBoundingClientRect().height - 190));
@@ -6113,14 +6318,16 @@ function installDockLayout() {
         'tool-dock'
     ]){
         const node = element(id);
-        new MutationObserver(()=>syncDocks()).observe(node, {
+        const observer = new MutationObserver(()=>syncDocks());
+        observer.observe(node, {
             attributes: true,
             attributeFilter: [
                 'class'
             ]
         });
+        disposeWithShell(()=>observer.disconnect());
     }
-    dockNarrow.addEventListener('change', ()=>applyDockLayout(false));
+    listenWithShell(dockNarrow, 'change', ()=>applyDockLayout(false));
 }
 function installPanelLayout() {
     installSidebarResizer();

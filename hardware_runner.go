@@ -27,7 +27,7 @@ func probeHardwareMCP(ctx context.Context, h *HardwareRuntime) error {
 	defer client.CloseIdleConnections()
 	response, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("硬件工具连接失败，请检查执行环境到简作的网络：%v", err)
+		return fmt.Errorf("硬件工具连接失败，请检查执行环境到Duo的网络：%v", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
@@ -41,7 +41,7 @@ func probeHardwareMCP(ctx context.Context, h *HardwareRuntime) error {
 		} `json:"result"`
 	}
 	if json.NewDecoder(response.Body).Decode(&v) != nil || v.Result.Info.Name != "jianzuo-hardware" {
-		return fmt.Errorf("硬件工具地址未指向简作服务")
+		return fmt.Errorf("硬件工具地址未指向Duo服务")
 	}
 	return nil
 }
@@ -61,7 +61,7 @@ for address in [payload['url']]+(payload.get('fallback_urls') or []):
  try:
   request=urllib.request.Request(address,data=json.dumps(message).encode(),headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream','Authorization':'Bearer '+payload['token']})
   with client.open(request,timeout=4) as response: result=json.load(response)
-  if result.get('result',{}).get('serverInfo',{}).get('name')!='jianzuo-hardware':raise ValueError('not a Jianzuo hardware endpoint')
+  if result.get('result',{}).get('serverInfo',{}).get('name')!='jianzuo-hardware':raise ValueError('not a Duo hardware endpoint')
   selected=address;break
  except Exception as error: failures.append(address+': '+str(error))
 if selected is None:

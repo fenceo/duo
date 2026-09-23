@@ -1,4 +1,4 @@
-// xterm.js is vendored under its MIT license; this is Jianzuo's session UI.
+// xterm.js is vendored under its MIT license; this is Duo's session UI.
 type TerminalView={cols:number;rows:number;element?:HTMLElement;options:{disableStdin:boolean};open(el:HTMLElement):void;write(data:string|Uint8Array,done?:()=>void):void;resize(cols:number,rows:number):void;focus():void;dispose():void;getSelection():string;onData(fn:(data:string)=>void):void;onBinary(fn:(data:string)=>void):void;attachCustomKeyEventHandler(fn:(event:KeyboardEvent)=>boolean):void};
 declare const Terminal:{new(options:Record<string,unknown>):TerminalView};
 type TaskTerminal={id:string;task:string;environmentID:string;environment:string;workspace:string;term:TerminalView;host:HTMLElement;socket:WebSocket|null;state:string;live:boolean;starting:boolean;resize:ResizeObserver;timer:ReturnType<typeof setTimeout>|null;pendingBytes:number;sentCols:number;sentRows:number};

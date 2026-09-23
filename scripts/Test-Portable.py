@@ -14,9 +14,9 @@ import urllib.request
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "dist/Jianzuo-portable-windows-x64"
-SERVICE = PACKAGE / "jianzuo-service.exe"
-LAUNCHER = PACKAGE / "简作.exe"
+PACKAGE = ROOT / "dist/Duo-portable-windows-x64"
+SERVICE = PACKAGE / "duo-service.exe"
+LAUNCHER = PACKAGE / "Duo.exe"
 FLAGS = subprocess.CREATE_NO_WINDOW
 PASSWORD = "便携测试-password"
 
@@ -55,7 +55,9 @@ def start(directory, port):
                 raise AssertionError(proc.stderr.read().decode("utf-8", "replace"))
             try:
                 with client.open(url + "/healthz", timeout=0.5) as res:
-                    assert json.load(res)["version"] == "0.18.1-portable"
+                    health = json.load(res)
+                    assert health["release_version"] == "0.19.0"
+                    assert health["version"] == "0.19.0-portable", "legacy updater health contract"
                     return proc, client, url
             except OSError:
                 time.sleep(.1)
@@ -108,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix="portable-中文 path-", dir=test_root) 
             assert error.code == 401
         csrf = api(client, url, "login", "POST", {"password": PASSWORD})["csrf"]
         initial_update = api(client, url, "updates")
-        assert initial_update["current"] == "0.18.1-portable"
+        assert initial_update["current"] == "0.19.0"
         assert not initial_update.get("checked")
         try:
             api(client, url, "updates", "PUT", {"repository": "owner/jianzuo"})
@@ -167,9 +169,9 @@ with tempfile.TemporaryDirectory(prefix="portable-中文 path-", dir=test_root) 
     with socket.socket() as sock:
         assert sock.connect_ex(("127.0.0.1", port)) != 0
 
-with zipfile.ZipFile(ROOT / "dist/Jianzuo-portable-windows-x64.zip") as archive:
-    assert set(archive.namelist()) == {"简作.exe", "jianzuo-service.exe", "使用说明.md", "THIRD-PARTY-NOTICES.txt"}
-package_zip = ROOT / "dist/Jianzuo-portable-windows-x64.zip"
+with zipfile.ZipFile(ROOT / "dist/Duo-portable-windows-x64.zip") as archive:
+    assert set(archive.namelist()) == {"Duo.exe", "duo-service.exe", "使用说明.md", "THIRD-PARTY-NOTICES.txt"}
+package_zip = ROOT / "dist/Duo-portable-windows-x64.zip"
 assert hashlib.sha256(package_zip.read_bytes()).hexdigest() == pathlib.Path(str(package_zip)+".sha256").read_text().split()[0]
 print("PASS: initialization, Unicode password/path, non-overwrite, login, notes, settings, duplicate lock,")
 print("      port collision preserves state, restart persistence, EOF shutdown, launcher smoke, clean ZIP.")

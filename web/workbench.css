@@ -46,7 +46,7 @@
 .run-knowledge:hover:not(:disabled){color:var(--accent)!important}
 .run-knowledge:disabled{opacity:.55;cursor:default}
 :root .task-views button.selected{background:var(--tint);color:var(--accent);border-color:var(--line)}
-.update-version{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0 12px}.update-version small{display:block;color:var(--muted);font-size:11px;margin-bottom:7px}.update-version strong{font-size:20px;font-weight:550}.update-actions{display:flex;align-items:center;gap:8px;flex:none}.update-version button{font-size:12px}.update-links{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.update-links a{display:block;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:12px}.update-links a:hover{background:var(--tint)}#update-result{min-height:36px;overflow-wrap:anywhere}#update-notes{border:1px solid var(--line);border-radius:9px;padding:12px;font-size:12px}#update-notes>summary,.update-source>summary{cursor:pointer;color:var(--muted)}#update-notes-content{white-space:pre-wrap;overflow-wrap:anywhere;max-height:270px;overflow:auto;font-family:inherit;font-size:12px;line-height:1.8}.update-source{margin-top:20px;border-top:1px solid var(--line);padding-top:15px;font-size:12px}.update-source button{font-size:12px}.update-help{margin-top:20px!important}
+.update-version{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:22px 0 18px}.update-version small{display:block;color:var(--muted);font-size:11px;margin-bottom:7px}.update-version strong{font-size:24px;font-weight:550}.update-mode{display:block;width:fit-content;margin-top:9px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;color:var(--muted);font-size:11px}.update-actions{display:flex;align-items:center;gap:8px;flex:none}.update-version button{font-size:12px}.update-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;list-style:none;padding:0;margin:20px 0 16px;counter-reset:update}.update-steps li{counter-increment:update;display:flex;align-items:center;gap:6px;border-top:2px solid var(--line);padding:10px 4px 4px;color:var(--muted);font-size:11px}.update-steps li:before{content:counter(update);font-size:10px}.update-steps li.active{color:var(--ink);border-color:var(--accent);font-weight:600}.update-links{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.update-links a{display:block;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:12px}.update-links a:hover{background:var(--tint)}#update-result{min-height:36px;overflow-wrap:anywhere;line-height:1.7}#update-reconnect{margin:0 0 12px;font-size:12px}.update-support{color:var(--muted);font-size:12px!important;line-height:1.7}#update-notes{border:1px solid var(--line);border-radius:9px;padding:12px;font-size:12px}#update-notes>summary,.update-source>summary{cursor:pointer;color:var(--muted)}#update-notes-content{white-space:pre-wrap;overflow-wrap:anywhere;max-height:270px;overflow:auto;font-family:inherit;font-size:12px;line-height:1.8}.update-source{margin-top:20px;border-top:1px solid var(--line);padding-top:15px;font-size:12px}.update-source button{font-size:12px}.update-help{margin-top:20px!important}
 :root[data-theme="light"] .settings-nav{background:var(--canvas)}
 @media(max-width:560px){.settings-nav{gap:3px}.settings-nav button{font-size:11px;padding:9px 5px}.update-version{align-items:flex-end}.update-version strong{font-size:18px}.update-actions{flex-direction:column-reverse;align-items:stretch}.update-actions button{width:100%}}
 /* Manual layout: drag a panel edge with the mouse, double-click it to reset, arrow keys nudge. */
@@ -306,6 +306,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .session-banner .session-warning{background:var(--raised);color:var(--ink);border-color:var(--line);font-size:12px;overflow-wrap:anywhere}
 .session-banner #session-reset{min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--canvas);color:var(--ink);font-size:13px}
 .session-banner #session-reset:hover:not(:disabled){background:var(--raised)}
+#sticky-expand{display:none}
 
 @media(max-width:760px){
  .header{padding:12px 16px;min-height:72px;align-items:center}
@@ -318,10 +319,29 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .sticky-board select{min-height:40px}.sticky-board>header button{min-width:40px}
  .tabs{gap:14px}.tabs>button,.tabs .filter-presets button{font-size:13px}
  .filter-presets{gap:14px}.tools-menu>summary,.display-menu>summary{font-size:12px}
- .composer-tools button,.composer-tools select{font-size:13px;min-height:40px}
- .composer-tools select{max-width:100%;min-width:0}
- .composer-bottom{gap:8px;flex-wrap:wrap}
- .composer-bottom #task-model{max-width:100%;width:100%;flex-basis:100%;font-size:13px}
+ /* Keep the phone conversation primary; expanding empty notes is explicit. */
+ #sticky-board[data-empty="true"]{height:auto;min-height:0;max-height:none;padding-top:0}
+ #sticky-board[data-empty="true"]>header{grid-template-columns:auto minmax(0,1fr) 44px 44px;gap:6px;margin:0}
+ #sticky-board[data-empty="true"]>header>.dock-grip{display:none}
+ #sticky-board[data-empty="true"]>header>strong{grid-column:1}
+ #sticky-board[data-empty="true"] #sticky-count{grid-column:2}
+ #sticky-board[data-empty="true"] #sticky-expand{display:inline-flex;align-items:center;justify-content:center;grid-column:3;grid-row:1;font-size:12px}
+ #sticky-board>header button,#sticky-board>header select{min-height:44px;min-width:44px}
+ #sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-list,
+ #sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-filter,
+ #sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-scope{display:none}
+ #chat-column .composer-wrap{padding:0 12px 8px}
+ #chat-column .composer{padding:8px 10px}
+ #chat-column .composer textarea{min-height:56px;max-height:120px;overflow-y:auto}
+ #chat-column .run-status{padding:4px 2px;max-height:44px;line-height:18px;overflow:auto}
+ #chat-column .run-status:empty{display:none}
+ .composer-tools{display:grid;grid-template-columns:auto auto minmax(0,1fr) 44px;gap:2px;margin:2px -4px 6px}
+ .composer-tools button,.composer-tools select{font-size:13px;min-height:44px;min-width:44px;white-space:nowrap}
+ .composer-tools select{width:100%;max-width:100%;min-width:0;margin-left:0;text-overflow:ellipsis}
+ .composer-tools .mode-engine-hint{grid-column:1 / -1}
+ .composer-bottom{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+ .composer-bottom #task-model{max-width:100%;width:100%;min-width:0;font-size:13px}
+ .composer-bottom button{min-height:44px;min-width:44px}
  #task-model-button{max-width:100%;width:100%;justify-content:space-between}
  .composer-bottom .actions{margin-left:auto}
  .model-menu{max-width:calc(100vw - 32px)}
