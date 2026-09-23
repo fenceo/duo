@@ -4,7 +4,8 @@ type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string
 type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number};
-type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];chat:string;session_started?:number};
+type EngineRuntime={state:'new'|'live'|'busy'|'closed';can_continue:boolean;reason:string};
+type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];chat:string;session_started?:number;runtime?:EngineRuntime};
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
@@ -20,6 +21,7 @@ let taskContext:ContextFile[]=[];
 const drafts=new Map<string,string>();
 let editingEnvironments:Environment[]=[],editingID="",modelRequest=0;
 let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'|'full'|'read'='auto';
+let createSubmitting=false,sessionResetTask='';
 function notify(text:string){element('notice').textContent=text;element('notice').classList.add('show');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>element('notice').classList.remove('show'),6500)}
 async function api<T=any>(path:string,method='GET',data?:unknown):Promise<T>{
  const response=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
@@ -75,7 +77,7 @@ function renderShell(){
  button('pair-code').onclick=async()=>{try{const r=await api('feishu/pair','POST',{});element('pair-result').textContent='向机器人发送：\n/配对 '+r.code}catch(e){notify((e as Error).message)}};
  button('setup-feishu').onclick=()=>openSetup('');button('bind-setup').onclick=()=>openSetup(chosen);button('setup-start').onclick=startSetup;button('setup-close').onclick=()=>element<HTMLDialogElement>('setup-dialog').close();button('setup-cancel').onclick=cancelSetup;button('bind-open').onclick=openBinding;button('bind').onclick=()=>setBinding(true);button('unbind').onclick=()=>setBinding(false);
 }
-function mayLeave(){return true}
+function mayLeave(){if(createSubmitting){notify('正在创建任务，请等待提交完成。你的要求和附件会保留。');return false}return true}
 function setCreatePageVisible(visible:boolean){
  element('create-page')?.classList.toggle('hidden',!visible);
  element('workspace')?.classList.toggle('create-mode',visible);
@@ -136,28 +138,34 @@ function renderKnowledgeList(){
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-use]').forEach(b=>b.onclick=()=>useKnowledge(knowledgeItems.find(k=>k.id===b.dataset.knowledgeUse)));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-delete]').forEach(b=>b.onclick=()=>void deleteKnowledge(knowledgeItems.find(k=>k.id===b.dataset.knowledgeDelete)));
 }
-// A resumed task keeps the engine's own conversation, so switching model or
-// tool never clears context. Say that out loud and keep one button that does.
+function harnessSessionClosed(value:Detail|null=detail){return value?.task.engine==='deepseek-harness'&&value.runtime?.can_continue===false}
+// Describe the real native session, not just the persisted conversation log.
 function renderSessionBanner(){
  const banner=element('session-banner');
- if(!detail||!detail.task.session||detail.task.archived){banner.classList.add('hidden');banner.innerHTML='';return}
+ if(!detail||detail.task.archived||(!detail.task.session&&!detail.runs.length)){banner.classList.add('hidden');banner.innerHTML='';return}
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const foreign=taskContext.length?`<span class="session-warning" title="${escapeHTML(taskContext.map(f=>f.label+' · '+f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map(f=>f.name).join('、'))}</span>`:'';
- if(detail.task.engine==='deepseek-harness'){banner.innerHTML=`<span class="session-text">${escapeHTML(harnessSessionHint)}</span>${foreign}`;banner.classList.remove('hidden');return}
- banner.innerHTML=`<span class="session-text">本任务在续用 ${started?escapeHTML(started)+' 开始的历史会话':'历史会话'}，换模型或 AI 工具都不会清空它。</span>${foreign}<button type="button" id="session-reset" class="subtle">新建会话</button>`;
+ const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
+ const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'空白会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'空白会话已就绪';
+ const explanation=harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
+ banner.dataset.state=closed?'closed':busy?'busy':'live';
+ const html=`<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session?`<button type="button" id="session-reset" class="subtle"${busy||sessionResetTask===detail.task.id?' disabled':''}>${sessionResetTask===detail.task.id?'正在新建…':'新建空白会话'}</button>`:''}`;
+ if(banner.innerHTML!==html)banner.innerHTML=html;
  banner.classList.remove('hidden');
- button('session-reset').onclick=()=>void resetSession();
+ if(button('session-reset'))button('session-reset').onclick=()=>void resetSession();
 }
 async function resetSession(){
- if(!detail||!detail.task.session)return;
- if(!confirm('新建会话？任务记录和任务知识都会保留，但下一轮 AI 不再记得之前的对话内容。'))return;
- const id=detail.task.id;
+ if(!detail||!detail.task.session||sessionResetTask)return;
+ if(detail.runs.some(r=>r.status==='running'||r.status==='queued')){notify('请先停止执行并取消排队，再新建空白会话。');return}
+ if(!confirm('新建空白会话？任务记录和任务知识都会保留，未发送的草稿也保留。下一轮 AI 不会自动记得之前的对话，这不是恢复旧会话。'))return;
+ const id=detail.task.id,token=++selection;sessionResetTask=id;renderTask();
  try{
   const task=await api<Task>('tasks/'+id+'/session/reset','POST',{});
+  if(chosen!==id||selection!==token||!detail)return;
   detail.task=task;detail.session_started=0;
-  element('conversation').innerHTML='<p class="muted">已开启新会话，下一轮从空白上下文开始。</p>';sequence=0;resetConversation();
-  renderTask();notify('已新建会话，历史记录和任务知识保留在本任务里。');
- }catch(e){notify((e as Error).message)}
+  if(task.engine==='deepseek-harness')detail.runtime={state:'new',can_continue:true,reason:'下一条要求将开启新的原生会话；旧记录不自动带入 AI 上下文。'};
+  notify('空白会话已就绪；记录、知识和未发送的草稿均保留。');
+ }catch(e){if(chosen===id)notify((e as Error).message)}finally{sessionResetTask='';if(chosen===id&&selection===token)renderTask()}
 }
 async function loadTaskContext(id:string){
  const token=selection;taskContext=[];
@@ -172,6 +180,7 @@ function renderTask(){
  const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='任务知识'+(knowledgeItems.length?' · '+knowledgeItems.length:'');button('summarize').disabled=active;
  if(knowledge&&pending){const preview=element('draft-content');if(preview.dataset.run!==knowledge.id){preview.innerHTML=markdown(knowledge.result);preview.dataset.run=knowledge.id}element('draft-label').textContent=saved?'这轮执行的总结已保存，草稿可编辑合并':'执行总结 · 未保存';button('save-draft').disabled=!!saved}
  input('message').disabled=t.archived;button('send').disabled=sending||t.archived;button('summarize').disabled=active||t.archived;if(t.archived)element('run-status').textContent='任务已归档，记录保留；恢复后可以继续执行。';
+ if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建空白会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建空白会话后再发送…'}
  const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived||harness;button('summarize').title=harness?harnessKnowledgeHint:'根据任务记录生成知识草稿';
  let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('notebook').querySelector('.note-head')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
  renderWorkflow();renderCodexApprovals(detail);renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
@@ -188,13 +197,14 @@ function appendEvents(events:EventRecord[]){
  if(nearBottom)container.scrollTop=container.scrollHeight;
 }
 async function poll(){
- if(!authenticated||polling||document.hidden)return;polling=true;const id=chosen,token=selection,approvalRevision=codexApprovalRevision;
+ if(!authenticated||polling||document.hidden||sessionResetTask===chosen&&!!chosen)return;polling=true;const id=chosen,token=selection,approvalRevision=codexApprovalRevision;
  try{if(Date.now()-refreshList>4000){tasks=await api<Task[]>('tasks');refreshList=Date.now();renderList()}
   if(id){const [d,k]=await Promise.all([api<Detail>('tasks/'+id+'?after='+sequence),api<Knowledge[]>('tasks/'+id+'/knowledge')]);if(token!==selection||approvalRevision!==codexApprovalRevision)return;detail=d;if(k)storeKnowledge(k);appendEvents(d.events);renderTask()}
   if(element('connection'))element('connection').textContent='本机服务已连接';
  }catch(e){if(element('connection'))element('connection').textContent='连接中断，正在重试'}finally{polling=false}
 }
 async function showCreate(){
+ if(!mayLeave())return;
  try{
   settings=await api<Settings>('settings');
   if(!creatingTask)createReturnTask=chosen;
@@ -215,11 +225,13 @@ function createTaskTitle(text:string){
  return line.length>180?line.slice(0,180):line;
 }
 function cancelCreate(){
+ if(!mayLeave())return;
  const id=createReturnTask;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);
  if(id&&tasks.some(t=>t.id===id)){void choose(id);return}
  chosen='';detail=null;selection++;resetConversation();for(const name of ['tabs','task-actions','composer-wrap'])element(name).classList.add('hidden');element('conversation').classList.remove('hidden');element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';history.replaceState(null,'','/');switchTab('chat');renderList();
 }
 async function loadCreateEnvironment(keepWorkspace=false){
+ if(createSubmitting)return;
  const token=++modelRequest,env=settings.config.environments.find(e=>e.id===input('create-environment').value);if(!env)return;
  if(!keepWorkspace)input('create-engine').value=env.default_engine||'codex';
  const engine=input('create-engine').value,defaultModel=engineDefaultModel(env,engine);setCreatePermission(createPermission);
@@ -228,21 +240,25 @@ async function loadCreateEnvironment(keepWorkspace=false){
  let models:EngineModel[]=[],hint='';
  try{const result=await api<{models:EngineModel[];modified:number;message?:string;source:string}>('environments/'+env.id+'/models?engine='+engine);models=result.models||[];hint=result.message||result.source+(result.modified?' · '+new Date(result.modified).toLocaleString():'')}
  catch(e){hint=(e as Error).message+'。可以选择默认模型或手动指定。'}
- if(token!==modelRequest)return;
+ if(token!==modelRequest||createSubmitting||!creatingTask)return;
  if(defaultModel&&!models.some(m=>m.id===defaultModel))models.push({id:defaultModel,name:defaultModel+'（配置的默认模型）'});createModels=models;
  setCreateModels(models,defaultModel);setCreateSubmitState('idle');element('models-hint').textContent=hint;
 }
 async function createTask(e:Event){
- e.preventDefault();if(!mayLeave())return;setCreateSubmitState('starting');let created='';const text=input('create-input').value,files=[...createFiles];
+ e.preventDefault();if(createSubmitting||button('create-submit').disabled||!creatingTask)return;
+ const text=input('create-input').value,files=[...createFiles];if(!text.trim()&&!files.length){element('create-error').textContent='请先写下任务要求，或添加附件。';input('create-input').focus();return}
+ createSubmitting=true;modelRequest++;setCreateSubmitState('starting');let created='',uploadedCount=0;
  try{validateEngineAttachments(input('create-engine').value,files.length);validateAttachmentFiles(files);const mode=modeForPermission(createPermission,input('create-engine').value);if(!mode||!modeSupportsEngine(mode,input('create-engine').value))throw new Error('所选审批模式暂不可用，请刷新工作台或重新选择。');const r=await api('tasks','POST',{engine:input('create-engine').value,reasoning_effort:input('create-effort').value,environment_id:input('create-environment').value,title:createTaskTitle(text),workspace:input('create-workspace').value,model:input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value,mode_id:mode.id});created=r.task.id;tasks.unshift(r.task);drafts.set(created,text);attachmentDrafts.set(created,[]);
-  for(const file of files){const attachment=await uploadTaskFile(created,file);attachmentDrafts.get(created)!.push(attachment)}
+  for(const file of files){const attachment=await uploadTaskFile(created,file);attachmentDrafts.get(created)!.push(attachment);uploadedCount++}
   if(text.trim()||files.length){await api('tasks/'+created+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode.id,attachment_ids:attachmentDrafts.get(created)!.map(f=>f.id)});drafts.delete(created);attachmentDrafts.delete(created)}
-  dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);await choose(created);
- }catch(error){if(created){dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);await choose(created);notify('任务已创建，尚未开始：'+(error as Error).message)}else{element('create-error').textContent=(error as Error).message;setCreateSubmitState('idle')}}finally{if(creatingTask)setCreateSubmitState('idle')}
+  dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);createSubmitting=false;setCreateSubmitState('idle');await choose(created);
+ }catch(error){if(created){if(uploadedCount<files.length)pendingUploadFiles.set(created,files.slice(uploadedCount));dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);createSubmitting=false;setCreateSubmitState('idle');await choose(created);notify('任务已创建，提交未完成；要求和未上传附件已保留，请检查记录后再发送：'+(error as Error).message)}else{element('create-error').textContent=(error as Error).message}}finally{createSubmitting=false;setCreateSubmitState('idle')}
 }
 async function send(text:string,clear:boolean){
+ if(harnessSessionClosed()||sessionResetTask===chosen&&!!chosen){notify('请先新建空白会话，再发送要求；输入内容会保留。');return}
+ if(pendingUploadFiles.get(chosen)?.length){notify('请先重试上传或移除待上传附件，避免遗漏文件。');return}
  const files=[...(attachmentDrafts.get(chosen)||[])];if(!chosen||!detail||sending||uploadingTasks.has(chosen)||(!text.trim()&&!files.length))return;try{validateEngineAttachments(detail.task.engine,files.length)}catch(e){notify((e as Error).message);return}const id=chosen,original=input('message').value,mode=selectedMessageMode();sending=true;renderTask();
- try{await api('tasks/'+id+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode,attachment_ids:files.map(f=>f.id)});attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear&&chosen===id&&input('message').value===original){input('message').value='';drafts.delete(id)}await poll()}catch(e){notify((e as Error).message)}finally{sending=false;if(chosen===id)renderTask()}
+ try{await api('tasks/'+id+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode,attachment_ids:files.map(f=>f.id)});attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(chosen===id&&input('message').value===original)input('message').value=''}await poll()}catch(e){notify((e as Error).message)}finally{sending=false;if(chosen===id)renderTask()}
 }
 async function loadKnowledge(){const id=chosen;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge');if(id!==chosen)return;storeKnowledge(items||[])}catch(e){notify((e as Error).message)}}
 function editKnowledge(id:string|null){

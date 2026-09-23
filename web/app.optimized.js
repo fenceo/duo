@@ -147,6 +147,7 @@ let workCatalog = {
     commands: []
 };
 const attachmentDrafts = new Map(), uploadingTasks = new Set();
+const pendingUploadFiles = new Map();
 let renameTaskID = '', trashTaskID = '', stoppingTask = '', presetType = 'modes', presetID = '', directoryEnvironment = '', directoryPath = '', directoryParent = '', directoryRequest = 0, workspacePicked = null;
 function modeOptions(select, snapshot) {
     const previous = select.value, engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine, items = workCatalog.modes.filter((m)=>m.id !== 'harness:read' || engine === 'deepseek-harness');
@@ -466,8 +467,18 @@ function addCreateFiles(files) {
 function setCreateSubmitState(state) {
     const submit = button('create-submit');
     if (!submit) return;
-    const starting = state === 'starting';
+    const starting = state === 'starting' || createSubmitting;
     submit.dataset.starting = starting ? '1' : '';
+    element('create-form').querySelectorAll('input,select,textarea,button').forEach((control)=>{
+        if (control === submit) return;
+        if (starting) {
+            if (control.dataset.submitDisabled === undefined) control.dataset.submitDisabled = String(control.disabled);
+            control.disabled = true;
+        } else if (control.dataset.submitDisabled !== undefined) {
+            control.disabled = control.dataset.submitDisabled === 'true';
+            delete control.dataset.submitDisabled;
+        }
+    });
     submit.disabled = starting;
     submit.textContent = starting ? '▶' : '↑';
     submit.title = starting ? '正在创建并开始任务' : '创建并开始任务';
@@ -550,9 +561,10 @@ function renderWorkflow() {
         }
         control.disabled = detail.task.archived || harness;
         const hint = element('mode-engine-hint');
-        hint.textContent = harness ? harnessSessionHint + ' 无交互审批，网络由原生策略和执行环境控制。' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.textContent = harness ? 'Harness 无交互审批 · 仅运行进程内可续聊 · 网络由原生策略和执行环境控制' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.title = harness ? harnessSessionHint : hint.textContent;
         hint.classList.toggle('hidden', detail.task.engine === 'codex');
-        control.title = harness || detail.task.engine === 'claude' ? hint.textContent : '本轮 Codex 工作模式与原生审批方式';
+        control.title = harness || detail.task.engine === 'claude' ? hint.title : '本轮 Codex 工作模式与原生审批方式';
         button('task-model-button').title = harness ? harnessSessionHint : '本任务使用的 AI 工具、模型和推理强度';
         const footnote = element('composer-wrap').querySelector('.footnote');
         if (footnote) footnote.textContent = harness ? 'Harness SDK 会话 · 仅当前运行进程内可续聊' : '在服务所在电脑执行 · 保留所选工具的原生会话';
@@ -566,17 +578,17 @@ function renderWorkflow() {
     button('stop').textContent = stoppingTask === chosen ? '…' : '■';
     button('stop').title = stoppingTask === chosen ? '正在停止' : '停止当前执行';
     button('stop').setAttribute('aria-label', button('stop').title);
-    const files = attachmentDrafts.get(chosen) || [];
+    const files = attachmentDrafts.get(chosen) || [], pending = pendingUploadFiles.get(chosen) || [];
     button('send').textContent = sending ? '▶' : '↑';
     button('send').title = sending ? '正在开始' : active ? '追加要求并排队' : '开始执行';
     button('send').setAttribute('aria-label', button('send').title);
-    button('send').disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || !input('message').value.trim() && !files.length;
+    button('send').disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || harnessSessionClosed() || sessionResetTask === chosen || pending.length > 0 || !input('message').value.trim() && !files.length;
     const attachmentsBlocked = detail?.task.engine === 'deepseek-harness';
     button('attach-open').disabled = attachmentsBlocked || !!detail?.task.archived || uploadingTasks.has(chosen);
     button('attach-open').title = attachmentsBlocked ? harnessAttachmentHint : '添加文件或图片，也可以拖放、粘贴图片';
     input('attachment-input').disabled = attachmentsBlocked;
     button('command-open').disabled = !!detail?.task.archived;
-    const html = files.map((f)=>`<span class="attachment-chip" title="${escapeHTML(f.name)}">${escapeHTML(f.name)} <button type="button" data-remove-attachment="${f.id}" aria-label="移除附件 ${escapeHTML(f.name)}">×</button></span>`).join('') + (uploadingTasks.has(chosen) ? '<small>正在上传…</small>' : '');
+    const html = files.map((f)=>`<span class="attachment-chip" title="${escapeHTML(f.name)}">${escapeHTML(f.name)} <button type="button" data-remove-attachment="${f.id}" aria-label="移除附件 ${escapeHTML(f.name)}">×</button></span>`).join('') + pending.map((f, i)=>`<span class="attachment-chip pending-upload">待上传：${escapeHTML(f.name)} <button type="button" data-remove-pending="${i}" aria-label="移除待上传附件 ${escapeHTML(f.name)}">×</button></span>`).join('') + (pending.length && !uploadingTasks.has(chosen) ? '<button type="button" id="retry-uploads">重试未完成的上传</button><small>文件仅保留在当前页面，刷新后需重新选择。</small>' : '') + (uploadingTasks.has(chosen) ? '<small>正在上传…</small>' : '');
     const target = element('attachment-drafts');
     if (target.innerHTML !== html) {
         target.innerHTML = html;
@@ -584,6 +596,11 @@ function renderWorkflow() {
                 attachmentDrafts.set(chosen, (attachmentDrafts.get(chosen) || []).filter((f)=>f.id !== b.dataset.removeAttachment));
                 renderWorkflow();
             });
+        target.querySelectorAll('[data-remove-pending]').forEach((b)=>b.onclick = ()=>{
+                pendingUploadFiles.set(chosen, (pendingUploadFiles.get(chosen) || []).filter((_, i)=>i !== Number(b.dataset.removePending)));
+                renderWorkflow();
+            });
+        if (button('retry-uploads')) button('retry-uploads').onclick = ()=>void retryPendingUploads(chosen);
     }
     renderCodexApprovals(detail);
 }
@@ -612,10 +629,12 @@ async function addAttachments(files, task = chosen) {
         notify('请等待当前附件上传完成');
         return;
     }
+    let uploadedCount = 0, accepted = false;
     try {
         const engine = detail?.task.id === task ? detail.task.engine : tasks.find((item)=>item.id === task)?.engine;
         validateEngineAttachments(engine, files.length);
-        validateAttachmentFiles(files, (attachmentDrafts.get(task) || []).length);
+        validateAttachmentFiles(files, (attachmentDrafts.get(task) || []).length + (pendingUploadFiles.get(task) || []).length);
+        accepted = true;
         uploadingTasks.add(task);
         renderWorkflow();
         for (const file of files){
@@ -624,14 +643,34 @@ async function addAttachments(files, task = chosen) {
                 ...attachmentDrafts.get(task) || [],
                 uploaded
             ]);
+            uploadedCount++;
             if (task === chosen) renderWorkflow();
         }
     } catch (e) {
+        if (accepted) pendingUploadFiles.set(task, [
+            ...pendingUploadFiles.get(task) || [],
+            ...files.slice(uploadedCount)
+        ]);
         notify(e.message);
     } finally{
         uploadingTasks.delete(task);
         if (task === chosen) renderWorkflow();
     }
+}
+async function retryPendingUploads(task) {
+    if (uploadingTasks.has(task)) return;
+    const files = pendingUploadFiles.get(task) || [];
+    if (!files.length) return;
+    try {
+        const engine = detail?.task.id === task ? detail.task.engine : tasks.find((item)=>item.id === task)?.engine;
+        validateEngineAttachments(engine, files.length);
+        validateAttachmentFiles(files, (attachmentDrafts.get(task) || []).length);
+    } catch (e) {
+        notify(e.message);
+        return;
+    }
+    pendingUploadFiles.delete(task);
+    await addAttachments(files, task);
 }
 function selectedMessageMode() {
     const value = input('message-mode').value;
@@ -2727,6 +2766,7 @@ async function relayOperation(action) {
 let createModels = [];
 let taskPickerModels = [];
 let taskPickerStatus = '', taskModelRequest = 0, modelTestRequest = 0;
+let modelTestBusy = false;
 const modelsByEnv = {};
 const effortLabels = {
     off: '关闭',
@@ -2764,7 +2804,7 @@ function taskEngineName(engine) {
 function engineDefaultModel(env, engine) {
     return engine === 'claude' ? env.claude_model || '' : engine === 'deepseek-harness' ? env.harness_model || 'deepseek-flash' : env.model;
 }
-const harnessSessionHint = 'Harness 在同一个运行进程中连续对话；闲置 30 分钟会结束运行进程，停止任务或重启服务后不能恢复原会话。更换模型、provider 或权限请新建任务。';
+const harnessSessionHint = 'Harness 仅在同一个运行进程中连续对话；闲置 30 分钟、停止任务或重启服务后不能恢复原生上下文。可新建空白会话，旧记录仍保留但不会自动带入 AI 上下文。更换模型、provider 或权限请新建任务。';
 const harnessKnowledgeHint = 'Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine, model) {
     if (engine === 'deepseek-harness') return [
@@ -2789,7 +2829,9 @@ function effortLevels(engine, model) {
 }
 function installExecution() {
     input('create-engine').onchange = ()=>void loadCreateEnvironment(true);
+    button('test-models').textContent = '测试当前模型';
     button('test-models').onclick = ()=>void testCreateModels();
+    input('create-workspace').addEventListener('input', invalidateModelTest);
     installModelPicker();
     element('setting-model').previousElementSibling.textContent = 'Codex 默认模型（可留空）';
     element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
@@ -2825,29 +2867,80 @@ function installExecution() {
         }
     };
 }
+function resolveModelProbeTarget(env, engine, selected, custom, workspace) {
+    if (!env) throw new Error('请先选择执行环境。');
+    const model = (selected === '__custom__' ? custom : selected || engineDefaultModel(env, engine) || '').trim();
+    if (!model) throw new Error('请先选择或输入一个明确的模型 ID；不会批量测试模型列表。');
+    if (model.length > 120 || /[\0\r\n]/.test(model)) throw new Error('模型名称无效。');
+    const provider = engine === 'deepseek-harness' ? env.harness_provider || 'deepseek-official' : '该 CLI 的原生配置';
+    const target = {
+        environmentID: env.id,
+        environmentName: env.name,
+        engine,
+        provider,
+        model,
+        workspace: workspace.trim()
+    };
+    return {
+        ...target,
+        key: JSON.stringify([
+            target.environmentID,
+            engine,
+            provider,
+            model,
+            target.workspace
+        ])
+    };
+}
+function currentModelProbeTarget() {
+    return resolveModelProbeTarget(settings.config.environments.find((env)=>env.id === input('create-environment').value), input('create-engine').value, input('create-model').value, input('custom-model').value, input('create-workspace').value);
+}
+function syncModelTestButton() {
+    const control = button('test-models'), picker = button('model-picker-button');
+    if (control) control.disabled = createSubmitting || modelTestBusy || !picker || picker.disabled;
+}
+function invalidateModelTest() {
+    modelTestRequest++;
+    element('model-test-result').textContent = '';
+    syncModelTestButton();
+}
+function modelProbeStillCurrent(request, key) {
+    if (!creatingTask || request !== modelTestRequest) return false;
+    try {
+        return currentModelProbeTarget().key === key;
+    } catch  {
+        return false;
+    }
+}
 async function testCreateModels() {
-    const request = ++modelTestRequest, environmentID = input('create-environment').value, engine = input('create-engine').value;
-    const models = [
-        ...new Set(createModels.map((model)=>model.id).filter(Boolean))
-    ];
-    if (!environmentID || !models.length) {
-        element('model-test-result').textContent = '没有可测试的模型，请先重读模型列表。';
+    if (createSubmitting || modelTestBusy || !creatingTask || button('model-picker-button').disabled) return;
+    let target;
+    try {
+        target = currentModelProbeTarget();
+    } catch (e) {
+        element('model-test-result').textContent = e.message;
         return;
     }
-    button('test-models').disabled = true;
-    element('model-test-result').textContent = '正在逐个测试模型，请稍候…';
+    if (!confirm(`将使用以下配置发送一条最小测试消息，可能消耗少量模型额度：\n环境：${target.environmentName}\nAI 工具：${taskEngineName(target.engine)}\nProvider：${target.provider}\n模型：${target.model}\n目录：${target.workspace}\n\n仅测试当前模型，不遍历列表。关闭页面不会取消已提交的测试。是否继续？`)) return;
+    const request = ++modelTestRequest;
+    modelTestBusy = true;
+    syncModelTestButton();
+    element('model-test-result').textContent = '正在测试当前模型 ' + target.model + '，请稍候…';
     try {
-        const result = await api('environments/' + environmentID + '/models/test', 'POST', {
-            engine,
-            workspace: input('create-workspace').value,
-            models
+        const result = await api('environments/' + encodeURIComponent(target.environmentID) + '/models/test', 'POST', {
+            engine: target.engine,
+            workspace: target.workspace,
+            models: [
+                target.model
+            ]
         });
-        if (request !== modelTestRequest) return;
+        if (!modelProbeStillCurrent(request, target.key)) return;
         renderModelTestResult(result);
     } catch (e) {
-        if (request === modelTestRequest) element('model-test-result').textContent = e.message;
+        if (modelProbeStillCurrent(request, target.key)) element('model-test-result').textContent = e.message;
     } finally{
-        if (request === modelTestRequest) button('test-models').disabled = false;
+        modelTestBusy = false;
+        syncModelTestButton();
     }
 }
 function renderModelTestResult(result) {
@@ -2891,6 +2984,7 @@ function installModelPicker() {
         };
     }
     input('custom-model').oninput = ()=>{
+        invalidateModelTest();
         updateCreateModelLabel();
         updateReasoning();
     };
@@ -3040,6 +3134,7 @@ async function applyTaskModel(model, effort) {
     }
 }
 async function chooseCreateModel(value) {
+    invalidateModelTest();
     closeModelMenu('create');
     const custom = input('custom-model'), typed = input('model-search').value.trim();
     if (value === '__custom__') {
@@ -3077,7 +3172,7 @@ function setCreateModels(models, defaultModel) {
     input('create-model').value = defaultModel || '';
     element('model-picker-label').textContent = defaultModel || defaultModelLabel;
     button('model-picker-button').disabled = false;
-    button('test-models').disabled = models.length === 0;
+    syncModelTestButton();
     element('model-test-result').textContent = '';
     updateReasoning();
 }
@@ -4216,6 +4311,7 @@ let taskContext = [];
 const drafts = new Map();
 let editingEnvironments = [], editingID = "", modelRequest = 0;
 let createFiles = [], creatingTask = false, createReturnTask = '', createPermission = 'auto';
+let createSubmitting = false, sessionResetTask = '';
 function notify(text) {
     element('notice').textContent = text;
     element('notice').classList.add('show');
@@ -4444,6 +4540,10 @@ function renderShell() {
     button('unbind').onclick = ()=>setBinding(false);
 }
 function mayLeave() {
+    if (createSubmitting) {
+        notify('正在创建任务，请等待提交完成。你的要求和附件会保留。');
+        return false;
+    }
     return true;
 }
 function setCreatePageVisible(visible) {
@@ -4641,9 +4741,12 @@ function renderKnowledgeList() {
     element('knowledge-list').querySelectorAll('[data-knowledge-use]').forEach((b)=>b.onclick = ()=>useKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeUse)));
     element('knowledge-list').querySelectorAll('[data-knowledge-delete]').forEach((b)=>b.onclick = ()=>void deleteKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeDelete)));
 }
+function harnessSessionClosed(value = detail) {
+    return value?.task.engine === 'deepseek-harness' && value.runtime?.can_continue === false;
+}
 function renderSessionBanner() {
     const banner = element('session-banner');
-    if (!detail || !detail.task.session || detail.task.archived) {
+    if (!detail || detail.task.archived || !detail.task.session && !detail.runs.length) {
         banner.classList.add('hidden');
         banner.innerHTML = '';
         return;
@@ -4656,30 +4759,41 @@ function renderSessionBanner() {
         hour12: false
     }) : '';
     const foreign = taskContext.length ? `<span class="session-warning" title="${escapeHTML(taskContext.map((f)=>f.label + ' · ' + f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map((f)=>f.name).join('、'))}</span>` : '';
-    if (detail.task.engine === 'deepseek-harness') {
-        banner.innerHTML = `<span class="session-text">${escapeHTML(harnessSessionHint)}</span>${foreign}`;
-        banner.classList.remove('hidden');
-        return;
-    }
-    banner.innerHTML = `<span class="session-text">本任务在续用 ${started ? escapeHTML(started) + ' 开始的历史会话' : '历史会话'}，换模型或 AI 工具都不会清空它。</span>${foreign}<button type="button" id="session-reset" class="subtle">新建会话</button>`;
+    const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
+    const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '空白会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '空白会话已就绪';
+    const explanation = harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
+    banner.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
+    const html = `<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session ? `<button type="button" id="session-reset" class="subtle"${busy || sessionResetTask === detail.task.id ? ' disabled' : ''}>${sessionResetTask === detail.task.id ? '正在新建…' : '新建空白会话'}</button>` : ''}`;
+    if (banner.innerHTML !== html) banner.innerHTML = html;
     banner.classList.remove('hidden');
-    button('session-reset').onclick = ()=>void resetSession();
+    if (button('session-reset')) button('session-reset').onclick = ()=>void resetSession();
 }
 async function resetSession() {
-    if (!detail || !detail.task.session) return;
-    if (!confirm('新建会话？任务记录和任务知识都会保留，但下一轮 AI 不再记得之前的对话内容。')) return;
-    const id = detail.task.id;
+    if (!detail || !detail.task.session || sessionResetTask) return;
+    if (detail.runs.some((r)=>r.status === 'running' || r.status === 'queued')) {
+        notify('请先停止执行并取消排队，再新建空白会话。');
+        return;
+    }
+    if (!confirm('新建空白会话？任务记录和任务知识都会保留，未发送的草稿也保留。下一轮 AI 不会自动记得之前的对话，这不是恢复旧会话。')) return;
+    const id = detail.task.id, token = ++selection;
+    sessionResetTask = id;
+    renderTask();
     try {
         const task = await api('tasks/' + id + '/session/reset', 'POST', {});
+        if (chosen !== id || selection !== token || !detail) return;
         detail.task = task;
         detail.session_started = 0;
-        element('conversation').innerHTML = '<p class="muted">已开启新会话，下一轮从空白上下文开始。</p>';
-        sequence = 0;
-        resetConversation();
-        renderTask();
-        notify('已新建会话，历史记录和任务知识保留在本任务里。');
+        if (task.engine === 'deepseek-harness') detail.runtime = {
+            state: 'new',
+            can_continue: true,
+            reason: '下一条要求将开启新的原生会话；旧记录不自动带入 AI 上下文。'
+        };
+        notify('空白会话已就绪；记录、知识和未发送的草稿均保留。');
     } catch (e) {
-        notify(e.message);
+        if (chosen === id) notify(e.message);
+    } finally{
+        sessionResetTask = '';
+        if (chosen === id && selection === token) renderTask();
     }
 }
 async function loadTaskContext(id) {
@@ -4735,6 +4849,11 @@ function renderTask() {
     button('send').disabled = sending || t.archived;
     button('summarize').disabled = active || t.archived;
     if (t.archived) element('run-status').textContent = '任务已归档，记录保留；恢复后可以继续执行。';
+    if (harnessSessionClosed()) {
+        element('run-status').textContent = '当前运行会话不可继续，请先新建空白会话。已输入的要求会保留。';
+        element('run-status').classList.add('error');
+        input('message').placeholder = '可先写下要求，新建空白会话后再发送…';
+    }
     const harness = t.engine === 'deepseek-harness';
     button('summarize').disabled = active || t.archived || harness;
     button('summarize').title = harness ? harnessKnowledgeHint : '根据任务记录生成知识草稿';
@@ -4781,7 +4900,7 @@ function appendEvents(events) {
     if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 async function poll() {
-    if (!authenticated || polling || document.hidden) return;
+    if (!authenticated || polling || document.hidden || sessionResetTask === chosen && !!chosen) return;
     polling = true;
     const id = chosen, token = selection, approvalRevision = codexApprovalRevision;
     try {
@@ -4809,6 +4928,7 @@ async function poll() {
     }
 }
 async function showCreate() {
+    if (!mayLeave()) return;
     try {
         settings = await api('settings');
         if (!creatingTask) createReturnTask = chosen;
@@ -4851,6 +4971,7 @@ function createTaskTitle(text) {
     return line.length > 180 ? line.slice(0, 180) : line;
 }
 function cancelCreate() {
+    if (!mayLeave()) return;
     const id = createReturnTask;
     creatingTask = false;
     createReturnTask = '';
@@ -4879,6 +5000,7 @@ function cancelCreate() {
     renderList();
 }
 async function loadCreateEnvironment(keepWorkspace = false) {
+    if (createSubmitting) return;
     const token = ++modelRequest, env = settings.config.environments.find((e)=>e.id === input('create-environment').value);
     if (!env) return;
     if (!keepWorkspace) input('create-engine').value = env.default_engine || 'codex';
@@ -4905,7 +5027,7 @@ async function loadCreateEnvironment(keepWorkspace = false) {
     } catch (e) {
         hint = e.message + '。可以选择默认模型或手动指定。';
     }
-    if (token !== modelRequest) return;
+    if (token !== modelRequest || createSubmitting || !creatingTask) return;
     if (defaultModel && !models.some((m)=>m.id === defaultModel)) models.push({
         id: defaultModel,
         name: defaultModel + '（配置的默认模型）'
@@ -4917,12 +5039,19 @@ async function loadCreateEnvironment(keepWorkspace = false) {
 }
 async function createTask(e) {
     e.preventDefault();
-    if (!mayLeave()) return;
-    setCreateSubmitState('starting');
-    let created = '';
+    if (createSubmitting || button('create-submit').disabled || !creatingTask) return;
     const text = input('create-input').value, files = [
         ...createFiles
     ];
+    if (!text.trim() && !files.length) {
+        element('create-error').textContent = '请先写下任务要求，或添加附件。';
+        input('create-input').focus();
+        return;
+    }
+    createSubmitting = true;
+    modelRequest++;
+    setCreateSubmitState('starting');
+    let created = '', uploadedCount = 0;
     try {
         validateEngineAttachments(input('create-engine').value, files.length);
         validateAttachmentFiles(files);
@@ -4944,6 +5073,7 @@ async function createTask(e) {
         for (const file of files){
             const attachment = await uploadTaskFile(created, file);
             attachmentDrafts.get(created).push(attachment);
+            uploadedCount++;
         }
         if (text.trim() || files.length) {
             await api('tasks/' + created + '/messages', 'POST', {
@@ -4961,9 +5091,12 @@ async function createTask(e) {
         input('create-files').value = '';
         renderCreateFiles();
         setCreatePageVisible(false);
+        createSubmitting = false;
+        setCreateSubmitState('idle');
         await choose(created);
     } catch (error) {
         if (created) {
+            if (uploadedCount < files.length) pendingUploadFiles.set(created, files.slice(uploadedCount));
             dirty = false;
             creatingTask = false;
             createReturnTask = '';
@@ -4971,17 +5104,27 @@ async function createTask(e) {
             input('create-files').value = '';
             renderCreateFiles();
             setCreatePageVisible(false);
+            createSubmitting = false;
+            setCreateSubmitState('idle');
             await choose(created);
-            notify('任务已创建，尚未开始：' + error.message);
+            notify('任务已创建，提交未完成；要求和未上传附件已保留，请检查记录后再发送：' + error.message);
         } else {
             element('create-error').textContent = error.message;
-            setCreateSubmitState('idle');
         }
     } finally{
-        if (creatingTask) setCreateSubmitState('idle');
+        createSubmitting = false;
+        setCreateSubmitState('idle');
     }
 }
 async function send(text, clear) {
+    if (harnessSessionClosed() || sessionResetTask === chosen && !!chosen) {
+        notify('请先新建空白会话，再发送要求；输入内容会保留。');
+        return;
+    }
+    if (pendingUploadFiles.get(chosen)?.length) {
+        notify('请先重试上传或移除待上传附件，避免遗漏文件。');
+        return;
+    }
     const files = [
         ...attachmentDrafts.get(chosen) || []
     ];
@@ -5002,9 +5145,9 @@ async function send(text, clear) {
             attachment_ids: files.map((f)=>f.id)
         });
         attachmentDrafts.set(id, (attachmentDrafts.get(id) || []).filter((f)=>!files.some((sent)=>sent.id === f.id)));
-        if (clear && chosen === id && input('message').value === original) {
-            input('message').value = '';
-            drafts.delete(id);
+        if (clear) {
+            if (drafts.get(id) === original) drafts.delete(id);
+            if (chosen === id && input('message').value === original) input('message').value = '';
         }
         await poll();
     } catch (e) {

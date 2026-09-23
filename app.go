@@ -164,6 +164,9 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if task.Archived || task.Deleted {
 		return Run{}, errors.New("任务已归档，请先在网页恢复任务")
 	}
+	if runtime := harnessRuntimeStatus(task); runtime != nil && !runtime.CanContinue {
+		return Run{}, errHarnessSessionClosed
+	}
 	mode, e := a.store.resolveMode(options.ModeID, task.Mode)
 	if e != nil {
 		return Run{}, e

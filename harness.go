@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const harnessLostSession = "Harness 运行会话已结束（停止任务、服务重启或空闲超过 30 分钟）。当前 SDK 不支持跨进程恢复，请新建任务；原聊天记录仍保留。"
+const harnessLostSession = "Harness 运行会话已结束（停止任务、服务重启或空闲超过 30 分钟）。当前 SDK 不支持跨进程恢复，请新建空白会话；原聊天记录仍保留，但不会自动带入 AI 上下文。"
 const harnessUnsupportedReasoningMessage = "此模型不支持所选推理强度，请选择工具默认后新建任务"
 
 func isHarnessUnsupportedReasoning(message string) bool {
@@ -34,23 +34,24 @@ var harnessRuntimes = struct {
 }{workers: map[string]*harnessWorker{}}
 
 type harnessWorker struct {
-	lease       sync.Mutex
-	c           Config
-	cmd         *exec.Cmd
-	in          io.WriteCloser
-	frames      chan codexRPC
-	fault       chan error
-	done, halt  chan struct{}
-	once        sync.Once
-	pid         atomic.Int64
-	mu          sync.Mutex
-	diagnostic  string
-	exitErr     error
-	readErr     error
-	fingerprint string
-	idle        *time.Timer
-	nextID      int
-	generation  int
+	lease        sync.Mutex
+	c            Config
+	cmd          *exec.Cmd
+	in           io.WriteCloser
+	frames       chan codexRPC
+	fault        chan error
+	done, halt   chan struct{}
+	once         sync.Once
+	pid          atomic.Int64
+	mu           sync.Mutex
+	diagnostic   string
+	exitErr      error
+	readErr      error
+	stdoutClosed atomic.Bool
+	fingerprint  string
+	idle         *time.Timer
+	nextID       int
+	generation   int
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
@@ -300,7 +301,10 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 // a still-live process that is blocked on an unread oversized output line.
 func (w *harnessWorker) scan(r io.Reader, stdout bool) {
 	if stdout {
-		defer close(w.frames)
+		defer func() {
+			w.stdoutClosed.Store(true)
+			close(w.frames)
+		}()
 	}
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 65536), 4*1024*1024)
@@ -508,7 +512,7 @@ func checkHarness(c Config) (string, error) {
 	if _, err = w.request(shutdown, "shutdown", nil); err != nil {
 		return "", err
 	}
-	return "Harness SDK 握手成功（未发送模型请求）。这不代表 API 密钥、余额或模型调用已验证；停止/重启后旧会话需新建任务。", nil
+	return "Harness SDK 握手成功（未发送模型请求）。这不代表 API 密钥、余额或模型调用已验证；停止/重启后需新建空白会话，不能恢复原生上下文。", nil
 }
 
 func runHarnessSDK(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session, result string, runErr error) {

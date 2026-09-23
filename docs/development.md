@@ -24,6 +24,40 @@ node scripts/Test-Updates-Web.mjs
 
 `data`、`dist`、`build`、`_backups`、`_testdata`、本机部署脚本与验收资料不进入 Git。测试用密码与回环地址只是合成测试数据。
 
+## 工作流与浏览器验收
+
+提交前运行所有网页回归，而不只是布局检查：
+
+```powershell
+Get-ChildItem scripts/Test-*-Web.mjs | ForEach-Object {
+  node $_.FullName
+  if ($LASTEXITCODE -ne 0) { throw "Web regression failed" }
+}
+```
+
+`Test-Task-Workflow-Web.mjs` 覆盖重复提交锁、创建部分失败的草稿与附件保留、
+仅重试未完成的上传、切换任务后的异步结果隔离，以及空白会话重置。
+`Test-Model-Probe-Web.mjs` 覆盖单模型测试确认、禁止空模型触发批量测试、
+重复点击锁和过期测试结果隔离。以上只使用内存 fixture，不消耗模型额度。
+
+需要在真实浏览器点击验收时，显式启动隔离 HTTP fixture：
+
+```powershell
+$env:JIANZUO_TEST_UI_FIXTURE='1'
+go test -run '^TestUIFixture$' -count=1 -v -timeout=11m
+Remove-Item Env:\JIANZUO_TEST_UI_FIXTURE
+```
+
+启动后终端输出临时回环地址和合成密码。任务、知识、配置和工作区均使用测试临时目录；
+普通文字返回模拟回复，`[wait]` 开头的消息等待停止，`[fail]` 开头模拟执行失败。
+预置失效 Harness 会话可验收“新建空白会话”后保留旧记录/知识/草稿。
+fixture 不启动 CLI、不读取真实模型缓存、不调用模型，并禁止模型探测、设备和配置写入；
+最多运行 10 分钟，也可用登录 cookie、Origin 和 CSRF 提交 `POST /__fixture/finish` 提前结束。
+它只存在于 `_test.go`，不进入发行程序。不要把该开关带入普通全量测试环境。
+
+浏览器至少检查 1280×800 和 390×844 下的创建页、会话页、浅/深色设置页，
+确认自定义模型可选择、模型按钮没有错误截断、重置提示不会冒充原生恢复。
+
 ## Windows 与 WSL 进程约定
 
 - 调用 `wsl.exe` 时只传递 `SystemRoot` 和 `WINDIR`。不要把 Windows 的完整 `PATH`、代理变量或受限沙箱变量传给 WSL；Linux 命令必须使用所选用户的登录环境。

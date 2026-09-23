@@ -6,6 +6,7 @@ type ModelPickerTarget='create'|'task';
 let createModels:EngineModel[]=[];
 let taskPickerModels:EngineModel[]=[];
 let taskPickerStatus='',taskModelRequest=0,modelTestRequest=0;
+let modelTestBusy=false;
 const modelsByEnv:Record<string,{models:EngineModel[];message:string;expires:number}>={};
 const effortLabels:Record<string,string>={off:'关闭',none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
 const defaultModelLabel='使用此工具的默认模型';
@@ -15,7 +16,7 @@ const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:str
 };
 function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
 function engineDefaultModel(env:Environment,engine:string){return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
-const harnessSessionHint='Harness 在同一个运行进程中连续对话；闲置 30 分钟会结束运行进程，停止任务或重启服务后不能恢复原会话。更换模型、provider 或权限请新建任务。';
+const harnessSessionHint='Harness 仅在同一个运行进程中连续对话；闲置 30 分钟、停止任务或重启服务后不能恢复原生上下文。可新建空白会话，旧记录仍保留但不会自动带入 AI 上下文。更换模型、provider 或权限请新建任务。';
 const harnessKnowledgeHint='Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
  if(engine==='deepseek-harness')return ['off','low','high','max'];
@@ -24,7 +25,8 @@ function effortLevels(engine:string,model?:EngineModel):string[]{
 }
 function installExecution(){
  input('create-engine').onchange=()=>void loadCreateEnvironment(true);
- button('test-models').onclick=()=>void testCreateModels();
+ button('test-models').textContent='测试当前模型';button('test-models').onclick=()=>void testCreateModels();
+ input('create-workspace').addEventListener('input',invalidateModelTest);
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
  element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
@@ -34,19 +36,38 @@ function installExecution(){
  button('check-claude').insertAdjacentHTML('afterend',' <button type="button" id="check-harness">检查 Harness</button>');
  button('check-harness').onclick=async()=>{button('check-harness').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'deepseek-harness'});element('check-result').textContent=(r.ok?'Harness 基础检查通过（不代表模型调用成功）\n':'Harness 检查失败\n')+r.output+'\n检查使用已保存的环境配置；可在新建任务中测试模型调用。'}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-harness').disabled=false}};
 }
+function resolveModelProbeTarget(env:Environment|undefined,engine:string,selected:string,custom:string,workspace:string){
+ if(!env)throw new Error('请先选择执行环境。');
+ const model=(selected==='__custom__'?custom:selected||engineDefaultModel(env,engine)||'').trim();
+ // The legacy API treats an empty list/ID as a request to test the whole
+ // catalog. Never use that fallback for this explicitly single-model action.
+ if(!model)throw new Error('请先选择或输入一个明确的模型 ID；不会批量测试模型列表。');
+ if(model.length>120||/[\0\r\n]/.test(model))throw new Error('模型名称无效。');
+ const provider=engine==='deepseek-harness'?(env.harness_provider||'deepseek-official'):'该 CLI 的原生配置';
+ const target={environmentID:env.id,environmentName:env.name,engine,provider,model,workspace:workspace.trim()};
+ return {...target,key:JSON.stringify([target.environmentID,engine,provider,model,target.workspace])};
+}
+function currentModelProbeTarget(){return resolveModelProbeTarget(settings.config.environments.find(env=>env.id===input('create-environment').value),input('create-engine').value,input('create-model').value,input('custom-model').value,input('create-workspace').value)}
+function syncModelTestButton(){const control=button('test-models'),picker=button('model-picker-button');if(control)control.disabled=createSubmitting||modelTestBusy||!picker||picker.disabled}
+function invalidateModelTest(){modelTestRequest++;element('model-test-result').textContent='';syncModelTestButton()}
+function modelProbeStillCurrent(request:number,key:string){
+ if(!creatingTask||request!==modelTestRequest)return false;
+ try{return currentModelProbeTarget().key===key}catch{return false}
+}
 async function testCreateModels(){
- const request=++modelTestRequest,environmentID=input('create-environment').value,engine=input('create-engine').value;
- const models=[...new Set(createModels.map(model=>model.id).filter(Boolean))];
- if(!environmentID||!models.length){element('model-test-result').textContent='没有可测试的模型，请先重读模型列表。';return}
- button('test-models').disabled=true;element('model-test-result').textContent='正在逐个测试模型，请稍候…';
+ if(createSubmitting||modelTestBusy||!creatingTask||button('model-picker-button').disabled)return;
+ let target:ReturnType<typeof resolveModelProbeTarget>;
+ try{target=currentModelProbeTarget()}catch(e){element('model-test-result').textContent=(e as Error).message;return}
+ if(!confirm(`将使用以下配置发送一条最小测试消息，可能消耗少量模型额度：\n环境：${target.environmentName}\nAI 工具：${taskEngineName(target.engine)}\nProvider：${target.provider}\n模型：${target.model}\n目录：${target.workspace}\n\n仅测试当前模型，不遍历列表。关闭页面不会取消已提交的测试。是否继续？`))return;
+ const request=++modelTestRequest;modelTestBusy=true;syncModelTestButton();element('model-test-result').textContent='正在测试当前模型 '+target.model+'，请稍候…';
  try{
-  const result=await api<ModelProbeResponse>('environments/'+environmentID+'/models/test','POST',{engine,workspace:input('create-workspace').value,models});
-  if(request!==modelTestRequest)return;
+  const result=await api<ModelProbeResponse>('environments/'+encodeURIComponent(target.environmentID)+'/models/test','POST',{engine:target.engine,workspace:target.workspace,models:[target.model]});
+  if(!modelProbeStillCurrent(request,target.key))return;
   renderModelTestResult(result);
  }catch(e){
-  if(request===modelTestRequest)element('model-test-result').textContent=(e as Error).message;
+  if(modelProbeStillCurrent(request,target.key))element('model-test-result').textContent=(e as Error).message;
  }finally{
-  if(request===modelTestRequest)button('test-models').disabled=false;
+  modelTestBusy=false;syncModelTestButton();
  }
 }
 function renderModelTestResult(result:ModelProbeResponse){
@@ -80,7 +101,7 @@ function installModelPicker(){
    else void chooseTaskModel(item.dataset.model==='__custom__'?input(ids.search).value.trim():item.dataset.model||'');
   };
  }
- input('custom-model').oninput=()=>{updateCreateModelLabel();updateReasoning()};
+ input('custom-model').oninput=()=>{invalidateModelTest();updateCreateModelLabel();updateReasoning()};
  document.addEventListener('click',e=>{const node=e.target as HTMLElement;for(const target of Object.keys(modelPickers) as ModelPickerTarget[])if(!node.closest('#'+modelPickers[target].root))closeModelMenu(target)});
 }
 async function toggleModelMenu(target:ModelPickerTarget){
@@ -182,6 +203,7 @@ async function applyTaskModel(model:string,effort:string|undefined){
  catch(e){notify((e as Error).message)}
 }
 async function chooseCreateModel(value:string){
+ invalidateModelTest();
  closeModelMenu('create');
  const custom=input('custom-model'),typed=input('model-search').value.trim();
  if(value==='__custom__'){
@@ -207,7 +229,7 @@ function setCreateModelsLoading(){
 function setCreateModels(models:EngineModel[],defaultModel:string){
  createModels=models;input('create-model').value=defaultModel||'';
  element('model-picker-label').textContent=defaultModel||defaultModelLabel;
- button('model-picker-button').disabled=false;button('test-models').disabled=models.length===0;element('model-test-result').textContent='';updateReasoning();
+ button('model-picker-button').disabled=false;syncModelTestButton();element('model-test-result').textContent='';updateReasoning();
 }
 function updateReasoning(){
  const engine=input('create-engine').value,id=input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value;
