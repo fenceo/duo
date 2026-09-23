@@ -68,7 +68,7 @@ function installWorkflow(){
  // The composer is deliberately detached until replaceChildren below. Keep
  // direct references: document.getElementById cannot see nodes in this subtree.
  modelMenu.append(modelFooter);
- modelFooter.querySelector('#model-catalog-actions')!.append(element('reload-models'),element('test-models'));
+ modelFooter.querySelector('#model-catalog-actions')!.append(element('reload-models'),element('test-models'),element('stop-model-test'));
  modelFooter.querySelector('#model-catalog-details')!.append(element('models-hint'));modelFooter.append(element('model-test-result'));
  meta.append(element('effort-hint'),element('create-error'));
  form.replaceChildren(head,context,createComposer,meta);

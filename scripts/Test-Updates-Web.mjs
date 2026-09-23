@@ -29,6 +29,12 @@ function fixture(){
  runInContext(script,ctx,{filename:'updates-under-test.js'});
  return {ctx,node,calls,notices,confirmations,get reloads(){return reloads},unmount(){mounted=false},value:expression=>runInContext(expression,ctx)};
 }
+function syntheticClock(ctx){
+ let now=0,next=0;const timers=new Map();
+ ctx.Date=class extends Date {static now(){return now}};
+ ctx.setTimeout=(callback,ms)=>{const id=++next;timers.set(id,{at:now+ms,callback});return id};ctx.clearTimeout=id=>timers.delete(id);
+ return {async advance(ms){const end=now+ms;await new Promise(setImmediate);for(;;){const nextTimer=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!nextTimer)break;now=nextTimer[1].at;timers.delete(nextTimer[0]);nextTimer[1].callback();await new Promise(setImmediate)}now=end;await new Promise(setImmediate)},get pending(){return timers.size}};
+}
 {
  const {ctx}=fixture();
  for(const url of ['https://github.com/owner/jianzuo/releases','https://github.com/owner/jianzuo/releases/tag/v1.0.0',installer])assert.equal(ctx.safeUpdateLink(url,repo),url);
@@ -120,6 +126,23 @@ for(const health of [{app:'other',version:'0.19.0'},{app:'jianzuo',version:'0.18
 for(const status of [401,403]){
  const {ctx}=fixture();let requests=0;ctx.fetch=async()=>{requests++;return {ok:false,status}};
  const result=await ctx.waitForUpdatedService('0.19.0',100,1);assert.equal(result.status,status);assert.equal(result.matched,false);assert.equal(requests,1);
+}
+{
+ const f=fixture(),clock=syntheticClock(f.ctx);let healthReads=0;
+ f.ctx.fetch=async()=>{healthReads++;if(healthReads===1)return {ok:true,status:200,json:async()=>({app:'jianzuo',version:'0.18.1'})};throw new Error('synthetic service offline')};f.ctx.renderUpdateInformation(info);
+ const pending=f.ctx.installNewVersion();await clock.advance(0);
+ assert.match(f.node('update-result').textContent,/已等待 0 秒，本次最多等待 180 秒/);
+ assert.match(f.node('update-result').textContent,/不是安装实时进度/);
+ await clock.advance(60000);assert.match(f.node('update-result').textContent,/已等待 60 秒/);
+ assert.equal(f.node('update-install').disabled,true);assert.equal(f.reloads,0);
+ await clock.advance(118000);assert.match(f.node('update-result').textContent,/已等待 178 秒/);
+ await clock.advance(2000);await pending;
+ assert.equal(f.value('updatePhase'),'timeout');assert.equal(clock.pending,0,'all health request and polling timers settle');assert(healthReads<=91);
+ assert.match(f.node('update-result').textContent,/服务尚未恢复连接/);assert.match(f.node('update-result').textContent,/从桌面或开始菜单启动 Duo/);
+ assert.doesNotMatch(f.node('update-result').textContent,/服务仍返回版本/,'an old pre-shutdown health response is not evidence the service is still online');
+ assert.match(f.node('update-result').textContent,/update\.log 和 update-installer\.log/);
+ assert.equal(f.node('update-install').disabled,true,'timeout keeps duplicate-install protection');assert.equal(f.node('update-reconnect').disabled,false);
+ assert.equal(f.reloads,0,'elapsed time is never proof of installation');
 }
 assert.doesNotMatch(source,/Math\.random|setInterval|[0-9]+%|会停止正在运行的任务/,'do not fabricate progress or force-stop work');
 console.log('PASS: mode-aware EXE/ZIP links, real stages, duplicate locks, 401/403/409/download failure recovery, lost-response reconnect, strict health/version proof, bounded polling/abort, retry after timeout, and no model or network calls.');

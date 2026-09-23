@@ -340,48 +340,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		jsonOut(w, 200, models)
 	}))
-	m.HandleFunc("POST /api/environments/{id}/models/test", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		var v ModelProbeRequest
-		if !body(w, r, &v) {
-			return
-		}
-		c := s.app.config.get()
-		env, e := c.environment(r.PathValue("id"))
-		if e != nil {
-			fail(w, 404, e.Error())
-			return
-		}
-		if v.Engine == "" {
-			v.Engine = "codex"
-		}
-		if !validEngine(v.Engine) {
-			fail(w, 400, "AI 工具无效")
-			return
-		}
-		if _, e = normalizeProbeModels(v.Models); e != nil {
-			fail(w, 400, e.Error())
-			return
-		}
-		if !s.modelProbeMu.TryLock() {
-			fail(w, http.StatusConflict, "已有模型测试或更新正在进行，请稍后重试")
-			return
-		}
-		defer s.modelProbeMu.Unlock()
-		if s.app.updating.Load() {
-			fail(w, http.StatusConflict, errUpdateBusy.Error())
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
-		defer cancel()
-		runtime := runtimeConfig(c, env)
-		runtime.EngineEnv = s.app.activeEngineEnvironment(Task{Engine: v.Engine, Environment: &env})
-		result, e := probeModels(ctx, runtime, env, v.Engine, v.Workspace, v.Models)
-		if e != nil {
-			fail(w, 400, e.Error())
-			return
-		}
-		jsonOut(w, 200, result)
-	}))
+	m.HandleFunc("POST /api/environments/{id}/models/test", s.secure(s.testModels))
 	m.HandleFunc("PUT /api/settings", s.secure(s.settings))
 	m.HandleFunc("POST /api/check", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {

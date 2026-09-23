@@ -125,6 +125,14 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .model-item-name{flex:1;min-width:0;overflow-wrap:anywhere}
 .model-item small{color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44%;min-width:0;flex-shrink:1}
 .model-item-check{color:var(--accent)}
+.model-probe-badge{flex:none;max-width:5em;padding:2px 5px;border-radius:5px;font-size:10px;line-height:1.5;background:var(--raised);color:var(--muted);white-space:nowrap}
+.model-probe-available{color:#187340;background:#dff6e7}
+.model-probe-unavailable{color:#ad3131;background:#fce6e6}
+.model-probe-testing{color:var(--accent);background:var(--raised)}
+.model-probe-timeout{color:#895f05;background:#fff0c2}
+[data-theme="dark"] .model-probe-available{color:#9ee9b4;background:#193828}
+[data-theme="dark"] .model-probe-unavailable{color:#ffb5b5;background:#482525}
+[data-theme="dark"] .model-probe-timeout{color:#f9d773;background:#473c21}
 .model-efforts{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
 .model-efforts>small{display:block;margin-bottom:6px;font-size:10px;color:var(--muted)}
 .model-efforts>div{display:flex;flex-wrap:wrap;gap:4px}

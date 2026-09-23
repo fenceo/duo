@@ -203,13 +203,50 @@ end;
 function RunHelper(const Command, Arguments: String): String;
 var Code: Integer;
 begin
-  DeleteFile(ResultFile);
+  Code := -1;
+  if FileExists(ResultFile) and not DeleteFile(ResultFile) then begin
+    Result := '无法清除旧安装探测结果，未继续：' + ResultFile;
+    Log(Result); exit;
+  end;
   if not Exec(HelperFile, Command + Arguments + ' --result ' + Q(ResultFile), '', SW_HIDE, ewWaitUntilTerminated, Code) then
     Result := '无法运行安装维护程序：' + SysErrorMessage(Code)
+  else if not FileExists(ResultFile) then
+    Result := '安装维护程序未返回结果（代码 ' + IntToStr(Code) + '），未继续。'
   else if Code <> 0 then
     Result := GetIniString('Result', 'Error', '安装维护失败（代码 ' + IntToStr(Code) + '），请查看安装日志。', ResultFile)
   else Result := '';
+  Log('Maintenance command=' + Command + '; exit=' + IntToStr(Code) + '; result=' + ResultFile + '; present=' + IntToStr(Ord(FileExists(ResultFile))));
   if Result <> '' then Log(Result);
+end;
+
+function ProbeValue(const Name: String): String;
+begin
+  Result := GetIniString('Result', Name, '__duo_probe_missing__', ProbeFile);
+end;
+
+function ValidProbeFlag(const Name: String): Boolean;
+var Value: String;
+begin
+  Value := ProbeValue(Name);
+  Result := (Value = '0') or (Value = '1');
+end;
+
+function ValidateProbeResult: String;
+begin
+  Result := '';
+  if ProbeValue('Protocol') <> 'duo-install-probe-v1' then
+    Result := '安装探测协议缺失或无效，未更改程序或数据。'
+  else if not (ValidProbeFlag('HasInstall') and ValidProbeFlag('Startup') and ValidProbeFlag('Desktop') and
+    ValidProbeFlag('TaskPresent') and ValidProbeFlag('TaskRecognized') and ValidProbeFlag('LegacyInstall')) then
+    Result := '安装探测状态字段缺失或无效，未更改程序或数据。'
+  else if (ProbeValue('InstallDir') = '__duo_probe_missing__') or (ProbeValue('DataDir') = '__duo_probe_missing__') or
+    (ProbeValue('TaskDirectory') = '__duo_probe_missing__') or (ProbeValue('TaskData') = '__duo_probe_missing__') or
+    (ProbeValue('MigrationDirectory') = '__duo_probe_missing__') or (ProbeValue('MigrationData') = '__duo_probe_missing__') then
+    Result := '安装探测缺少必要路径字段，未更改程序或数据。'
+  else if (ProbeValue('HasInstall') = '1') and ((ProbeValue('InstallDir') = '') or (ProbeValue('DataDir') = '')) then
+    Result := '已安装版本缺少程序或数据目录登记，请先核查，未更改程序或数据。'
+  else if (ProbeValue('TaskRecognized') = '1') and (ProbeValue('TaskPresent') <> '1') then
+    Result := '安装探测的启动任务状态不一致，未继续。';
 end;
 
 function InitializeSetup: Boolean;
@@ -234,17 +271,26 @@ begin
   if Error <> '' then begin
     SuppressibleMsgBox(Error, mbError, MB_OK, IDOK); Result := False; exit;
   end;
-  FileCopy(ResultFile, ProbeFile, False);
-  OldInstallDir := GetIniString('Result', 'InstallDir', '', ProbeFile);
-  OldDataDir := GetIniString('Result', 'DataDir', '', ProbeFile);
-  OldTaskDir := GetIniString('Result', 'MigrationDirectory', '', ProbeFile);
-  OldTaskData := GetIniString('Result', 'MigrationData', '', ProbeFile);
-  OldStartup := GetIniString('Result', 'Startup', '1', ProbeFile) = '1';
-  OldDesktop := GetIniString('Result', 'Desktop', '1', ProbeFile) = '1';
-  HasOldInstall := GetIniString('Result', 'HasInstall', '0', ProbeFile) = '1';
+  if not FileCopy(ResultFile, ProbeFile, False) then begin
+    Error := '无法保留安装探测结果，未继续：' + ProbeFile;
+    Log(Error); SuppressibleMsgBox(Error, mbError, MB_OK, IDOK); Result := False; exit;
+  end;
+  Log('Probe copy succeeded: ' + ProbeFile);
+  Error := ValidateProbeResult;
+  Log('Probe protocol=' + ProbeValue('Protocol') + '; HasInstall=' + ProbeValue('HasInstall') + '; InstallDir=' + ProbeValue('InstallDir') + '; DataDir=' + ProbeValue('DataDir'));
+  if Error <> '' then begin
+    Log(Error); SuppressibleMsgBox(Error, mbError, MB_OK, IDOK); Result := False; exit;
+  end;
+  OldInstallDir := ProbeValue('InstallDir');
+  OldDataDir := ProbeValue('DataDir');
+  OldTaskDir := ProbeValue('MigrationDirectory');
+  OldTaskData := ProbeValue('MigrationData');
+  OldStartup := ProbeValue('Startup') = '1';
+  OldDesktop := ProbeValue('Desktop') = '1';
+  HasOldInstall := ProbeValue('HasInstall') = '1';
   HasPreviousData := OldDataDir <> '';
-  TaskRecognized := GetIniString('Result', 'TaskRecognized', '0', ProbeFile) = '1';
-  TaskPresent := GetIniString('Result', 'TaskPresent', '0', ProbeFile) = '1';
+  TaskRecognized := ProbeValue('TaskRecognized') = '1';
+  TaskPresent := ProbeValue('TaskPresent') = '1';
   if UpdateMode and not HasOldInstall then begin
     SuppressibleMsgBox('自动更新只适用于已安装的Duo，请手动运行安装包。', mbError, MB_OK, IDOK); Result := False;
   end;

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -139,6 +140,59 @@ func TestUIFixture(t *testing.T) {
 		}
 		jsonOut(w, http.StatusOK, map[string]any{"source": "UI fixture（合成模型，不调用 CLI）", "models": models, "message": message, "status": status, "default_model": defaultModel})
 	})
+	// Entirely synthetic availability probes; this route never reaches a runner
+	// or reads credentials. Small delays allow browser validation of Stop.
+	probe := server.secure(func(w http.ResponseWriter, r *http.Request) {
+		var request ModelProbeRequest
+		if !body(w, r, &request) {
+			return
+		}
+		models, err := normalizeProbeModels(request.Models)
+		if err != nil || len(models) == 0 {
+			fail(w, 400, "合成测试需要明确模型列表")
+			return
+		}
+		response := ModelProbeResponse{Engine: request.Engine, Workspace: request.Workspace, Results: []ModelProbeResult{}}
+		stream := strings.Contains(r.Header.Get("Accept"), "application/x-ndjson")
+		if stream {
+			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+		}
+		write := func(value any) bool {
+			if !stream {
+				return true
+			}
+			if json.NewEncoder(w).Encode(value) != nil {
+				return false
+			}
+			if flush, ok := w.(http.Flusher); ok {
+				flush.Flush()
+			}
+			return true
+		}
+		if !write(map[string]any{"type": "start", "models": models}) {
+			return
+		}
+		for i, model := range models {
+			if !write(map[string]any{"type": "model_start", "model": model}) {
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			result := ModelProbeResult{Model: model, Status: []string{"available", "unavailable", "timeout"}[i%3], Message: "UI 合成测试结果；未调用任何模型", DurationMS: 2000}
+			response.Results = append(response.Results, result)
+			if !write(map[string]any{"type": "result", "result": result}) {
+				return
+			}
+		}
+		if stream {
+			write(map[string]any{"type": "done", "engine": response.Engine, "workspace": response.Workspace, "results": response.Results})
+		} else {
+			jsonOut(w, 200, response)
+		}
+	})
 	blocked := server.secure(func(w http.ResponseWriter, _ *http.Request) {
 		fail(w, http.StatusForbidden, "UI 验收环境禁止真实 CLI、模型探测、设备、环境发现及配置修改")
 	})
@@ -154,6 +208,15 @@ func TestUIFixture(t *testing.T) {
 		}
 		if (path == "/api/environments/ui-fixture/models" || path == "/api/environments/ui-empty/models" || path == "/api/environments/ui-error/models") && r.Method == http.MethodGet {
 			catalog(w, r)
+			return
+		}
+		if path == "/api/environments/ui-fixture/models/test" && r.Method == http.MethodPost {
+			probe(w, r)
+			return
+		}
+		if path == "/api/engines" && r.Method == http.MethodGet {
+			// Only the synthetic fixture's account references, never real data.
+			production.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(path, "/api/") {

@@ -54,10 +54,14 @@ async function loadUpdateInformation(){if(updateLoading)return;setUpdateBusy(tru
 async function saveUpdateSource(){if(updateLoading||updateExpectedVersion)return;setUpdateBusy(true);try{renderUpdateInformation(await api<UpdateInfo>('updates','PUT',{repository:input('update-repository').value}));notify('更新来源已保存')}catch(e){updateFailure(e)}finally{setUpdateBusy(false)}}
 async function checkNewVersion(){if(updateLoading)return;setUpdateBusy(true);if(!updateExpectedVersion)setUpdatePhase('checking','正在检查 GitHub 正式发布版本…');try{renderUpdateInformation(await api<UpdateInfo>('updates/check','POST',{}))}catch(e){updateFailure(e)}finally{setUpdateBusy(false)}}
 function normalizedUpdateVersion(value:string):string{return /^v?\d+\.\d+\.\d+(?:-portable)?$/.test(value)?value.replace(/^v/,'').replace(/-portable$/,''):''}
-async function waitForUpdatedService(expected:string,timeoutMs=180000,intervalMs=2000):Promise<{matched:boolean;lastVersion:string;status?:number}>{
+async function waitForUpdatedService(expected:string,timeoutMs=180000,intervalMs=2000,onWait?:(elapsedSeconds:number,limitSeconds:number)=>void):Promise<{matched:boolean;lastVersion:string;status?:number}>{
  const target=normalizedUpdateVersion(expected);if(!target)return {matched:false,lastVersion:''};
- const deadline=Date.now()+timeoutMs;let lastVersion='';
+ const started=Date.now(),deadline=started+timeoutMs;let lastVersion='';
  while(Date.now()<deadline){
+  onWait?.(Math.min(Math.ceil(timeoutMs/1000),Math.max(0,Math.floor((Date.now()-started)/1000))),Math.ceil(timeoutMs/1000));
+  // An old version seen before shutdown must not imply the service is still
+  // reachable when the final polls fail.
+  lastVersion='';
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),Math.min(4000,Math.max(1,deadline-Date.now())));
   try{
    const response=await fetch('/healthz',{credentials:'same-origin',cache:'no-store',signal:controller.signal});
@@ -69,15 +73,18 @@ async function waitForUpdatedService(expected:string,timeoutMs=180000,intervalMs
  }
  return {matched:false,lastVersion};
 }
+function renderUpdateWait(elapsedSeconds:number,limitSeconds:number){
+ setUpdatePhase('reconnecting','正在确认 '+updateExpectedVersion+' · 已等待 '+elapsedSeconds+' 秒，本次最多等待 '+limitSeconds+' 秒。\n这是服务版本确认等待，不是安装实时进度；服务可能暂时离线。确认新版前不会显示成功。');
+}
 async function reconnectAfterUpdate(){
  if(updateLoading||!updateExpectedVersion)return;
- setUpdateBusy(true);setUpdatePhase('reconnecting','更新已进入安装与重连等待，正在确认 '+updateExpectedVersion+'。服务可能短暂离线；确认新版前不会显示成功。');
+ setUpdateBusy(true);renderUpdateWait(0,180);
  try{
-  const result=await waitForUpdatedService(updateExpectedVersion);
+  const result=await waitForUpdatedService(updateExpectedVersion,180000,2000,renderUpdateWait);
   if(result.matched){updateExpectedVersion='';setUpdatePhase('complete','已连接新版 '+result.lastVersion+'，正在刷新工作台…');location.reload();return}
-  const reason=result.status===401?'访问服务需要重新登录。':result.status===403?'当前连接没有访问权限，请检查登录或代理设置。':result.lastVersion?'服务仍返回版本 '+result.lastVersion+'。':'服务暂未恢复连接。';
-  setUpdatePhase('timeout',reason+' 尚未确认更新成功；可再次连接，或在服务电脑上启动Duo并查看数据目录中的 update.log。请勿重复安装或删除数据。',true);
- }catch(e){setUpdatePhase('timeout','暂时无法确认更新结果。可重新连接，或查看数据目录中的 update.log；不要重复安装。',true)}
+  const reason=result.status===401?'访问服务需要重新登录。':result.status===403?'当前连接没有访问权限，请检查登录或代理设置。':result.lastVersion?'服务仍返回版本 '+result.lastVersion+'。':'服务尚未恢复连接。请在服务电脑上从桌面或开始菜单启动 Duo，再点击“重新连接并确认版本”。';
+  setUpdatePhase('timeout',reason+' 尚未确认更新成功；请查看数据目录中的 update.log 和 update-installer.log。请勿重复安装或删除数据。',true);
+ }catch(e){setUpdatePhase('timeout','暂时无法确认更新结果。若服务未恢复，请在服务电脑上从桌面或开始菜单启动 Duo，再重新连接；请查看数据目录中的 update.log 和 update-installer.log。不要重复安装或删除数据。',true)}
  finally{if(updatePhase!=='complete')setUpdateBusy(false)}
 }
 async function installNewVersion(){

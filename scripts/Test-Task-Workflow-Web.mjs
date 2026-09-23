@@ -23,7 +23,7 @@ function fixture(){
   input:node,button:node,element:node,createFiles:[],createSubmitting:false,creatingTask:true,createPermission:'request',createReturnTask:'',modelRequest:0,shellEpoch:0,shellCurrent:epoch=>epoch===ctx.shellEpoch,
   sessionResetTask:'',chosen:'',selection:0,detail:null,sending:false,dirty:false,tasks:[],drafts:new Map(),attachmentDrafts:new Map(),pendingUploadFiles:new Map(),uploadingTasks:new Set(),
   validateEngineAttachments(){},validateAttachmentFiles(){},modeForPermission:()=>({id:'work'}),modeSupportsEngine:()=>true,createTaskTitle:text=>text,
-  renderCreateFiles(){},setCreatePageVisible(){},renderTask(){},renderWorkflow(){},notify:text=>notices.push(text),confirm:()=>true,poll:async()=>{},selectedMessageMode:()=> 'work',
+  renderCreateFiles(){},setCreatePageVisible(){},renderTask(){},renderWorkflow(){},invalidateModelTest(){},notify:text=>notices.push(text),confirm:()=>true,poll:async()=>{},selectedMessageMode:()=> 'work',
   choose:async id=>{ctx.chosen=id;ctx.detail={task:{id,engine:'codex'},runs:[],events:[]}},
   api:async(path,method,data)=>{calls.push({path,method,data});return path==='tasks'?{task:{id:'created',engine:'codex'}}:{}},
   uploadTaskFile:async(_,file)=>({id:file.name,name:file.name}),

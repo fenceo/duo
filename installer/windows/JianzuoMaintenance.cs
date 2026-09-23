@@ -30,6 +30,7 @@ static class Program
     static readonly string RunName = TestNamespace.Length == 0 ? "JianzuoPortable" : ProductKey + "Portable";
     const string LauncherName = "Duo.exe";
     const string MarkerName = ".jianzuo-install";
+    const string ProbeProtocol = "duo-install-probe-v1";
     static readonly string[] ManagedNames = { LauncherName, "duo-service.exe", "简作.exe", "jianzuo-service.exe", "使用说明.md", "THIRD-PARTY-NOTICES.txt", "DuoMaintenance.exe", "JianzuoMaintenance.exe", "卸载简作.exe", MarkerName, "unins000.exe", "unins000.dat" };
 
     [STAThread]
@@ -271,7 +272,8 @@ static class Program
         if (data.Length == 0 && source != null) data = source.DataDir;
         string desktopPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ProductName + ".lnk");
         string desktopOwner = install.Length > 0 ? install : (source == null ? "" : Path.GetDirectoryName(source.Executable));
-        return new Dictionary<string, string> {
+        Dictionary<string, string> result = new Dictionary<string, string> {
+            { "Protocol", ProbeProtocol },
             { "InstallDir", install }, { "DataDir", data }, { "HasInstall", install.Length > 0 && OwnedInstallation(install) ? "1" : "0" },
             { "Startup", task != null ? (task.Recognized && task.Enabled ? "1" : "0") : (run != null && run.Recognized ? "1" : (install.Length > 0 ? "0" : "1")) },
             { "Desktop", desktopOwner.Length == 0 || ShortcutOwned(desktopPath, desktopOwner) || LegacyShortcutPaths().Any(p => p.EndsWith("简作.lnk", StringComparison.OrdinalIgnoreCase) && Path.GetDirectoryName(p).Equals(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), StringComparison.OrdinalIgnoreCase) && ShortcutOwned(p, desktopOwner)) ? "1" : "0" },
@@ -279,6 +281,26 @@ static class Program
             { "TaskDirectory", task == null || !task.Recognized ? "" : Path.GetDirectoryName(task.Executable) }, { "TaskData", task == null ? "" : task.DataDir },
             { "MigrationDirectory", source == null ? "" : Path.GetDirectoryName(source.Executable) }, { "MigrationData", source == null ? "" : source.DataDir },
             { "LegacyInstall", install.Length > 0 && RegistryOwned(LegacyKey, "InstallLocation", install) ? "1" : "0" } };
+        ValidateProbeResult(result);
+        return result;
+    }
+    // Missing discovery output is a protocol failure, never proof that this is
+    // a fresh installation. Keep this small validator pure for safety tests.
+    static void ValidateProbeResult(Dictionary<string, string> result)
+    {
+        string value;
+        if (result == null || !result.TryGetValue("Protocol", out value) || value != ProbeProtocol)
+            throw new Exception("安装探测协议无效，未更改程序或数据。");
+        foreach (string name in new[] { "InstallDir", "DataDir", "TaskDirectory", "TaskData", "MigrationDirectory", "MigrationData" })
+            if (!result.TryGetValue(name, out value) || value == null)
+                throw new Exception("安装探测缺少必要字段：" + name);
+        foreach (string name in new[] { "HasInstall", "Startup", "Desktop", "TaskPresent", "TaskRecognized", "LegacyInstall" })
+            if (!result.TryGetValue(name, out value) || (value != "0" && value != "1"))
+                throw new Exception("安装探测状态字段无效：" + name);
+        if (result["HasInstall"] == "1" && (result["InstallDir"].Length == 0 || result["DataDir"].Length == 0))
+            throw new Exception("已安装版本缺少程序或数据目录登记，请先核查，未更改程序或数据。");
+        if (result["TaskRecognized"] == "1" && result["TaskPresent"] != "1")
+            throw new Exception("安装探测的启动任务状态不一致。");
     }
     static IEnumerable<string> ShortcutPaths()
     {

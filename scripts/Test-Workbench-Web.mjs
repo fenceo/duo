@@ -51,7 +51,7 @@ const classList=()=>{const values=new Set(['hidden']);return {contains:value=>va
 const nodes=new Map();
 for(const id of ['task-model','task-model-menu','task-model-button','task-model-search','task-model-list','task-models-status','task-models-hint','task-models-context','task-reload-models'])nodes.set(id,{id,classList:classList(),value:'',innerHTML:'',setAttribute(){},focus(){}});
 globalThis.element=id=>nodes.get(id)||null;globalThis.input=id=>nodes.get(id);globalThis.button=id=>nodes.get(id);globalThis.detail={task:modelTask};
-globalThis.settings={config:{environments:[modelTask.environment]}};globalThis.shellEpoch=1;globalThis.createSubmitting=false;
+globalThis.settings={config:{environments:[modelTask.environment]}};globalThis.shellEpoch=1;globalThis.createSubmitting=false;globalThis.creatingTask=false;
 let modelCalls=0;
 globalThis.api=async path=>{modelCalls++;assert.equal(path,'environments/model-env/models?engine=codex&workspace=C%3A%5Cwork');return {models:[{id:'api-model',name:'API Model'}],modified:0,source:'test'}};
 await execution.toggleModelMenu('task');await new Promise(resolve=>setImmediate(resolve));

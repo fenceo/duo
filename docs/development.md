@@ -46,8 +46,8 @@ Get-ChildItem scripts/Test-*-Web.mjs | ForEach-Object {
 
 `Test-Task-Workflow-Web.mjs` 覆盖重复提交锁、创建部分失败的草稿与附件保留、
 仅重试未完成的上传、切换任务后的异步结果隔离，以及空白会话重置。
-`Test-Model-Probe-Web.mjs` 覆盖单模型测试确认、禁止空模型触发批量测试、
-重复点击锁和过期测试结果隔离。以上只使用内存 fixture，不消耗模型额度。
+`Test-Model-Probe-Web.mjs` 覆盖列表模型的明确范围确认、空列表拒绝、逐项流式结果、
+停止与中断、重复点击锁和过期测试结果隔离。以上只使用内存 fixture，不消耗模型额度。
 
 需要在真实浏览器点击验收时，显式启动隔离 HTTP fixture：
 
@@ -60,7 +60,7 @@ Remove-Item Env:\JIANZUO_TEST_UI_FIXTURE
 启动后终端输出临时回环地址和合成密码。任务、知识、配置和工作区均使用测试临时目录；
 普通文字返回模拟回复，`[wait]` 开头的消息等待停止，`[fail]` 开头模拟执行失败。
 预置失效 Harness 会话可验收“新建空白会话”后保留旧记录/知识/草稿。
-fixture 不启动 CLI、不读取真实模型缓存、不调用模型，并禁止模型探测、设备和配置写入；
+fixture 不启动 CLI、不读取真实模型缓存、不调用模型；列表测试仅返回延迟的合成成功/失败/超时，设备和配置写入被禁止；
 最多运行 10 分钟，也可用登录 cookie、Origin 和 CSRF 提交 `POST /__fixture/finish` 提前结束。
 它只存在于 `_test.go`，不进入发行程序。不要把该开关带入普通全量测试环境。
 

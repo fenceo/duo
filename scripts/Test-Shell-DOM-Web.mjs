@@ -37,10 +37,13 @@ assert(document.getElementById('sticky-board'),'mount must reach notes initializ
 assert(document.getElementById('update-current'),'mount must reach the final update settings initializer');
 assert.equal(document.getElementById('reload-models').closest('.model-picker')?.id,'model-picker');
 assert.equal(document.getElementById('test-models').closest('.model-picker')?.id,'model-picker');
+for(const id of ['reload-models','test-models','stop-model-test'])assert.equal(document.getElementById(id).closest('.model-catalog-actions')?.id,'model-catalog-actions',id+' must stay in the model menu, including after detached composer mount');
+for(const id of ['task-reload-models','task-test-models','task-stop-model-test'])assert.equal(document.getElementById(id).closest('.model-menu')?.id,'task-model-menu',id+' belongs to the task model menu');
 assert.equal(document.getElementById('models-hint').closest('.model-menu')?.id,'model-menu');
 const sidebarChildren=[...document.getElementById('sidebar').children];
 assert(sidebarChildren.indexOf(document.getElementById('sticky-board'))<sidebarChildren.indexOf(document.getElementById('sidebar-footer')));
 assert.equal(document.querySelectorAll('#model-catalog-actions').length,1);
+assert.equal(document.querySelectorAll('#stop-model-test').length,1);
 // A fresh login mounts the same full shell again without losing detached nodes.
 await ctx.boot();
 assert.equal(typeof document.getElementById('new-task')?.onclick,'function');

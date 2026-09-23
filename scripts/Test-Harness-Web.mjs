@@ -80,6 +80,7 @@ globalThis.shellEpoch=0;
 globalThis.shellCurrent=epoch=>epoch===globalThis.shellEpoch;
 globalThis.button=()=>({disabled:false});
 globalThis.setCreateSubmitState=()=>{};
+globalThis.invalidateModelTest=()=>{};
 globalThis.validateEngineAttachments=workflow.validateEngineAttachments;
 await createModule.createTask({preventDefault(){}});
 assert.equal(requests,0,'unsupported drafts must be rejected before POST /tasks');

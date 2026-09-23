@@ -63,7 +63,7 @@ for(const kind of ['workspace','config','shell','closed']){
  const f=fixture();f.ctx.api=async()=>response('',{default_model:'native-default'});await f.ctx.loadCreateModels(true);
  assert.equal(f.node('create-model').value,'','native default keeps CLI-managed default semantics');assert.equal(f.node('model-picker-label').textContent,'默认 · native-default');
  assert.match(f.node('model-list').innerHTML,/当前默认：native-default/);
- assert.equal(f.ctx.currentModelProbeTarget().model,'native-default');
+ assert.equal(f.value('createResolvedDefault'),'native-default');
  f.ctx.api=async()=>{throw new Error('fixture CLI unavailable')};await f.ctx.loadCreateModels(false,true);
  assert.match(f.node('models-status').textContent,/读取失败/);assert.match(f.node('models-hint').textContent,/fixture CLI unavailable/);assert.equal(f.node('reload-models').disabled,false);
  f.node('model-search').value='my-custom';f.ctx.renderModelMenu('create');assert.match(f.node('model-list').innerHTML,/使用「my-custom」/);
@@ -79,7 +79,7 @@ for(const kind of ['workspace','config','shell','closed']){
  assert.equal(f.node('task-models-status').textContent,'new-task');assert.doesNotMatch(f.node('task-model-list').innerHTML,/stale-task/);
 }
 const workflow=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
-assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\)\)/);
+assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\),element\('stop-model-test'\)\)/);
 assert.match(workflow,/meta\.append\(element\('effort-hint'\),element\('create-error'\)\)/);
 const environments=await readFile(new URL('../web/environments.ts',import.meta.url),'utf8');
 assert.match(environments,/id="custom-model-engine"/);assert.match(environments,/env\.models\.push\(\{id,name,engine\}\)/);

@@ -27,6 +27,10 @@ $source = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'install
 foreach ($contract in @('PrivilegesRequired=lowest','[Files]','[Icons]','[Registry]','if CurStep = ssInstall then ApplyStartup','--rollback','--commit','--update','TaskRecognized','MigrationPage.Values[0] := False','CloseApplications=no','WizardForm.DirBrowseButton.Enabled := False','DataPage.Buttons[0].Enabled','--confirm-data','--release-guard')) {
     if (!$definition.Contains($contract)) { throw "Missing Inno safety contract: $contract" }
 }
+foreach ($contract in @('else if not FileExists(ResultFile) then','if not FileCopy(ResultFile, ProbeFile, False) then',"ProbeValue('Protocol') <> 'duo-install-probe-v1'","ValidProbeFlag('HasInstall')",'Error := ValidateProbeResult;','Maintenance command=','Probe protocol=')) {
+    if (!$definition.Contains($contract)) { throw "Missing fail-closed probe contract: $contract" }
+}
+if ($definition.Contains("GetIniString('Result', 'HasInstall', '0'")) { throw 'Missing probe result still defaults to fresh installation.' }
 foreach ($unsafe in @('taskkill','Directory.Delete(','ExtractPayload','--uninstall --install-dir')) {
     if ($source.Contains($unsafe)) { throw "Maintenance helper is not narrowly scoped: $unsafe" }
 }
@@ -83,6 +87,36 @@ try {
     if ($exitCode -ne 1 -or !(Test-Path -LiteralPath $sentinel) -or [IO.File]::ReadAllText($sentinel) -cne 'Jianzuo installer verification v1') {
         throw 'Native installer pure verification did not exit before installation.'
     }
+    # The discovery protocol is checked without querying or mutating the user's
+    # registry, scheduled tasks, shortcuts, installation, or runtime data.
+    $probeResult=[Collections.Generic.Dictionary[string,string]]::new()
+    $probeResult.Add('Protocol','duo-install-probe-v1')
+    foreach($field in @('InstallDir','DataDir','TaskDirectory','TaskData','MigrationDirectory','MigrationData')) { $probeResult.Add($field,'') }
+    foreach($field in @('HasInstall','Startup','Desktop','TaskPresent','TaskRecognized','LegacyInstall')) { $probeResult.Add($field,'0') }
+    Invoke-Helper 'ValidateProbeResult' @($probeResult)
+    foreach($field in @($probeResult.Keys)) {
+        $badProbe=[Collections.Generic.Dictionary[string,string]]::new($probeResult)
+        [void]$badProbe.Remove($field)
+        Assert-Rejected { Invoke-Helper 'ValidateProbeResult' @($badProbe) } ('Missing probe field accepted: ' + $field)
+    }
+    $badProbe=[Collections.Generic.Dictionary[string,string]]::new($probeResult);$badProbe['Protocol']='old-unknown-protocol'
+    Assert-Rejected { Invoke-Helper 'ValidateProbeResult' @($badProbe) } 'Unknown probe protocol accepted.'
+    foreach($field in @('HasInstall','Startup','Desktop','TaskPresent','TaskRecognized','LegacyInstall')) {
+        foreach($value in @('','yes','2','-1')) {
+            $badProbe=[Collections.Generic.Dictionary[string,string]]::new($probeResult);$badProbe[$field]=$value
+            Assert-Rejected { Invoke-Helper 'ValidateProbeResult' @($badProbe) } ('Invalid binary probe status accepted: ' + $field)
+        }
+    }
+    $badProbe=[Collections.Generic.Dictionary[string,string]]::new($probeResult);$badProbe['HasInstall']='1'
+    Assert-Rejected { Invoke-Helper 'ValidateProbeResult' @($badProbe) } 'Installed probe accepted missing registered paths.'
+    $badProbe=[Collections.Generic.Dictionary[string,string]]::new($probeResult);$badProbe['TaskRecognized']='1'
+    Assert-Rejected { Invoke-Helper 'ValidateProbeResult' @($badProbe) } 'Recognized task accepted without present task.'
+    $probeResult['HasInstall']='1';$probeResult['InstallDir']=Join-Path $fixture 'program';$probeResult['DataDir']=Join-Path $fixture 'data'
+    Invoke-Helper 'ValidateProbeResult' @($probeResult)
+    $probeINI=Join-Path $fixture 'probe-result.ini'
+    Invoke-Helper 'WriteResult' @($probeINI,$probeResult)
+    $probeBytes=[IO.File]::ReadAllBytes($probeINI)
+    if($probeBytes.Length -lt 2 -or $probeBytes[0] -ne 255 -or $probeBytes[1] -ne 254 -or !([IO.File]::ReadAllText($probeINI)).Contains("Protocol=duo-install-probe-v1`r`n")) { throw 'Probe INI protocol/Unicode encoding changed.' }
     $programDir = Join-Path $fixture 'program'
     $dataDir = Join-Path $fixture 'data'
     New-Item -ItemType Directory -Path $programDir,$dataDir | Out-Null

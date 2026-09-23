@@ -129,7 +129,7 @@ function renderList(){
  element('task-list').querySelectorAll<HTMLElement>('[data-hit]').forEach(b=>b.onclick=()=>{const hit=searchHits?.[Number(b.dataset.hit)];if(hit)void openSearchHit(hit)});
 }
 async function choose(id:string,view='chat'){
- if(!mayLeave())return;creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
+ if(!mayLeave())return;invalidateModelTest();creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
  element('conversation').innerHTML='<p id="loading" class="muted">正在读取任务记录…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeEditing=null;lastKnowledge='';renderKnowledgeList();
  for(const key of ['tabs','task-actions','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
@@ -137,7 +137,7 @@ async function choose(id:string,view='chat'){
  catch(e){if(token===selection)notify((e as Error).message)}
 }
 function switchTab(tab:string){
- if(creatingTask){creatingTask=false;createReturnTask=''}
+ if(creatingTask){invalidateModelTest('create');creatingTask=false;createReturnTask=''}
  setCreatePageVisible(false);
  toolsTab=tab;const open=tab!=='chat';
  if(chosen){const query=new URLSearchParams({task:chosen});if(tab==='note')query.set('view','note');history.replaceState(null,'','/?'+query)}
@@ -234,6 +234,7 @@ async function poll(){
 }
 async function showCreate(){
  if(!mayLeave())return;
+ invalidateModelTest();
  const epoch=shellEpoch;
  try{
   const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;
@@ -256,6 +257,7 @@ function createTaskTitle(text:string){
 }
 function cancelCreate(){
  if(!mayLeave())return;
+ invalidateModelTest('create');
  const id=createReturnTask;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);
  if(id&&tasks.some(t=>t.id===id)){void choose(id);return}
  chosen='';detail=null;selection++;resetConversation();for(const name of ['tabs','task-actions','composer-wrap'])element(name).classList.add('hidden');element('conversation').classList.remove('hidden');element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';history.replaceState(null,'','/');switchTab('chat');renderList();
@@ -272,7 +274,7 @@ async function loadCreateEnvironment(keepWorkspace=false){
 async function createTask(e:Event){
  e.preventDefault();if(createSubmitting||button('create-submit').disabled||!creatingTask)return;
  const text=input('create-input').value,files=[...createFiles];if(!text.trim()&&!files.length){element('create-error').textContent='请先写下任务要求，或添加附件。';input('create-input').focus();return}
- const epoch=shellEpoch;createSubmitting=true;modelRequest++;setCreateSubmitState('starting');let created='',uploadedCount=0;
+ const epoch=shellEpoch;invalidateModelTest('create');createSubmitting=true;modelRequest++;setCreateSubmitState('starting');let created='',uploadedCount=0;
  try{validateEngineAttachments(input('create-engine').value,files.length);validateAttachmentFiles(files);const mode=modeForPermission(createPermission,input('create-engine').value);if(!mode||!modeSupportsEngine(mode,input('create-engine').value))throw new Error('所选审批模式暂不可用，请刷新工作台或重新选择。');const r=await api('tasks','POST',{engine:input('create-engine').value,reasoning_effort:input('create-effort').value,environment_id:input('create-environment').value,title:createTaskTitle(text),workspace:input('create-workspace').value,model:input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value,mode_id:mode.id});created=r.task.id;drafts.set(created,text);attachmentDrafts.set(created,[]);
   if(!shellCurrent(epoch)){if(files.length)pendingUploadFiles.set(created,files);return}tasks.unshift(r.task);
   for(const file of files){const attachment=await uploadTaskFile(created,file);attachmentDrafts.get(created)!.push(attachment);uploadedCount++;if(!shellCurrent(epoch)){if(uploadedCount<files.length)pendingUploadFiles.set(created,files.slice(uploadedCount));return}}
