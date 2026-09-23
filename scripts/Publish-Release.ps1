@@ -26,8 +26,10 @@ try {
     $builtStatus=& git status --porcelain
     if($LASTEXITCODE -ne 0 -or $builtStatus){throw 'Build changed source or generated assets; review and commit them before publishing'}
     $service=Join-Path $root 'dist\Jianzuo-portable-windows-x64\jianzuo-service.exe'
-    $serviceVersion=& $service --version
-    if($LASTEXITCODE -ne 0 -or $serviceVersion.Trim() -ne ($package.version+'-portable')){throw 'Packaged service version differs from release version'}
+    # windowsgui executables do not reliably attach stdout to a PowerShell
+    # expression; explicitly pipe the child output for this release guard.
+    & node --input-type=module -e "import {spawnSync} from 'node:child_process'; const r=spawnSync(process.argv[1],['--version'],{encoding:'utf8',windowsHide:true}); if(r.error||r.status!==0||r.stdout.trim()!==process.argv[2]){console.error('Packaged service version differs from release version');process.exit(1)} console.log('Packaged service version: '+r.stdout.trim());" $service ($package.version+'-portable')
+    if($LASTEXITCODE -ne 0){throw 'Packaged service version validation failed'}
     & node scripts/Test-Codex-Native-Build.mjs $service
     if($LASTEXITCODE -ne 0){throw 'Packaged HTTP acceptance failed; no release created'}
     $head=& git rev-parse HEAD
