@@ -19,8 +19,15 @@ try {
     if($repo.isPrivate){throw 'This update channel expects a public repository'}
     $updateSource=Get-Content -Raw updates.go
     if($updateSource -notmatch 'var releaseRepository = "([^"]+)"' -or $Matches[1] -ine $repo.nameWithOwner){throw 'Set releaseRepository in updates.go to this public repository before publishing'}
-    $existing=& $GitHubCLI release view $tag --repo $repo.nameWithOwner --json tagName 2>$null
-    if($LASTEXITCODE -eq 0){throw 'Release already exists; use a new version instead of overwriting'}
+    # Windows PowerShell turns native stderr into terminating errors under Stop,
+    # including gh's expected "release not found" for a new version.
+    $previousErrorPreference=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        $existing=& $GitHubCLI release view $tag --repo $repo.nameWithOwner --json tagName 2>$null
+        $releaseLookupExitCode=$LASTEXITCODE
+    } finally { $ErrorActionPreference=$previousErrorPreference }
+    if($releaseLookupExitCode -eq 0){throw 'Release already exists; use a new version instead of overwriting'}
     & scripts/Build-Portable.ps1 -Go $Go
     if($LASTEXITCODE -ne 0){throw 'Build failed'}
     $builtStatus=& git status --porcelain
