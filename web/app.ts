@@ -104,7 +104,7 @@ function renderShell(){
  input('environment-picker').onchange=()=>{storeEnvironmentEditor();editingID=input('environment-picker').value;loadEnvironmentEditor()};input('environment-type').onchange=showEnvironmentFields;button('add-wsl').onclick=()=>addEnvironment('wsl');button('add-windows').onclick=()=>addEnvironment('windows');button('add-ssh').onclick=()=>addEnvironment('ssh');button('remove-environment').onclick=removeEnvironment;
  element('settings-form').onsubmit=saveSettings;button('check-codex').onclick=async()=>{button('check-codex').disabled=true;try{const r=await api('check','POST',{environment_id:editingID});element('check-result').textContent=(r.ok?'检查通过\n':'检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-codex').disabled=false}};
  button('pair-code').onclick=async()=>{try{const r=await api('feishu/pair','POST',{});element('pair-result').textContent='向机器人发送：\n/配对 '+r.code}catch(e){notify((e as Error).message)}};
- button('data-dir-switch').onclick=()=>void switchDataDirectory();
+ button('data-dir-switch').onclick=()=>void switchDataDirectory();button('workspace-export').onclick=()=>void downloadWorkspaceExport();button('workspace-import-file').onchange=()=>void chooseWorkspaceImport(input('workspace-import-file').files?.[0]||null);button('workspace-import').onclick=()=>void importWorkspaceData();
  button('setup-feishu').onclick=()=>openSetup('');button('bind-setup').onclick=()=>openSetup(chosen);button('setup-start').onclick=startSetup;button('setup-close').onclick=()=>element<HTMLDialogElement>('setup-dialog').close();button('setup-cancel').onclick=cancelSetup;button('bind-open').onclick=openBinding;button('bind').onclick=()=>setBinding(true);button('unbind').onclick=()=>setBinding(false);
 }
 function mayLeave(){if(createSubmitting){notify('正在创建任务，请等待提交完成。你的要求和附件会保留。');return false}return true}
@@ -333,6 +333,50 @@ function loadDataSettings(){
  current.textContent=settings.data_dir||'未能读取当前数据目录';input('data-dir-target').value='';
  const supported=settings.data_switch_supported!==false;button('data-dir-switch').disabled=!supported;
  element('data-dir-supported').textContent=supported?'当前通过 Duo 启动器运行，可自动安全重启。':'当前是直接运行服务，需通过 Duo.exe 启动后才能切换。';
+ resetWorkspaceImport();
+}
+let workspaceImportFile:File|null=null,workspaceImportBytes:ArrayBuffer|null=null,workspaceTransferBusy=false;
+function resetWorkspaceImport(){
+ workspaceImportFile=null;workspaceImportBytes=null;workspaceTransferBusy=false;
+ const file=input('workspace-import-file');if(file)file.value='';
+ const importButton=button('workspace-import');if(importButton)importButton.disabled=true;
+ const name=element('workspace-import-file-name');if(name)name.textContent='尚未选择文件';
+ const preview=element('workspace-import-preview');if(preview)preview.textContent='';
+ const result=element('workspace-transfer-result');if(result)result.textContent='';
+}
+async function downloadWorkspaceExport(){
+ if(workspaceTransferBusy)return;const epoch=shellEpoch;workspaceTransferBusy=true;button('workspace-export').disabled=true;element('workspace-transfer-result').textContent='正在生成脱敏数据包…';
+ try{
+  const response=await fetch('/api/workspace/export',{credentials:'same-origin',cache:'no-store',signal:shellController.signal});
+  if(!response.ok){if(response.status===401&&shellCurrent(epoch)){showLogin();return}const body=await response.json().catch(()=>({error:'导出失败'}));throw Object.assign(new Error(body.error||'导出失败'),{status:response.status})}
+  const blob=await response.blob();if(!shellCurrent(epoch))return;
+  const link=document.createElement('a'),url=URL.createObjectURL(blob),stamp=new Date().toISOString().replace(/[^0-9]/g,'').slice(0,14);link.href=url;link.download='duo-workspace-'+stamp+'.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  element('workspace-transfer-result').textContent='已下载脱敏数据包。它不含密码、凭据或执行环境配置，请妥善保管。';
+ }catch(error){if(shellCurrent(epoch))element('workspace-transfer-result').textContent=(error as Error).message||'导出失败'}finally{if(shellCurrent(epoch)){workspaceTransferBusy=false;button('workspace-export').disabled=false}}
+}
+async function chooseWorkspaceImport(file:File|null){
+ workspaceImportFile=file;workspaceImportBytes=null;const importButton=button('workspace-import');importButton.disabled=true;
+ const name=element('workspace-import-file-name'),preview=element('workspace-import-preview');if(!file){name.textContent='尚未选择文件';preview.textContent='';return}
+ name.textContent=file.name+' · '+Math.ceil(file.size/1024)+' KB';
+ try{
+  if(file.size>64*1024*1024)throw new Error('导入 ZIP 超过 64 MiB，请先拆分附件或使用完整数据目录切换。');
+  const header=new Uint8Array(await file.slice(0,4).arrayBuffer());if(header.length<4||header[0]!==0x50||header[1]!==0x4b)throw new Error('请选择 Duo 导出的 ZIP 文件。');
+  const bytes=await file.arrayBuffer();if(workspaceImportFile!==file)return;workspaceImportBytes=bytes;preview.textContent='已读取脱敏 ZIP（'+Math.ceil(file.size/1024)+' KB），将由服务校验内容。未执行导入。';importButton.disabled=false;
+ }catch(error){preview.textContent=(error as Error).message||'无法读取导入包';workspaceImportFile=null;workspaceImportBytes=null}
+}
+async function importWorkspaceData(){
+ if(workspaceTransferBusy||!workspaceImportFile||!workspaceImportBytes)return;
+ const strategy:string=input('workspace-import-strategy').value;
+ if(strategy==='replace'){element('workspace-transfer-result').textContent='当前版本暂不支持覆盖导入，请选择“追加”。当前数据不会改变。';return}
+ const title=strategy==='replace'?'覆盖导入':'追加导入';
+ const warning=strategy==='replace'?'会以导入包中的同 ID 记录覆盖当前对应记录，未包含的当前记录保留。':'只新增导入包中的记录，当前任务、对话和知识不会被删除。';
+ if(!confirm(title+'将写入当前工作区数据。\n'+warning+'\n密码、凭据、执行环境配置和当前数据目录不会被导入。建议先下载备份。继续吗？'))return;
+ const epoch=shellEpoch;workspaceTransferBusy=true;button('workspace-import').disabled=true;button('workspace-export').disabled=true;element('workspace-transfer-result').textContent='正在校验并导入…请不要关闭窗口。';
+ try{
+  const response=await fetch('/api/workspace/import',{method:'POST',credentials:'same-origin',cache:'no-store',signal:shellController.signal,headers:{'Content-Type':'application/zip','X-CSRF-Token':csrf},body:workspaceImportBytes});
+  const result=await response.json().catch(()=>({error:'服务返回内容异常'}));if(!response.ok){if(response.status===401&&shellCurrent(epoch)){showLogin();return}throw Object.assign(new Error(result.error||'导入失败'),{status:response.status});}
+  if(!shellCurrent(epoch))return;element('workspace-transfer-result').textContent='导入完成，正在刷新任务列表…';setTimeout(()=>{if(shellCurrent(epoch))location.reload()},250);
+ }catch(error){if(shellCurrent(epoch)){element('workspace-transfer-result').textContent=(error as Error).message||'导入失败';workspaceTransferBusy=false;button('workspace-export').disabled=false;button('workspace-import').disabled=!workspaceImportBytes}}
 }
 async function switchDataDirectory(){
  const target=input('data-dir-target').value.trim();if(!target){element('data-dir-result').textContent='请填写已有数据目录的绝对路径。';return}

@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	s.updateRoutes(m)
 	s.engineRoutes(m)
 	s.workspaceRoutes(m)
+	s.workspaceTransferRoutes(m)
 	s.scratchRoutes(m)
 	s.knowledgeRoutes(m)
 	s.hardwareRoutes(m)

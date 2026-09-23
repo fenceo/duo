@@ -4649,7 +4649,7 @@ function installSettingsSections() {
     const data = document.createElement('section');
     data.id = 'settings-data';
     data.className = 'settings-section hidden';
-    data.innerHTML = '<h3>数据与存储</h3><p>不需要重新安装即可载入已有的 Duo 数据目录。这里的操作只切换目录，不复制、合并或删除文件；原目录会保留。</p><label>当前数据目录</label><code id="data-dir-current" class="data-dir-path"></code><p id="data-dir-supported" class="muted"></p><label for="data-dir-target">已有数据目录</label><input id="data-dir-target" placeholder="例如：E:\\Duo\\data" autocomplete="off"><p class="muted">请先把目标目录完整复制出来（需包含 config.json 和 jianzuo.db）；如果它来自另一份 Duo，请先退出那一份。然后填写副本路径。目标监听端口需与当前相同。</p><button type="button" id="data-dir-switch" class="primary">切换到已有目录并重启</button><p id="data-dir-result" class="settings-result" role="status"></p>';
+    data.innerHTML = '<h3>数据与存储</h3><section class="data-directory-switch"><h4>高级：切换完整数据目录</h4><p>适用于同一台电脑上的 Duo 数据目录切换。它会短暂重启服务，原目录不删除；不会复制、合并或清理文件。跨电脑迁移请使用下面的脱敏工作区包。</p><label>当前数据目录</label><code id="data-dir-current" class="data-dir-path"></code><p id="data-dir-supported" class="muted"></p><label for="data-dir-target">已有数据目录</label><input id="data-dir-target" placeholder="例如：E:\\Duo\\data" autocomplete="off"><p class="muted">请先把目标目录完整复制出来（需包含 config.json 和 jianzuo.db）；如果它来自另一份 Duo，请先退出那一份。然后填写副本路径。目标监听端口需与当前相同。</p><button type="button" id="data-dir-switch" class="primary">切换到已有目录并重启</button><p id="data-dir-result" class="settings-result" role="status"></p></section><div class="data-transfer"><h4>脱敏工作区导出 / 导入</h4><p>适合跨电脑或跨数据目录迁移任务记录和知识。导出 ZIP 只含任务、对话、执行记录、知识和待办；不含工作台密码、登录会话、附件、飞书 App ID/Secret、Codex / Claude / Harness API 或登录凭据、SSH 私钥、硬件凭据或机器绝对路径；执行环境配置和当前数据目录也不会被导入。</p><div class="data-transfer-actions"><button type="button" id="workspace-export">下载脱敏 ZIP</button><label class="file-button" for="workspace-import-file">选择导入 ZIP</label><input id="workspace-import-file" type="file" accept="application/zip,.zip" class="file-input"><select id="workspace-import-strategy" aria-label="导入策略"><option value="append">追加：保留当前数据，导入为新任务</option><option value="replace" disabled>覆盖：暂未支持（不会覆盖当前数据）</option></select><button type="button" id="workspace-import" class="primary" disabled>导入选中的数据</button></div><p id="workspace-import-file-name" class="muted">尚未选择文件</p><p id="workspace-import-preview" class="data-transfer-preview muted" role="status"></p><p class="muted">导入会将任务绑定到当前环境配置，工作区路径由服务重新映射；附件需另行上传。当前版本只支持追加为新任务，不删除或覆盖当前记录。导入过程不会改变密码、会话、凭据、环境配置或数据目录。请先下载备份，再导入可信文件。</p><p id="workspace-transfer-result" class="settings-result" role="status" aria-live="polite"></p></div>';
     form.insertBefore(data, error);
     const saved = document.createElement('p');
     saved.id = 'settings-saved';
@@ -5123,6 +5123,9 @@ function renderShell() {
         }
     };
     button('data-dir-switch').onclick = ()=>void switchDataDirectory();
+    button('workspace-export').onclick = ()=>void downloadWorkspaceExport();
+    button('workspace-import-file').onchange = ()=>void chooseWorkspaceImport(input('workspace-import-file').files?.[0] || null);
+    button('workspace-import').onclick = ()=>void importWorkspaceData();
     button('setup-feishu').onclick = ()=>openSetup('');
     button('bind-setup').onclick = ()=>openSetup(chosen);
     button('setup-start').onclick = startSetup;
@@ -5900,6 +5903,146 @@ function loadDataSettings() {
     const supported = settings.data_switch_supported !== false;
     button('data-dir-switch').disabled = !supported;
     element('data-dir-supported').textContent = supported ? '当前通过 Duo 启动器运行，可自动安全重启。' : '当前是直接运行服务，需通过 Duo.exe 启动后才能切换。';
+    resetWorkspaceImport();
+}
+let workspaceImportFile = null, workspaceImportBytes = null, workspaceTransferBusy = false;
+function resetWorkspaceImport() {
+    workspaceImportFile = null;
+    workspaceImportBytes = null;
+    workspaceTransferBusy = false;
+    const file = input('workspace-import-file');
+    if (file) file.value = '';
+    const importButton = button('workspace-import');
+    if (importButton) importButton.disabled = true;
+    const name = element('workspace-import-file-name');
+    if (name) name.textContent = '尚未选择文件';
+    const preview = element('workspace-import-preview');
+    if (preview) preview.textContent = '';
+    const result = element('workspace-transfer-result');
+    if (result) result.textContent = '';
+}
+async function downloadWorkspaceExport() {
+    if (workspaceTransferBusy) return;
+    const epoch = shellEpoch;
+    workspaceTransferBusy = true;
+    button('workspace-export').disabled = true;
+    element('workspace-transfer-result').textContent = '正在生成脱敏数据包…';
+    try {
+        const response = await fetch('/api/workspace/export', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            signal: shellController.signal
+        });
+        if (!response.ok) {
+            if (response.status === 401 && shellCurrent(epoch)) {
+                showLogin();
+                return;
+            }
+            const body = await response.json().catch(()=>({
+                    error: '导出失败'
+                }));
+            throw Object.assign(new Error(body.error || '导出失败'), {
+                status: response.status
+            });
+        }
+        const blob = await response.blob();
+        if (!shellCurrent(epoch)) return;
+        const link = document.createElement('a'), url = URL.createObjectURL(blob), stamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+        link.href = url;
+        link.download = 'duo-workspace-' + stamp + '.zip';
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 1000);
+        element('workspace-transfer-result').textContent = '已下载脱敏数据包。它不含密码、凭据或执行环境配置，请妥善保管。';
+    } catch (error) {
+        if (shellCurrent(epoch)) element('workspace-transfer-result').textContent = error.message || '导出失败';
+    } finally{
+        if (shellCurrent(epoch)) {
+            workspaceTransferBusy = false;
+            button('workspace-export').disabled = false;
+        }
+    }
+}
+async function chooseWorkspaceImport(file) {
+    workspaceImportFile = file;
+    workspaceImportBytes = null;
+    const importButton = button('workspace-import');
+    importButton.disabled = true;
+    const name = element('workspace-import-file-name'), preview = element('workspace-import-preview');
+    if (!file) {
+        name.textContent = '尚未选择文件';
+        preview.textContent = '';
+        return;
+    }
+    name.textContent = file.name + ' · ' + Math.ceil(file.size / 1024) + ' KB';
+    try {
+        if (file.size > 64 * 1024 * 1024) throw new Error('导入 ZIP 超过 64 MiB，请先拆分附件或使用完整数据目录切换。');
+        const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+        if (header.length < 4 || header[0] !== 0x50 || header[1] !== 0x4b) throw new Error('请选择 Duo 导出的 ZIP 文件。');
+        const bytes = await file.arrayBuffer();
+        if (workspaceImportFile !== file) return;
+        workspaceImportBytes = bytes;
+        preview.textContent = '已读取脱敏 ZIP（' + Math.ceil(file.size / 1024) + ' KB），将由服务校验内容。未执行导入。';
+        importButton.disabled = false;
+    } catch (error) {
+        preview.textContent = error.message || '无法读取导入包';
+        workspaceImportFile = null;
+        workspaceImportBytes = null;
+    }
+}
+async function importWorkspaceData() {
+    if (workspaceTransferBusy || !workspaceImportFile || !workspaceImportBytes) return;
+    const strategy = input('workspace-import-strategy').value;
+    if (strategy === 'replace') {
+        element('workspace-transfer-result').textContent = '当前版本暂不支持覆盖导入，请选择“追加”。当前数据不会改变。';
+        return;
+    }
+    const title = strategy === 'replace' ? '覆盖导入' : '追加导入';
+    const warning = strategy === 'replace' ? '会以导入包中的同 ID 记录覆盖当前对应记录，未包含的当前记录保留。' : '只新增导入包中的记录，当前任务、对话和知识不会被删除。';
+    if (!confirm(title + '将写入当前工作区数据。\n' + warning + '\n密码、凭据、执行环境配置和当前数据目录不会被导入。建议先下载备份。继续吗？')) return;
+    const epoch = shellEpoch;
+    workspaceTransferBusy = true;
+    button('workspace-import').disabled = true;
+    button('workspace-export').disabled = true;
+    element('workspace-transfer-result').textContent = '正在校验并导入…请不要关闭窗口。';
+    try {
+        const response = await fetch('/api/workspace/import', {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            signal: shellController.signal,
+            headers: {
+                'Content-Type': 'application/zip',
+                'X-CSRF-Token': csrf
+            },
+            body: workspaceImportBytes
+        });
+        const result = await response.json().catch(()=>({
+                error: '服务返回内容异常'
+            }));
+        if (!response.ok) {
+            if (response.status === 401 && shellCurrent(epoch)) {
+                showLogin();
+                return;
+            }
+            throw Object.assign(new Error(result.error || '导入失败'), {
+                status: response.status
+            });
+        }
+        if (!shellCurrent(epoch)) return;
+        element('workspace-transfer-result').textContent = '导入完成，正在刷新任务列表…';
+        setTimeout(()=>{
+            if (shellCurrent(epoch)) location.reload();
+        }, 250);
+    } catch (error) {
+        if (shellCurrent(epoch)) {
+            element('workspace-transfer-result').textContent = error.message || '导入失败';
+            workspaceTransferBusy = false;
+            button('workspace-export').disabled = false;
+            button('workspace-import').disabled = !workspaceImportBytes;
+        }
+    }
 }
 async function switchDataDirectory() {
     const target = input('data-dir-target').value.trim();

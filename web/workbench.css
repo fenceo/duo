@@ -305,6 +305,15 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .engine-profile-editor>summary{padding:10px 0;cursor:pointer;font-size:14px}
 .engine-plan{max-width:100%;overflow:auto;overflow-wrap:anywhere;font-size:12px;line-height:1.65}
 .settings-result,.model-test-result{font-size:12px;overflow-wrap:anywhere}
+.data-directory-switch,.data-transfer{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.data-directory-switch h4,.data-transfer h4{margin:0 0 8px;font-size:14px;line-height:1.5}
+.data-dir-path{display:block;margin:6px 0 10px;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--canvas);color:var(--accent);font:12px/1.5 Consolas,monospace;overflow-wrap:anywhere;white-space:pre-wrap}
+.data-transfer-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 6px}
+.data-transfer-actions select{flex:1 1 230px}
+.file-input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;padding:0;border:0}
+.file-button{display:inline-flex;align-items:center;min-height:42px;padding:9px 14px;border:1px solid var(--line);border-radius:8px;background:var(--canvas);color:var(--ink);cursor:pointer}
+.file-button:hover{background:var(--raised)}
+.data-transfer-preview{min-height:20px;overflow-wrap:anywhere}
 .knowledge-card{background:var(--surface)}
 .session-banner{color:var(--ink);background:var(--surface);font-size:12px;line-height:1.6}
 .session-banner .session-text{min-width:0;overflow-wrap:anywhere}
@@ -424,6 +433,9 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .model-manager-head{display:block}
  .model-manager-badge{display:inline-block;margin-top:10px}
  .model-add-row{grid-template-columns:minmax(0,1fr)}
+ .data-directory-switch,.data-transfer{padding:13px}
+ .data-transfer-actions{display:grid;grid-template-columns:minmax(0,1fr);align-items:stretch}
+ .data-transfer-actions button,.data-transfer-actions .file-button,.data-transfer-actions select{width:100%;justify-content:center}
  .model-add-row button{width:100%}
  .engine-card>header{gap:8px}
  .engine-actions a{display:inline-flex;align-items:center;min-height:40px}

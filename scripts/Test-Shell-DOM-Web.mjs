@@ -40,6 +40,10 @@ assert.equal(document.getElementById('test-models').closest('.model-picker')?.id
 for(const id of ['reload-models','test-models','stop-model-test'])assert.equal(document.getElementById(id).closest('.model-catalog-actions')?.id,'model-catalog-actions',id+' must stay in the model menu, including after detached composer mount');
 for(const id of ['task-reload-models','task-test-models','task-stop-model-test'])assert.equal(document.getElementById(id).closest('.model-menu')?.id,'task-model-menu',id+' belongs to the task model menu');
 assert.equal(document.getElementById('models-hint').closest('.model-menu')?.id,'model-menu');
+assert(document.getElementById('settings-data'),'settings must include the data and workspace transfer section');
+for(const id of ['workspace-export','workspace-import-file','workspace-import-strategy','workspace-import'])assert(document.getElementById(id),'workspace transfer control missing: '+id);
+assert.match(document.getElementById('settings-data').textContent,/不含工作台密码/);
+assert.match(document.getElementById('settings-data').textContent,/当前版本只支持追加/);
 const sidebarChildren=[...document.getElementById('sidebar').children];
 assert(sidebarChildren.indexOf(document.getElementById('sticky-board'))<sidebarChildren.indexOf(document.getElementById('sidebar-footer')));
 assert.equal(document.querySelectorAll('#model-catalog-actions').length,1);
