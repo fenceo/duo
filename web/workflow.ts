@@ -55,8 +55,8 @@ function installWorkflow(){
  const optionField=(name:string,control:HTMLElement,className='')=>{const box=document.createElement('div');box.className='create-field'+(className?' '+className:'');const label=document.createElement('span');label.textContent=name;box.append(label,control);return box};
  const engine=input('create-engine'),engineLabel=engine.previousElementSibling!;engineLabel.remove();
  const effort=input('create-effort'),effortLabel=effort.previousElementSibling!;effortLabel.remove();
-  const modelLabel=element('model-picker').previousElementSibling;modelLabel?.remove();
- const modelField=optionField('模型',element('model-picker'),'create-model-field');modelField.append(input('create-model'));
+ const modelPicker=element('model-picker'),modelMenu=element('model-menu'),modelLabel=modelPicker.previousElementSibling;modelLabel?.remove();
+ const modelField=optionField('模型',modelPicker,'create-model-field');modelField.append(input('create-model'));
  options.append(attach,files,permission,mode,optionField('AI 工具',engine),modelField,optionField('推理强度',effort),input('custom-model'));
  const submitWrap=document.createElement('div');submitWrap.className='create-submit-wrap';
  const createStatus=document.createElement('span');createStatus.id='create-status';createStatus.className='create-status';createStatus.setAttribute('role','status');
@@ -64,10 +64,16 @@ function installWorkflow(){
  toolbar.append(options,submitWrap);createComposer.append(inputLabel,input('create-input'),attachmentDrafts,toolbar);
  const meta=document.createElement('div');meta.className='create-meta';
  const finalHint=form.querySelectorAll(':scope > p');for(const node of finalHint)if(node!==element('effort-hint')&&node!==element('models-hint')&&node!==element('model-test-result')&&node!==element('create-error'))node.remove();
- meta.append(element('models-hint'),element('reload-models'),element('test-models'),element('model-test-result'),element('effort-hint'),element('create-error'));
+ const modelFooter=document.createElement('div');modelFooter.className='model-catalog-footer';modelFooter.innerHTML='<p id="models-context" class="model-context"></p><p id="models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions" id="model-catalog-actions"></div><details class="model-catalog-details" id="model-catalog-details"><summary>来源与诊断</summary></details>';
+ // The composer is deliberately detached until replaceChildren below. Keep
+ // direct references: document.getElementById cannot see nodes in this subtree.
+ modelMenu.append(modelFooter);
+ modelFooter.querySelector('#model-catalog-actions')!.append(element('reload-models'),element('test-models'));
+ modelFooter.querySelector('#model-catalog-details')!.append(element('models-hint'));modelFooter.append(element('model-test-result'));
+ meta.append(element('effort-hint'),element('create-error'));
  form.replaceChildren(head,context,createComposer,meta);
  button('create-cancel').onclick=cancelCreate;
- button('create-browse').onclick=()=>openWorkspacePicker(input('create-environment').value,input('create-workspace').value,async(p,env)=>{input('create-environment').value=env;await loadCreateEnvironment();input('create-workspace').value=p});
+ button('create-browse').onclick=()=>openWorkspacePicker(input('create-environment').value,input('create-workspace').value,async(p,env)=>{input('create-environment').value=env;await loadCreateEnvironment();input('create-workspace').value=p;await loadCreateModels()});
  button('create-attach').onclick=()=>input('create-files').click();input('create-files').onchange=()=>{addCreateFiles(Array.from(input('create-files').files||[]));input('create-files').value=''};
  element('create-permission-options').querySelectorAll<HTMLButtonElement>('[data-create-permission]').forEach(b=>b.onclick=()=>{
   const value=b.dataset.createPermission;
@@ -140,7 +146,7 @@ function setCreateSubmitState(state:'idle'|'starting'){
  element('create-form').setAttribute('aria-busy',String(starting));
  if(element('create-status'))element('create-status').textContent=starting?'正在创建并开始…':createFiles.length?'已选择 '+createFiles.length+'/5 个附件':'准备开始';
 }
-async function showCreateAt(path:string,environment:string){await showCreate();input('create-environment').value=environment;await loadCreateEnvironment();input('create-workspace').value=path}
+async function showCreateAt(path:string,environment:string){await showCreate();input('create-environment').value=environment;await loadCreateEnvironment();input('create-workspace').value=path;await loadCreateModels()}
 function openWorkspacePicker(environment:string,path:string,pick:(path:string,environment:string)=>void){
  workspacePicked=pick;directoryEnvironment=environment;input('workspace-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');input('workspace-environment').value=environment;renderWorkspaceRecent();element<HTMLDialogElement>('workspace-dialog').showModal();void browseDirectory(path||settings.config.environments.find(e=>e.id===environment)?.workspaces[0]||'');
 }

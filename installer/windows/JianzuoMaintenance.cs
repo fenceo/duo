@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using Microsoft.Win32;
 
@@ -40,6 +41,8 @@ static class Program
             if (command == "--verify") { WriteResult(result, null); return 0; }
             if (command == "--probe") { WriteResult(result, Probe()); return 0; }
             if (command == "--rollback") { Rollback(Value(args, "--transaction")); WriteResult(result, null); return 0; }
+            if (command == "--guard") { GuardData(Value(args, "--transaction")); return 0; }
+            if (command == "--release-guard") { ReleaseDataGuard(Value(args, "--transaction")); WriteResult(result, null); return 0; }
             Options options = ReadOptions(args);
             if (command == "--validate") Validate(options);
             else if (command == "--prepare") Prepare(options, Value(args, "--transaction"));
@@ -79,11 +82,17 @@ static class Program
     static Options ReadOptions(string[] args)
     {
         return new Options { InstallDir = NormalizeDirectory(Value(args, "--install-dir")), DataDir = NormalizeDirectory(Value(args, "--data")),
+            DataMode = Value(args, "--data-mode").Length == 0 ? "keep" : Value(args, "--data-mode"), PreviousData = Value(args, "--previous-data"),
+            Interactive = Flag(args, "--interactive"), ConfirmData = Flag(args, "--confirm-data"), Validator = Value(args, "--data-validator"), OwnerPid = Value(args, "--owner-pid"),
             Update = Flag(args, "--update"), MigrateFrom = Value(args, "--migrate-from"), EnableStartup = Flag(args, "--startup"), Desktop = Flag(args, "--desktop"), TestFailAfterTask = TestNamespace.Length > 0 && Flag(args, "--test-fail-after-task") };
     }
     static string NormalizeDirectory(string value)
     {
-        value = Environment.ExpandEnvironmentVariables((value ?? "").Trim());
+        value = value ?? "";
+        // Inno writes the displayed path into registry/shortcut arguments. Do
+        // not accept a different expanded/trimmed path only inside this helper.
+        if (value != value.Trim() || value.Contains("%"))
+            throw new Exception("目录不能含首尾空白或未展开的 % 环境变量，请选择实际的绝对目录；目录内部的空格可以保留。");
         if (value.Length < 3 || value.IndexOfAny(new[] { '"', '\r', '\n' }) >= 0 || value.StartsWith(@"\\") ||
             !Path.IsPathRooted(value) || value[1] != ':' || (value[2] != '\\' && value[2] != '/'))
             throw new Exception("请选择本机绝对目录路径（不能是网络共享）。");
@@ -153,9 +162,84 @@ static class Program
         {
             if (options.Update || !SamePath(options.MigrateFrom, source))
                 throw new Exception("发现旧简作入口：" + source + "；请在向导明确勾选迁移，原程序和数据不会删除。");
-            if (!SamePath(task.DataDir, options.DataDir)) throw new Exception("迁移必须沿用旧启动任务的数据目录：" + task.DataDir);
+            if (!SamePath(task.DataDir, SourceData(options))) throw new Exception("旧启动任务的数据目录与已确认的来源不一致：" + task.DataDir);
         }
         else if (options.MigrateFrom.Length > 0) throw new Exception("迁移来源与当前启动任务不一致，请重新确认。");
+    }
+    static string SourceData(Options options) { return options.DataMode == "keep" || options.PreviousData.Length == 0 ? options.DataDir : options.PreviousData; }
+    static void ValidateDataChoice(Options options, string previous)
+    {
+        if (!new[] { "keep", "fresh", "existing" }.Contains(options.DataMode)) throw new Exception("数据模式无效。");
+        if (options.DataMode == "keep")
+        {
+            if (previous.Length > 0 && !SamePath(previous, options.DataDir)) throw new Exception("保留模式必须沿用原数据目录：" + previous);
+            if (previous.Length == 0) ValidateFreshData(options.DataDir);
+            return;
+        }
+        if (options.Update || !options.Interactive || !options.ConfirmData) throw new Exception("新建或载入数据必须在交互向导中明确确认；静默安装和自动更新不能切换数据。");
+        if (previous.Length > 0)
+        {
+            if (!SamePath(previous, options.PreviousData)) throw new Exception("原数据目录已改变，请重新打开安装器确认。");
+            if (PathWithin(previous, options.DataDir) || PathWithin(options.DataDir, previous)) throw new Exception("新旧数据目录不能相同或互相包含。");
+            RejectReparsePath(previous);
+        }
+        else if (options.PreviousData.Length > 0) throw new Exception("数据切换来源无法确认。");
+        if (options.DataMode == "fresh") ValidateFreshData(options.DataDir);
+        else ValidateExistingData(options);
+    }
+    static void ValidateFreshData(string path)
+    {
+        RejectReparsePath(path);
+        if (File.Exists(path) || (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()))
+            throw new Exception("全新数据目录必须为空或尚不存在；不会覆盖、清空或合并任何已有内容。");
+    }
+    static void ValidateDataIdle(string path)
+    {
+        if (path.Length == 0) return;
+        RejectReparsePath(path);
+        bool created;
+        using (Mutex mutex = new Mutex(false, DataMutexName(path), out created))
+        {
+            if (!created) throw new Exception("数据目录的 Duo 托盘/首次配置窗口仍在运行，请先正常退出：" + path);
+            string lockPath = Path.Combine(path, "service.lock");
+            if (Directory.Exists(lockPath) || (File.Exists(lockPath) && (File.GetAttributes(lockPath) & FileAttributes.ReparsePoint) != 0)) throw new Exception("数据锁不是安全的普通文件。");
+            if (File.Exists(lockPath))
+                try { using (FileStream stream = new FileStream(lockPath, FileMode.Open, FileAccess.Read, FileShare.None)) { } }
+                catch (IOException) { throw new Exception("数据目录正在使用，请先退出使用它的 Duo 服务：" + path); }
+        }
+    }
+    static string DataMutexName(string path)
+    {
+        using (SHA256 hash = SHA256.Create()) return "Local\\JianzuoPortable_" + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToLowerInvariant()))).Replace("-", "");
+    }
+    static void ValidateExistingData(Options options)
+    {
+        if (!Directory.Exists(options.DataDir)) throw new Exception("请选择已存在的 Duo 数据目录。");
+        foreach (string name in new[] { "config.json", "jianzuo.db", "jianzuo.db-wal", "jianzuo.db-shm", "jianzuo.db-journal", "service.lock" })
+        {
+            string path = Path.Combine(options.DataDir, name);
+            if (Directory.Exists(path) || (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)) throw new Exception("数据文件不能是目录或符号链接：" + name);
+        }
+        if (!File.Exists(options.Validator) || !Path.GetFileName(options.Validator).Equals("duo-service.exe", StringComparison.OrdinalIgnoreCase)) throw new Exception("缺少安装包内的只读数据验证器。");
+        ProcessStartInfo info = new ProcessStartInfo(options.Validator, "--validate-data --data " + Quote(options.DataDir)) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+        using (Process process = new Process())
+        {
+            process.StartInfo = info; StringBuilder output = new StringBuilder(), errors = new StringBuilder();
+            process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null && output.Length < 4096) output.AppendLine(e.Data); };
+            process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null && errors.Length < 4096) errors.AppendLine(e.Data); };
+            process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
+            if (!process.WaitForExit(15000))
+            {
+                // This is exclusively the read-only validator we just created,
+                // never a user's running Duo/CLI/task process.
+                try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) { }
+                process.WaitForExit();
+                throw new Exception("只读数据验证超时，验证子进程已退出，未切换；请稍后重试。");
+            }
+            process.WaitForExit();
+            if (process.ExitCode != 0) throw new Exception("无法载入该数据目录：" + errors.ToString().Trim());
+            if (output.ToString().Trim() != "{\"app\":\"jianzuo\",\"valid\":true,\"protocol\":1}") throw new Exception("数据验证器未返回有效确认，未切换。");
+        }
     }
     static void Validate(Options options)
     {
@@ -163,13 +247,17 @@ static class Program
         string installed = Saved("InstallDir"), data = Saved("DataDir");
         ValidateUpdate(options, OwnedInstallation(options.InstallDir), installed, data);
         if (installed.Length > 0 && !SamePath(installed, options.InstallDir)) throw new Exception("已安装 Duo 位于 " + installed + "，请在原目录升级/修复。");
-        if (installed.Length > 0 && data.Length > 0 && !SamePath(data, options.DataDir)) throw new Exception("升级/修复必须沿用原数据目录：" + data);
         foreach (string key in new[] { LegacyKey, NativeKey })
             using (RegistryKey registry = Registry.CurrentUser.OpenSubKey(key))
                 if (registry != null && !SamePath(Convert.ToString(registry.GetValue("InstallLocation")), options.InstallDir))
                     throw new Exception("另一个目录已注册 Duo，请沿用原安装目录。");
         ExistingTask task = ReadExistingTask(); ValidateTaskChoice(options, task);
         ExistingTask run = InspectLegacyRun(ReadLegacyRun());
+        ExistingTask source = task != null && task.Recognized ? task : (run != null && run.Recognized ? run : null);
+        string previous = data.Length > 0 ? data : (source == null ? "" : source.DataDir);
+        if (source != null && previous.Length > 0 && !SamePath(source.DataDir, previous)) throw new Exception("启动入口与已登记的数据目录不一致，请先核查，未切换数据。");
+        if (options.DataMode != "keep") { ValidateDataIdle(previous); ValidateDataIdle(options.DataDir); }
+        ValidateDataChoice(options, previous);
         if (task == null && options.MigrateFrom.Length > 0 && (run == null || !run.Recognized || !SamePath(Path.GetDirectoryName(run.Executable), options.MigrateFrom)))
             throw new Exception("旧入口已改变，请重新打开安装器确认来源。");
         ValidateShortcuts(options, task ?? run); ValidateLegacyRun(options);
@@ -254,7 +342,7 @@ static class Program
         string[] args = SplitArguments(command); string data;
         return args.Length > 0 && (OwnedExecutable(options.InstallDir, args[0]) ||
             (options.MigrateFrom.Length > 0 && OwnedExecutable(options.MigrateFrom, args[0]))) &&
-            RecognizeArguments(args[0], string.Join(" ", args.Skip(1).Select(Quote)), out data) && SamePath(data, options.DataDir);
+            RecognizeArguments(args[0], string.Join(" ", args.Skip(1).Select(Quote)), out data) && SamePath(data, SourceData(options));
     }
     static void ValidateLegacyRun(Options options)
     {
@@ -275,12 +363,16 @@ static class Program
     static void Prepare(Options options, string path)
     {
         Validate(options); ExistingTask task = ReadExistingTask(); ValidateTaskChoice(options, task);
-        string backup = Path.Combine(options.DataDir, "installer-backups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+        // Selecting another data set never writes backups into that data set.
+        string backupRoot = options.DataMode == "keep" && options.PreviousData.Length > 0 ? options.DataDir : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), TestNamespace.Length == 0 ? "Duo" : ProductKey);
+        string backup = Path.Combine(backupRoot, "installer-backups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
         RejectReparsePath(backup); Directory.CreateDirectory(backup); string xml = task == null ? "" : task.Xml;
         if (xml.Length > 0) File.WriteAllText(Path.Combine(backup, "startup-task.xml"), xml, Encoding.Unicode);
         XmlDocument doc = new XmlDocument(); doc.AppendChild(doc.CreateElement("JianzuoInstallerTransaction"));
         foreach (KeyValuePair<string, string> item in new Dictionary<string, string> {
             { "InstallDir", options.InstallDir }, { "DataDir", options.DataDir }, { "Before", xml }, { "After", "" }, { "Intent", "0" }, { "Startup", options.EnableStartup ? "1" : "0" }, { "Applied", "0" }, { "Committed", "0" }, { "Backup", backup },
+            { "PreviousData", options.PreviousData }, { "DataMode", options.DataMode }, { "Validator", options.Validator }, { "OwnerPid", options.OwnerPid },
+            { "GuardEvent", "Local\\DuoInstallData_" + Guid.NewGuid().ToString("N") },
             { "MarkerBefore", File.Exists(Path.Combine(options.InstallDir, MarkerName)) ? File.ReadAllText(Path.Combine(options.InstallDir, MarkerName), Encoding.UTF8) : "" } })
         { XmlElement element = doc.CreateElement(item.Key); element.InnerText = item.Value; doc.DocumentElement.AppendChild(element); }
         int linkIndex = 0;
@@ -304,16 +396,117 @@ static class Program
         AddTransactionValue(doc, "LegacyRun", ReadLegacyRun());
         if (ownedLegacy) File.Copy(legacy, Path.Combine(backup, "legacy-uninstaller.exe"), false);
         doc.Save(path);
+        File.Copy(path, Path.Combine(backup, "maintenance-transaction.xml"), false);
+        if (options.DataMode != "keep")
+        {
+            try { StartDataGuard(path); }
+            catch { ReleaseDataGuard(path); throw; }
+        }
     }
     static void AddTransactionValue(XmlDocument doc, string key, string value)
     { XmlElement element = doc.CreateElement(key); element.InnerText = value; doc.DocumentElement.AppendChild(element); }
     static XmlDocument ReadTransaction(string path)
     { XmlDocument doc = new XmlDocument(); doc.XmlResolver = null; doc.Load(path); if (doc.DocumentElement.Name != "JianzuoInstallerTransaction") throw new Exception("安装事务记录无效。"); return doc; }
     static string T(XmlDocument doc, string name) { return doc.DocumentElement[name].InnerText; }
+    static void StartDataGuard(string path)
+    {
+        XmlDocument doc = ReadTransaction(path); int owner;
+        if (!int.TryParse(T(doc, "OwnerPid"), out owner) || owner <= 0) throw new Exception("数据切换缺少安装进程标识。");
+        using (Process parent = Process.GetProcessById(owner)) if (parent.HasExited) throw new Exception("安装进程已退出。");
+        string ready = path + ".guard-ready";
+        if (File.Exists(ready)) File.Delete(ready);
+        if (File.Exists(path + ".guard-stopped")) File.Delete(path + ".guard-stopped");
+        ProcessStartInfo info = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "--guard --transaction " + Quote(path)) { UseShellExecute = false, CreateNoWindow = true };
+        using (Process guard = Process.Start(info))
+        {
+            for (int i = 0; i < 100; i++)
+            {
+                if (File.Exists(ready))
+                {
+                    string status = File.ReadAllText(ready, Encoding.UTF8);
+                    if (status == "ready" && !guard.HasExited) return;
+                    throw new Exception(status.Length > 0 ? status : "无法锁定数据目录。");
+                }
+                if (guard.WaitForExit(200)) break;
+            }
+            throw new Exception("无法锁定新旧数据目录；未改变入口，请退出 Duo 后重试。");
+        }
+    }
+    static void GuardData(string path)
+    {
+        XmlDocument doc = ReadTransaction(path); string ready = path + ".guard-ready";
+        List<Mutex> mutexes = new List<Mutex>(); List<FileStream> streams = new List<FileStream>(); List<string> createdLocks = new List<string>();
+        using (EventWaitHandle release = new EventWaitHandle(false, EventResetMode.ManualReset, T(doc, "GuardEvent")))
+        using (Process parent = Process.GetProcessById(int.Parse(T(doc, "OwnerPid"))))
+        {
+            try
+            {
+                string[] paths = new[] { T(doc, "PreviousData"), T(doc, "DataDir") }.Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+                foreach (string data in paths)
+                {
+                    RejectReparsePath(data); bool created;
+                    Mutex mutex = new Mutex(true, DataMutexName(data), out created);
+                    if (!created) { mutex.Dispose(); throw new Exception("数据目录的 Duo 窗口仍在运行，请退出后重试。"); }
+                    mutexes.Add(mutex);
+                }
+                Options options = new Options { DataDir = T(doc, "DataDir"), DataMode = T(doc, "DataMode"), Validator = T(doc, "Validator") };
+                if (options.DataMode == "fresh") ValidateFreshData(options.DataDir);
+                foreach (string data in paths)
+                {
+                    RejectReparsePath(data);
+                    if (!Directory.Exists(data) && !SamePath(data, T(doc, "DataDir"))) continue;
+                    Directory.CreateDirectory(data); string lockPath = Path.Combine(data, "service.lock");
+                    if (Directory.Exists(lockPath) || (File.Exists(lockPath) && (File.GetAttributes(lockPath) & FileAttributes.ReparsePoint) != 0)) throw new Exception("数据锁不是普通文件。");
+                    bool existed = File.Exists(lockPath);
+                    streams.Add(new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
+                    if (!existed) createdLocks.Add(lockPath);
+                }
+                if (options.DataMode == "existing") ValidateExistingData(options);
+                WriteGuardStatus(ready, "ready");
+                while (!parent.HasExited && !release.WaitOne(200)) { }
+            }
+            catch (Exception error) { WriteGuardStatus(ready, error.GetBaseException().Message); }
+            finally
+            {
+                foreach (FileStream stream in streams) stream.Dispose();
+                // Only empty lock files created by this guard are disposable.
+                // Configurations, databases, logs and old directories are never removed.
+                foreach (string lockPath in createdLocks) try { if (File.Exists(lockPath) && new FileInfo(lockPath).Length == 0) File.Delete(lockPath); } catch { }
+                foreach (Mutex mutex in mutexes) { mutex.ReleaseMutex(); mutex.Dispose(); }
+                File.WriteAllText(path + ".guard-stopped", "stopped", new UTF8Encoding(false));
+            }
+        }
+    }
+    static void WriteGuardStatus(string path, string status)
+    {
+        string temporary = path + ".tmp";
+        File.WriteAllText(temporary, status, new UTF8Encoding(false));
+        if (File.Exists(path)) File.Delete(path);
+        File.Move(temporary, path);
+    }
+    static void CheckDataGuard(XmlDocument doc, string path)
+    {
+        if (T(doc, "DataMode") == "keep") return;
+        EventWaitHandle handle;
+        if (File.Exists(path + ".guard-stopped") || !File.Exists(path + ".guard-ready") || File.ReadAllText(path + ".guard-ready") != "ready" || !EventWaitHandle.TryOpenExisting(T(doc, "GuardEvent"), out handle))
+            throw new Exception("数据保护已中断，未切换入口。请重新运行安装器。");
+        handle.Dispose();
+    }
+    static void ReleaseDataGuard(string path)
+    {
+        if (!File.Exists(path)) return; XmlDocument doc = ReadTransaction(path);
+        if (T(doc, "DataMode") == "keep") return;
+        EventWaitHandle handle;
+        if (EventWaitHandle.TryOpenExisting(T(doc, "GuardEvent"), out handle)) using (handle) handle.Set();
+        else return;
+        for (int i = 0; i < 100; i++) { if (File.Exists(path + ".guard-stopped")) return; Thread.Sleep(100); }
+        throw new Exception("数据保护进程尚未退出，请关闭安装器后再启动 Duo。");
+    }
     static void Apply(Options options, string path)
     {
         XmlDocument doc = ReadTransaction(path);
         if (!SamePath(T(doc, "InstallDir"), options.InstallDir) || !SamePath(T(doc, "DataDir"), options.DataDir)) throw new Exception("安装事务路径不一致。");
+        CheckDataGuard(doc, path);
         ExistingTask current = ReadExistingTask(); ValidateTaskChoice(options, current);
         if ((current == null ? "" : current.Xml) != T(doc, "Before")) throw new Exception("启动任务在安装期间发生变化，未覆盖，请重试。");
         // Persist intent before COM mutation. Recovery must also cover a successful
@@ -525,5 +718,5 @@ static class Program
     static object Invoke(object target, string name, params object[] args) { return target.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, target, args); }
     static void Release(object value) { if (value != null && Marshal.IsComObject(value)) try { Marshal.ReleaseComObject(value); } catch { } }
 }
-sealed class Options { public string InstallDir; public string DataDir; public string MigrateFrom = ""; public bool Update; public bool EnableStartup; public bool Desktop; public bool TestFailAfterTask; }
+sealed class Options { public string InstallDir; public string DataDir; public string MigrateFrom = ""; public string DataMode = "keep"; public string PreviousData = ""; public string Validator = ""; public string OwnerPid = ""; public bool Interactive; public bool ConfirmData; public bool Update; public bool EnableStartup; public bool Desktop; public bool TestFailAfterTask; }
 sealed class ExistingTask { public string Executable; public string Arguments; public string DataDir; public string Xml; public bool Recognized; public bool Enabled; }

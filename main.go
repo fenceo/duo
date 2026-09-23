@@ -25,6 +25,7 @@ func main() {
 	portableInit := flag.Bool("portable-init", false, "从 stdin 初始化全新便携数据目录")
 	managed := flag.Bool("managed", false, "由托盘通过 stdin 管理生命周期")
 	showVersion := flag.Bool("version", false, "显示版本")
+	validateData := flag.Bool("validate-data", false, "只读验证已有 Duo 数据目录，不初始化或迁移")
 	discover := flag.Bool("detect-environments", false, "只检测本机环境并输出 JSON，不创建数据目录")
 	updateHelper := flag.Bool("update-helper", false, "执行已准备的便携版替换并退出")
 	updateRoot := flag.String("update-root", "", "自动更新目标程序目录")
@@ -34,6 +35,14 @@ func main() {
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
+		return
+	}
+	if *validateData {
+		if err := validateExistingData(*dir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(`{"app":"jianzuo","valid":true,"protocol":1}`)
 		return
 	}
 	if *discover {

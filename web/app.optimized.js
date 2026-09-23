@@ -366,9 +366,9 @@ function installWorkflow() {
     engineLabel.remove();
     const effort = input('create-effort'), effortLabel = effort.previousElementSibling;
     effortLabel.remove();
-    const modelLabel = element('model-picker').previousElementSibling;
+    const modelPicker = element('model-picker'), modelMenu = element('model-menu'), modelLabel = modelPicker.previousElementSibling;
     modelLabel?.remove();
-    const modelField = optionField('模型', element('model-picker'), 'create-model-field');
+    const modelField = optionField('模型', modelPicker, 'create-model-field');
     modelField.append(input('create-model'));
     options.append(attach, files, permission, mode, optionField('AI 工具', engine), modelField, optionField('推理强度', effort), input('custom-model'));
     const submitWrap = document.createElement('div');
@@ -387,13 +387,21 @@ function installWorkflow() {
     meta.className = 'create-meta';
     const finalHint = form.querySelectorAll(':scope > p');
     for (const node of finalHint)if (node !== element('effort-hint') && node !== element('models-hint') && node !== element('model-test-result') && node !== element('create-error')) node.remove();
-    meta.append(element('models-hint'), element('reload-models'), element('test-models'), element('model-test-result'), element('effort-hint'), element('create-error'));
+    const modelFooter = document.createElement('div');
+    modelFooter.className = 'model-catalog-footer';
+    modelFooter.innerHTML = '<p id="models-context" class="model-context"></p><p id="models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions" id="model-catalog-actions"></div><details class="model-catalog-details" id="model-catalog-details"><summary>来源与诊断</summary></details>';
+    modelMenu.append(modelFooter);
+    modelFooter.querySelector('#model-catalog-actions').append(element('reload-models'), element('test-models'));
+    modelFooter.querySelector('#model-catalog-details').append(element('models-hint'));
+    modelFooter.append(element('model-test-result'));
+    meta.append(element('effort-hint'), element('create-error'));
     form.replaceChildren(head, context, createComposer, meta);
     button('create-cancel').onclick = cancelCreate;
     button('create-browse').onclick = ()=>openWorkspacePicker(input('create-environment').value, input('create-workspace').value, async (p, env)=>{
             input('create-environment').value = env;
             await loadCreateEnvironment();
             input('create-workspace').value = p;
+            await loadCreateModels();
         });
     button('create-attach').onclick = ()=>input('create-files').click();
     input('create-files').onchange = ()=>{
@@ -601,6 +609,7 @@ async function showCreateAt(path, environment) {
     input('create-environment').value = environment;
     await loadCreateEnvironment();
     input('create-workspace').value = path;
+    await loadCreateModels();
 }
 function openWorkspacePicker(environment, path, pick) {
     workspacePicked = pick;
@@ -1770,6 +1779,19 @@ function installLayout() {
     } catch  {}
     document.documentElement.dataset.theme = theme;
     element('settings-open').insertAdjacentHTML('afterend', '<button id="theme-toggle" class="subtle" title="切换浅色 / 深色外观">外观</button>');
+    const footer = element('settings-open').parentElement;
+    footer.id = 'sidebar-footer';
+    const utilities = document.createElement('nav');
+    utilities.className = 'sidebar-utilities';
+    utilities.setAttribute('aria-label', '工作台设置');
+    for (const id of [
+        'settings-open',
+        'theme-toggle',
+        'sidebar-close',
+        'logout'
+    ])utilities.append(element(id));
+    footer.prepend(utilities);
+    element('connection').setAttribute('role', 'status');
     button('theme-toggle').onclick = ()=>{
         const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
         document.documentElement.dataset.theme = next;
@@ -1895,18 +1917,13 @@ function installEnvironmentDiscovery() {
         advanced.append(node);
         node = next;
     }
-    const extra = document.createElement('details');
-    extra.className = 'create-advanced';
-    extra.innerHTML = '<summary>模型检测详情</summary>';
-    element('reload-models').before(extra);
-    extra.append(element('models-hint'), element('reload-models'));
     input('search').placeholder = '搜索任务和记录';
     const modelManager = document.createElement('section');
     modelManager.className = 'model-manager';
-    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前执行环境添加自定义模型 ID。它会出现在新建任务的模型选择器中，并交给所选的 Codex、Claude Code 或 DeepSeek Harness；实际可用性由对应引擎和 provider 配置决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><div class="model-add-row"><input id="custom-model-id" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
+    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前环境的指定引擎补充模型 ID。新建任务会自动读取目标 CLI；这里添加的名称不代表已验证可用，实际调用仍由引擎和 provider 决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><label for="custom-model-engine">模型所属引擎</label><select id="custom-model-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="">所有引擎（兼容共享配置）</option></select><div class="model-add-row"><input id="custom-model-id" aria-label="模型 ID" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" aria-label="模型显示名称" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
     section.append(modelManager);
     button('custom-model-add').onclick = ()=>{
-        const id = input('custom-model-id').value.trim(), name = input('custom-model-name').value.trim() || id;
+        const id = input('custom-model-id').value.trim(), name = input('custom-model-name').value.trim() || id, engine = input('custom-model-engine').value;
         if (!id) {
             element('custom-model-result').textContent = '请输入模型 ID';
             input('custom-model-id').focus();
@@ -1919,13 +1936,14 @@ function installEnvironmentDiscovery() {
         const env = editingEnvironments.find((e)=>e.id === editingID);
         if (!env) return;
         env.models = env.models || [];
-        if (env.models.some((m)=>m.id === id)) {
-            element('custom-model-result').textContent = '这个模型已经添加';
+        if (env.models.some((m)=>m.id === id && (m.engine || '') === engine)) {
+            element('custom-model-result').textContent = '这个引擎的模型已经添加';
             return;
         }
         env.models.push({
             id,
-            name
+            name,
+            engine
         });
         input('custom-model-id').value = '';
         input('custom-model-name').value = '';
@@ -1939,7 +1957,7 @@ function renderConfiguredModels() {
     if (!target) return;
     const env = editingEnvironments?.find((e)=>e.id === editingID);
     const models = env?.models || [];
-    target.innerHTML = models.map((m, i)=>`<div class="configured-model"><div><strong>${escapeHTML(m.id)}</strong><small>${escapeHTML(m.name || m.id)}</small></div><button type="button" data-remove-custom-model="${i}" title="删除此模型">删除</button></div>`).join('') || '<p class="muted">还没有自定义模型。发现的 CLI 模型仍会自动显示。</p>';
+    target.innerHTML = models.map((m, i)=>`<div class="configured-model"><div><strong>${escapeHTML(m.id)}</strong><small>${escapeHTML(m.name || m.id)} · ${m.engine ? escapeHTML(taskEngineName(m.engine)) : '所有引擎'}</small></div><button type="button" data-remove-custom-model="${i}" title="删除此模型">删除</button></div>`).join('') || '<p class="muted">还没有自定义模型。发现的 CLI 模型仍会自动显示。</p>';
     target.querySelectorAll('[data-remove-custom-model]').forEach((b)=>b.onclick = ()=>{
             const e = editingEnvironments.find((x)=>x.id === editingID);
             if (!e?.models) return;
@@ -2896,10 +2914,27 @@ async function relayOperation(action) {
     }
 }
 let createModels = [];
+let createResolvedDefault = '';
 let taskPickerModels = [];
-let taskPickerStatus = '', taskModelRequest = 0, modelTestRequest = 0;
+let taskModelRequest = 0, modelTestRequest = 0, modelProfileRevision = 0;
 let modelTestBusy = false;
-const modelsByEnv = {};
+const modelCatalogState = {
+    create: {
+        loading: false,
+        key: '',
+        summary: '',
+        details: '',
+        failed: false
+    },
+    task: {
+        loading: false,
+        key: '',
+        summary: '',
+        details: '',
+        failed: false
+    }
+};
+const modelCatalogControllers = {};
 const effortLabels = {
     off: '关闭',
     none: '关闭',
@@ -2960,10 +2995,27 @@ function effortLevels(engine, model) {
     ];
 }
 function installExecution() {
+    disposeWithShell(()=>{
+        modelCatalogControllers.create?.abort();
+        modelCatalogControllers.task?.abort();
+    });
     input('create-engine').onchange = ()=>void loadCreateEnvironment(true);
     button('test-models').textContent = '测试当前模型';
     button('test-models').onclick = ()=>void testCreateModels();
-    input('create-workspace').addEventListener('input', invalidateModelTest);
+    input('create-workspace').addEventListener('input', ()=>{
+        invalidateModelTest();
+        modelCatalogControllers.create?.abort();
+        modelRequest++;
+        modelCatalogState.create.key = '';
+        createModels = [];
+        createResolvedDefault = '';
+        if (!element('model-menu').classList.contains('hidden')) {
+            modelCatalogState.create.loading = false;
+            modelCatalogState.create.summary = '目录已改变，离开目录输入框后自动读取。';
+            renderModelMenu('create');
+        }
+    });
+    input('create-workspace').addEventListener('change', ()=>void loadCreateModels());
     installModelPicker();
     element('setting-model').previousElementSibling.textContent = 'Codex 默认模型（可留空）';
     element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
@@ -3025,7 +3077,11 @@ function resolveModelProbeTarget(env, engine, selected, custom, workspace) {
     };
 }
 function currentModelProbeTarget() {
-    return resolveModelProbeTarget(settings.config.environments.find((env)=>env.id === input('create-environment').value), input('create-engine').value, input('create-model').value, input('custom-model').value, input('create-workspace').value);
+    const value = resolveModelProbeTarget(settings.config.environments.find((env)=>env.id === input('create-environment').value), input('create-engine').value, input('create-model').value || createResolvedDefault, input('custom-model').value, input('create-workspace').value);
+    return {
+        ...value,
+        key: value.key + ':' + modelProfileRevision
+    };
 }
 function syncModelTestButton() {
     const control = button('test-models'), picker = button('model-picker-button');
@@ -3086,11 +3142,175 @@ function renderModelTestResult(result) {
     }
     element('model-test-result').textContent = lines.join('\n');
 }
+function catalogContextKey(environment, engine, workspace) {
+    return JSON.stringify([
+        shellEpoch,
+        modelProfileRevision,
+        environment,
+        engine,
+        workspace.trim()
+    ]);
+}
+function currentCreateCatalogContext() {
+    const environment = settings.config.environments.find((env)=>env.id === input('create-environment').value);
+    if (!environment) return null;
+    const engine = input('create-engine').value, workspace = input('create-workspace').value.trim();
+    return {
+        environment,
+        engine,
+        workspace,
+        key: catalogContextKey(environment, engine, workspace)
+    };
+}
+function modelsURL(environmentID, engine, workspace, refresh = false) {
+    const query = new URLSearchParams({
+        engine,
+        workspace
+    });
+    if (refresh) query.set('refresh', '1');
+    return 'environments/' + encodeURIComponent(environmentID) + '/models?' + query;
+}
+function catalogSummary(result) {
+    return result.models?.length ? (result.status === 'fallback' ? '已读取配置/缓存中的 ' : '已读取 ') + result.models.length + ' 个模型' : '该环境的此引擎尚未发现模型';
+}
+function catalogDetails(result) {
+    return [
+        result.message,
+        result.source ? '来源：' + result.source : '',
+        result.modified ? '更新：' + new Date(result.modified).toLocaleString() : '',
+        '列表表示已发现或已配置，不代表调用已验证。'
+    ].filter(Boolean).join('\n');
+}
+function renderModelCatalogStatus(target) {
+    const state = modelCatalogState[target], prefix = target === 'create' ? '' : 'task-';
+    const status = element(prefix + 'models-status'), details = element(prefix + 'models-hint'), context = element(prefix + 'models-context');
+    if (status) {
+        status.textContent = state.loading ? '正在读取目标环境的模型…' : state.summary;
+        status.classList.toggle('error', state.failed);
+        status.setAttribute('aria-busy', String(state.loading));
+    }
+    if (details) details.textContent = state.details;
+    if (context) {
+        const env = target === 'create' ? settings.config.environments.find((item)=>item.id === input('create-environment').value) : detail?.task.environment;
+        context.textContent = (env?.name || '未选择环境') + ' · ' + taskEngineName(target === 'create' ? input('create-engine').value : detail?.task.engine);
+    }
+    const reload = button(prefix + 'reload-models');
+    if (reload) {
+        reload.disabled = state.loading || createSubmitting;
+        reload.textContent = state.loading ? '读取中…' : '刷新列表';
+    }
+    element(modelPickers[target].list)?.setAttribute('aria-busy', String(state.loading));
+}
+async function loadCreateModels(reset = false, refresh = false) {
+    if (!creatingTask || createSubmitting) return;
+    const target = currentCreateCatalogContext();
+    if (!target) return;
+    const state = modelCatalogState.create;
+    if (!reset && !refresh && state.loading && state.key === target.key) return;
+    if (state.key !== target.key) {
+        createModels = [];
+        createResolvedDefault = '';
+    }
+    const request = ++modelRequest, defaultModel = engineDefaultModel(target.environment, target.engine);
+    modelCatalogControllers.create?.abort();
+    const controller = new AbortController();
+    modelCatalogControllers.create = controller;
+    state.key = target.key;
+    state.loading = true;
+    state.failed = false;
+    state.summary = '';
+    state.details = '';
+    if (reset) {
+        setCreateModelsLoading();
+        setCreateModels(defaultModel ? [
+            {
+                id: defaultModel,
+                name: defaultModel + '（环境默认）',
+                origin: 'configured'
+            }
+        ] : [], defaultModel);
+    }
+    renderModelMenu('create');
+    try {
+        const result = await api(modelsURL(target.environment.id, target.engine, target.workspace, refresh), 'GET', undefined, controller.signal);
+        if (request !== modelRequest || !creatingTask || createSubmitting || currentCreateCatalogContext()?.key !== target.key) return;
+        const models = result.models || [], fallback = defaultModel || result.default_model || '';
+        if (fallback && !models.some((model)=>model.id === fallback)) models.unshift({
+            id: fallback,
+            name: fallback + '（环境默认）',
+            origin: 'configured'
+        });
+        createModels = models;
+        createResolvedDefault = fallback;
+        state.summary = catalogSummary(result);
+        state.details = catalogDetails(result);
+    } catch (e) {
+        if (request !== modelRequest || !creatingTask || createSubmitting || currentCreateCatalogContext()?.key !== target.key) return;
+        state.failed = true;
+        state.summary = '读取失败；可重试、沿用默认或输入模型 ID';
+        state.details = e.message;
+    } finally{
+        if (request === modelRequest && creatingTask && !createSubmitting && currentCreateCatalogContext()?.key === target.key) {
+            state.loading = false;
+            updateCreateModelLabel();
+            updateReasoning();
+            renderModelMenu('create');
+            syncModelTestButton();
+        }
+    }
+}
+function invalidateModelCatalogs() {
+    modelCatalogControllers.create?.abort();
+    modelCatalogControllers.task?.abort();
+    modelProfileRevision++;
+    modelRequest++;
+    taskModelRequest++;
+    invalidateModelTest();
+    for (const target of [
+        'create',
+        'task'
+    ]){
+        Object.assign(modelCatalogState[target], {
+            key: '',
+            loading: false,
+            summary: '配置已改变，请重新读取模型',
+            details: '',
+            failed: false
+        });
+    }
+    createModels = [];
+    taskPickerModels = [];
+    createResolvedDefault = '';
+    if (creatingTask) void loadCreateModels(true);
+    else if (detail && !element('task-model-menu').classList.contains('hidden')) void refreshTaskModels();
+}
 function installModelPicker() {
+    element('task-model-menu').insertAdjacentHTML('beforeend', '<div class="model-catalog-footer"><p id="task-models-context" class="model-context"></p><p id="task-models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions"><button id="task-reload-models" type="button">刷新列表</button></div><details class="model-catalog-details"><summary>来源与诊断</summary><p id="task-models-hint"></p></details></div>');
+    button('task-reload-models').onclick = ()=>void refreshTaskModels(true);
     for (const target of Object.keys(modelPickers)){
         const ids = modelPickers[target];
         if (!element(ids.root)) continue;
         button(ids.button).onclick = ()=>void toggleModelMenu(target);
+        button(ids.button).setAttribute('aria-haspopup', 'dialog');
+        button(ids.button).setAttribute('aria-controls', ids.menu);
+        element(ids.menu).setAttribute('role', 'dialog');
+        element(ids.menu).setAttribute('aria-label', '选择模型');
+        element(ids.list).setAttribute('role', 'listbox');
+        element(ids.list).setAttribute('aria-label', '已配置的模型');
+        input(ids.search).setAttribute('aria-label', '搜索模型或输入自定义模型 ID');
+        element(ids.menu).onkeydown = (e)=>{
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeModelMenu(target);
+                button(ids.button).focus();
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                const options = Array.from(element(ids.list).querySelectorAll('.model-item')), current = options.indexOf(document.activeElement);
+                if (options.length) {
+                    e.preventDefault();
+                    options[current < 0 ? e.key === 'ArrowDown' ? 0 : options.length - 1 : (current + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus();
+                }
+            }
+        };
         input(ids.search).oninput = ()=>renderModelMenu(target);
         input(ids.search).onkeydown = (e)=>{
             if (e.key === 'Escape') {
@@ -3140,28 +3360,17 @@ async function toggleModelMenu(target) {
             notify(harnessSessionHint);
             return;
         }
-        const request = ++taskModelRequest, key = modelCacheKey(detail.task), cached = modelsByEnv[key];
-        taskPickerModels = cached?.models?.slice() || [];
-        taskPickerStatus = cached?.message || '';
-        if (cached?.expires > Date.now() && taskPickerModels.length) {
-            renderModelMenu(target);
-            element(ids.menu).classList.remove('hidden');
-            button(ids.button).setAttribute('aria-expanded', 'true');
-            input(ids.search).focus();
-        } else {
-            taskPickerStatus = '正在读取模型列表…';
-        }
-        renderModelMenu(target);
         element(ids.menu).classList.remove('hidden');
         button(ids.button).setAttribute('aria-expanded', 'true');
         input(ids.search).focus();
-        void loadTaskModels(request, detail.task);
+        void refreshTaskModels();
         return;
     }
     renderModelMenu(target);
     element(ids.menu).classList.remove('hidden');
     button(ids.button).setAttribute('aria-expanded', 'true');
     input(ids.search).focus();
+    void loadCreateModels();
 }
 function closeModelMenu(target) {
     const ids = modelPickers[target];
@@ -3173,16 +3382,21 @@ function modelRow(value, name, hint, active, effort) {
     return `<button type="button" class="model-item${active ? ' selected' : ''}" role="option" aria-selected="${active}" data-model="${escapeHTML(value)}"${effort === undefined ? '' : ` data-effort="${escapeHTML(effort)}"`}><span class="model-item-name">${escapeHTML(name)}</span>${hint ? `<small>${escapeHTML(hint)}</small>` : ''}${active ? '<span class="model-item-check">✓</span>' : ''}</button>`;
 }
 function renderModelMenu(target) {
+    renderModelCatalogStatus(target);
     const ids = modelPickers[target], search = input(ids.search).value.trim(), filter = search.toLowerCase();
     const models = target === 'task' ? taskPickerModels : createModels;
     const selected = target === 'task' ? detail?.task.model || '' : input('create-model').value;
-    const matches = models.filter((m)=>!filter || m.id.toLowerCase().includes(filter) || m.name.toLowerCase().includes(filter));
+    const matches = models.filter((m)=>!filter || m.id.toLowerCase().includes(filter) || (m.name || '').toLowerCase().includes(filter));
     const custom = !!filter && matches.length === 0;
     const rows = [];
-    for (const m of matches)rows.push(modelRow(m.id, m.id, m.name === m.id ? '' : m.name, selected === m.id));
-    const head = custom ? modelRow('__custom__', `使用「${search}」`, '列表里没有这个模型，按此名称启动', selected === '__custom__' || selected === search) : filter ? '' : modelRow('', defaultModelLabel, target === 'task' ? '沿用该环境的默认模型' : '', !selected);
+    for (const m of matches)rows.push(modelRow(m.id, m.id, [
+        m.name === m.id ? '' : m.name,
+        m.origin === 'configured' ? '已配置' : m.origin === 'cache' ? '缓存' : ''
+    ].filter(Boolean).join(' · '), selected === m.id));
+    const head = custom ? modelRow('__custom__', `使用「${search}」`, '列表里没有这个模型，按此名称启动', selected === '__custom__' || selected === search) : filter ? '' : modelRow('', defaultModelLabel, target === 'task' ? '沿用该环境的默认模型' : createResolvedDefault ? '当前默认：' + createResolvedDefault : '', !selected);
     const tail = target === 'create' && !filter ? modelRow('__custom__', '自定义模型…', '输入列表里没有的名称', selected === '__custom__') : '';
-    const body = head + (rows.join('') || (custom ? '' : '<p class="model-empty">没有匹配的模型</p>')) + tail;
+    const empty = modelCatalogState[target].loading ? '正在读取模型列表…' : filter ? '没有匹配的模型' : '暂无模型；可使用工具默认或输入自定义 ID';
+    const body = head + (rows.join('') || (custom ? '' : `<p class="model-empty">${empty}</p>`)) + tail;
     if (target === 'create') {
         element(ids.list).innerHTML = body;
         return;
@@ -3192,11 +3406,10 @@ function renderModelMenu(target) {
         '',
         ...levels
     ].map((v)=>`<button type="button" class="model-effort${(detail?.task.reasoning_effort || '') === v ? ' selected' : ''}" data-effort="${escapeHTML(v)}">${escapeHTML(v === '' ? '工具默认' : effortLabels[v] || v)}</button>`).join('')}</div></div>` : '<p class="model-empty">此模型不提供推理强度</p>';
-    const status = taskPickerStatus ? `<p class="model-empty">${escapeHTML(taskPickerStatus)}</p>` : '';
-    element(ids.list).innerHTML = body + status + efforts;
+    element(ids.list).innerHTML = body + efforts;
 }
-function modelCacheKey(task) {
-    return (task.environment?.id || '') + ':' + (task.engine || 'codex');
+function taskCatalogContextKey(task) {
+    return task.id + ':' + catalogContextKey(settings.config.environments.find((env)=>env.id === task.environment.id) || task.environment, task.engine || 'codex', task.workspace);
 }
 function mergeTaskModels(task, list) {
     const models = [
@@ -3216,26 +3429,37 @@ function mergeTaskModels(task, list) {
     });
     return models;
 }
-async function loadTaskModels(request, task) {
-    const engine = task.engine || 'codex', key = modelCacheKey(task);
+async function refreshTaskModels(refresh = false) {
+    if (!detail || detail.task.engine === 'deepseek-harness') return;
+    const task = detail.task, key = taskCatalogContextKey(task), state = modelCatalogState.task;
+    if (state.loading && state.key === key && !refresh) return;
+    const request = ++taskModelRequest;
+    modelCatalogControllers.task?.abort();
+    const controller = new AbortController();
+    modelCatalogControllers.task = controller;
+    taskPickerModels = mergeTaskModels(task, []);
+    Object.assign(state, {
+        key,
+        loading: true,
+        summary: '',
+        details: '',
+        failed: false
+    });
+    renderModelMenu('task');
     try {
-        const result = await api('environments/' + task.environment.id + '/models?engine=' + engine);
-        if (request !== taskModelRequest || detail?.task.id !== task.id) return;
-        const catalog = result.models || [], models = mergeTaskModels(task, catalog), message = result.message || result.source + (result.modified ? ' · ' + new Date(result.modified).toLocaleString() : '') || '';
-        taskPickerModels = models;
-        taskPickerStatus = message;
-        if (catalog.length) modelsByEnv[key] = {
-            models,
-            message,
-            expires: Date.now() + 30000
-        };
-        else delete modelsByEnv[key];
+        const result = await api(modelsURL(task.environment.id, task.engine || 'codex', task.workspace, refresh), 'GET', undefined, controller.signal);
+        if (request !== taskModelRequest || !detail || taskCatalogContextKey(detail.task) !== key) return;
+        taskPickerModels = mergeTaskModels(task, result.models || []);
+        state.summary = catalogSummary(result);
+        state.details = catalogDetails(result);
     } catch (e) {
-        if (request !== taskModelRequest || detail?.task.id !== task.id) return;
-        delete modelsByEnv[key];
-        taskPickerModels = mergeTaskModels(task, []);
-        taskPickerStatus = e.message + '。可直接输入模型名称后按 Enter。';
+        if (request !== taskModelRequest || !detail || taskCatalogContextKey(detail.task) !== key) return;
+        state.failed = true;
+        state.summary = '读取失败；可刷新或输入模型 ID';
+        state.details = e.message;
     }
+    if (request !== taskModelRequest || !detail || taskCatalogContextKey(detail.task) !== key) return;
+    state.loading = false;
     if (!element('task-model-menu').classList.contains('hidden')) renderModelMenu('task');
 }
 async function chooseTaskModel(id) {
@@ -3284,19 +3508,18 @@ async function chooseCreateModel(value) {
 function updateCreateModelLabel() {
     const value = input('create-model').value, label = element('model-picker-label');
     if (!label) return;
-    label.textContent = value === '__custom__' ? input('custom-model').value.trim() || '自定义模型…' : value || defaultModelLabel;
+    label.textContent = value === '__custom__' ? input('custom-model').value.trim() || '自定义模型…' : value || (createResolvedDefault ? '默认 · ' + createResolvedDefault : defaultModelLabel);
 }
 function setCreateModelsLoading() {
     modelTestRequest++;
     createModels = [];
+    createResolvedDefault = '';
     input('create-model').value = '';
     input('custom-model').value = '';
     input('custom-model').classList.add('hidden');
-    element('model-picker-label').textContent = '正在读取模型列表…';
-    button('model-picker-button').disabled = true;
-    button('test-models').disabled = true;
+    element('model-picker-label').textContent = defaultModelLabel;
+    button('model-picker-button').disabled = false;
     element('model-test-result').textContent = '';
-    closeModelMenu('create');
     updateReasoning();
 }
 function setCreateModels(models, defaultModel) {
@@ -4384,21 +4607,27 @@ async function saveEngineProfile() {
         created: 0,
         updated: 0
     };
+    const epoch = shellEpoch;
     try {
         await api('engine-profiles', 'PUT', profile);
+        if (!shellCurrent(epoch)) return;
+        invalidateModelCatalogs();
         element('engine-profile-result').textContent = profile.kind === 'env_file' ? '已保存引用；环境文件目前仅记录，不会应用到运行进程。' : profile.engine === 'deepseek-harness' ? '已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。' : '已保存；点击对应配置的“切换”后对下一次运行生效。';
         await loadEngineSettings();
     } catch (e) {
-        element('engine-profile-result').textContent = e.message;
+        if (shellCurrent(epoch)) element('engine-profile-result').textContent = e.message;
     }
 }
 async function activateEngineProfile(id) {
+    const epoch = shellEpoch;
     try {
         await api(`engine-profiles/${encodeURIComponent(id)}/activate`, 'POST', {});
+        if (!shellCurrent(epoch)) return;
+        invalidateModelCatalogs();
         notify(engineProfileActivationMessage(engineCatalog?.profiles.find((p)=>p.id === id)));
         await loadEngineSettings();
     } catch (e) {
-        notify(e.message);
+        if (shellCurrent(epoch)) notify(e.message);
     }
 }
 const element = (id)=>document.getElementById(id);
@@ -4548,14 +4777,26 @@ async function boot() {
     if (!shellCurrent(epoch)) return;
     [tasks, settings, workCatalog] = loaded;
     authenticated = true;
-    renderShell();
-    renderList();
+    try {
+        renderShell();
+        renderList();
+    } catch (error) {
+        showShellFailure(error);
+        return;
+    }
     const query = new URLSearchParams(location.search), id = query.get('task');
     if (id && tasks.some((t)=>t.id === id)) await choose(id, query.get('view') === 'note' ? 'note' : 'chat');
     if (query.get('settings') === 'access') {
         await openSettings();
         document.querySelector('[data-settings="access"]')?.click();
     }
+}
+function showShellFailure(error) {
+    authenticated = false;
+    renewShellScope();
+    const message = error instanceof Error ? error.message.slice(0, 500) : '界面初始化异常，请重新加载。';
+    element('root').innerHTML = '<div class="login-shell"><section class="login" role="alert"><h1>工作台界面未能加载</h1><p>本机数据不会因此被清除。请重新加载；若仍失败，请把以下提示发给维护者。</p><p class="error">' + escapeHTML(message) + '</p><button type="button" id="shell-retry">重新加载</button></section></div>';
+    button('shell-retry').onclick = ()=>location.reload();
 }
 function renderShell() {
     renewShellScope();
@@ -4601,7 +4842,7 @@ function renderShell() {
     button('chat-tab').onclick = ()=>switchTab('chat');
     button('note-tab').onclick = ()=>switchTab('note');
     input('create-environment').onchange = ()=>void loadCreateEnvironment();
-    button('reload-models').onclick = ()=>loadCreateEnvironment(true);
+    button('reload-models').onclick = ()=>void loadCreateModels(false, true);
     element('create-form').onsubmit = createTask;
     element('composer').onsubmit = (e)=>{
         e.preventDefault();
@@ -5162,10 +5403,9 @@ function cancelCreate() {
 }
 async function loadCreateEnvironment(keepWorkspace = false) {
     if (createSubmitting) return;
-    const token = ++modelRequest, env = settings.config.environments.find((e)=>e.id === input('create-environment').value);
+    const env = settings.config.environments.find((e)=>e.id === input('create-environment').value);
     if (!env) return;
     if (!keepWorkspace) input('create-engine').value = env.default_engine || 'codex';
-    const engine = input('create-engine').value, defaultModel = engineDefaultModel(env, engine);
     setCreatePermission(createPermission);
     input('create-effort').value = '';
     const directories = [
@@ -5177,26 +5417,8 @@ async function loadCreateEnvironment(keepWorkspace = false) {
     const workspaceOptions = element('workspace-options');
     if (workspaceOptions) workspaceOptions.innerHTML = directories.map((p)=>`<option value="${escapeHTML(p)}"></option>`).join('');
     if (!keepWorkspace) input('create-workspace').value = env.workspaces[0] || '';
-    setCreateModelsLoading();
-    button('create-submit').disabled = true;
-    element('models-hint').textContent = '读取 ' + env.name + ' 的模型列表…';
-    let models = [], hint = '';
-    try {
-        const result = await api('environments/' + env.id + '/models?engine=' + engine);
-        models = result.models || [];
-        hint = result.message || result.source + (result.modified ? ' · ' + new Date(result.modified).toLocaleString() : '');
-    } catch (e) {
-        hint = e.message + '。可以选择默认模型或手动指定。';
-    }
-    if (token !== modelRequest || createSubmitting || !creatingTask) return;
-    if (defaultModel && !models.some((m)=>m.id === defaultModel)) models.push({
-        id: defaultModel,
-        name: defaultModel + '（配置的默认模型）'
-    });
-    createModels = models;
-    setCreateModels(models, defaultModel);
     setCreateSubmitState('idle');
-    element('models-hint').textContent = hint;
+    await loadCreateModels(true);
 }
 async function createTask(e) {
     e.preventDefault();
@@ -5594,6 +5816,7 @@ async function saveSettings(e) {
         const saved = await api('settings', 'PUT', c);
         if (!shellCurrent(epoch)) return;
         settings = saved;
+        invalidateModelCatalogs();
         input('feishu-secret').value = '';
         updateFeishuStatus();
         element('settings-error').textContent = '';

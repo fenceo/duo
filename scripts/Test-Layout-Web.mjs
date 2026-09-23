@@ -46,6 +46,9 @@ assert.equal(declarations('.create-permission',desktop)['grid-column'],'1 / -1')
 assert.equal(declarations('.create-context-field>select',desktop).width,'100%');
 assert.equal(declarations('#model-picker-label')['text-overflow'],'ellipsis');
 assert.equal(declarations('#model-picker-label')['white-space'],'nowrap');
+assert.equal(declarations('.model-item small',css.slice(0,css.lastIndexOf('@media(max-width:760px){')))['max-width'],'44%','long source labels cannot squeeze model IDs on desktop');
+assert.equal(declarations('.model-item small')['min-width'],'0');
+assert.equal(declarations('.model-item small')['flex-shrink'],'1');
 assert.equal(declarations('.create-permission>small',mobile).display,'block','important execution boundaries remain visible on phones');
 assert.equal(declarations('.create-options',mobile)['grid-template-columns'],'minmax(0,1fr) minmax(0,1fr)');
 assert.equal(declarations('.create-icon-button',mobile)['grid-row'],'3','attachment stays clear of the two engine/model controls');

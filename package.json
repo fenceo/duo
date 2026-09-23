@@ -1,8 +1,8 @@
 {
  "name":"duo",
- "version":"0.19.0",
+ "version":"0.20.0",
  "private":true,
  "type":"module",
  "scripts":{"check":"tsc --noEmit","build":"node scripts/build.mjs"},
- "devDependencies":{"typescript":"7.0.2"}
+ "devDependencies":{"linkedom":"0.18.13","typescript":"7.0.2"}
 }

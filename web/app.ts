@@ -1,5 +1,5 @@
 /// <reference path="./codex-approvals.ts" />
-type EnvironmentModel={id:string;name:string;reasoning_levels?:string[];default_reasoning?:string};
+type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
 type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
 type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
@@ -64,9 +64,18 @@ async function boot(){
  const epoch=shellEpoch,signal=shellController.signal;
  const status=await api<{authenticated:boolean;csrf:string}>('auth','GET',undefined,signal);if(!shellCurrent(epoch))return;if(!status.authenticated){showLogin();return}csrf=status.csrf;
  const loaded=await Promise.all([api<Task[]>('tasks','GET',undefined,signal),api<Settings>('settings','GET',undefined,signal),api<WorkCatalog>('workbench','GET',undefined,signal)]);if(!shellCurrent(epoch))return;
- [tasks,settings,workCatalog]=loaded;authenticated=true;renderShell();renderList();
+ [tasks,settings,workCatalog]=loaded;authenticated=true;
+ // renderShell renews the epoch before mounting feature modules. A synchronous
+ // mount failure belongs to that new shell, not the earlier login/API epoch.
+ try{renderShell();renderList()}catch(error){showShellFailure(error);return}
  const query=new URLSearchParams(location.search),id=query.get('task');if(id&&tasks.some(t=>t.id===id))await choose(id,query.get('view')==='note'?'note':'chat');
  if(query.get('settings')==='access'){await openSettings();document.querySelector<HTMLButtonElement>('[data-settings="access"]')?.click()}
+}
+function showShellFailure(error:unknown){
+ authenticated=false;renewShellScope();
+ const message=error instanceof Error?error.message.slice(0,500):'界面初始化异常，请重新加载。';
+ element('root').innerHTML='<div class="login-shell"><section class="login" role="alert"><h1>工作台界面未能加载</h1><p>本机数据不会因此被清除。请重新加载；若仍失败，请把以下提示发给维护者。</p><p class="error">'+escapeHTML(message)+'</p><button type="button" id="shell-retry">重新加载</button></section></div>';
+ button('shell-retry').onclick=()=>location.reload();
 }
 function renderShell(){
  renewShellScope();
@@ -81,7 +90,7 @@ function renderShell(){
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
  button('logout').onclick=async()=>{if(!mayLeave())return;const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('settings-open').onclick=openSettings;button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
- input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>loadCreateEnvironment(true);
+ input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
  input('message').oninput=()=>{drafts.set(chosen,input('message').value);renderWorkflow()};input('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();element<HTMLFormElement>('composer').requestSubmit()}};
 
@@ -253,17 +262,12 @@ function cancelCreate(){
 }
 async function loadCreateEnvironment(keepWorkspace=false){
  if(createSubmitting)return;
- const token=++modelRequest,env=settings.config.environments.find(e=>e.id===input('create-environment').value);if(!env)return;
+ const env=settings.config.environments.find(e=>e.id===input('create-environment').value);if(!env)return;
  if(!keepWorkspace)input('create-engine').value=env.default_engine||'codex';
- const engine=input('create-engine').value,defaultModel=engineDefaultModel(env,engine);setCreatePermission(createPermission);
+ setCreatePermission(createPermission);
  input('create-effort').value='';
- const directories=[...new Set([...env.workspaces,...tasks.filter(t=>t.environment?.id===env.id).map(t=>t.workspace)])];const workspaceOptions=element<HTMLDataListElement>('workspace-options');if(workspaceOptions)workspaceOptions.innerHTML=directories.map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');if(!keepWorkspace)input('create-workspace').value=env.workspaces[0]||'';setCreateModelsLoading();button('create-submit').disabled=true;element('models-hint').textContent='读取 '+env.name+' 的模型列表…';
- let models:EngineModel[]=[],hint='';
- try{const result=await api<{models:EngineModel[];modified:number;message?:string;source:string}>('environments/'+env.id+'/models?engine='+engine);models=result.models||[];hint=result.message||result.source+(result.modified?' · '+new Date(result.modified).toLocaleString():'')}
- catch(e){hint=(e as Error).message+'。可以选择默认模型或手动指定。'}
- if(token!==modelRequest||createSubmitting||!creatingTask)return;
- if(defaultModel&&!models.some(m=>m.id===defaultModel))models.push({id:defaultModel,name:defaultModel+'（配置的默认模型）'});createModels=models;
- setCreateModels(models,defaultModel);setCreateSubmitState('idle');element('models-hint').textContent=hint;
+ const directories=[...new Set([...env.workspaces,...tasks.filter(t=>t.environment?.id===env.id).map(t=>t.workspace)])];const workspaceOptions=element<HTMLDataListElement>('workspace-options');if(workspaceOptions)workspaceOptions.innerHTML=directories.map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');if(!keepWorkspace)input('create-workspace').value=env.workspaces[0]||'';
+ setCreateSubmitState('idle');await loadCreateModels(true);
 }
 async function createTask(e:Event){
  e.preventDefault();if(createSubmitting||button('create-submit').disabled||!creatingTask)return;
@@ -347,7 +351,7 @@ async function saveSettings(e:Event){
  e.preventDefault();const epoch=shellEpoch;button('settings-save').disabled=true;element('settings-saved').textContent='';
  storeEnvironmentEditor();
  const c:Configuration={...settings.config,access:{lan:input("access-lan").value.trim(),tailscale:input("access-tailscale").value.trim()},environments:editingEnvironments,default_environment:input('default-environment').value,feishu:{enabled:input('feishu-enabled').checked,app_id:input('feishu-id').value.trim(),secret:input('feishu-secret').value.trim()}};
- try{const saved=await api<Settings>('settings','PUT',c);if(!shellCurrent(epoch))return;settings=saved;input('feishu-secret').value='';updateFeishuStatus();element('settings-error').textContent='';element('settings-saved').textContent='设置已保存';notify('设置已保存')}catch(e){if(shellCurrent(epoch))element('settings-error').textContent=(e as Error).message}finally{if(shellCurrent(epoch))button('settings-save').disabled=false}
+ try{const saved=await api<Settings>('settings','PUT',c);if(!shellCurrent(epoch))return;settings=saved;invalidateModelCatalogs();input('feishu-secret').value='';updateFeishuStatus();element('settings-error').textContent='';element('settings-saved').textContent='设置已保存';notify('设置已保存')}catch(e){if(shellCurrent(epoch))element('settings-error').textContent=(e as Error).message}finally{if(shellCurrent(epoch))button('settings-save').disabled=false}
 }
 async function pollSettingsStatus(){
  if(!authenticated||settingsPolling||!element<HTMLDialogElement>('settings-dialog')?.open)return;

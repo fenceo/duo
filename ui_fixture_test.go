@@ -60,7 +60,10 @@ func TestUIFixture(t *testing.T) {
 		Model: "fixture-model", HarnessModel: "fixture-model", HarnessProvider: "fixture-provider", DefaultEngine: "codex",
 		ModelCache: filepath.Join(workspace, "fixture-models.json"), Models: []ModelOption{{ID: "fixture-model", Name: "合成测试模型", ReasoningLevels: []string{}}}, Workspaces: []string{workspace},
 	}
-	c := Config{Listen: "127.0.0.1:0", Environments: []Environment{env}, DefaultEnvironment: env.ID, Workspaces: []string{workspace}, Codex: env.Codex, Model: env.Model}
+	emptyEnv, errorEnv := env, env
+	emptyEnv.ID, emptyEnv.Name, emptyEnv.Model, emptyEnv.Models = "ui-empty", "空模型目录（合成测试）", "", nil
+	errorEnv.ID, errorEnv.Name, errorEnv.Model, errorEnv.Models = "ui-error", "模型读取失败（合成测试）", "", nil
+	c := Config{Listen: "127.0.0.1:0", Environments: []Environment{env, emptyEnv, errorEnv}, DefaultEnvironment: env.ID, Workspaces: []string{workspace}, Codex: env.Codex, Model: env.Model}
 	if err := a.config.save(c); err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +113,31 @@ func TestUIFixture(t *testing.T) {
 	})
 	// Catalog responses are synthetic too: production catalog discovery may
 	// read the user's global CLI caches even with an explicit ModelCache path.
-	catalog := server.secure(func(w http.ResponseWriter, _ *http.Request) {
-		jsonOut(w, http.StatusOK, ModelList{Source: "UI fixture（合成模型，不调用 CLI）", Models: env.Models})
+	catalog := server.secure(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/ui-error/") {
+			fail(w, http.StatusBadGateway, "合成错误：目标环境暂不可达；未读取其它环境或账号")
+			return
+		}
+		models := []map[string]any{}
+		message, status, defaultModel := "", "native", "fixture-model"
+		engine := r.URL.Query().Get("engine")
+		if engine == "" {
+			engine = "codex"
+		}
+		if strings.Contains(r.URL.Path, "/ui-empty/") {
+			message, status, defaultModel = "目标引擎暂未返回模型；可以重读或输入自定义模型。", "empty", ""
+		} else {
+			prefix := engine
+			if engine != "codex" {
+				defaultModel = prefix + "-fixture-default"
+			}
+			models = append(models,
+				map[string]any{"id": defaultModel, "name": prefix + " · 合成默认模型", "origin": "native", "reasoning_levels": []string{"low", "high"}},
+				map[string]any{"id": prefix + "-fixture-fast", "name": prefix + " · 合成快速模型", "origin": "native", "reasoning_levels": []string{}},
+				map[string]any{"id": prefix + "-fixture-custom", "name": prefix + " · 自定义模型（未验证调用）", "origin": "configured"},
+			)
+		}
+		jsonOut(w, http.StatusOK, map[string]any{"source": "UI fixture（合成模型，不调用 CLI）", "models": models, "message": message, "status": status, "default_model": defaultModel})
 	})
 	blocked := server.secure(func(w http.ResponseWriter, _ *http.Request) {
 		fail(w, http.StatusForbidden, "UI 验收环境禁止真实 CLI、模型探测、设备、环境发现及配置修改")
@@ -126,7 +152,7 @@ func TestUIFixture(t *testing.T) {
 			finish(w, r)
 			return
 		}
-		if path == "/api/environments/ui-fixture/models" && r.Method == http.MethodGet {
+		if (path == "/api/environments/ui-fixture/models" || path == "/api/environments/ui-empty/models" || path == "/api/environments/ui-error/models") && r.Method == http.MethodGet {
 			catalog(w, r)
 			return
 		}

@@ -38,7 +38,7 @@ assert.equal(node('sticky-list').textContent,'synthetic read failure');
 
 const media=css.lastIndexOf('@media(max-width:760px){');
 const mobile=css.slice(media),desktop=css.slice(0,media);
-assert(!desktop.includes('#sticky-board[data-empty="true"]'),'compact board rules must not affect desktop docking');
+assert(desktop.includes('#sticky-board[data-empty="true"]'),'empty notes also collapse in the desktop sidebar');
 assert.match(desktop,/#sticky-expand\{display:none\}/);
 assert.match(sticky,/aria-controls="sticky-list sticky-filter sticky-scope"/);
 assert.match(mobile,/#sticky-board\[data-empty="true"\]\{height:auto;min-height:0;/,'saved dock height cannot reserve empty phone space');
@@ -52,4 +52,8 @@ assert.match(mobile,/\.composer-bottom\{display:grid;grid-template-columns:minma
 assert.match(mobile,/\.composer-bottom button\{min-height:44px;min-width:44px\}/);
 assert.match(mobile,/#chat-column \.composer textarea\{min-height:56px;max-height:120px;overflow-y:auto\}/,'long drafts remain scrollable');
 assert(!mobile.includes('.session-banner{display:none'),'do not conceal session boundaries');
-console.log('PASS: phone empty-note expand/filter state, visible failures, 44px controls and compact composer; desktop rules preserved. Browser geometry is checked separately.');
+assert.match(desktop,/#workspace>\.dock>#sticky-board\[data-empty="true"\]/,'empty docks do not reserve a full height');
+const layout=await readFile(new URL('../web/layout.ts',import.meta.url),'utf8');
+assert.match(layout,/footer\.id='sidebar-footer'/,'dock placement inserts notes before the utility footer');
+assert.match(layout,/utilities\.setAttribute\('aria-label','工作台设置'\)/);
+console.log('PASS: desktop/phone empty-note expand/filter state, visible failures, stable utility footer, 44px phone controls and compact composer. Browser geometry is checked separately.');

@@ -19,6 +19,7 @@ SERVICE = PACKAGE / "duo-service.exe"
 LAUNCHER = PACKAGE / "Duo.exe"
 FLAGS = subprocess.CREATE_NO_WINDOW
 PASSWORD = "便携测试-password"
+VERSION = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
 
 
 @contextmanager
@@ -56,8 +57,8 @@ def start(directory, port):
             try:
                 with client.open(url + "/healthz", timeout=0.5) as res:
                     health = json.load(res)
-                    assert health["release_version"] == "0.19.0"
-                    assert health["version"] == "0.19.0-portable", "legacy updater health contract"
+                    assert health["release_version"] == VERSION
+                    assert health["version"] == VERSION + "-portable", "legacy updater health contract"
                     return proc, client, url
             except OSError:
                 time.sleep(.1)
@@ -110,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix="portable-中文 path-", dir=test_root) 
             assert error.code == 401
         csrf = api(client, url, "login", "POST", {"password": PASSWORD})["csrf"]
         initial_update = api(client, url, "updates")
-        assert initial_update["current"] == "0.19.0"
+        assert initial_update["current"] == VERSION
         assert not initial_update.get("checked")
         try:
             api(client, url, "updates", "PUT", {"repository": "owner/jianzuo"})
@@ -164,6 +165,17 @@ with tempfile.TemporaryDirectory(prefix="portable-中文 path-", dir=test_root) 
     finally:
         if proc.poll() is None:
             stop(proc)
+    before_validation = {p.name: hashlib.sha256(p.read_bytes()).digest()
+                         for p in directory.iterdir() if p.is_file()}
+    validation = run([SERVICE, "--data", directory, "--validate-data"])
+    assert validation.returncode == 0, validation.stderr.decode("utf-8", "replace")
+    assert json.loads(validation.stdout) == {"app": "jianzuo", "valid": True, "protocol": 1}
+    after_validation = {p.name: hashlib.sha256(p.read_bytes()).digest()
+                        for p in directory.iterdir() if p.is_file()}
+    assert before_validation == after_validation, "read-only validator changed data files"
+    missing_data = directory / "must-not-be-created"
+    assert run([SERVICE, "--data", missing_data, "--validate-data"]).returncode != 0
+    assert not missing_data.exists(), "read-only validator initialized missing directory"
     smoke = run([LAUNCHER, "--smoke", "--data", directory])
     assert smoke.returncode == 0, smoke.stderr.decode("utf-8", "replace")
     with socket.socket() as sock:
@@ -176,3 +188,4 @@ assert hashlib.sha256(package_zip.read_bytes()).hexdigest() == pathlib.Path(str(
 print("PASS: initialization, Unicode password/path, non-overwrite, login, notes, settings, duplicate lock,")
 print("      port collision preserves state, restart persistence, EOF shutdown, launcher smoke, clean ZIP.")
 print("      update version/source, auth/CSRF, validation, source persistence, ZIP checksum.")
+print("      read-only data validation preserves file hashes and never initializes missing data.")

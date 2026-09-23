@@ -13,24 +13,22 @@ function installEnvironmentDiscovery(){
  const advanced=document.createElement('details');advanced.className='environment-advanced';advanced.innerHTML='<summary>高级设置 · AI 程序位置和默认模型</summary>';
  const first=element('setting-codex').previousElementSibling!,last=element('setting-workspaces').previousElementSibling!;first.before(advanced);
  let node:ChildNode|null=first;while(node&&node!==last){const next:ChildNode|null=node.nextSibling;advanced.append(node);node=next}
- // Model selection remains visible. Cache details and re-read are occasional actions.
- const extra=document.createElement('details');extra.className='create-advanced';extra.innerHTML='<summary>模型检测详情</summary>';element('reload-models').before(extra);extra.append(element('models-hint'),element('reload-models'));
  input('search').placeholder='搜索任务和记录';
- const modelManager=document.createElement('section');modelManager.className='model-manager';modelManager.innerHTML='<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前执行环境添加自定义模型 ID。它会出现在新建任务的模型选择器中，并交给所选的 Codex、Claude Code 或 DeepSeek Harness；实际可用性由对应引擎和 provider 配置决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><div class="model-add-row"><input id="custom-model-id" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
+ const modelManager=document.createElement('section');modelManager.className='model-manager';modelManager.innerHTML='<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前环境的指定引擎补充模型 ID。新建任务会自动读取目标 CLI；这里添加的名称不代表已验证可用，实际调用仍由引擎和 provider 决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><label for="custom-model-engine">模型所属引擎</label><select id="custom-model-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="">所有引擎（兼容共享配置）</option></select><div class="model-add-row"><input id="custom-model-id" aria-label="模型 ID" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" aria-label="模型显示名称" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
  section.append(modelManager);
  button('custom-model-add').onclick=()=>{
-  const id=input('custom-model-id').value.trim(),name=input('custom-model-name').value.trim()||id;
+  const id=input('custom-model-id').value.trim(),name=input('custom-model-name').value.trim()||id,engine=input('custom-model-engine').value;
   if(!id){element('custom-model-result').textContent='请输入模型 ID';input('custom-model-id').focus();return}
   if(!/^[^\s\r\n]{1,120}$/.test(id)){element('custom-model-result').textContent='模型 ID 不能包含空格或换行';return}
   const env=editingEnvironments.find(e=>e.id===editingID);if(!env)return;env.models=env.models||[];
-  if(env.models.some(m=>m.id===id)){element('custom-model-result').textContent='这个模型已经添加';return}
-  env.models.push({id,name});input('custom-model-id').value='';input('custom-model-name').value='';element('custom-model-result').textContent='已添加，保存设置后生效';renderConfiguredModels();
+  if(env.models.some(m=>m.id===id&&(m.engine||'')===engine)){element('custom-model-result').textContent='这个引擎的模型已经添加';return}
+  env.models.push({id,name,engine});input('custom-model-id').value='';input('custom-model-name').value='';element('custom-model-result').textContent='已添加，保存设置后生效';renderConfiguredModels();
  };
  renderConfiguredModels();
 }
 function renderConfiguredModels(){
  const target=element('configured-models');if(!target)return;const env=editingEnvironments?.find(e=>e.id===editingID);const models=env?.models||[];
- target.innerHTML=models.map((m,i)=>`<div class="configured-model"><div><strong>${escapeHTML(m.id)}</strong><small>${escapeHTML(m.name||m.id)}</small></div><button type="button" data-remove-custom-model="${i}" title="删除此模型">删除</button></div>`).join('')||'<p class="muted">还没有自定义模型。发现的 CLI 模型仍会自动显示。</p>';
+ target.innerHTML=models.map((m,i)=>`<div class="configured-model"><div><strong>${escapeHTML(m.id)}</strong><small>${escapeHTML(m.name||m.id)} · ${m.engine?escapeHTML(taskEngineName(m.engine)):'所有引擎'}</small></div><button type="button" data-remove-custom-model="${i}" title="删除此模型">删除</button></div>`).join('')||'<p class="muted">还没有自定义模型。发现的 CLI 模型仍会自动显示。</p>';
  target.querySelectorAll<HTMLButtonElement>('[data-remove-custom-model]').forEach(b=>b.onclick=()=>{const e=editingEnvironments.find(x=>x.id===editingID);if(!e?.models)return;e.models.splice(Number(b.dataset.removeCustomModel),1);renderConfiguredModels();element('custom-model-result').textContent='已移除，保存设置后生效'});
 }
 function renderDetectedEnvironments(){

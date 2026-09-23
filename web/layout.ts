@@ -21,6 +21,10 @@ function workspaceTaskList(items:Task[]):string{
 function installLayout(){
  let theme='light';try{theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{}document.documentElement.dataset.theme=theme;
  element('settings-open').insertAdjacentHTML('afterend','<button id="theme-toggle" class="subtle" title="切换浅色 / 深色外观">外观</button>');
+ const footer=element('settings-open').parentElement!;footer.id='sidebar-footer';
+ const utilities=document.createElement('nav');utilities.className='sidebar-utilities';utilities.setAttribute('aria-label','工作台设置');
+ for(const id of ['settings-open','theme-toggle','sidebar-close','logout'])utilities.append(element(id));
+ footer.prepend(utilities);element('connection').setAttribute('role','status');
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
  const tabs=element('tabs');tabs.prepend(element('conversation-filter'));button('chat-tab').classList.add('hidden');
  for(const id of ['conversation-results','conversation-all'])button(id).addEventListener('click',()=>{if(matchMedia('(max-width:760px)').matches)switchTab('chat')});

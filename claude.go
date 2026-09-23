@@ -146,7 +146,8 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 		return modelsForEnvironment(ctx, env, profileEnv...)
 	}
 	if engine == "deepseek-harness" {
-		models := mergeConfiguredModels([]ModelOption{{ID: "deepseek-flash", Name: "DeepSeek Flash"}}, env.Models)
+		list := mergeEngineCatalog(ModelList{Source: "Duo 中该环境的 Harness 配置", Status: "fallback", Models: []ModelOption{}}, env, engine, env.HarnessModel)
+		models := list.Models
 		for i := range models {
 			// Harness has its own effort vocabulary; do not use Codex's levels.
 			models[i].ReasoningLevels = []string{"off", "low", "high", "max"}
@@ -154,16 +155,17 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 				models[i].DefaultReasoning = ""
 			}
 		}
-		return ModelList{Source: "DeepSeek Harness SDK 模型", Message: "模型 ID 通过 SDK 传给此环境配置的 provider；可添加自定义模型 ID，实际可用性以 provider 为准。", Models: models}, nil
+		list.Models = models
+		list.Message = "当前 Harness SDK 没有只读模型目录接口；这里仅列出 Duo 为该环境配置的模型，不是 provider 全部可用模型。实际可用性以目标账号为准。"
+		if len(list.Models) == 0 {
+			list.Status = "empty"
+		}
+		return list, nil
 	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")
 	}
-	levels := []string{"low", "medium", "high", "xhigh", "max"}
-	return ModelList{Source: "Claude Code 模型别名", Message: "使用此环境的 Claude 登录与服务配置；模型可用性以该账号为准。", Models: []ModelOption{
-		{ID: "sonnet", Name: "Sonnet", ReasoningLevels: levels}, {ID: "opus", Name: "Opus", ReasoningLevels: levels},
-		{ID: "haiku", Name: "Haiku", ReasoningLevels: []string{}}, {ID: "fable", Name: "Fable", ReasoningLevels: levels},
-	}}, nil
+	return configuredClaudeCatalog(ctx, env, profileEnv...)
 }
 func checkEngine(c Config, engine string) (string, error) {
 	if engine == "codex" {

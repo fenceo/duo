@@ -44,6 +44,7 @@ async function showEnginePlan(engine:string){
 }
 async function saveEngineProfile(){
  const profile:EngineProfile={id:input('engine-profile-id').value.trim(),name:input('engine-profile-name').value.trim(),engine:element<HTMLSelectElement>('engine-profile-engine').value,environment_id:element<HTMLSelectElement>('engine-profile-environment').value,kind:element<HTMLSelectElement>('engine-profile-kind').value,reference:input('engine-profile-reference').value.trim(),created:0,updated:0};
- try{await api('engine-profiles','PUT',profile);element('engine-profile-result').textContent=profile.kind==='env_file'?'已保存引用；环境文件目前仅记录，不会应用到运行进程。':profile.engine==='deepseek-harness'?'已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。':'已保存；点击对应配置的“切换”后对下一次运行生效。';await loadEngineSettings()}catch(e){element('engine-profile-result').textContent=(e as Error).message}
+ const epoch=shellEpoch;
+ try{await api('engine-profiles','PUT',profile);if(!shellCurrent(epoch))return;invalidateModelCatalogs();element('engine-profile-result').textContent=profile.kind==='env_file'?'已保存引用；环境文件目前仅记录，不会应用到运行进程。':profile.engine==='deepseek-harness'?'已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。':'已保存；点击对应配置的“切换”后对下一次运行生效。';await loadEngineSettings()}catch(e){if(shellCurrent(epoch))element('engine-profile-result').textContent=(e as Error).message}
 }
-async function activateEngineProfile(id:string){try{await api(`engine-profiles/${encodeURIComponent(id)}/activate`,'POST',{});notify(engineProfileActivationMessage(engineCatalog?.profiles.find(p=>p.id===id)));await loadEngineSettings()}catch(e){notify((e as Error).message)}}
+async function activateEngineProfile(id:string){const epoch=shellEpoch;try{await api(`engine-profiles/${encodeURIComponent(id)}/activate`,'POST',{});if(!shellCurrent(epoch))return;invalidateModelCatalogs();notify(engineProfileActivationMessage(engineCatalog?.profiles.find(p=>p.id===id)));await loadEngineSettings()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}}

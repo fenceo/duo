@@ -229,6 +229,8 @@ type ModelOption struct {
 	Name             string   `json:"name"`
 	ReasoningLevels  []string `json:"reasoning_levels"`
 	DefaultReasoning string   `json:"default_reasoning"`
+	Engine           string   `json:"engine,omitempty"`
+	Origin           string   `json:"origin,omitempty"`
 }
 
 func validReasoning(value string) bool {
@@ -240,10 +242,12 @@ func validReasoning(value string) bool {
 }
 
 type ModelList struct {
-	Models   []ModelOption `json:"models"`
-	Source   string        `json:"source"`
-	Modified int64         `json:"modified"`
-	Message  string        `json:"message,omitempty"`
+	Models       []ModelOption `json:"models"`
+	Source       string        `json:"source"`
+	Modified     int64         `json:"modified"`
+	Message      string        `json:"message,omitempty"`
+	DefaultModel string        `json:"default_model,omitempty"`
+	Status       string        `json:"status,omitempty"`
 }
 
 func parseModels(raw []byte) ([]ModelOption, error) {
@@ -337,10 +341,14 @@ allowed={'none','minimal','low','medium','high','xhigh','max','ultra'}
 configured_home=os.environ.get('CODEX_HOME','').strip()
 root=pathlib.Path(configured_home).expanduser() if configured_home else pathlib.Path.home()/'.codex'
 cands=[sys.argv[1]] if sys.argv[1] else []
+default_model=''
 try:
  cfg=root/'config.toml'
  if cfg.is_file():
-  match=re.search(r'(?m)^\s*model_catalog_json\s*=\s*["\']([^"\']+)["\']',cfg.read_text(encoding='utf-8',errors='replace'))
+  text=re.split(r'(?m)^\s*\[',cfg.read_text(encoding='utf-8',errors='replace'),maxsplit=1)[0]
+  model=re.search(r'(?m)^\s*model\s*=\s*["\']([^"\']+)["\']',text)
+  if model: default_model=model.group(1)
+  match=re.search(r'(?m)^\s*model_catalog_json\s*=\s*["\']([^"\']+)["\']',text)
   if match: cands.append(match.group(1) if os.path.isabs(match.group(1)) else str(root/match.group(1)))
 except OSError: pass
 cands+= [str(root/'models_cache.json'),str(root/'model_catalog.json'),str(root/'cockpit-model-catalog.json')]
@@ -371,7 +379,7 @@ for c in cands:
    models.append({'id':slug,'name':m.get('display_name') or m.get('name') or slug,'reasoning_levels':[r['effort'] for r in levels if isinstance(r,dict) and r.get('effort') in allowed] if isinstance(levels,list) else [],'default_reasoning':m.get('default_reasoning_level','')})
  if found: used.append(p.name)
  modified=max(modified,int(p.stat().st_mtime*1000))
-out={'models':models,'modified':modified}
+out={'models':models,'modified':modified,'default_model':default_model}
 if models: out['source']='该环境的 Codex 模型目录 · '+' + '.join(used)
 else: out['message']='此环境还没有模型缓存，请先登录并运行一次 Codex。已检查：'+'、'.join(checked)
 print(json.dumps(out,ensure_ascii=False))
@@ -398,7 +406,7 @@ func codexHomes() []string {
 		roots = append(roots, clean)
 	}
 	add(os.Getenv("CODEX_HOME"))
-	if home != "" {
+	if len(roots) == 0 && home != "" {
 		add(filepath.Join(home, ".codex"))
 	}
 	return roots
@@ -417,11 +425,7 @@ func catalogFromConfig(path string) string {
 	if err != nil || len(raw) > 1024*1024 {
 		return ""
 	}
-	match := regexp.MustCompile(`(?m)^\s*model_catalog_json\s*=\s*["']([^"']+)["']`).FindSubmatch(raw)
-	if match == nil {
-		return ""
-	}
-	return string(match[1])
+	return codexTopLevelString(raw, "model_catalog_json")
 }
 
 func modelCacheCandidates(explicit string) []string {
@@ -517,7 +521,7 @@ func readModelCaches(paths []string) ([]ModelOption, []string, int64, string) {
 	return models, used, modified, note
 }
 
-func modelsForEnvironment(ctx context.Context, e Environment, profileEnv ...map[string]string) (ModelList, error) {
+func cachedModelsForEnvironment(ctx context.Context, e Environment, profileEnv ...map[string]string) (ModelList, error) {
 	out := ModelList{Models: []ModelOption{}, Source: "Codex 本地模型缓存"}
 	var selected map[string]string
 	if len(profileEnv) > 0 {
@@ -531,7 +535,12 @@ func modelsForEnvironment(ctx context.Context, e Environment, profileEnv ...map[
 			candidates = modelCacheCandidates(e.ModelCache)
 		}
 		models, used, modified, note := readModelCaches(candidates)
-		out.Models, out.Modified = mergeConfiguredModels(models, e.Models), modified
+		out.Models, out.Modified = models, modified
+		roots := []string{codexHome()}
+		if home := selected["CODEX_HOME"]; home != "" {
+			roots = []string{home}
+		}
+		out.DefaultModel = configuredCodexModel(filepath.Join(roots[0], "config.toml"))
 		if len(out.Models) > 0 {
 			out.Source = "Codex 模型目录 · " + strings.Join(used, " + ")
 		} else {
@@ -542,37 +551,26 @@ func modelsForEnvironment(ctx context.Context, e Environment, profileEnv ...map[
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var lastDiagnostic string
-	for index, variant := range environmentProbeVariants(e) {
-		args := withEngineEnv([]string{"python3", "-c", readRemoteModels, variant.ModelCache}, selected)
-		stdout, stderr, _, err := runEnvironmentCommand(ctx, variant, args...)
+	{
+		args := withEngineEnv([]string{"python3", "-c", readRemoteModels, e.ModelCache}, selected)
+		stdout, stderr, err := runModelEnvironmentCommand(ctx, e, args...)
 		if err != nil {
 			lastDiagnostic = strings.TrimSpace(string(stderr))
 			if lastDiagnostic == "" {
 				lastDiagnostic = err.Error()
 			}
-			continue
+			return out, fmt.Errorf("读取该环境模型失败：%s", modelReadDiagnostic(ctx, lastDiagnostic))
 		}
 		candidate := ModelList{Models: []ModelOption{}}
 		if err = json.Unmarshal(stdout, &candidate); err != nil {
 			lastDiagnostic = "环境返回的模型数据无效，请检查 Python 3 和 SSH 登录输出"
-			continue
+			return out, errors.New(lastDiagnostic)
 		}
 		if candidate.Source == "" {
 			candidate.Source = "该环境的 Codex 模型缓存"
 		}
-		// A stale saved WSL user can still run Python successfully while
-		// pointing at a home without Codex's cache. Retry with the distro's
-		// default user before returning an empty catalog.
-		if len(candidate.Models) == 0 && index+1 < len(environmentProbeVariants(e)) {
-			continue
-		}
-		candidate.Models = mergeConfiguredModels(candidate.Models, e.Models)
 		return candidate, nil
 	}
-	if lastDiagnostic == "" {
-		lastDiagnostic = "环境命令执行失败"
-	}
-	return out, fmt.Errorf("读取该环境模型失败：%s", lastDiagnostic)
 }
 
 func mergeConfiguredModels(discovered, configured []ModelOption) []ModelOption {
@@ -580,7 +578,8 @@ func mergeConfiguredModels(discovered, configured []ModelOption) []ModelOption {
 	seen := make(map[string]bool, len(discovered)+len(configured))
 	for _, model := range append(discovered, configured...) {
 		model.ID = strings.TrimSpace(model.ID)
-		if model.ID == "" || seen[model.ID] {
+		key := model.Engine + ":" + model.ID
+		if model.ID == "" || seen[key] {
 			continue
 		}
 		model.Name = strings.TrimSpace(model.Name)
@@ -599,7 +598,7 @@ func mergeConfiguredModels(discovered, configured []ModelOption) []ModelOption {
 		if !validReasoning(model.DefaultReasoning) {
 			model.DefaultReasoning = ""
 		}
-		seen[model.ID] = true
+		seen[key] = true
 		out = append(out, model)
 	}
 	return out

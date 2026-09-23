@@ -29,6 +29,10 @@ node scripts/Test-Updates-Web.mjs
 
 `data`、`dist`、`build`、`_backups`、`_testdata`、本机部署脚本与验收资料不进入 Git。测试用密码与回环地址只是合成测试数据。
 
+数据加载验证器 `duo-service.exe --validate-data --data <directory>` 在任何目录创建、配置加载或数据库迁移之前运行。它仅输出固定成功协议或不含凭据的错误，不初始化、不修复数据。调用方必须保护源/目标数据在验证至安装期间不被运行实例打开。SQLite 以只读 immutable 模式检查，非空 WAL/recovery journal 会拒绝并要求原程序正常退出，避免忽略未落盘内容；不能删除 WAL 来绕过检查。安装器只调用发布包内的验证器，不执行用户数据目录中的程序。
+
+交互安装可显式选择保留、全新或载入数据。静默更新不得改变 data；原程序安装目录不能在维护向导中变更。对新建/载入模式应使用独立 GUID 安装身份验证旧数据保留、已有数据哈希不变、活动锁拒绝、失败回滚与无参数默认路径。不得把用户现有安装作为自动化卸载测试对象。
+
 ## 工作流与浏览器验收
 
 提交前运行所有网页回归，而不只是布局检查：
@@ -74,7 +78,7 @@ fixture 不启动 CLI、不读取真实模型缓存、不调用模型，并禁�
 
 维护者约定：每轮完成的功能优化都发布正式 Release，不以仅推送提交或本地体验构建代替。当前任务明确要求暂不发布时例外；测试失败或发布受阻时说明原因，不跳过校验。
 
-1. 同步修改 `portable.go`、`package.json`、`package-lock.json` 和 `scripts/Test-Portable.py` 中的版本号。启动器不维护独立版本常量，安装器从 package.json 读取版本。
+1. 同步修改 `portable.go`、`package.json` 和 `package-lock.json` 中的版本号。成品验收脚本、安装器从 package.json 读取版本，启动器不维护独立版本常量。
 2. 添加 `docs/releases/vX.Y.Z.md`，描述变更与迁移注意事项。
 3. 完成测试和源码提交；确认 GitHub CLI 已登录目标仓库账号。
 4. 运行 `scripts/Publish-Release.ps1`。脚本构建，推送分支和精确标签，创建草稿并上传便携 ZIP、安装器及两个 SHA-256 文件，检查大小后发布正式 Release。

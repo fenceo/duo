@@ -42,7 +42,7 @@ func TestHarnessEnvironmentDefaultsAndRuntimeConfig(t *testing.T) {
 }
 
 func TestHarnessModelCatalogAndReasoning(t *testing.T) {
-	list, err := modelsForEngine(context.Background(), Environment{Models: []ModelOption{
+	list, err := modelsForEngine(context.Background(), Environment{HarnessModel: "deepseek-flash", Models: []ModelOption{
 		{ID: "custom-model", Name: "Custom", DefaultReasoning: "medium"},
 		{ID: "deepseek-flash", Name: "Duplicate"},
 	}}, "deepseek-harness")

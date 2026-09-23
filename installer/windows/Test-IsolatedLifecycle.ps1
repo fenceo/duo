@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$ProjectRoot,[string]$Payload='')
+param([Parameter(Mandatory=$true)][string]$ProjectRoot,[string]$Payload='',[string]$DataValidator='')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath($ProjectRoot)
@@ -21,11 +21,39 @@ $desktop=Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) ($name + '
 $menu=Join-Path ([Environment]::GetFolderPath('Programs')) $name
 $scheduler=$null; $folder=$null
 $lastSetupLog=''
-function Q([string]$Value) { if ($Value.Contains('"')) { throw 'Invalid test path.' }; return '"' + $Value + '"' }
+function Q([string]$Value) { if ($Value.Contains('"')) { throw 'Invalid test path.' }; $trailing=$Value.Length - $Value.TrimEnd('\').Length; return '"' + $Value + ('\' * $trailing) + '"' }
+function Exec-Helper([string[]]$Arguments) {
+    # Start-Process -Wait waits the entire descendant tree, including the guard
+    # that deliberately outlives prepare. Wait only for this direct helper.
+    $info=[Diagnostics.ProcessStartInfo]::new($helperPath,($Arguments -join ' '))
+    $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+    $process=[Diagnostics.Process]::Start($info)
+    try { $process.WaitForExit(); return $process.ExitCode } finally { $process.Dispose() }
+}
+function Invoke-Private([string]$Method,[object[]]$Arguments) {
+    $member=$type.GetMethod($Method,$flags); $parameters=$member.GetParameters(); $converted=[object[]]::new($Arguments.Count)
+    for ($i=0;$i -lt $Arguments.Count;$i++) { $converted[$i]=[System.Management.Automation.LanguagePrimitives]::ConvertTo($Arguments[$i].PSObject.BaseObject,$parameters[$i].ParameterType) }
+    return ,($member.Invoke($null,$converted))
+}
 function Exec-Setup([string[]]$Extra) {
     $script:lastSetupLog=Join-Path $fixture ('setup-' + [Guid]::NewGuid().ToString('N') + '.log')
     $run=Start-Process -FilePath (Join-Path $output 'Duo-Setup-User-x64.exe') -WindowStyle Hidden -PassThru -Wait -ArgumentList (@('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOLAUNCH',('/DIR=' + (Q $program)),('/DATADIR=' + (Q $data)),('/LOG=' + (Q $script:lastSetupLog))) + $Extra)
     return $run.ExitCode
+}
+function Data-Snapshot([string]$Path) {
+    return @(Get-ChildItem -LiteralPath $Path -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($Path.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+}
+function Assert-NoDataChange([string]$Path,[string]$Before) { if ((Data-Snapshot $Path) -cne $Before) { throw 'Installer changed user data contents or file inventory.' } }
+function Initialize-SyntheticData([string]$Path) {
+    $info=[Diagnostics.ProcessStartInfo]::new((Join-Path $output '.installer-build\payload\duo-service.exe'),('--portable-init --data ' + (Q $Path)))
+    $info.UseShellExecute=$false; $info.CreateNoWindow=$true; $info.RedirectStandardInput=$true; $info.RedirectStandardError=$true; $info.RedirectStandardOutput=$true
+    $process=[Diagnostics.Process]::Start($info)
+    try {
+        $process.StandardInput.WriteLine('{"password":"fixture-password","config":{"listen":"127.0.0.1:18789","distro":"Ubuntu-22.04","user":"fixture","codex":"codex","workspaces":["/tmp"],"model":"fixture"}}')
+        $process.StandardInput.Close()
+        $errorText=$process.StandardError.ReadToEnd(); [void]$process.StandardOutput.ReadToEnd()
+        if (!$process.WaitForExit(20000) -or $process.ExitCode -ne 0) { throw ('Synthetic data initialization failed: ' + $errorText) }
+    } finally { $process.Dispose() }
 }
 function Read-TestTask {
     try { return $folder.GetTask($key) } catch { if ($_.Exception.GetBaseException().HResult -eq -2147024894) { return $null }; throw }
@@ -40,6 +68,14 @@ function Uninstall-Test {
 }
 New-Item -ItemType Directory -Path $fixture,$data,$oldProgram | Out-Null
 try {
+    if ($DataValidator) {
+        if (!$Payload) { $Payload=Join-Path $root 'dist\Duo-portable-windows-x64.zip' }
+        $fixturePayload=Join-Path $fixture 'fixture-payload'
+        Expand-Archive -LiteralPath $Payload -DestinationPath $fixturePayload
+        Copy-Item -LiteralPath $DataValidator -Destination (Join-Path $fixturePayload 'duo-service.exe') -Force
+        $Payload=Join-Path $fixture 'fixture-payload.zip'
+        Compress-Archive -LiteralPath @((Join-Path $fixturePayload 'Duo.exe'),(Join-Path $fixturePayload 'duo-service.exe'),(Join-Path $fixturePayload '使用说明.md'),(Join-Path $fixturePayload 'THIRD-PARTY-NOTICES.txt')) -DestinationPath $Payload
+    }
     & (Join-Path $root 'scripts\Build-Installer.ps1') -ProjectRoot $root -Payload $Payload -OutputDir $output -TestNamespace $identity -SkipTests
     if ($LASTEXITCODE -ne 0) { throw 'Isolated installer compilation failed.' }
     # Confirm actual compiled helper identities before any external-state operation.
@@ -49,14 +85,79 @@ try {
         $type.GetField('SettingsKey',$flags).GetValue($null) -cne ('Software\' + $key)) { throw 'Compiled isolated identities differ; refusing lifecycle.' }
     $scheduler=[Activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service')); $scheduler.Connect(); $folder=$scheduler.GetFolder('\')
     if ((Read-TestTask) -or (Test-Path -LiteralPath $settings) -or (Test-Path -LiteralPath $uninstall) -or (Test-Path -LiteralPath $desktop) -or (Test-Path -LiteralPath $menu)) { throw 'Generated fixture identities already exist.' }
-    [IO.File]::WriteAllText((Join-Path $data 'preserve-data.txt'),'synthetic data must survive')
     if ((Exec-Setup @('/UPDATE=1')) -eq 0) { throw 'UPDATE accepted a new installation.' }
     if (Test-Path -LiteralPath $settings) { throw 'Rejected UPDATE wrote registration.' }
     if ((Exec-Setup @()) -ne 0) { throw 'Isolated native first install failed.' }
+    [IO.File]::WriteAllText((Join-Path $data 'preserve-data.txt'),'synthetic data must survive')
+    # No /DIR or /DATADIR: exercise the actual wizard defaults independently of
+    # installation. This early-abort hook only exists in GUID fixture builds.
+    $defaults=Join-Path $fixture 'defaults.txt'
+    $probe=Start-Process -FilePath (Join-Path $output 'Duo-Setup-User-x64.exe') -WindowStyle Hidden -PassThru -Wait -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/TESTDEFAULTSRESULT=' + (Q $defaults)))
+    if ($probe.ExitCode -eq 0 -or !(Test-Path -LiteralPath $defaults) -or [IO.File]::ReadAllText($defaults) -cne ($program + "`r`n" + $data)) { throw 'Wizard failed to inherit existing program/data without command-line defaults.' }
+    $dataWithoutSlash=$data; $data += '\'
+    if ((Exec-Setup @('/UPDATE=1')) -ne 0) { throw 'Trailing-backslash data path broke helper argument quoting.' }
+    $data=$dataWithoutSlash
     foreach($file in @('Duo.exe','duo-service.exe','DuoMaintenance.exe','unins000.exe','.jianzuo-install')) {
         if (!(Test-Path -LiteralPath (Join-Path $program $file))) { throw ('Installed file missing: ' + $file) }
     }
     if (!(Read-TestTask) -or !(Test-Path -LiteralPath $desktop) -or (Get-ItemPropertyValue -LiteralPath $settings -Name Installer) -cne 'inno') { throw 'Native registration/shortcut/startup missing.' }
+    Initialize-SyntheticData $data
+    $originalData=$data
+    $originalSnapshot=Data-Snapshot $originalData
+    # Inspect the cross-phase guard itself without modifying any task/registry.
+    $guardTarget=Join-Path $fixture 'guard-only-data'
+    $guardTransaction=Join-Path $fixture 'guard-only.xml'
+    $helperPath=Join-Path $output '.installer-build\DuoMaintenance.exe'
+    # Reusing the transaction path models retrying within one open installer;
+    # the previous stopped sentinel must not poison the next guard.
+    foreach ($guardAttempt in 1..2) {
+      $guardPrepare=Exec-Helper @('--prepare','--install-dir',(Q $program),'--data',(Q $guardTarget),'--previous-data',(Q $originalData),'--data-mode','fresh','--interactive','--confirm-data','--owner-pid',$PID.ToString(),'--transaction',(Q $guardTransaction))
+      if ($guardPrepare -ne 0) { throw 'Isolated guard prepare failed.' }
+      try {
+        $guardDocument=[Xml.XmlDocument]::new(); $guardDocument.Load($guardTransaction)
+        Invoke-Private 'CheckDataGuard' @($guardDocument,$guardTransaction)
+        foreach ($guardPath in @($originalData,$guardTarget)) {
+            $mutexName=[string](Invoke-Private 'DataMutexName' @($guardPath))
+            $opened=[Threading.Mutex]::OpenExisting($mutexName); $opened.Dispose()
+            $busy=$false
+            try { $probeLock=[IO.File]::Open((Join-Path $guardPath 'service.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); $probeLock.Dispose() } catch [IO.IOException] { $busy=$true }
+            if (!$busy) { throw 'Guard did not exclusively protect both selected data directories.' }
+        }
+      } finally {
+        $guardRelease=Exec-Helper @('--release-guard','--transaction',(Q $guardTransaction))
+        if ($guardRelease -ne 0) { throw 'Isolated data guard failed to release.' }
+      }
+    }
+    Assert-NoDataChange $originalData $originalSnapshot
+    if (@(Get-ChildItem -LiteralPath $guardTarget -Force).Count -ne 0) { throw 'Guard left new lock file after release.' }
+    $freshData=Join-Path $fixture 'fresh-data'
+    $data=$freshData
+    if ((Exec-Setup @()) -eq 0) { throw 'Silent keep mode switched data.' }
+    if ((Exec-Setup @('/TESTDATAMODE=fresh')) -eq 0) { throw 'Data switch proceeded without interactive confirmation.' }
+    if ((Exec-Setup @('/UPDATE=1','/TESTDATAMODE=fresh','/TESTCONFIRMDATA=1')) -eq 0) { throw 'UPDATE accepted explicit data switching.' }
+    $taskBeforeSwitch=(Read-TestTask).Xml
+    if ((Exec-Setup @('/TESTDATAMODE=fresh','/TESTCONFIRMDATA=1','/TESTFAILAFTERTASK=1')) -eq 0) { throw 'Injected data-switch failure was hidden.' }
+    if ((Read-TestTask).Xml -cne $taskBeforeSwitch -or (Get-ItemPropertyValue -LiteralPath $settings -Name DataDir) -ine $originalData) { throw 'Failed data switch did not restore original task/registration.' }
+    Assert-NoDataChange $originalData $originalSnapshot
+    if ((Exec-Setup @('/TESTDATAMODE=fresh','/TESTCONFIRMDATA=1')) -ne 0) { throw 'Confirmed fresh-data switch failed.' }
+    if ((Get-ItemPropertyValue -LiteralPath $settings -Name DataDir) -ine $freshData -or !(Read-TestTask).Definition.Actions.Item(1).Arguments.Contains($freshData)) { throw 'Fresh switch failed to retarget registered data and startup.' }
+    Assert-NoDataChange $originalData $originalSnapshot
+    if (@(Get-ChildItem -LiteralPath $freshData -Force).Count -ne 0) { throw 'Fresh data was initialized or left with guard/backup contents.' }
+    $unknownData=Join-Path $fixture 'unknown-data'
+    New-Item -ItemType Directory -Path $unknownData | Out-Null
+    [IO.File]::WriteAllText((Join-Path $unknownData 'config.json'),'{}')
+    [IO.File]::WriteAllText((Join-Path $unknownData 'jianzuo.db'),'not a Duo database')
+    $unknownSnapshot=Data-Snapshot $unknownData; $data=$unknownData
+    if ((Exec-Setup @('/TESTDATAMODE=existing','/TESTCONFIRMDATA=1')) -eq 0) { throw 'Arbitrary directory accepted as existing Duo data.' }
+    Assert-NoDataChange $unknownData $unknownSnapshot
+    $data=$originalData
+    $lock=[IO.File]::Open((Join-Path $originalData 'service.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try { if ((Exec-Setup @('/TESTDATAMODE=existing','/TESTCONFIRMDATA=1')) -eq 0) { throw 'Active existing-data lock was ignored.' } } finally { $lock.Dispose() }
+    if ((Exec-Setup @('/TESTDATAMODE=existing','/TESTCONFIRMDATA=1')) -ne 0) { throw 'Loading existing Duo data failed.' }
+    Assert-NoDataChange $originalData $originalSnapshot
+    if ((Get-ItemPropertyValue -LiteralPath $settings -Name DataDir) -ine $originalData -or !(Read-TestTask).Definition.Actions.Item(1).Arguments.Contains($originalData)) { throw 'Load-existing failed to restore selected data references.' }
+    # Neither selected database/config nor abandoned fresh directory is deleted.
+    if (!(Test-Path -LiteralPath $freshData -PathType Container) -or @(Get-ChildItem -LiteralPath $freshData -Force).Count -ne 0) { throw 'Previous fresh data directory was altered during loading.' }
     # Simulate the pre-Inno same-directory installer/payload identities; these
     # files are synthetic, recognized by the old bound ownership marker.
     foreach ($oldName in @('简作.exe','jianzuo-service.exe','JianzuoMaintenance.exe','卸载简作.exe')) {
@@ -134,7 +235,7 @@ try {
     if ((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties.Name -contains $runName) { throw 'Owned legacy Run entry duplicated new startup task.' }
     if (!(Read-TestTask)) { throw 'Run-only migration did not create the new startup task.' }
     Uninstall-Test
-    Write-Output 'PASS: GUID-isolated native install/update, post-install cleanup warning preserves finalized state and repairs cleanly, old payload/ARP cleanup, disabled preferences, native uninstall/data survival, consent, pre-install injected rollback without residue, Task and Run-only migration.'
+    Write-Output 'PASS: GUID-isolated native install/update, no-argument wizard defaults, explicit fresh/load-existing data and guarded rollback with hashes unchanged, busy/unknown-data rejection, post-install cleanup warning preserves finalized state and repairs cleanly, old payload/ARP cleanup, disabled preferences, native uninstall/data survival, consent, pre-install injected rollback without residue, Task and Run-only migration.'
 } catch {
     if ($folder) {
         $diagnostic=Read-TestTask

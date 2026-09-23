@@ -309,6 +309,29 @@ func (s *Server) Handler() http.Handler {
 		if engine == "" {
 			engine = "codex"
 		}
+		if !validEngine(engine) {
+			fail(w, http.StatusBadRequest, "AI 工具无效")
+			return
+		}
+		if workspace := r.URL.Query().Get("workspace"); workspace != "" {
+			workspace, err := probeWorkspace(env, workspace)
+			if err != nil {
+				fail(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			env.Workspaces = []string{workspace}
+		}
+		// Model metadata creates a short-lived native CLI process. Admit it
+		// atomically with model probes and maintenance, without paid generation.
+		if !s.admitModelCatalog(r.Context()) {
+			fail(w, http.StatusConflict, "已有模型读取、测试或更新正在进行，请稍后重试")
+			return
+		}
+		defer s.modelProbeMu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, http.StatusConflict, errUpdateBusy.Error())
+			return
+		}
 		profileEnv := s.app.activeEngineEnvironment(Task{Engine: engine, Environment: &env})
 		models, e := modelsForEngine(r.Context(), env, engine, profileEnv)
 		if e != nil {

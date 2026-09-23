@@ -24,7 +24,7 @@ $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($setup))
 if (!$binary.StartsWith('MZ') -or !$binary.Contains('Inno Setup Setup Data')) { throw 'Release artifact is not a native Inno Setup executable.' }
 $definition = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'installer\windows\Jianzuo.iss')
 $source = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'installer\windows\JianzuoMaintenance.cs')
-foreach ($contract in @('PrivilegesRequired=lowest','[Files]','[Icons]','[Registry]','if CurStep = ssInstall then ApplyStartup','--rollback','--commit','--update','TaskRecognized','MigrationPage.Values[0] := False','CloseApplications=no')) {
+foreach ($contract in @('PrivilegesRequired=lowest','[Files]','[Icons]','[Registry]','if CurStep = ssInstall then ApplyStartup','--rollback','--commit','--update','TaskRecognized','MigrationPage.Values[0] := False','CloseApplications=no','WizardForm.DirBrowseButton.Enabled := False','DataPage.Buttons[0].Enabled','--confirm-data','--release-guard')) {
     if (!$definition.Contains($contract)) { throw "Missing Inno safety contract: $contract" }
 }
 foreach ($unsafe in @('taskkill','Directory.Delete(','ExtractPayload','--uninstall --install-dir')) {
@@ -88,6 +88,55 @@ try {
     New-Item -ItemType Directory -Path $programDir,$dataDir | Out-Null
     $options = New-Options $programDir $dataDir
     Invoke-Helper 'ValidateOptions' @($options)
+    foreach ($uncanonical in @(' ' + $dataDir,$dataDir + ' ','%LOCALAPPDATA%\Duo\data','C:\%USERNAME%\data')) {
+        Assert-Rejected { Invoke-Helper 'NormalizeDirectory' @($uncanonical) } 'Path normalization accepted a different path from native registration/launch.'
+    }
+    $spacedData=Join-Path $fixture 'legitimate internal spaces'
+    if ([string](Invoke-Helper 'NormalizeDirectory' @($spacedData)) -cne $spacedData) { throw 'Internal path spaces were damaged.' }
+    Invoke-Helper 'ValidateDataChoice' @($options,'')
+    $otherData = Join-Path $fixture 'new-data'
+    Set-Field $options 'DataDir' $otherData
+    Assert-Rejected { Invoke-Helper 'ValidateDataChoice' @($options,$dataDir) } 'Keep mode silently switched data.'
+    Set-Field $options 'DataMode' 'fresh'
+    Set-Field $options 'PreviousData' $dataDir
+    Assert-Rejected { Invoke-Helper 'ValidateDataChoice' @($options,$dataDir) } 'Fresh data accepted without interaction/confirmation.'
+    Set-Field $options 'Interactive' $true
+    Set-Field $options 'ConfirmData' $true
+    Invoke-Helper 'ValidateDataChoice' @($options,$dataDir)
+    Set-Field $options 'Update' $true
+    Assert-Rejected { Invoke-Helper 'ValidateDataChoice' @($options,$dataDir) } 'UPDATE changed data with confirmation flags.'
+    Set-Field $options 'Update' $false
+    New-Item -ItemType Directory -Path $otherData | Out-Null
+    [IO.File]::WriteAllText((Join-Path $otherData 'unknown.txt'),'never overwrite')
+    Assert-Rejected { Invoke-Helper 'ValidateDataChoice' @($options,$dataDir) } 'Fresh mode accepted non-empty data.'
+    Set-Field $options 'DataDir' (Join-Path $dataDir 'nested')
+    Assert-Rejected { Invoke-Helper 'ValidateDataChoice' @($options,$dataDir) } 'Nested data directory was accepted.'
+    Set-Field $options 'DataDir' $dataDir
+    Set-Field $options 'DataMode' 'keep'
+    Set-Field $options 'PreviousData' ''
+    $mutexName=[string](Invoke-Helper 'DataMutexName' @($dataDir))
+    $mutex=[Threading.Mutex]::new($true,$mutexName)
+    try { Assert-Rejected { Invoke-Helper 'ValidateDataIdle' @($dataDir) } 'Running launcher mutex ignored.' }
+    finally { $mutex.ReleaseMutex(); $mutex.Dispose() }
+    $lockFile=Join-Path $dataDir 'service.lock'
+    $lock=[IO.File]::Open($lockFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try { Assert-Rejected { Invoke-Helper 'ValidateDataIdle' @($dataDir) } 'Running service lock ignored.' }
+    finally { $lock.Dispose() }
+    Invoke-Helper 'ValidateDataIdle' @($dataDir)
+    $validatorDir=Join-Path $fixture 'validator-bin'
+    $validatorTimeout=Join-Path $fixture 'validator-timeout'
+    New-Item -ItemType Directory -Path $validatorDir,$validatorTimeout | Out-Null
+    $fakeValidator=Join-Path $validatorDir 'duo-service.exe'
+    & (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe') /nologo /target:exe ('/out:' + $fakeValidator) (Join-Path $root 'installer\windows\Test-ValidatorFixture.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Validator protocol fixture compilation failed.' }
+    Set-Field $options 'Validator' $fakeValidator
+    Assert-Rejected { Invoke-Helper 'ValidateExistingData' @($options) } 'Unknown validator protocol accepted.'
+    Set-Field $options 'DataDir' $validatorTimeout
+    Assert-Rejected { Invoke-Helper 'ValidateExistingData' @($options) } 'Hung validator accepted.'
+    $validatorPid=[int][IO.File]::ReadAllText((Join-Path $validatorTimeout 'validator.pid'))
+    if (Get-Process -Id $validatorPid -ErrorAction SilentlyContinue) { throw 'Timed-out installer-owned validator remains running.' }
+    Set-Field $options 'DataDir' $dataDir
+    Set-Field $options 'Validator' ''
     foreach ($invalid in @('C:\','relative\path','\\server\share','C:\bad"path')) {
         Assert-Rejected { Invoke-Helper 'NormalizeDirectory' @($invalid) } "Accepted unsafe path: $invalid"
     }

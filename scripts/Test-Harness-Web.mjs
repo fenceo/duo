@@ -109,5 +109,7 @@ assert.match(workflowSource,/button\('create-attach'\)\.disabled=harness/);
 assert.match(workflowSource,/button\('attach-open'\)\.disabled=attachmentsBlocked/);
 assert.match(app,/validateEngineAttachments\(detail\.task\.engine,files\.length\)/);
 assert.match(await source('layout.ts'),/Codex、Claude Code 或 DeepSeek Harness/);
-assert.match(await source('environments.ts'),/Codex、Claude Code 或 DeepSeek Harness/);
+const modelManager=await source('environments.ts');
+for(const engine of ['codex','claude','deepseek-harness'])assert(modelManager.includes('option value="'+engine+'"'),'custom models retain an explicit '+engine+' scope');
+assert.match(modelManager,/实际调用仍由引擎和 provider 决定/);
 console.log('PASS: Harness engine-specific defaults, provider persistence, supported reasoning levels, immutable SDK session options, network-policy limits, CLI check and honest credential switching.');

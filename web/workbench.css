@@ -123,7 +123,7 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .model-item:hover{background:var(--raised)}
 .model-item.selected{color:var(--accent)}
 .model-item-name{flex:1;min-width:0;overflow-wrap:anywhere}
-.model-item small{color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.model-item small{color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44%;min-width:0;flex-shrink:1}
 .model-item-check{color:var(--accent)}
 .model-efforts{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
 .model-efforts>small{display:block;margin-bottom:6px;font-size:10px;color:var(--muted)}
@@ -308,6 +308,36 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .session-banner #session-reset:hover:not(:disabled){background:var(--raised)}
 #sticky-expand{display:none}
 
+/* Model metadata and explicit probe actions belong to the model picker. */
+.model-menu{max-height:min(500px,calc(100dvh - 120px));overflow:hidden}
+.model-list{min-height:0;overflow-y:auto;overscroll-behavior:contain;flex:1 1 auto}
+.model-catalog-footer{flex:none;min-width:0;margin-top:8px;padding:10px 2px 2px;border-top:1px solid var(--line);max-height:200px;overflow-y:auto}
+.model-catalog-footer p{margin:0;font-size:12px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
+.model-context{color:var(--ink);font-weight:550}
+.model-catalog-status{color:var(--muted);padding:4px 0 8px}
+.model-catalog-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.model-catalog-actions button{font-size:12px;min-height:36px;padding:6px 9px;background:var(--surface);color:var(--ink)}
+.model-catalog-details{margin:8px 0 0;color:var(--muted);font-size:11px}
+.model-catalog-details>summary{cursor:pointer;padding:3px 0}
+.model-catalog-details>p{padding-top:6px;font-size:11px}
+.model-catalog-footer .model-test-result:not(:empty){padding:8px;margin-top:8px;border-radius:6px;background:var(--surface)}
+
+/* Notes sit above a stable utility footer, never below account controls. */
+#sidebar-footer{display:flex;flex-direction:column;align-items:stretch;gap:5px;border-top:1px solid var(--line);padding:9px 0 0}
+.sidebar-utilities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:3px}
+.sidebar-utilities button{width:100%;min-width:0;min-height:36px;text-align:center}
+#sidebar-footer #connection{width:auto;order:0;padding:0 8px 3px;text-align:center;font-size:10px}
+#sticky-board[data-empty="true"],#workspace>.dock>#sticky-board[data-empty="true"]{flex:none;height:auto;min-height:0;max-height:none;padding-top:0}
+#sticky-board[data-empty="true"]>header{grid-template-columns:auto minmax(0,1fr) 38px 36px;gap:5px;margin:0;min-height:42px}
+#sticky-board[data-empty="true"]>header>.dock-grip,#sticky-board[data-empty="true"]>#sticky-resizer{display:none}
+#sticky-board[data-empty="true"]>header>strong{grid-column:1}
+#sticky-board[data-empty="true"] #sticky-count{grid-column:2}
+#sticky-board[data-empty="true"] #sticky-expand{display:inline-flex;align-items:center;justify-content:center;grid-column:3;grid-row:1;font-size:11px;min-height:36px}
+#sticky-board[data-empty="true"] #sticky-new{min-height:36px}
+#sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-list,
+#sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-filter,
+#sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #sticky-scope{display:none}
+
 @media(max-width:760px){
  .header{padding:12px 16px;min-height:72px;align-items:center}
  .header h1{font-size:15px}.header p{font-size:12px}
@@ -316,6 +346,8 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .app summary,dialog summary{min-height:40px;align-content:center}
  .task-item-menu>summary{min-width:40px;text-align:center}
  .sidebar .task{padding-left:14px}.sidebar .task-views button{font-size:12px;padding-left:3px;padding-right:3px}
+ .sidebar-utilities{grid-template-columns:repeat(4,minmax(0,1fr))}
+ .sidebar-utilities button{min-height:44px}
  .sticky-board select{min-height:40px}.sticky-board>header button{min-width:40px}
  .tabs{gap:14px}.tabs>button,.tabs .filter-presets button{font-size:13px}
  .filter-presets{gap:14px}.tools-menu>summary,.display-menu>summary{font-size:12px}
@@ -345,6 +377,8 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  #task-model-button{max-width:100%;width:100%;justify-content:space-between}
  .composer-bottom .actions{margin-left:auto}
  .model-menu{max-width:calc(100vw - 32px)}
+ .create-model-field .model-menu,.composer-bottom .model-menu{position:fixed;top:auto;bottom:16px;left:16px;right:16px;width:auto;max-width:none;max-height:min(560px,calc(100dvh - 96px))}
+ .model-catalog-actions button,.model-item,.model-search-input{min-height:44px}
  .model-item small{max-width:40%}
  .model-effort{min-height:40px}
  .create-page{padding:24px 16px 28px}

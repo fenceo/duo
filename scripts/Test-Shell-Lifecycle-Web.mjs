@@ -30,12 +30,12 @@ function fixture(){
   return nodes.get(id);
  };
  const ctx=createContext({
-  AbortController,URLSearchParams,Date,console,selection:0,modelRequest:0,taskModelRequest:0,modelTestRequest:0,
+  AbortController,URLSearchParams,Date,Error,console,selection:0,modelRequest:0,taskModelRequest:0,modelTestRequest:0,
   polling:false,settingsPolling:false,createSubmitting:false,sending:false,sessionResetTask:'',csrf:'synthetic-token',
   authenticated:true,chosen:'',refreshList:0,sequence:0,codexApprovalRevision:0,
   settings:{config:configuration,secret_configured:false,feishu_status:'before',chat:''},tasks:[],workCatalog:{},editingEnvironments:[],editingID:'',
   engineCatalog:null,engineSettingsRequest:0,document:{hidden:false,querySelector(){return null}},location:{search:''},
-  element:node,button:node,input:node,notify:message=>notices.push(message),
+  element:node,button:node,input:node,notify:message=>notices.push(message),escapeHTML:value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
   renderList(){counts.render++},renderTask(){counts.render++},renderShell(){counts.render++;ctx.renewShellScope()},
   showLogin(){counts.login++;ctx.renewShellScope()},choose:async()=>{},
   loadAccessSettings(){},environmentPickers(){},loadEnvironmentEditor(){},storeEnvironmentEditor(){},
@@ -81,6 +81,17 @@ for(const status of [401,403,409]){
  gate.resolve({authenticated:true,csrf:'old-response'});
  await pending;
  assert.equal(f.ctx.csrf,'synthetic-token');assert.equal(f.counts.render,0,'old boot cannot rebuild a new shell');
+}
+{
+ const f=fixture();
+ f.ctx.api=async path=>path==='auth'?{authenticated:true,csrf:'fixture'}:path==='tasks'?[]:path==='settings'?{config:configuration}:{modes:[],commands:[]};
+ f.ctx.renderShell=()=>{f.ctx.renewShellScope();throw new Error('<synthetic mount failure>')};
+ await f.ctx.boot();
+ assert.equal(f.ctx.authenticated,false,'a half-mounted workbench must not keep polling');
+ assert.match(f.node('root').innerHTML,/工作台界面未能加载/);
+ assert.match(f.node('root').innerHTML,/&lt;synthetic mount failure&gt;/);
+ assert.doesNotMatch(f.node('root').innerHTML,/<synthetic mount failure>/);
+ assert.equal(typeof f.node('shell-retry').onclick,'function','mount failure after epoch renewal must expose a reload action');
 }
 {
  const f=fixture(),gate=deferred();f.ctx.api=()=>gate.promise;
