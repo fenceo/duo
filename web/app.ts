@@ -9,7 +9,7 @@ type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRe
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
-type Settings={config:Configuration;secret_configured:boolean;feishu_status:string;chat:string};
+type Settings={config:Configuration;data_dir:string;data_switch_supported?:boolean;secret_configured:boolean;feishu_status:string;chat:string};
 const element=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
 const input=(id:string)=>element<HTMLInputElement>(id);
 const button=(id:string)=>element<HTMLButtonElement>(id);
@@ -104,6 +104,7 @@ function renderShell(){
  input('environment-picker').onchange=()=>{storeEnvironmentEditor();editingID=input('environment-picker').value;loadEnvironmentEditor()};input('environment-type').onchange=showEnvironmentFields;button('add-wsl').onclick=()=>addEnvironment('wsl');button('add-windows').onclick=()=>addEnvironment('windows');button('add-ssh').onclick=()=>addEnvironment('ssh');button('remove-environment').onclick=removeEnvironment;
  element('settings-form').onsubmit=saveSettings;button('check-codex').onclick=async()=>{button('check-codex').disabled=true;try{const r=await api('check','POST',{environment_id:editingID});element('check-result').textContent=(r.ok?'检查通过\n':'检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-codex').disabled=false}};
  button('pair-code').onclick=async()=>{try{const r=await api('feishu/pair','POST',{});element('pair-result').textContent='向机器人发送：\n/配对 '+r.code}catch(e){notify((e as Error).message)}};
+ button('data-dir-switch').onclick=()=>void switchDataDirectory();
  button('setup-feishu').onclick=()=>openSetup('');button('bind-setup').onclick=()=>openSetup(chosen);button('setup-start').onclick=startSetup;button('setup-close').onclick=()=>element<HTMLDialogElement>('setup-dialog').close();button('setup-cancel').onclick=cancelSetup;button('bind-open').onclick=openBinding;button('bind').onclick=()=>setBinding(true);button('unbind').onclick=()=>setBinding(false);
 }
 function mayLeave(){if(createSubmitting){notify('正在创建任务，请等待提交完成。你的要求和附件会保留。');return false}return true}
@@ -325,7 +326,23 @@ function useKnowledge(k:Knowledge|undefined){if(!k)return;bringToChat(k.title+'\
 async function openSettings(){
  const epoch=shellEpoch;
  element('settings-saved').textContent='';
- try{const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;const c=settings.config;loadAccessSettings();editingEnvironments=JSON.parse(JSON.stringify(c.environments));editingID=c.default_environment;environmentPickers(c.default_environment);loadEnvironmentEditor();input('feishu-id').value=c.feishu.app_id;input('feishu-secret').value='';input('feishu-secret').placeholder=settings.secret_configured?'已保存，留空保持不变':'填写自建应用 App Secret';input('feishu-enabled').checked=c.feishu.enabled;updateFeishuStatus();element('check-result').textContent='';element('settings-error').textContent='';element<HTMLDialogElement>('settings-dialog').showModal()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
+ try{const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;const c=settings.config;loadAccessSettings();loadDataSettings();editingEnvironments=JSON.parse(JSON.stringify(c.environments));editingID=c.default_environment;environmentPickers(c.default_environment);loadEnvironmentEditor();input('feishu-id').value=c.feishu.app_id;input('feishu-secret').value='';input('feishu-secret').placeholder=settings.secret_configured?'已保存，留空保持不变':'填写自建应用 App Secret';input('feishu-enabled').checked=c.feishu.enabled;updateFeishuStatus();element('check-result').textContent='';element('settings-error').textContent='';element<HTMLDialogElement>('settings-dialog').showModal()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
+}
+function loadDataSettings(){
+ const current=element('data-dir-current');if(!current)return;
+ current.textContent=settings.data_dir||'未能读取当前数据目录';input('data-dir-target').value='';
+ const supported=settings.data_switch_supported!==false;button('data-dir-switch').disabled=!supported;
+ element('data-dir-supported').textContent=supported?'当前通过 Duo 启动器运行，可自动安全重启。':'当前是直接运行服务，需通过 Duo.exe 启动后才能切换。';
+}
+async function switchDataDirectory(){
+ const target=input('data-dir-target').value.trim();if(!target){element('data-dir-result').textContent='请填写已有数据目录的绝对路径。';return}
+ if(!settings.data_switch_supported){element('data-dir-result').textContent='当前启动方式不支持自动切换，请先通过 Duo.exe 启动。';return}
+ if(!confirm('将停止当前空闲服务并载入此已有数据目录。不会复制、合并或删除任何数据；原目录会保留。目标目录必须已完整复制并正常退出 Duo。继续吗？'))return;
+ const expected=settings.data_dir;button('data-dir-switch').disabled=true;element('data-dir-result').textContent='正在校验并安全重启…请不要关闭窗口。';
+ try{await api('data/switch','POST',{data_dir:target,expected_current:expected,confirm:true});element('data-dir-result').textContent='已接受切换请求，正在载入新目录…';
+  const started=Date.now();let sawDown=false;while(Date.now()-started<60000){await new Promise(resolve=>setTimeout(resolve,500));try{const response=await fetch('/healthz',{cache:'no-store'});if(response.ok&&sawDown){location.reload();return}}catch{sawDown=true}}
+  throw new Error('等待新数据目录启动超时；原目录应仍保留，请查看托盘状态后重试。');
+ }catch(e){element('data-dir-result').textContent=(e as Error).message;button('data-dir-switch').disabled=false}
 }
 function environmentPickers(defaultID?:string){
  const preferred=defaultID||input('default-environment').value||settings.config.default_environment;

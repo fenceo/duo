@@ -440,7 +440,14 @@ func (w *harnessWorker) stop() error {
 				case <-w.done:
 				default:
 					_ = w.cmd.Process.Kill()
-					failure = fmt.Errorf("Harness 主进程已终止，但无法确认所有子进程已停止：%w", err)
+					// Process.Kill is asynchronous on Windows. Give the reader
+					// goroutine a moment to observe the exit before reporting that
+					// the process tree could not be confirmed.
+					select {
+					case <-w.done:
+					case <-time.After(500 * time.Millisecond):
+						failure = fmt.Errorf("Harness 主进程已终止，但无法确认所有子进程已停止：%w", err)
+					}
 				}
 			}
 		} else {

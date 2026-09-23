@@ -33,6 +33,9 @@ func main() {
 	updateVersion := flag.String("update-version", "", "自动更新版本")
 	launcherPID := flag.Int("launcher-pid", 0, "等待退出的便携版启动器进程")
 	flag.Parse()
+	if absolute, err := filepath.Abs(*dir); err == nil {
+		*dir = absolute
+	}
 	if *showVersion {
 		fmt.Println(version)
 		return
@@ -133,8 +136,10 @@ func main() {
 	go func() { defer a.wg.Done(); f.runCardsLoop() }()
 	done := make(chan os.Signal, 1)
 	handler := &Server{
-		app:        a,
-		updateRoot: filepath.Dir(exe),
+		app:           a,
+		updateRoot:    filepath.Dir(exe),
+		dataDir:       filepath.Clean(*dir),
+		switchRequest: filepath.Join(filepath.Dir(exe), ".duo-data-switch.json"),
 		launcherPID: func() int {
 			if *managed {
 				return os.Getppid()

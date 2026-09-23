@@ -26,7 +26,14 @@ func validateExistingData(dir string) error {
 	}
 	dir = filepath.Clean(dir)
 	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil || !strings.EqualFold(resolved, dir) {
+	if err != nil {
+		// Some restricted Windows runners deny the final-handle query used by
+		// EvalSymlinks even for an ordinary directory. Fall back to Lstat for
+		// every component; a reparse/symlink is still rejected.
+		if !errors.Is(err, os.ErrPermission) || dataPathHasReparse(dir) {
+			return errors.New("数据目录不存在或包含符号链接，请使用实际本机目录")
+		}
+	} else if !strings.EqualFold(resolved, dir) {
 		return errors.New("数据目录不存在或包含符号链接，请使用实际本机目录")
 	}
 	configPath, databasePath := filepath.Join(dir, "config.json"), filepath.Join(dir, "jianzuo.db")
@@ -121,4 +128,17 @@ func validateExistingData(dir string) error {
 		}
 	}
 	return nil
+}
+
+func dataPathHasReparse(dir string) bool {
+	for current := filepath.Clean(dir); ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+	}
 }

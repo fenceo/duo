@@ -22,11 +22,39 @@ static class Portable {
     public static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     public static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     public static string Data;
+    public static string DataPointer { get { return Path.Combine(Root,".duo-data-location.json"); } }
     public static string Service { get { return Path.Combine(Root,"duo-service.exe"); } }
     public static string Q(string s) { return "\"" + s.TrimEnd('\\') + "\""; }
     public static Dictionary<string,object> Config() { return Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(Data,"config.json"),Encoding.UTF8)); }
     public static int Port { get { string s=Convert.ToString(Config()["listen"]); int p; if(!Int32.TryParse(s.Substring(s.LastIndexOf(':')+1),out p)||p<1||p>65535)throw new Exception("配置中的监听端口无效");return p; } }
     public static string URL { get { return "http://127.0.0.1:"+Port+"/"; } }
+    public static bool IsUsableData(string path){
+        try{
+            if(String.IsNullOrWhiteSpace(path)||!Path.IsPathRooted(path)||path.StartsWith("\\\\")||path.StartsWith("//"))return false;
+            path=Path.GetFullPath(path).TrimEnd('\\');if(!Directory.Exists(path))return false;
+            var dir=new DirectoryInfo(path);if((dir.Attributes&FileAttributes.ReparsePoint)!=0)return false;
+            return File.Exists(Path.Combine(path,"config.json"))&&File.Exists(Path.Combine(path,"jianzuo.db"));
+        }catch{return false;}
+    }
+    public static string ResolveData(string requested){
+        try{
+            if(File.Exists(DataPointer)){
+                var map=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(DataPointer,Encoding.UTF8));
+                string pointer=Convert.ToString(map["data_dir"]);
+                if(IsUsableData(pointer))return Path.GetFullPath(pointer);
+            }
+        }catch{}
+        return Path.GetFullPath(requested);
+    }
+    public static void WriteDataPointer(string path){
+        if(!IsUsableData(path))throw new Exception("目标数据目录无法作为 Duo 启动目录");
+        string tmp=DataPointer+"."+Guid.NewGuid().ToString("N")+".tmp";
+        File.WriteAllText(tmp,Json.Serialize(new Dictionary<string,object>{{"protocol",1},{"data_dir",Path.GetFullPath(path)}}),new UTF8Encoding(false));
+        if(File.Exists(DataPointer))File.Replace(tmp,DataPointer,null);else File.Move(tmp,DataPointer);
+    }
+    public static void UpdateInstalledDataDirectory(string path){
+        try{using(var key=Registry.CurrentUser.OpenSubKey("Software\\Jianzuo",true)){if(key==null)return;string install=Convert.ToString(key.GetValue("InstallDir"));if(String.Equals(Path.GetFullPath(install).TrimEnd('\\'),Root.TrimEnd('\\'),StringComparison.OrdinalIgnoreCase))key.SetValue("DataDir",Path.GetFullPath(path));}}catch{}
+    }
     public static void Open(string target) { Process.Start(new ProcessStartInfo(target){UseShellExecute=true}); }
     public static bool FreePort(int port) { TcpListener l=new TcpListener(IPAddress.Any,port);try{l.Start();return true;}catch(SocketException){return false;}finally{l.Stop();} }
     public static ProcessStartInfo StartInfo(string args) { return new ProcessStartInfo(Service,args){WorkingDirectory=Root,UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardError=true,RedirectStandardOutput=true,StandardErrorEncoding=Encoding.UTF8,StandardOutputEncoding=Encoding.UTF8}; }
@@ -40,7 +68,7 @@ static class Portable {
         bool smoke=args.Contains("--smoke"),background=args.Contains("--background");
         try {
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
-            Data=Path.Combine(Root,"data");int d=Array.IndexOf(args,"--data");if(d>=0){if(d+1>=args.Length)throw new Exception("--data 缺少目录");Data=Path.GetFullPath(args[d+1]);}
+            Data=Path.Combine(Root,"data");int d=Array.IndexOf(args,"--data");if(d>=0){if(d+1>=args.Length)throw new Exception("--data 缺少目录");Data=Path.GetFullPath(args[d+1]);}Data=ResolveData(Data);
             if(!File.Exists(Service))throw new Exception("请先完整解压，再启动Duo.exe；缺少 duo-service.exe。");
             Directory.CreateDirectory(Data);
             string key;using(var h=SHA256.Create()){key=BitConverter.ToString(h.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(Data).ToLowerInvariant()))).Replace("-","");}
@@ -61,15 +89,16 @@ static class Portable {
 }
 
 sealed class ServiceHost:IDisposable {
-    Process process;readonly StringBuilder errors=new StringBuilder();volatile bool updateRequested;
+    Process process;readonly StringBuilder errors=new StringBuilder();volatile bool updateRequested, dataSwitchRequested;
     public bool Running { get { return process!=null&&!process.HasExited; } }
     public bool UpdateRequested { get { return updateRequested; } }
+    public bool DataSwitchRequested { get { return dataSwitchRequested; } }
     public void Start(){
         if(Running)return;
         if(!Portable.FreePort(Portable.Port))throw new Exception("端口 "+Portable.Port+" 已被占用，未启动第二份服务。\n若旧版Duo正在运行，可继续使用旧版，或退出旧版后再启动本便携版。\n要并行运行，请在本便携版 data/config.json 中设置不同的 listen 端口。");
-        process=new Process();process.StartInfo=Portable.StartInfo("--data "+Portable.Q(Portable.Data)+" --managed");
+        dataSwitchRequested=false;process=new Process();process.StartInfo=Portable.StartInfo("--data "+Portable.Q(Portable.Data)+" --managed");
         process.ErrorDataReceived+=(s,e)=>{if(e.Data!=null)lock(errors){if(errors.Length<16000)errors.AppendLine(e.Data);}};
-        process.OutputDataReceived+=(s,e)=>{if(e.Data!=null&&e.Data.StartsWith("JIANZUO_UPDATE ",StringComparison.Ordinal))updateRequested=true;};process.Start();process.BeginErrorReadLine();process.BeginOutputReadLine();
+        process.OutputDataReceived+=(s,e)=>{if(e.Data!=null){if(e.Data.StartsWith("JIANZUO_UPDATE ",StringComparison.Ordinal))updateRequested=true;if(e.Data.Trim()=="JIANZUO_SWITCH")dataSwitchRequested=true;}};process.Start();process.BeginErrorReadLine();process.BeginOutputReadLine();
         for(int i=0;i<80;i++){
             if(process.HasExited)throw new Exception("服务启动失败：\n"+errors+"\n日志："+Path.Combine(Portable.Data,"service.log"));
             try{var req=(HttpWebRequest)WebRequest.Create(Portable.URL+"healthz");req.Proxy=null;req.Timeout=350;using(var res=req.GetResponse())using(var reader=new StreamReader(res.GetResponseStream())){var obj=Portable.Json.Deserialize<Dictionary<string,object>>(reader.ReadToEnd());if(Convert.ToString(obj["app"])=="jianzuo"&&!String.IsNullOrEmpty(Convert.ToString(obj["version"])))return;}}catch(WebException){}
@@ -77,6 +106,20 @@ sealed class ServiceHost:IDisposable {
         }
         if(Running){process.StandardInput.Close();process.WaitForExit(20000);}throw new Exception("启动超时，请查看 data/service.log。");
     }
+    public void ApplyDataSwitch(){
+        if(Running)throw new Exception("服务尚未退出，暂不能切换数据目录");
+        string marker=Path.Combine(Portable.Root,".duo-data-switch.json");
+        if(!File.Exists(marker))throw new Exception("未找到数据目录切换请求，原目录保持不变");
+        var request=Portable.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(marker,Encoding.UTF8));
+        string oldData=Convert.ToString(request["old_data"]),newData=Convert.ToString(request["new_data"]);
+        if(String.IsNullOrWhiteSpace(oldData)||!String.Equals(Path.GetFullPath(oldData).TrimEnd('\\'),Path.GetFullPath(Portable.Data).TrimEnd('\\'),StringComparison.OrdinalIgnoreCase))throw new Exception("切换请求来源已变化，原目录保持不变");
+        if(String.IsNullOrWhiteSpace(newData)||!Portable.IsUsableData(newData))throw new Exception("切换请求目标不是有效的数据目录");
+        bool startupEnabled=false;try{using(var task=new UserStartup(StartupCommand()))startupEnabled=task.IsConfigured();}catch{}
+        dataSwitchRequested=false;string old=Portable.Data;Portable.WriteDataPointer(newData);Portable.Data=Path.GetFullPath(newData);
+        try{Portable.UpdateInstalledDataDirectory(Portable.Data);if(startupEnabled)using(var task=new UserStartup(StartupCommand()))task.Install();Start();File.Delete(marker);}
+        catch(Exception e){Portable.Data=old;try{Portable.WriteDataPointer(old);}catch{}try{Portable.UpdateInstalledDataDirectory(old);if(startupEnabled)using(var task=new UserStartup(StartupCommand()))task.Install();}catch{}try{File.Delete(marker);}catch{}try{Start();}catch{}throw new Exception("载入新数据目录失败，已恢复原目录："+e.Message);}
+    }
+    static string StartupCommand(){return Portable.Q(Application.ExecutablePath)+" --data "+Portable.Q(Portable.Data)+" --background";}
     public void Stop(){if(!Running)return;process.StandardInput.WriteLine("stop");process.StandardInput.Flush();if(!process.WaitForExit(25000))throw new Exception("服务仍在结束任务，请稍后再点退出。此时不要移动数据目录。");}
     public void Dispose(){if(process!=null){if(Running){try{process.StandardInput.Close();process.WaitForExit(25000);}catch{}}process.Dispose();}}
 }
@@ -99,6 +142,7 @@ sealed class TrayApp:ApplicationContext,IDisposable {
         icon=new NotifyIcon{Icon=SystemIcons.Application,Text="Duo · 本地任务工作台",ContextMenuStrip=menu,Visible=true};
         icon.DoubleClick+=(s,e)=>Safe(()=>Portable.Open(Portable.URL));
         timer=new System.Windows.Forms.Timer{Interval=500};timer.Tick+=(s,e)=>{
+            if(host.DataSwitchRequested&&!host.Running){try{host.ApplyDataSwitch();status.Text="Duo · 已载入新数据目录";}catch(Exception err){status.Text="数据目录切换失败";MessageBox.Show(err.Message,"Duo",MessageBoxButtons.OK,MessageBoxIcon.Error);}}
             if(host.UpdateRequested&&!host.Running){timer.Stop();status.Text="Duo · 正在自动更新";icon.Text=status.Text;icon.Visible=false;ExitThread();return;}
             status.Text=host.UpdateRequested?"Duo · 正在准备自动更新":(host.Running?"Duo · 正在运行":"服务已停止 · 请查看日志");icon.Text=status.Text;
         };timer.Start();
@@ -122,7 +166,7 @@ sealed class TrayApp:ApplicationContext,IDisposable {
 
 sealed class UserStartup:IDisposable {
     const string TaskName="Jianzuo User";
-    readonly string command,identity;object service,root;
+    string command;readonly string identity;object service,root;
     public UserStartup(string taskCommand){
         command=NormalizeTaskArguments(taskCommand,Application.ExecutablePath);identity=WindowsIdentity.GetCurrent().Name;Connect();
     }
@@ -152,6 +196,14 @@ sealed class UserStartup:IDisposable {
             return TaskActionMatches(path,args,dir,Application.ExecutablePath,command,Portable.Root)&&sameUser&&Convert.ToInt32(Get(principal,"RunLevel"))==0;
         }catch{return false;}
     }
+    bool IsOwnedExecutableTask(object task){
+        try{
+            if(task==null)return false;object definition=Get(task,"Definition"),actions=Get(definition,"Actions"),principal=Get(definition,"Principal");
+            if(Convert.ToInt32(Get(actions,"Count"))!=1)return false;object action=GetIndexed(actions,"Item",1);
+            bool sameUser=String.Equals(Convert.ToString(Get(principal,"UserId")),identity,StringComparison.OrdinalIgnoreCase)||SameSid(Convert.ToString(Get(principal,"UserId")));
+            return String.Equals(Path.GetFullPath(Convert.ToString(Get(action,"Path"))),Path.GetFullPath(Application.ExecutablePath),StringComparison.OrdinalIgnoreCase)&&String.Equals(Path.GetFullPath(Convert.ToString(Get(action,"WorkingDirectory"))).TrimEnd('\\'),Path.GetFullPath(Portable.Root).TrimEnd('\\'),StringComparison.OrdinalIgnoreCase)&&sameUser&&Convert.ToInt32(Get(principal,"RunLevel"))==0;
+        }catch{return false;}
+    }
     // Legacy tray builds stored the executable again inside Arguments. Accept
     // that exact legacy prefix when inspecting our own action, but never write it.
     static string NormalizeTaskArguments(string value,string executable){
@@ -168,7 +220,7 @@ sealed class UserStartup:IDisposable {
         try{return String.Equals(value,WindowsIdentity.GetCurrent().User.Value,StringComparison.OrdinalIgnoreCase)||String.Equals(new NTAccount(value).Translate(typeof(SecurityIdentifier)).Value,WindowsIdentity.GetCurrent().User.Value,StringComparison.OrdinalIgnoreCase);}catch{return false;}
     }
     public void Install(){
-        object existing=Find();if(existing!=null&&!IsOwnedTask(existing))throw new Exception("自启动入口已改变，取消覆盖。请通过安装包迁移旧入口。");
+        object existing=Find();if(existing!=null&&!IsOwnedExecutableTask(existing))throw new Exception("自启动入口已改变，取消覆盖。请通过安装包迁移旧入口。");
         object definition=Call(service,"NewTask",0),settings=Get(definition,"Settings"),principal=Get(definition,"Principal");
         Set(Get(definition,"RegistrationInfo"),"Description","Duo独立任务工作台（当前用户登录后启动）");
         Set(settings,"StartWhenAvailable",true);Set(settings,"AllowDemandStart",true);Set(settings,"Hidden",true);

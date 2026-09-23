@@ -36,6 +36,8 @@ type Server struct {
 	updateMu             sync.Mutex
 	modelProbeMu         sync.Mutex
 	updateRoot           string
+	dataDir              string
+	switchRequest        string
 	launcherPID          int
 	shutdown             func()
 }
@@ -299,6 +301,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("PUT /api/tasks/{id}/note", s.secure(s.note))
 	m.HandleFunc("POST /api/environments/discover", s.secure(s.detectEnvironments))
 	m.HandleFunc("GET /api/settings", s.secure(s.settings))
+	m.HandleFunc("POST /api/data/switch", s.secure(s.switchDataDirectory))
 	m.HandleFunc("GET /api/environments/{id}/models", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		env, e := s.app.config.get().environment(r.PathValue("id"))
 		if e != nil {
@@ -576,5 +579,5 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := c.Feishu.Secret != ""
 	c.Feishu.Secret = ""
-	jsonOut(w, 200, map[string]any{"config": c, "secret_configured": secret, "feishu_status": s.app.feishu.status(), "chat": s.app.store.setting("feishu_chat")})
+	jsonOut(w, 200, map[string]any{"config": c, "data_dir": s.dataDir, "data_switch_supported": s.launcherPID > 0, "secret_configured": secret, "feishu_status": s.app.feishu.status(), "chat": s.app.store.setting("feishu_chat")})
 }

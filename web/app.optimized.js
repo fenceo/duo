@@ -4637,7 +4637,7 @@ function installSettingsSections() {
     const tabs = document.createElement('nav');
     tabs.className = 'settings-nav';
     tabs.setAttribute('aria-label', '设置分类');
-    tabs.innerHTML = '<button type="button" data-settings="environment" class="selected">执行环境</button><button type="button" data-settings="feishu">飞书连接</button><button type="button" data-settings="access">访问地址</button>';
+    tabs.innerHTML = '<button type="button" data-settings="environment" class="selected">执行环境</button><button type="button" data-settings="feishu">飞书连接</button><button type="button" data-settings="access">访问地址</button><button type="button" data-settings="data">数据与存储</button>';
     const access = document.createElement('section');
     access.id = 'settings-access';
     access.className = 'settings-section hidden';
@@ -4646,6 +4646,11 @@ function installSettingsSections() {
     form.insertBefore(environment, error);
     form.insertBefore(feishu, error);
     form.insertBefore(access, error);
+    const data = document.createElement('section');
+    data.id = 'settings-data';
+    data.className = 'settings-section hidden';
+    data.innerHTML = '<h3>数据与存储</h3><p>不需要重新安装即可载入已有的 Duo 数据目录。这里的操作只切换目录，不复制、合并或删除文件；原目录会保留。</p><label>当前数据目录</label><code id="data-dir-current" class="data-dir-path"></code><p id="data-dir-supported" class="muted"></p><label for="data-dir-target">已有数据目录</label><input id="data-dir-target" placeholder="例如：E:\\Duo\\data" autocomplete="off"><p class="muted">请先把目标目录完整复制出来（需包含 config.json 和 jianzuo.db）；如果它来自另一份 Duo，请先退出那一份。然后填写副本路径。目标监听端口需与当前相同。</p><button type="button" id="data-dir-switch" class="primary">切换到已有目录并重启</button><p id="data-dir-result" class="settings-result" role="status"></p>';
+    form.insertBefore(data, error);
     const saved = document.createElement('p');
     saved.id = 'settings-saved';
     saved.setAttribute('role', 'status');
@@ -4663,7 +4668,7 @@ function showSettingsSection(page) {
     const nav = element('settings-form').querySelector('.settings-nav');
     nav.querySelectorAll('button[data-settings]').forEach((b)=>b.classList.toggle('selected', b.dataset.settings === page));
     element('settings-form').querySelectorAll('.settings-section').forEach((section)=>section.classList.toggle('hidden', section.id !== 'settings-' + page));
-    button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines');
+    button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines' || page === 'data');
     if (page === 'engines') void loadEngineSettings();
     else if (page === 'updates') void loadUpdateInformation();
 }
@@ -5117,6 +5122,7 @@ function renderShell() {
             notify(e.message);
         }
     };
+    button('data-dir-switch').onclick = ()=>void switchDataDirectory();
     button('setup-feishu').onclick = ()=>openSetup('');
     button('bind-setup').onclick = ()=>openSetup(chosen);
     button('setup-start').onclick = startSetup;
@@ -5869,6 +5875,7 @@ async function openSettings() {
         settings = loaded;
         const c = settings.config;
         loadAccessSettings();
+        loadDataSettings();
         editingEnvironments = JSON.parse(JSON.stringify(c.environments));
         editingID = c.default_environment;
         environmentPickers(c.default_environment);
@@ -5883,6 +5890,58 @@ async function openSettings() {
         element('settings-dialog').showModal();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
+    }
+}
+function loadDataSettings() {
+    const current = element('data-dir-current');
+    if (!current) return;
+    current.textContent = settings.data_dir || '未能读取当前数据目录';
+    input('data-dir-target').value = '';
+    const supported = settings.data_switch_supported !== false;
+    button('data-dir-switch').disabled = !supported;
+    element('data-dir-supported').textContent = supported ? '当前通过 Duo 启动器运行，可自动安全重启。' : '当前是直接运行服务，需通过 Duo.exe 启动后才能切换。';
+}
+async function switchDataDirectory() {
+    const target = input('data-dir-target').value.trim();
+    if (!target) {
+        element('data-dir-result').textContent = '请填写已有数据目录的绝对路径。';
+        return;
+    }
+    if (!settings.data_switch_supported) {
+        element('data-dir-result').textContent = '当前启动方式不支持自动切换，请先通过 Duo.exe 启动。';
+        return;
+    }
+    if (!confirm('将停止当前空闲服务并载入此已有数据目录。不会复制、合并或删除任何数据；原目录会保留。目标目录必须已完整复制并正常退出 Duo。继续吗？')) return;
+    const expected = settings.data_dir;
+    button('data-dir-switch').disabled = true;
+    element('data-dir-result').textContent = '正在校验并安全重启…请不要关闭窗口。';
+    try {
+        await api('data/switch', 'POST', {
+            data_dir: target,
+            expected_current: expected,
+            confirm: true
+        });
+        element('data-dir-result').textContent = '已接受切换请求，正在载入新目录…';
+        const started = Date.now();
+        let sawDown = false;
+        while(Date.now() - started < 60000){
+            await new Promise((resolve)=>setTimeout(resolve, 500));
+            try {
+                const response = await fetch('/healthz', {
+                    cache: 'no-store'
+                });
+                if (response.ok && sawDown) {
+                    location.reload();
+                    return;
+                }
+            } catch  {
+                sawDown = true;
+            }
+        }
+        throw new Error('等待新数据目录启动超时；原目录应仍保留，请查看托盘状态后重试。');
+    } catch (e) {
+        element('data-dir-result').textContent = e.message;
+        button('data-dir-switch').disabled = false;
     }
 }
 function environmentPickers(defaultID) {
