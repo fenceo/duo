@@ -28,6 +28,7 @@ static class Program
     const string NoticesName = "THIRD-PARTY-NOTICES.txt";
     const string InstructionsName = "使用说明.md";
     const string InstallMarkerName = ".jianzuo-install";
+    static string operationStage = "读取安装配置";
 
     static readonly string[] PayloadFiles =
     {
@@ -62,6 +63,7 @@ static class Program
             }
             if (HasFlag(args, "--uninstall"))
             {
+                operationStage = "卸载简作（保留数据）";
                 Uninstall(ParseOptions(args), quiet);
                 return 0;
             }
@@ -84,13 +86,10 @@ static class Program
         }
         catch (Exception error)
         {
-            if (quiet)
+            string logPath = TryWriteInstallError(error);
+            if (!quiet)
             {
-                TryWriteInstallError(error);
-            }
-            else
-            {
-                MessageBox.Show(error.Message, ProductName + " 安装失败",
+                MessageBox.Show(FormatInstallError(error, operationStage, logPath), ProductName + " 安装失败",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             return 1;
@@ -411,6 +410,7 @@ static class Program
 
     static void Install(Options options, bool quiet)
     {
+        operationStage = "检查程序目录和安装所有权";
         ValidateOptions(options);
         ValidateInstallDestination(options.InstallDir);
         if (options.WriteRegistry)
@@ -418,7 +418,12 @@ static class Program
             ValidateRegistryOwner(SettingsKey, "InstallDir", options.InstallDir);
             ValidateRegistryOwner(UninstallKey, "InstallLocation", options.InstallDir);
         }
-        if (options.EnableStartup) ValidateStartupOwner(options.InstallDir);
+        if (options.EnableStartup)
+        {
+            operationStage = "检查登录后自动启动任务";
+            ValidateStartupOwner(options.InstallDir);
+        }
+        operationStage = "准备安装文件";
         string version = ReadVersion();
         string temp = NewTempDirectory();
         string backup = Path.Combine(options.InstallDir, ".setup-backup-" + Guid.NewGuid().ToString("N"));
@@ -426,14 +431,17 @@ static class Program
         try
         {
             ExtractPayload(temp);
+            operationStage = "创建程序和数据目录";
             Directory.CreateDirectory(options.InstallDir);
             Directory.CreateDirectory(options.DataDir);
 
+            operationStage = "停止原有简作并备份程序";
             StopInstalledProcesses(options.InstallDir);
             if (options.EnableStartup) StopOwnedTask(options.InstallDir);
             PrepareBackup(options.InstallDir, backup);
             try
             {
+                operationStage = "复制程序文件";
                 foreach (string name in PayloadFiles)
                 {
                     File.Copy(Path.Combine(temp, name), Path.Combine(options.InstallDir, name), true);
@@ -451,15 +459,18 @@ static class Program
             string uninstaller = Path.Combine(options.InstallDir, UninstallerName);
             if (options.CreateShortcuts)
             {
+                operationStage = "创建开始菜单和桌面快捷方式";
                 CreateShortcuts(options, launcher, uninstaller);
             }
             if (options.EnableStartup)
             {
+                operationStage = "配置登录后自动启动";
                 RegisterStartupTask(options, launcher);
             }
             if (options.EnableStartup && options.WriteRegistry) DeleteLegacyRunEntry(options.InstallDir);
             if (options.WriteRegistry)
             {
+                operationStage = "保存安装和卸载信息";
                 SaveInstallation(options, version, launcher, uninstaller);
             }
             committed = true;
@@ -467,6 +478,7 @@ static class Program
 
             if (options.LaunchAfterInstall)
             {
+                operationStage = "启动已安装的简作";
                 StartLauncher(launcher, options.DataDir);
             }
             if (!quiet)
@@ -793,10 +805,9 @@ static class Program
     static void RegisterStartupTask(Options options, string launcher)
     {
         ValidateStartupOwner(options.InstallDir);
-        string identity = WindowsIdentity.GetCurrent().Name;
-        string arguments = "--data " + Quote(options.DataDir) + " --background";
         object service = null;
         object root = null;
+        object definition = null;
         try
         {
             Type type = Type.GetTypeFromProgID("Schedule.Service");
@@ -808,7 +819,26 @@ static class Program
             Invoke(service, "Connect");
             root = Invoke(service, "GetFolder", "\\");
 
-            object definition = Invoke(service, "NewTask", 0);
+            definition = BuildStartupTaskDefinition(service, options, launcher);
+            Invoke(root, "RegisterTaskDefinition", TaskName, definition, 6, null, null, 3, null);
+        }
+        finally
+        {
+            Release(definition);
+            Release(root);
+            Release(service);
+        }
+    }
+
+    // Construct only an in-memory definition. Tests can exercise the exact
+    // production settings and validate XML without registering a login task.
+    static object BuildStartupTaskDefinition(object service, Options options, string launcher)
+    {
+        string identity = WindowsIdentity.GetCurrent().Name;
+        string arguments = "--data " + Quote(options.DataDir) + " --background";
+        object definition = Invoke(service, "NewTask", 0);
+        try
+        {
             object settings = Get(definition, "Settings");
             object principal = Get(definition, "Principal");
             Set(Get(definition, "RegistrationInfo"), "Description", ProductName + "独立任务工作台（当前用户登录后启动）");
@@ -832,12 +862,12 @@ static class Program
             Set(action, "Path", launcher);
             Set(action, "Arguments", arguments);
             Set(action, "WorkingDirectory", options.InstallDir);
-            Invoke(root, "RegisterTaskDefinition", TaskName, definition, 6, null, null, 3, null);
+            return definition;
         }
-        finally
+        catch
         {
-            Release(root);
-            Release(service);
+            Release(definition);
+            throw;
         }
     }
 
@@ -951,7 +981,7 @@ static class Program
             {
                 return null;
             }
-            object action = Invoke(actions, "Item", 1);
+            object action = GetIndexed(actions, "Item", 1);
             string executable = Convert.ToString(Get(action, "Path"));
             string arguments = Convert.ToString(Get(action, "Arguments"));
             return new ExistingTask
@@ -979,7 +1009,7 @@ static class Program
         {
             return "";
         }
-        object action = Invoke(actions, "Item", 1);
+        object action = GetIndexed(actions, "Item", 1);
         return Convert.ToString(Get(action, "Path"));
     }
 
@@ -990,7 +1020,7 @@ static class Program
         {
             return "";
         }
-        object action = Invoke(actions, "Item", 1);
+        object action = GetIndexed(actions, "Item", 1);
         return Convert.ToString(Get(action, "Arguments"));
     }
 
@@ -1062,7 +1092,17 @@ static class Program
         }
     }
 
-    static void TryWriteInstallError(Exception error)
+    static string FormatInstallError(Exception error, string stage, string logPath)
+    {
+        Exception cause = error.GetBaseException();
+        return "失败步骤：" + stage + Environment.NewLine +
+            "具体原因：" + cause.Message + Environment.NewLine +
+            "错误代码：0x" + cause.HResult.ToString("X8") + Environment.NewLine + Environment.NewLine +
+            (string.IsNullOrEmpty(logPath) ? "无法写入诊断日志，请保留本窗口截图。" : "诊断日志：" + logPath) +
+            Environment.NewLine + "请保留原有数据目录，不要删除后重装。";
+    }
+
+    static string TryWriteInstallError(Exception error)
     {
         foreach (string root in new[]
         {
@@ -1074,16 +1114,18 @@ static class Program
             try
             {
                 Directory.CreateDirectory(root);
+                string logPath = Path.Combine(root, "installer-error.log");
                 File.AppendAllText(
-                    Path.Combine(root, "installer-error.log"),
-                    DateTime.Now.ToString("O") + " " + error + Environment.NewLine,
+                    logPath,
+                    DateTime.Now.ToString("O") + " version=" + ReadVersion() + " stage=" + operationStage + Environment.NewLine + error + Environment.NewLine,
                     new UTF8Encoding(false));
-                return;
+                return logPath;
             }
             catch
             {
             }
         }
+        return "";
     }
 
     static string NewTempDirectory()
@@ -1147,6 +1189,13 @@ static class Program
     static object Get(object target, string name)
     {
         return target.GetType().InvokeMember(name, BindingFlags.GetProperty, null, target, null);
+    }
+
+    // IActionCollection.Item is a 1-based indexed COM property, not a method.
+    // InvokeMethod fails with DISP_E_MEMBERNOTFOUND on .NET Framework.
+    static object GetIndexed(object target, string name, object index)
+    {
+        return target.GetType().InvokeMember(name, BindingFlags.GetProperty, null, target, new[] { index });
     }
 
     static void Set(object target, string name, object value)

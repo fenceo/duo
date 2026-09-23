@@ -20,7 +20,7 @@ node scripts/Test-Updates-Web.mjs
 
 完整 Windows 便携包使用 `scripts/Build-Portable.ps1`。构建依赖 Go 1.27+、支持 TypeScript 类型去除的 Node.js、npm，以及 Windows .NET Framework C# 编译器。运行包不需要这些构建工具。
 
-`scripts/Build-Installer.ps1` 单独构建安装器并把便携 ZIP 嵌入 EXE；`scripts/Test-Installer.ps1` 校验内嵌包、PE 头、安全契约和 SHA-256，并在 GUID 临时目录测试所有权检查和白名单清理。安装和卸载的 `Test-Installer.ps1 -Full -IsolatedUser` 仅在一次性 Windows VM/测试用户中执行，不在日常使用的 Windows 账号运行。即使测试传入 `--no-shortcuts --no-registry --no-startup`，也必须对卸载数据保留及入口所有权做独立验证。普通 `--verify` 和隔离服务 HTTP 验收不安装程序、不修改入口。
+`scripts/Build-Installer.ps1` 单独构建安装器并把便携 ZIP 嵌入 EXE；`scripts/Test-Installer.ps1` 校验内嵌包、PE 头、安全契约和 SHA-256，并在 GUID 临时目录测试所有权检查、快捷方式和白名单清理。普通测试还通过真实 Windows COM 构造内存任务，检查动作索引属性、路径和参数，并用 `TASK_VALIDATE_ONLY` 验证定义，不注册计划任务；应使用 Windows PowerShell / .NET Framework 运行，以覆盖安装器实际运行时。安装和卸载的 `Test-Installer.ps1 -Full -IsolatedUser` 仅在一次性 Windows VM/测试用户中执行，不在日常使用的 Windows 账号运行。即使测试传入 `--no-shortcuts --no-registry --no-startup`，也必须对卸载数据保留及入口所有权做独立验证。普通 `--verify` 和隔离服务 HTTP 验收不安装程序、不修改入口。
 
 `data`、`dist`、`build`、`_backups`、`_testdata`、本机部署脚本与验收资料不进入 Git。测试用密码与回环地址只是合成测试数据。
 

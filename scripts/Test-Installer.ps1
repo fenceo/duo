@@ -86,8 +86,8 @@ function Remove-FixtureTree([string]$Path, [string]$Parent, [string]$Prefix) {
     if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
 }
 
-# These pure/path helpers are exercised in an owned GUID temp directory. This is
-# not a real installation and never calls registry, shortcut, startup or uninstall mutations.
+# Path/error helpers and temporary shortcut creation use an owned GUID directory.
+# This is not an installation and never changes real user registry/shortcut/startup entries.
 $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($setup))
 $program = $assembly.GetType('Program', $true)
 function Invoke-SafetyHelper([string]$Name, [object[]]$Arguments) {
@@ -99,12 +99,22 @@ function Invoke-SafetyHelper([string]$Name, [object[]]$Arguments) {
         $value = $Arguments[$index].PSObject.BaseObject
         $converted[$index] = [System.Management.Automation.LanguagePrimitives]::ConvertTo($value, $parameters[$index].ParameterType)
     }
-    return $method.Invoke($null, $converted)
+    # Preserve COM collections as one return object; do not pipeline-enumerate Actions.
+    return ,($method.Invoke($null, $converted))
 }
 $safetyParent = [IO.Path]::GetTempPath()
 $safetyRoot = Join-Path $safetyParent ('JianzuoInstallerSafety-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $safetyRoot | Out-Null
 try {
+    $stage = 'fixture task startup stage'
+    $logPath = Join-Path $safetyRoot 'installer-error.log'
+    $cause = [Runtime.InteropServices.COMException]::new('fixture task registration denied', [int]-2147024891)
+    $wrappedCause = [Reflection.TargetInvocationException]::new([Reflection.TargetInvocationException]::new($cause))
+    $formatted = [string](Invoke-SafetyHelper 'FormatInstallError' @($wrappedCause, $stage, $logPath))
+    if (!$formatted.Contains($cause.Message) -or !$formatted.Contains($stage) -or !$formatted.Contains($logPath) -or
+        $formatted -notmatch '(?i)0x80070005') {
+        throw 'Installer error diagnostics must show the root COM cause, HRESULT, stage and log path through nested reflection wrappers.'
+    }
     $missingTask = [IO.FileNotFoundException]::new('fixture missing task')
     $wrappedMissingTask = [Reflection.TargetInvocationException]::new($missingTask)
     if (!(Invoke-SafetyHelper 'IsMissingTaskError' @($missingTask)) -or
@@ -135,6 +145,68 @@ try {
         [IO.File]::ReadAllText($unknownPath) -ne 'must survive') {
         throw 'Whitelist cleanup must preserve unknown files and their containing directory.'
     }
+    # Exercise the actual WScript COM path locally, never the user's desktop/menu.
+    $shortcutPath = Join-Path $safetyRoot 'fixture-shortcut.lnk'
+    Invoke-SafetyHelper 'CreateShortcut' @($shortcutPath, $ownedPath, '--data "fixture data"', $safetyRoot, $ownedPath)
+    if (!(Test-Path -LiteralPath $shortcutPath -PathType Leaf) -or
+        !(Invoke-SafetyHelper 'ShortcutOwned' @($shortcutPath, $safetyRoot)) -or
+        (Invoke-SafetyHelper 'ShortcutOwned' @($shortcutPath, ($safetyRoot + '-other')))) {
+        throw 'Actual temporary shortcut creation and exact installation ownership checks failed.'
+    }
+    $originalShortcut = [Convert]::ToBase64String([IO.File]::ReadAllBytes($shortcutPath))
+    $shortcutRejected = $false
+    try { Invoke-SafetyHelper 'CreateShortcut' @($shortcutPath, $ownedPath, '', ($safetyRoot + '-other'), $ownedPath) }
+    catch { $shortcutRejected = $true }
+    if (!$shortcutRejected -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($shortcutPath)) -ne $originalShortcut) {
+        throw 'A shortcut belonging to another installation must not be overwritten.'
+    }
+    # Use the production task builder and genuine COM collections in memory.
+    # TASK_VALIDATE_ONLY (1) never persists a scheduled task; flags 6 are not used here.
+    $scheduler = $null; $taskFolder = $null; $definition = $null; $actions = $null; $action = $null
+    try {
+        $scheduler = [Activator]::CreateInstance([type]::GetTypeFromProgID('Schedule.Service'))
+        $scheduler.Connect()
+        $taskFolder = $scheduler.GetFolder('\')
+        $optionsType = $assembly.GetType('Options', $true)
+        $options = [Activator]::CreateInstance($optionsType, $true)
+        $optionsType.GetField('InstallDir').SetValue($options, [string]$safetyRoot)
+        $fixtureData = Join-Path $safetyRoot 'fixture-data'
+        New-Item -ItemType Directory -Path $fixtureData | Out-Null
+        $optionsType.GetField('DataDir').SetValue($options, [string]$fixtureData)
+        $fixtureLauncher = Join-Path $safetyRoot '简作.exe'
+        Copy-Item -LiteralPath $setup -Destination $fixtureLauncher
+        $definition = Invoke-SafetyHelper 'BuildStartupTaskDefinition' @($scheduler, $options, $fixtureLauncher)
+        $actions = Invoke-SafetyHelper 'Get' @($definition, 'Actions')
+        $action = Invoke-SafetyHelper 'GetIndexed' @($actions, 'Item', 1)
+        if ([string](Invoke-SafetyHelper 'Get' @($action, 'Path')) -ne $fixtureLauncher) {
+            throw 'The real IActionCollection.Item indexed property must return the configured action.'
+        }
+        if (!('JianzuoInstallerRegisteredTaskFixture' -as [type])) {
+            Add-Type -TypeDefinition 'public sealed class JianzuoInstallerRegisteredTaskFixture { public object Definition { get; set; } }'
+        }
+        $registeredTask = [JianzuoInstallerRegisteredTaskFixture]::new()
+        $registeredTask.Definition = $definition.PSObject.BaseObject
+        $taskExecutable = [string](Invoke-SafetyHelper 'TaskExecutable' @($registeredTask))
+        $taskArguments = [string](Invoke-SafetyHelper 'TaskArguments' @($registeredTask))
+        if ($taskExecutable -ne $fixtureLauncher -or $taskArguments -notmatch '--background' -or
+            $taskArguments -notmatch '--data' -or !(Invoke-SafetyHelper 'IsJianzuoTask' @($registeredTask, $taskExecutable))) {
+            throw 'Existing-task inspection must read the real COM indexed action through the production helpers.'
+        }
+        $validationName = 'Jianzuo-Installer-ValidateOnly-' + [Guid]::NewGuid().ToString('N')
+        [void]$taskFolder.RegisterTaskDefinition($validationName, $definition, 1, $null, $null, 3, $null)
+        $notRegistered = $false
+        try {
+            [void]$taskFolder.GetTask($validationName)
+        } catch {
+            $notRegistered = $_.Exception.GetBaseException().HResult -eq -2147024894
+        }
+        if (!$notRegistered) { throw 'Validate-only must not register or persist a task.' }
+        Write-Output 'PASS: production startup definition, real COM indexed action inspection, validate-only, and no registered task.'
+    } finally {
+        foreach ($com in @($action,$actions,$definition,$taskFolder,$scheduler)) {
+            if ($null -ne $com) { Invoke-SafetyHelper 'Release' @($com) }
+        }
+    }
     $quotedRoot = Join-Path $safetyRoot "quoted ' &% path"
     New-Item -ItemType Directory -Path $quotedRoot | Out-Null
     $quotedMarker = Join-Path $quotedRoot '.jianzuo-install'
@@ -159,6 +231,7 @@ try {
     }
     Write-Output 'PASS: unowned collisions, exact path ownership, bound marker, and non-recursive whitelist cleanup.'
     Write-Output 'PASS: encoded self-removal script rejects wrong owners, handles quoted paths, and preserves unrelated files.'
+    Write-Output 'PASS: nested COM failure diagnostics and real temporary shortcut creation/ownership without changing user entries.'
 } finally {
     Remove-FixtureTree $safetyRoot $safetyParent 'JianzuoInstallerSafety-'
 }
@@ -222,7 +295,7 @@ function Invoke-InstallerRoundTrip {
         $ownedNames = @('简作.exe','jianzuo-service.exe','卸载简作.exe','使用说明.md','THIRD-PARTY-NOTICES.txt','.jianzuo-install')
         for ($i = 0; $i -lt 80; $i++) {
             $remaining = @($ownedNames | Where-Object { Test-Path -LiteralPath (Join-Path $InstallDir $_) })
-            if (!$remaining.Count) { break }
+            if (!$remaining.Count -and ($SharedFiles -or !(Test-Path -LiteralPath $InstallDir))) { break }
             Start-Sleep -Milliseconds 250
         }
         if ($remaining.Count) { throw "$Label uninstall did not remove all owned files: $($remaining -join ', ')" }
