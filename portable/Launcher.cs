@@ -92,6 +92,16 @@ sealed class ServiceHost:IDisposable {
     Process process;readonly StringBuilder errors=new StringBuilder();volatile bool updateRequested, dataSwitchRequested;
     public bool Running { get { return process!=null&&!process.HasExited; } }
     public bool UpdateRequested { get { return updateRequested; } }
+    // The service normally announces an update over stdout. If it exits before
+    // the asynchronous output event is delivered, the launcher used to remain
+    // hidden in the tray and block the installer. The staged update directory
+    // is created before the helper waits for us, so it is a safe second signal.
+    public bool PendingUpdate {
+        get {
+            try { return Directory.GetDirectories(Portable.Root,".jianzuo-update-*",SearchOption.TopDirectoryOnly).Length>0; }
+            catch { return false; }
+        }
+    }
     public bool DataSwitchRequested { get { return dataSwitchRequested; } }
     public void Start(){
         if(Running)return;
@@ -143,7 +153,7 @@ sealed class TrayApp:ApplicationContext,IDisposable {
         icon.DoubleClick+=(s,e)=>Safe(()=>Portable.Open(Portable.URL));
         timer=new System.Windows.Forms.Timer{Interval=500};timer.Tick+=(s,e)=>{
             if(host.DataSwitchRequested&&!host.Running){try{host.ApplyDataSwitch();status.Text="Duo · 已载入新数据目录";}catch(Exception err){status.Text="数据目录切换失败";MessageBox.Show(err.Message,"Duo",MessageBoxButtons.OK,MessageBoxIcon.Error);}}
-            if(host.UpdateRequested&&!host.Running){timer.Stop();status.Text="Duo · 正在自动更新";icon.Text=status.Text;icon.Visible=false;ExitThread();return;}
+            if((host.UpdateRequested||host.PendingUpdate)&&!host.Running){timer.Stop();status.Text="Duo · 正在自动更新";icon.Text=status.Text;icon.Visible=false;ExitThread();return;}
             status.Text=host.UpdateRequested?"Duo · 正在准备自动更新":(host.Running?"Duo · 正在运行":"服务已停止 · 请查看日志");icon.Text=status.Text;
         };timer.Start();
         if(!background)Portable.Open(Portable.URL);
