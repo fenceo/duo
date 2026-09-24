@@ -6,9 +6,10 @@ $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes([IO.Path]::GetFu
 
 # The first-run wizard is a native WinForms surface, so it cannot be rendered
 # reliably in this headless build test. Keep a small source-level contract in
-# the launcher regression: detection runs automatically and overrides remain
-# behind the advanced section. This catches accidental reintroduction of the
-# old six-field wizard without requiring a desktop session.
+# the launcher regression: first run accepts only a password and stays local;
+# discovery and machine-specific overrides belong in workbench Settings. This
+# catches accidental reintroduction of the old multi-field wizard without
+# requiring a desktop session.
 $projectRoot = Split-Path (Split-Path (Split-Path ([IO.Path]::GetFullPath($Launcher)) -Parent) -Parent) -Parent
 $launcherSourcePath = Join-Path $projectRoot 'portable\Launcher.cs'
 if (!(Test-Path -LiteralPath $launcherSourcePath -PathType Leaf)) { throw 'Launcher source is missing.' }
@@ -17,12 +18,18 @@ foreach ($contract in @(
     @{ Name = 'first-run heading'; Pattern = 'fields\.Controls\.Add\(new Label\{Text=' },
     @{ Name = 'password controls'; Pattern = 'password=new TextBox.*confirm=new TextBox' },
     @{ Name = 'advanced override section'; Pattern = 'FlowLayoutPanel advanced' },
-    @{ Name = 'automatic detection hook'; Pattern = 'Shown\s*\+=\s*async\s*\(s,e\)\s*=>\s*await Detect\(\)' },
-    @{ Name = 'detection command'; Pattern = '--detect-environments' }
+    @{ Name = 'password-only initialization'; Pattern = 'Portable\.Initialize\(Portable\.Json\.Serialize\(new Dictionary<string,object>\{\{"password",password\.Text\},\{"config",.*\}\}\)\)' },
+    @{ Name = 'detection command remains available from Settings'; Pattern = '--detect-environments' }
 )) {
     if ($launcherSource -notmatch $contract.Pattern) {
         throw ('First-run wizard contract missing: ' + $contract.Name)
     }
+}
+if ($launcherSource -match 'Shown\s*\+=\s*async\s*\(s,e\)\s*=>\s*await Detect\(\)') {
+    throw 'First-run wizard must not block on environment detection.'
+}
+if ($launcherSource -match 'fields\.Controls\.Add\(advanced\)') {
+    throw 'First-run wizard must not mount environment/tool/path/network controls.'
 }
 $advancedStart = $launcherSource.IndexOf('FlowLayoutPanel advanced')
 $networkField = $launcherSource.IndexOf('network.Margin', $advancedStart)

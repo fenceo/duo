@@ -257,33 +257,39 @@ sealed class SetupForm:Form {
     readonly Button detect=new Button{Text="重新检测",AutoSize=true},browse=new Button{Text="选择文件夹…",AutoSize=true};
     FoundChoice selected; bool applying, detecting;
     public SetupForm(){
-        Text="Duo · 首次使用";StartPosition=FormStartPosition.CenterScreen;ClientSize=new Size(610,560);MinimumSize=new Size(580,560);Font=new Font("Microsoft YaHei UI",9);AutoScaleMode=AutoScaleMode.Dpi;BackColor=Color.White;
+        Text="Duo · 首次使用";StartPosition=FormStartPosition.CenterScreen;ClientSize=new Size(520,390);MinimumSize=new Size(500,360);Font=new Font("Microsoft YaHei UI",9);AutoScaleMode=AutoScaleMode.Dpi;BackColor=Color.White;
         fields.Controls.Add(new Label{Text="设置密码，马上开始。",Font=new Font(Font.FontFamily,17,FontStyle.Bold),AutoSize=true,Margin=new Padding(0,0,0,8)});
-        fields.Controls.Add(new Label{Text="Duo 会在后台自动检查本机 Windows、WSL、Codex 和 Claude Code。",AutoSize=true,ForeColor=Color.DimGray});
-        detectionStatus.Text="正在准备自动检测…";AddField(fields,"自动检测结果",detectionStatus,null);fields.Controls.Add(detect);
+        fields.Controls.Add(new Label{Text="首次启动只需设置工作台密码。进入工作台后，可随时在“设置”中修改执行环境、AI 工具、工作目录、网络和端口。",AutoSize=true,MaximumSize=new Size(450,0),ForeColor=Color.DimGray,Margin=new Padding(0,0,0,14)});
         AddField(fields,"工作台密码（至少 6 字节）",password,null);AddField(fields,"再次输入密码",confirm,null);
-        Label hint=new Label{Text="通常只需设置密码即可。执行环境、AI 工具、工作目录和网络访问会沿用自动检测结果；需要修改时再展开高级设置。",AutoSize=true,MaximumSize=new Size(520,0),ForeColor=Color.DimGray,Margin=new Padding(0,12,0,2)};fields.Controls.Add(hint);
-        Button more=new Button{Text="高级设置（环境、工具、目录、网络）",AutoSize=true,FlatStyle=FlatStyle.Flat,Margin=new Padding(0,8,0,0)};more.FlatAppearance.BorderSize=0;more.ForeColor=Color.DimGray;more.Click+=(s,e)=>{advanced.Visible=!advanced.Visible;more.Text=advanced.Visible?"收起高级设置":"高级设置（环境、工具、目录、网络）";};fields.Controls.Add(more);fields.Controls.Add(advanced);
+        Label hint=new Label{Text="默认仅允许本机访问，检测和配置不会发送任务或调用模型。之后可在工作台设置中补充 Codex、Claude Code、Harness 或 SSH。",AutoSize=true,MaximumSize=new Size(450,0),ForeColor=Color.DimGray,Margin=new Padding(0,14,0,2)};fields.Controls.Add(hint);
+        // Environment/tool fields remain available to the background detector and
+        // compatibility smoke tests, but are intentionally not exposed in the
+        // first-use wizard. Configuration belongs in the workbench settings.
+        // Keep the configuration controls detached from the first-run form.
+        // They are populated only for discovery/smoke-test compatibility;
+        // users edit environment, tool, path and network settings later.
         kind.Items.AddRange(new object[]{"本机 Windows","WSL","SSH · Linux 主机"});AddField(advanced,"执行环境",detected,null);AddField(advanced,"执行方式",kind,null);
         engine.Items.AddRange(new object[]{"Codex","Claude Code"});AddField(advanced,"AI 工具",engine,null);engine.SelectedIndex=0;
         AddField(advanced,"工作目录",workspace,null);advanced.Controls.Add(browse);
         AddField(advanced,"WSL 发行版",distro,wslControls);AddField(advanced,"SSH 主机",sshHost,sshControls);AddField(advanced,"SSH 端口",sshPort,sshControls);AddField(advanced,"Linux 用户名（留空使用默认用户）",user,linuxControls);
         AddField(advanced,"AI 工具程序位置",binary,null);
         network.Margin=new Padding(0,15,0,5);advanced.Controls.Add(network);
-        int candidate=8789;while(candidate<8890&&!Portable.FreePort(candidate))candidate++;port.Value=candidate;AddField(advanced,"工作台端口",port,null);
+        int candidate=FindAvailablePort();port.Value=candidate;AddField(advanced,"工作台端口",port,null);
         advanced.Controls.Add(new Label{Text="SSH 需预先配好密钥与主机信任。\nAI 工具、WSL 和 Tailscale 按需单独安装。",AutoSize=true,MaximumSize=new Size(520,0),ForeColor=Color.DimGray,Margin=new Padding(0,10,0,4)});
         Button create=new Button{Text="启动工作台",AutoSize=true,Padding=new Padding(18,6,18,6),Margin=new Padding(0,17,0,8)};create.Click+=(s,e)=>{
             create.Enabled=false;try{Create();DialogResult=DialogResult.OK;Close();}catch(Exception err){MessageBox.Show(err.Message,"请检查配置",MessageBoxButtons.OK,MessageBoxIcon.Warning);}finally{if(!create.IsDisposed)create.Enabled=true;}
-        };fields.Controls.Add(create);fields.Controls.Add(new Label{Text="任务和设置保存在："+Portable.Data,AutoSize=true,MaximumSize=new Size(520,0),ForeColor=Color.DimGray,Font=new Font(Font.FontFamily,8)});Controls.Add(fields);AcceptButton=create;
+        };fields.Controls.Add(create);Controls.Add(fields);AcceptButton=create;
         kind.SelectedIndexChanged+=(s,e)=>{
             bool win=kind.SelectedIndex==0;foreach(var c in wslControls)c.Visible=kind.SelectedIndex==1;foreach(var c in sshControls)c.Visible=kind.SelectedIndex==2;foreach(var c in linuxControls)c.Visible=!win;browse.Enabled=win;
-            if(!applying){selected=null;binary.Text=DefaultBinary();workspace.Text=win?Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments):"/home";detectionStatus.Text="手工配置 · 可重新检测本机环境";}
+            if(!applying){selected=null;binary.Text=DefaultBinary();workspace.Text=win?DefaultWorkspace():"/home";detectionStatus.Text="配置将在工作台设置中完成";}
         };
         engine.SelectedIndexChanged+=(s,e)=>{if(applying)return;binary.Text=selected==null?DefaultBinary():(engine.SelectedIndex==1?selected.environment.claude:selected.environment.codex);};
-        kind.SelectedIndex=0;detected.Items.Add("手工配置（Windows / WSL / SSH）");detected.SelectedIndex=0;
-        detected.SelectedIndexChanged+=(s,e)=>{FoundChoice item=detected.SelectedItem as FoundChoice;if(item==null){selected=null;advanced.Visible=true;detectionStatus.Text="在高级设置中填写连接参数。";}else ApplyDetected(item);};
+        kind.SelectedIndex=0;
         browse.Click+=(s,e)=>{using(var picker=new FolderBrowserDialog{Description="选择任务的默认工作目录",SelectedPath=Directory.Exists(workspace.Text)?workspace.Text:"",ShowNewFolderButton=true}){if(picker.ShowDialog(this)==DialogResult.OK)workspace.Text=picker.SelectedPath;}};
-        detect.Click+=async(s,e)=>await Detect();Shown+=async(s,e)=>await Detect();
+        // Do not probe the machine while the first-use dialog is open.  The
+        // wizard must be usable offline and with only a password; discovery is
+        // available from Settings after the workbench has started.
+        detect.Click+=async(s,e)=>await Detect();
     }
     public void VerifyDetectedBinding(){
         var fixture=new FoundChoice{environment=new FoundEnvironment{name="WSL test",type="wsl",distro="Ubuntu-test",user="dev",codex="/home/dev/bin/codex",claude="/home/dev/bin/claude",default_engine="claude",workspaces=new[]{"/home/dev/work"}},codex=new FoundTool{label="Codex test"},claude=new FoundTool{label="Claude test"}};
@@ -294,13 +300,15 @@ sealed class SetupForm:Form {
         engine.SelectedIndex=0;if(binary.Text!="/home/dev/bin/codex")throw new Exception("Engine switch lost detected path");
         kind.SelectedIndex=0;if(selected!=null||!Directory.Exists(workspace.Text))throw new Exception("Manual environment switch failed");
     }
+    static int FindAvailablePort(){for(int candidate=8789;candidate<=65535;candidate++)if(Portable.FreePort(candidate))return candidate;throw new Exception("没有可用的本机监听端口");}
+    static string DefaultWorkspace(){string docs=Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);if(Directory.Exists(docs))return docs;string home=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);if(Directory.Exists(home))return home;return Environment.CurrentDirectory;}
     string DefaultBinary(){bool win=kind.SelectedIndex==0;return engine.SelectedIndex==1?(win?FindClaude():"claude"):(win?FindCodex():"codex");}
     void ApplyDetected(FoundChoice item){
-        string detectedWorkspace=item.environment.workspaces!=null&&item.environment.workspaces.Length>0?item.environment.workspaces[0]:(item.environment.type=="wsl"?"/home":Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        string detectedWorkspace=item.environment.workspaces!=null&&item.environment.workspaces.Length>0?item.environment.workspaces[0]:(item.environment.type=="wsl"?"/home":DefaultWorkspace());
         applying=true;try{selected=item;kind.SelectedIndex=item.environment.type=="wsl"?1:0;distro.Text=item.environment.distro??"";user.Text=item.environment.user??"";engine.SelectedIndex=item.environment.default_engine=="claude"?1:0;binary.Text=engine.SelectedIndex==1?item.environment.claude:item.environment.codex;workspace.Text=detectedWorkspace;detectionStatus.Text="已选择："+item.environment.name+" · 默认使用"+(engine.SelectedIndex==1?"Claude Code":"Codex")+"\nCodex："+item.codex.label+"    Claude："+item.claude.label+"\n"+(String.IsNullOrEmpty(item.message)?"沿用该环境的登录配置；模型是否可用以实际执行为准。":item.message);advanced.Visible=false;}finally{applying=false;}
     }
     async Task Detect(){
-        if(detecting)return;detecting=true;detect.Enabled=false;detected.Enabled=false;detectionStatus.Text="正在检测（约 10–25 秒）… 可能启动已安装的 WSL。";
+        if(detecting)return;detecting=true;
         try{
             FoundResult result=await Task.Run(()=>{
                 using(Process p=Process.Start(Portable.StartInfo("--detect-environments"))){
@@ -310,25 +318,22 @@ sealed class SetupForm:Form {
                 }
             });
             if(IsDisposed)return;
-            detected.Items.Clear();foreach(var item in result.items)detected.Items.Add(item);detected.Items.Add("手工配置（Windows / WSL / SSH）");
-            int preferred=Array.FindIndex(result.items,x=>x.codex.state=="configured"||x.claude.state=="configured");detected.SelectedIndex=preferred>=0?preferred:0;
-        }catch(Exception e){if(!IsDisposed){detectionStatus.Text=e.Message;advanced.Visible=true;}}finally{detecting=false;if(!IsDisposed){detect.Enabled=true;detected.Enabled=true;}}
+            FoundChoice[] items=result.items??new FoundChoice[0];
+            int preferred=Array.FindIndex(items,x=>x!=null&&((x.codex!=null&&x.codex.state=="configured")||(x.claude!=null&&x.claude.state=="configured")));
+            if(items.Length>0)ApplyDetected(items[preferred>=0?preferred:0]);
+        }catch(Exception e){if(!IsDisposed){selected=null;detectionStatus.Text=e.Message;}}
+        finally{detecting=false;}
     }
     static void AddField(FlowLayoutPanel container,string label,Control control,List<Control> group){var l=new Label{Text=label,AutoSize=true,Margin=new Padding(0,12,0,4)};control.Width=520;container.Controls.Add(l);container.Controls.Add(control);if(group!=null){group.Add(l);group.Add(control);}}
     static string FindCodex(){string candidate=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),"npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe");return File.Exists(candidate)?candidate:"codex.exe";}
     static string FindClaude(){string home=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);foreach(string relative in new[]{".local\\bin\\claude.exe","AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe"}){string path=Path.Combine(home,relative);if(File.Exists(path))return path;}return "claude.exe";}
     void Create(){
-        if(detecting)throw new Exception("仍在自动检测执行环境，请稍候；如检测失败可展开高级设置手工配置。");
         if(password.Text!=confirm.Text)throw new Exception("两次密码不一致");int count=Encoding.UTF8.GetByteCount(password.Text);if(count<6||count>72||password.Text.Trim()!=password.Text)throw new Exception("密码须为 6–72 字节，且首尾没有空白。");
-        if(!Portable.FreePort((int)port.Value))throw new Exception("端口已被占用，请换一个端口。");
-        string type=kind.SelectedIndex==0?"windows":kind.SelectedIndex==1?"wsl":"ssh";
-        if(binary.Text.Trim()=="")throw new Exception("请填写 AI 工具可执行文件。");
-        if(type=="windows"&&!Directory.Exists(workspace.Text))throw new Exception("工作目录不存在，请填写已有文件夹的绝对路径。");
-        if(type!="windows"&&!workspace.Text.StartsWith("/"))throw new Exception("请填写 Linux 绝对路径。");
-        var env=new Dictionary<string,object>{{"id","default"},{"name",kind.SelectedIndex==1?"WSL · "+distro.Text.Trim():Convert.ToString(kind.SelectedItem)},{"type",type},{"distro",distro.Text.Trim()},{"user",user.Text.Trim()},{"host",sshHost.Text.Trim()},{"port",(int)sshPort.Value},{"default_engine",engine.SelectedIndex==1?"claude":"codex"},{"claude",engine.SelectedIndex==1?binary.Text.Trim():(selected==null?"":selected.environment.claude)},{"codex",engine.SelectedIndex==1?(selected==null?(type=="windows"?"codex.exe":"codex"):selected.environment.codex):binary.Text.Trim()},{"model",""},{"workspaces",new[]{workspace.Text.Trim()}}};
-        string lan="",tail="";
-        if(network.Checked){foreach(var nic in NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==OperationalStatus.Up))foreach(var addr in nic.GetIPProperties().UnicastAddresses){if(addr.Address.AddressFamily!=AddressFamily.InterNetwork)continue;byte[] b=addr.Address.GetAddressBytes();string url="http://"+addr.Address+":"+port.Value;if(b[0]==100&&b[1]>=64&&b[1]<=127)tail=url;else if(lan==""&&(b[0]==10||(b[0]==192&&b[1]==168)||(b[0]==172&&b[1]>=16&&b[1]<=31)))lan=url;}}
-        var config=new Dictionary<string,object>{{"listen",(network.Checked?"0.0.0.0:":"127.0.0.1:")+port.Value},{"environments",new[]{env}},{"default_environment","default"},{"feishu",new Dictionary<string,object>{{"enabled",false}}},{"access",new Dictionary<string,object>{{"lan",lan},{"tailscale",tail}}}};
+        // Initialization deliberately accepts only the password.  The service
+        // creates a safe localhost/default-environment config; all discovery
+        // and machine-specific overrides happen from Settings after login.
+        int selectedPort=(int)port.Value;if(!Portable.FreePort(selectedPort))selectedPort=FindAvailablePort();
+        var config=new Dictionary<string,object>{{"listen","127.0.0.1:"+selectedPort}};
         Portable.Initialize(Portable.Json.Serialize(new Dictionary<string,object>{{"password",password.Text},{"config",config}}));password.Clear();confirm.Clear();
     }
 }
