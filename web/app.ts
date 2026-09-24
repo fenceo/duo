@@ -52,6 +52,18 @@ function renewShellScope(){
  polling=false;settingsPolling=false;createSubmitting=false;sending=false;sessionResetTask='';
 }
 function notify(text:string){element('notice').textContent=text;element('notice').classList.add('show');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>element('notice').classList.remove('show'),6500)}
+function taskLink(id=chosen,view='chat'){
+ const url=new URL(location.href);url.search='';url.searchParams.set('task',id);if(view==='note')url.searchParams.set('view','note');url.hash='';return url.toString();
+}
+async function copyTaskLink(id=chosen){
+ if(!id)return;
+ const url=taskLink(id);
+ try{
+  if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(url);
+  else{const area=document.createElement('textarea');area.value=url;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.append(area);area.select();document.execCommand('copy');area.remove()}
+  notify('任务链接已复制；打开后需要在这台 Duo 登录。');
+ }catch{notify('复制失败，请手动复制当前地址：'+url)}
+}
 async function api<T=any>(path:string,method='GET',data?:unknown,signal?:AbortSignal):Promise<T>{
  const epoch=shellEpoch;
  const response=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
