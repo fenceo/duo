@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -158,5 +159,47 @@ func TestHarnessUsageUsesDisjointNativeTokenBuckets(t *testing.T) {
 	}
 	if got := parseUsage("claude", json.RawMessage(`{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":50,"cache_creation_input_tokens":5}`)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Claude usage semantics changed: %#v", got)
+	}
+}
+
+func TestHarnessRouteDiscoversWindowsDSHSettings(t *testing.T) {
+	home := t.TempDir()
+	settings := `llm-pi-ai:
+  providers:
+    {
+      hl:
+        {
+          apiKeyEnv: HL_API_KEY,
+          models:
+            [
+              { id: deepseek-v4.1-flash, name: deepseek-v4.1-flash },
+              { id: gpt-5.6-sol, name: gpt-5.6-sol }
+            ]
+        }
+    }
+`
+	if err := os.WriteFile(filepath.Join(home, "settings.yaml"), []byte(settings), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := Environment{Type: "windows", HarnessProvider: defaultHarnessProvider, HarnessModel: defaultHarnessModel}
+	provider, model, models := harnessSettingsModelCatalog(env, map[string]string{"DSH_HOME": home})
+	if provider != "hl" || model != "deepseek-v4.1-flash" {
+		t.Fatalf("discovered Harness route = %s/%s", provider, model)
+	}
+	if len(models) != 2 || models[0].ID != "deepseek-v4.1-flash" || models[1].ID != "gpt-5.6-sol" {
+		t.Fatalf("discovered Harness models = %#v", models)
+	}
+	list, err := modelsForEngine(context.Background(), env, "deepseek-harness", map[string]string{"DSH_HOME": home})
+	if err != nil || list.DefaultModel != "deepseek-v4.1-flash" || len(list.Models) != 2 {
+		t.Fatalf("Harness model catalog = %#v (%v)", list, err)
+	}
+	c := Config{HarnessProvider: defaultHarnessProvider, HarnessModel: defaultHarnessModel, EngineEnv: map[string]string{"DSH_HOME": home}}
+	provider, model = harnessRouteForConfig(c, defaultHarnessModel)
+	if provider != "hl" || model != "deepseek-v4.1-flash" {
+		t.Fatalf("runtime Harness route = %s/%s", provider, model)
+	}
+	provider, model = harnessRouteForConfig(Config{HarnessProvider: "custom", HarnessModel: "custom-model", EngineEnv: map[string]string{"DSH_HOME": home}}, "custom-model")
+	if provider != "custom" || model != "custom-model" {
+		t.Fatalf("explicit Harness route was replaced: %s/%s", provider, model)
 	}
 }

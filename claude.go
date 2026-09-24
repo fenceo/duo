@@ -146,6 +146,11 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 		return modelsForEnvironment(ctx, env, profileEnv...)
 	}
 	if engine == "deepseek-harness" {
+		provider, model, configured := harnessSettingsModelCatalog(env, firstProfileEnv(profileEnv))
+		env.HarnessProvider, env.HarnessModel = provider, model
+		if len(configured) > 0 {
+			env.Models = append(configured, env.Models...)
+		}
 		list := mergeEngineCatalog(ModelList{Source: "Duo 中该环境的 Harness 配置", Status: "fallback", Models: []ModelOption{}}, env, engine, env.HarnessModel)
 		models := list.Models
 		for i := range models {

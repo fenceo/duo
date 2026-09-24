@@ -250,17 +250,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			return nil, err
 		}
 	}
-	model := t.Model
-	if model == "" {
-		model = c.HarnessModel
-	}
-	if model == "" {
-		model = "deepseek-flash"
-	}
-	provider := c.HarnessProvider
-	if provider == "" {
-		provider = "deepseek-official"
-	}
+	provider, model := harnessRouteForConfig(c, t.Model)
 	params := map[string]any{"cwd": t.Workspace, "provider": provider, "model": model}
 	if t.ReasoningEffort != "" {
 		params["reasoningEffort"] = t.ReasoningEffort

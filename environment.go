@@ -117,10 +117,10 @@ func normalizeEnvironments(c *Config) error {
 			}
 		}
 		if strings.TrimSpace(e.HarnessModel) == "" {
-			e.HarnessModel = "deepseek-flash"
+			e.HarnessModel = defaultHarnessModel
 		}
 		if strings.TrimSpace(e.HarnessProvider) == "" {
-			e.HarnessProvider = "deepseek-official"
+			e.HarnessProvider = defaultHarnessProvider
 		}
 		switch e.Type {
 		case "windows":
