@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,9 @@ func testUpdateChecker(t *testing.T, status int, body string) *UpdateChecker {
 			t.Fatal("Unexpected request", r.URL, r.Method)
 		}
 		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})
+	c.pageClient.Transport = updateTransport(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("fallback disabled in this fixture")
 	})
 	return c
 }
@@ -121,5 +125,38 @@ func TestUpdateFailureAndUnconfigured(t *testing.T) {
 	}
 	if time.Since(time.UnixMilli(c.cached.Checked)) > time.Second {
 		t.Fatal("check timestamp")
+	}
+}
+
+func TestUpdateFallsBackToReleasePageWhenAPILimited(t *testing.T) {
+	c := newUpdateChecker()
+	c.client.Transport = updateTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(`{"message":"API rate limit exceeded"}`)), Header: http.Header{"X-Ratelimit-Remaining": []string{"0"}}}, nil
+	})
+	c.pageClient.Transport = updateTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://github.com/owner/jianzuo/releases/latest" {
+			t.Fatal(r.URL)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`<meta property="og:url" content="https://github.com/owner/jianzuo/releases/tag/v99.0.0">`)),
+			Header:     http.Header{},
+			Request:    r,
+		}, nil
+	})
+	v, err := c.fetch(context.Background(), "owner/jianzuo")
+	if err != nil || v.State != "available" || v.Latest != "v99.0.0" || v.DownloadURL == "" || v.ChecksumURL == "" {
+		t.Fatal(v, err)
+	}
+}
+
+func TestGitHubRateLimitErrorIncludesReset(t *testing.T) {
+	reset := time.Now().Add(3 * time.Minute).Unix()
+	err := githubRateLimitError(&http.Response{StatusCode: http.StatusForbidden, Header: http.Header{
+		"X-Ratelimit-Remaining": []string{"0"},
+		"X-Ratelimit-Reset":     []string{strconv.FormatInt(reset, 10)},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "GitHub API 额度已用尽") {
+		t.Fatal(err)
 	}
 }

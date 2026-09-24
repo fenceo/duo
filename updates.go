@@ -55,6 +55,7 @@ type UpdateInfo struct {
 type UpdateChecker struct {
 	mu             sync.Mutex
 	client         *http.Client
+	pageClient     *http.Client
 	downloadClient *http.Client
 	cached         UpdateInfo
 	cachedErr      error
@@ -64,6 +65,12 @@ func newUpdateChecker() *UpdateChecker {
 	return &UpdateChecker{
 		client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("GitHub 仓库地址发生重定向，请检查更新源")
+		}},
+		pageClient: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 || req.URL.Scheme != "https" || req.URL.Host != "github.com" || req.URL.User != nil {
+				return errors.New("GitHub 版本页面发生了不安全的重定向")
+			}
+			return nil
 		}},
 		downloadClient: newUpdateDownloadClient(),
 	}
@@ -184,9 +191,14 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "Duo/"+version)
-	request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+	// Keep this on a published GitHub API version. An unknown/future value can
+	// be rejected by proxies even when the endpoint itself is reachable.
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	response, err := c.client.Do(request)
 	if err != nil {
+		if fallback, fallbackErr := c.fetchReleasePage(ctx, repo); fallbackErr == nil {
+			return fallback, nil
+		}
 		return v, errors.New("无法连接 GitHub，请检查运行Duo电脑的网络后重试")
 	}
 	defer response.Body.Close()
@@ -196,7 +208,10 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 		return v, nil
 	}
 	if response.StatusCode == 403 || response.StatusCode == 429 {
-		return v, errors.New("GitHub 暂时限制访问，请稍后再检查；也可打开版本页面")
+		if fallback, fallbackErr := c.fetchReleasePage(ctx, repo); fallbackErr == nil {
+			return fallback, nil
+		}
+		return v, githubRateLimitError(response)
 	}
 	if response.StatusCode != 200 {
 		return v, fmt.Errorf("GitHub 返回 HTTP %d，请稍后重试", response.StatusCode)
@@ -286,6 +301,114 @@ func (c *UpdateChecker) fetch(ctx context.Context, repo string) (UpdateInfo, err
 		v.Message = "发现新版本，便携包尚未上传，可先查看更新说明。"
 	}
 	return v, nil
+}
+
+func githubRateLimitError(response *http.Response) error {
+	if response == nil {
+		return errors.New("GitHub 暂时限制访问，请稍后再检查；也可打开版本页面")
+	}
+	if retry := strings.TrimSpace(response.Header.Get("Retry-After")); retry != "" {
+		return fmt.Errorf("GitHub 暂时限制访问，请约 %s 秒后再检查；也可打开版本页面", retry)
+	}
+	if remaining := strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")); remaining == "0" {
+		if reset := strings.TrimSpace(response.Header.Get("X-RateLimit-Reset")); reset != "" {
+			if unix, err := strconv.ParseInt(reset, 10, 64); err == nil {
+				when := time.Until(time.Unix(unix, 0))
+				if when > 0 {
+					return fmt.Errorf("GitHub API 额度已用尽，约 %s 后恢复；也可打开版本页面", formatUpdateWait(when))
+				}
+			}
+		}
+		return errors.New("GitHub API 额度已用尽，请稍后再检查；也可打开版本页面")
+	}
+	return errors.New("GitHub 暂时限制访问，请稍后再检查；也可打开版本页面")
+}
+
+func formatUpdateWait(d time.Duration) string {
+	minutes := int(d.Round(time.Minute) / time.Minute)
+	if minutes < 1 {
+		return "不到 1 分钟"
+	}
+	if minutes < 60 {
+		return fmt.Sprintf("约 %d 分钟", minutes)
+	}
+	return fmt.Sprintf("约 %d 小时", (minutes+59)/60)
+}
+
+func (c *UpdateChecker) fetchReleasePage(ctx context.Context, repo string) (UpdateInfo, error) {
+	v := updateBase(repo)
+	request, err := http.NewRequestWithContext(ctx, "GET", "https://github.com/"+repo+"/releases/latest", nil)
+	if err != nil {
+		return v, err
+	}
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("User-Agent", "Duo/"+version)
+	if c.pageClient == nil {
+		c.pageClient = &http.Client{Timeout: 12 * time.Second}
+	}
+	response, err := c.pageClient.Do(request)
+	if err != nil {
+		return v, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return v, fmt.Errorf("GitHub 版本页面返回 HTTP %d", response.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024+1))
+	if err != nil || len(raw) > 8*1024*1024 {
+		return v, errors.New("GitHub 版本页面读取失败或内容过大")
+	}
+	tag := releasePageTag(string(raw), repo, response.Request)
+	if tag == "" {
+		return v, errors.New("GitHub 版本页面未找到正式版本")
+	}
+	comparison, err := compareReleaseVersions(tag, version)
+	if err != nil {
+		return v, err
+	}
+	releaseURL := "https://github.com/" + repo + "/releases/tag/" + tag
+	v.ReleaseURL = releaseLink(releaseURL, repo, "/releases/tag/"+tag)
+	if v.ReleaseURL == "" {
+		return v, errors.New("GitHub 版本链接与更新仓库不匹配")
+	}
+	v.Latest = tag
+	v.State = "current"
+	v.Message = "已通过 GitHub 版本页面确认正式版本（API 暂时受限）。"
+	if comparison > 0 {
+		v.State = "available"
+		v.Message = "发现新版本，可以查看更新说明。"
+	} else if comparison < 0 {
+		v.State = "ahead"
+		v.Message = "本机版本高于仓库最新正式版本。"
+	}
+	// The page fallback intentionally derives only the two fixed, expected
+	// asset names. Downloads still go through the normal host, size and SHA-256
+	// validation path before an update is installed.
+	v.installer = updateAsset{URL: "https://github.com/" + repo + "/releases/download/" + tag + "/" + installerAssetName, ChecksumURL: "https://github.com/" + repo + "/releases/download/" + tag + "/" + installerAssetName + ".sha256"}
+	v.portable = updateAsset{URL: "https://github.com/" + repo + "/releases/download/" + tag + "/" + portableAssetName, ChecksumURL: "https://github.com/" + repo + "/releases/download/" + tag + "/" + portableAssetName + ".sha256"}
+	v.InstallerDownloadURL, v.InstallerChecksumURL = v.installer.URL, v.installer.ChecksumURL
+	v.PortableDownloadURL, v.PortableChecksumURL = v.portable.URL, v.portable.ChecksumURL
+	v.DownloadURL, v.ChecksumURL = v.portable.URL, v.portable.ChecksumURL
+	return v, nil
+}
+
+func releasePageTag(raw, repo string, response *http.Request) string {
+	if response != nil && response.URL != nil {
+		prefix := "/" + repo + "/releases/tag/"
+		path := response.URL.Path
+		if len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix) {
+			candidate := strings.Trim(path[len(prefix):], "/")
+			if stableVersionPattern.MatchString(candidate) {
+				return candidate
+			}
+		}
+	}
+	pattern := regexp.MustCompile(`(?i)https://github\.com/` + regexp.QuoteMeta(repo) + `/releases/tag/(v[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9})(?:["'<>\s]|$)`)
+	match := pattern.FindStringSubmatch(raw)
+	if len(match) == 2 && stableVersionPattern.MatchString(match[1]) {
+		return match[1]
+	}
+	return ""
 }
 func (s *Server) updateRoutes(m *http.ServeMux) {
 	checker := newUpdateChecker()
