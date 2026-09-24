@@ -8,7 +8,7 @@ function sameDetectedEnvironment(a:Environment,b:Environment){
  if(a.type!==b.type)return false;
  // A WSL distro is the stable host identity. The detected login user can be
  // different from the user's old hint, so it must not create a duplicate env.
- return a.type==='windows'||a.distro.trim().toLowerCase()===b.distro.trim().toLowerCase();
+ return a.type==='windows'||(a.distro||'').trim().toLowerCase()===(b.distro||'').trim().toLowerCase();
 }
 function renderCreateEnvironmentOptions(preferred=''){
  const select=element<HTMLSelectElement>('create-environment');if(!select||!settings?.config)return;
@@ -75,7 +75,7 @@ async function refreshCreateEnvironments(force=false){
    setCreateEnvironmentDiscoveryStatus(merged.changed?'已自动更新可用环境。':'环境配置已是最新。');
    if(result.message)setCreateEnvironmentDiscoveryStatus((merged.changed?'已自动更新可用环境。':'环境配置已是最新。')+' '+result.message);
   }catch(error){if(shellCurrent(epoch)&&creatingTask)setCreateEnvironmentDiscoveryStatus('自动检测失败，可点击“重新检测”重试：'+(error as Error).message)}
-  finally{createEnvironmentDiscoveryPromise=null;const control=button('create-detect-environments');if(control&&!control.disabled)control.textContent='重新检测';else if(control&&creatingTask)control.disabled=false}
+  finally{createEnvironmentDiscoveryPromise=null;const control=button('create-detect-environments');if(control){control.disabled=false;control.textContent='重新检测'}}
  })();
  return createEnvironmentDiscoveryPromise;
 }

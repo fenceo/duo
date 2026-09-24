@@ -1940,7 +1940,7 @@ let createEnvironmentDiscoveryPromise = null;
 const createEnvironmentDiscoveryCooldown = 2 * 60 * 1000;
 function sameDetectedEnvironment(a, b) {
     if (a.type !== b.type) return false;
-    return a.type === 'windows' || a.distro.trim().toLowerCase() === b.distro.trim().toLowerCase();
+    return a.type === 'windows' || (a.distro || '').trim().toLowerCase() === (b.distro || '').trim().toLowerCase();
 }
 function renderCreateEnvironmentOptions(preferred = '') {
     const select = element('create-environment');
@@ -2075,8 +2075,10 @@ async function refreshCreateEnvironments(force = false) {
         } finally{
             createEnvironmentDiscoveryPromise = null;
             const control = button('create-detect-environments');
-            if (control && !control.disabled) control.textContent = '重新检测';
-            else if (control && creatingTask) control.disabled = false;
+            if (control) {
+                control.disabled = false;
+                control.textContent = '重新检测';
+            }
         }
     })();
     return createEnvironmentDiscoveryPromise;
