@@ -44,7 +44,29 @@ func legacyEnvironment(c Config) Environment {
 		kind = "wsl"
 		name = "WSL · " + c.Distro
 	}
-	return Environment{ID: "default", Name: name, Type: kind, Distro: c.Distro, User: c.User, Codex: c.Codex, Model: c.Model, Workspaces: c.Workspaces}
+	workspaces := append([]string{}, c.Workspaces...)
+	if len(workspaces) == 0 {
+		// The first-run launcher only asks for a password. Keep a usable
+		// workspace while asynchronous environment discovery is still running.
+		workspaces = []string{defaultEnvironmentWorkspace(kind, c.User)}
+	}
+	return Environment{ID: "default", Name: name, Type: kind, Distro: c.Distro, User: c.User, Codex: c.Codex, Model: c.Model, Workspaces: workspaces}
+}
+
+func defaultEnvironmentWorkspace(kind, user string) string {
+	if kind == "windows" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			// Match the first-run launcher default and prefer a directory that
+			// normally already exists instead of inventing a nested path.
+			return filepath.Join(home, "Documents")
+		}
+		return "."
+	}
+	if user = strings.TrimSpace(user); user != "" {
+		return "/home/" + user
+	}
+	return "/home"
 }
 func windowsEnvironment() Environment {
 	home, _ := os.UserHomeDir()
@@ -100,17 +122,20 @@ func normalizeEnvironments(c *Config) error {
 		if strings.TrimSpace(e.HarnessProvider) == "" {
 			e.HarnessProvider = "deepseek-official"
 		}
-		if strings.TrimSpace(e.Name) == "" || strings.TrimSpace(e.Codex) == "" || len(e.Workspaces) == 0 {
-			return errors.New("每个环境都需要名称、Codex 程序和工作目录")
-		}
 		switch e.Type {
 		case "windows":
 			e.Distro = ""
 			e.Host = ""
+			if strings.TrimSpace(e.Name) == "" {
+				e.Name = "本机 Windows"
+			}
 		case "wsl":
 			e.Host = ""
 			if strings.TrimSpace(e.Distro) == "" {
 				return errors.New("WSL 环境需要发行版名称")
+			}
+			if strings.TrimSpace(e.Name) == "" {
+				e.Name = "WSL · " + strings.TrimSpace(e.Distro)
 			}
 		case "ssh":
 			e.Distro = ""
@@ -128,6 +153,12 @@ func normalizeEnvironments(c *Config) error {
 			}
 		default:
 			return errors.New("环境类型必须是 windows、wsl 或 ssh")
+		}
+		if len(e.Workspaces) == 0 {
+			e.Workspaces = []string{defaultEnvironmentWorkspace(e.Type, e.User)}
+		}
+		if strings.TrimSpace(e.Name) == "" || strings.TrimSpace(e.Codex) == "" || len(e.Workspaces) == 0 {
+			return errors.New("每个环境都需要名称、Codex 程序和工作目录")
 		}
 		for _, path := range e.Workspaces {
 			if e.Type == "windows" {

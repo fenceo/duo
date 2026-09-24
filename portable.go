@@ -31,6 +31,12 @@ func initializePortable(dir string, reader io.Reader) error {
 	if v.Config.Feishu.Enabled || v.Config.Feishu.Secret != "" {
 		return errors.New("首次初始化不导入飞书凭据，请启动后扫码配置")
 	}
+	// The first-run UI can finish with only a password while discovery is
+	// running. Keep that minimal initialization local by default; the user can
+	// opt into LAN/Tailscale access later from the settings page.
+	if strings.TrimSpace(v.Config.Listen) == "" {
+		v.Config.Listen = "127.0.0.1:8789"
+	}
 	if e := normalizeAccess(&v.Config.Access); e != nil {
 		return e
 	}
