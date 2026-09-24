@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	s.engineRoutes(m)
 	s.workspaceRoutes(m)
 	s.workspaceTransferRoutes(m)
+	s.handoffRoutes(m)
 	s.scratchRoutes(m)
 	s.knowledgeRoutes(m)
 	s.hardwareRoutes(m)
@@ -297,6 +298,17 @@ func (s *Server) Handler() http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		jsonOut(w, 200, map[string]any{"files": externalContextFiles(ctx, task)})
+	}))
+	// Preview the portable context that can be handed to another engine. This
+	// endpoint is intentionally read-only: it never invokes a model or submits
+	// the snapshot, so the user can inspect the redacted text first.
+	m.HandleFunc("GET /api/tasks/{id}/continuation/preview", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		preview, e := s.app.continuationPreview(r.PathValue("id"), r.URL.Query().Get("mode"))
+		if e != nil {
+			fail(w, http.StatusNotFound, "任务不存在")
+			return
+		}
+		jsonOut(w, http.StatusOK, preview)
 	}))
 	m.HandleFunc("GET /api/tasks/{id}/note", s.secure(s.note))
 	m.HandleFunc("PUT /api/tasks/{id}/note", s.secure(s.note))
@@ -496,6 +508,9 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	// and which foreign instruction files sit in the working directory, so a
 	// reply that follows old context is explainable instead of surprising.
 	response := map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id)}
+	if continuation, err := s.app.store.taskContinuation(id); err == nil {
+		response["continuation"] = continuation
+	}
 	if runtime := harnessRuntimeStatus(t); runtime != nil {
 		response["runtime"] = runtime
 	}

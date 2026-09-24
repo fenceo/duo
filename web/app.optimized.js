@@ -1798,7 +1798,7 @@ function groupWorkspaceTasks(items) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换工具继续</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items) {
     return groupWorkspaceTasks(items).map((g)=>`<section class="workspace-group"><button class="workspace-heading" data-workspace="${escapeHTML(g.key)}" aria-expanded="${!collapsedWorkspaces.has(g.key)}" title="${escapeHTML(g.environment + ' · ' + g.path)}"><span class="folder-arrow">${collapsedWorkspaces.has(g.key) ? '›' : '⌄'}</span><span class="folder-name">${escapeHTML(g.name)}</span><small>${escapeHTML(g.environment)}</small></button><div class="workspace-tasks ${collapsedWorkspaces.has(g.key) ? 'hidden' : ''}">${g.tasks.map((t)=>`<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><small class="task-state ${t.status === 'running' || t.status === 'queued' ? 'active' : ''}">${t.archived ? '已归档' : names[t.status] || escapeHTML(t.status)}</small></button>${taskItemMenu(t)}</div>`).join('')}</div></section>`).join('');
@@ -1850,7 +1850,8 @@ function installLayout() {
     const model = element('task-model');
     element('composer').querySelector('.composer-bottom').prepend(model);
     element('task-model-button').title = '本任务使用的 AI 工具、模型和推理强度';
-    element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');
+    element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');
+    button('task-handoff').onclick = ()=>void openHandoff();
     button('task-link-copy').onclick = ()=>void copyTaskLink();
     element('composer').querySelector('.composer-bottom small').remove();
     input('message').title = 'Enter 发送，Shift + Enter 换行';
@@ -1864,7 +1865,8 @@ function installLayout() {
             menu.removeAttribute('open');
             if (action.disabled) return;
             const id = action.dataset.taskId || '', kind = action.dataset.taskAction;
-            if (kind === 'copy-link') void copyTaskLink(id);
+            if (kind === 'handoff') void openHandoff(id);
+            else if (kind === 'copy-link') void copyTaskLink(id);
             else if (kind === 'rename') void openTaskRename(id);
             else if (kind === 'pin') void changeTaskPreference('pinned', id);
             else if (kind === 'archive') void changeTaskPreference('archived', id);
@@ -4961,6 +4963,102 @@ async function copyTaskLink(id = chosen) {
         notify('任务链接已复制；打开后需要在这台 Duo 登录。');
     } catch  {
         notify('复制失败，请手动复制当前地址：' + url);
+    }
+}
+let handoffPreviewSource = '', handoffPreviewReady = false;
+function ensureHandoffDialog() {
+    if (element('handoff-dialog')) return;
+    document.body.insertAdjacentHTML('beforeend', `<dialog id="handoff-dialog"><form id="handoff-form"><h2>切换工具并继续</h2><p>这会创建一个新的执行路线。原任务不会改变；发送给目标引擎的是经过脱敏的知识和对话快照，不包含原生会话或附件。</p><label for="handoff-environment">目标环境</label><select id="handoff-environment"></select><label for="handoff-engine">AI 工具</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-model">模型（可留空，沿用目标工具默认）</label><input id="handoff-model" placeholder="目标环境中的模型 ID"><label for="handoff-context-mode">历史范围</label><select id="handoff-context-mode"><option value="recent">已验证知识 + 最近 8 条记录</option><option value="summary">仅已验证知识</option><option value="full">最近记录和知识（限长）</option></select><label for="handoff-message">本次继续要求</label><textarea id="handoff-message" rows="4" required>请先检查当前工作区，再根据历史上下文继续完成任务。</textarea><p id="handoff-preview-status" class="muted" role="status">正在读取脱敏预览…</p><pre id="handoff-preview" class="handoff-preview hidden"></pre><p id="handoff-error" class="error"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">重新读取预览</button><button class="primary" id="handoff-submit" disabled>确认并开始</button></div></form></dialog>`);
+    element('handoff-form').onsubmit = (e)=>{
+        e.preventDefault();
+        void submitHandoff();
+    };
+    button('handoff-cancel').onclick = ()=>element('handoff-dialog').close();
+    button('handoff-refresh').onclick = ()=>void loadHandoffPreview();
+    element('handoff-context-mode').onchange = ()=>void loadHandoffPreview();
+    const env = element('handoff-environment');
+    env.onchange = ()=>{
+        const target = settings.config.environments.find((v)=>v.id === env.value);
+        if (!target) return;
+        element('handoff-workspace').value = target.workspaces[0] || '';
+        updateHandoffModel();
+    };
+    element('handoff-engine').onchange = updateHandoffModel;
+}
+function updateHandoffModel() {
+    const env = settings.config.environments.find((v)=>v.id === element('handoff-environment').value);
+    if (!env) return;
+    const engine = element('handoff-engine').value;
+    element('handoff-model').value = engineDefaultModel(env, engine);
+}
+async function loadHandoffPreview() {
+    const source = handoffPreviewSource;
+    if (!source) return;
+    const status = element('handoff-preview-status'), pre = element('handoff-preview'), submit = button('handoff-submit');
+    submit.disabled = true;
+    status.textContent = '正在生成本地脱敏预览…';
+    pre.classList.add('hidden');
+    element('handoff-error').textContent = '';
+    try {
+        const mode = element('handoff-context-mode').value;
+        const p = await api('tasks/' + source + '/continuation/preview?mode=' + encodeURIComponent(mode));
+        if (source !== handoffPreviewSource) return;
+        handoffPreviewReady = true;
+        status.textContent = `将转交 ${p.transferred_runs} 条对话、${p.transferred_knowledge} 条知识${p.context_truncated ? '（已截断）' : ''}。请检查下面内容后确认。`;
+        pre.textContent = p.context;
+        pre.classList.remove('hidden');
+        submit.disabled = false;
+    } catch (e) {
+        handoffPreviewReady = false;
+        status.textContent = '无法生成预览';
+        element('handoff-error').textContent = e.message;
+    }
+}
+async function openHandoff(id = chosen) {
+    if (!id || !detail) return;
+    ensureHandoffDialog();
+    handoffPreviewSource = id;
+    handoffPreviewReady = false;
+    const env = element('handoff-environment');
+    env.innerHTML = settings.config.environments.map((v)=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');
+    env.value = detail.task.environment?.id || settings.config.default_environment;
+    element('handoff-engine').value = detail.task.engine || 'codex';
+    element('handoff-workspace').value = detail.task.workspace || '';
+    element('handoff-model').value = detail.task.model || '';
+    element('handoff-message').value = '请先检查当前工作区，再根据历史上下文继续完成任务。';
+    element('handoff-dialog').showModal();
+    await loadHandoffPreview();
+}
+async function submitHandoff() {
+    if (!handoffPreviewSource || !handoffPreviewReady) return;
+    const engine = element('handoff-engine').value, mode = modeForPermission(createPermission, engine);
+    if (!mode || !modeSupportsEngine(mode, engine)) {
+        element('handoff-error').textContent = '当前权限模式不适用于目标工具，请调整设置后重试。';
+        return;
+    }
+    const submit = button('handoff-submit');
+    submit.disabled = true;
+    try {
+        const result = await api('tasks/' + handoffPreviewSource + '/handoff', 'POST', {
+            confirm: true,
+            environment_id: element('handoff-environment').value,
+            engine,
+            workspace: element('handoff-workspace').value,
+            model: element('handoff-model').value,
+            reasoning_effort: '',
+            mode_id: mode.id,
+            message: element('handoff-message').value,
+            context_mode: element('handoff-context-mode').value
+        });
+        element('handoff-dialog').close();
+        if (result.task) {
+            tasks.unshift(result.task);
+            await choose(result.task.id);
+            notify('已创建新的执行路线，原任务保持不变。');
+        }
+    } catch (e) {
+        element('handoff-error').textContent = e.message;
+        submit.disabled = false;
     }
 }
 async function api(path, method = 'GET', data, signal) {

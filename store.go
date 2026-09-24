@@ -84,6 +84,8 @@ func openStore(dir string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,workspace TEXT NOT NULL,model TEXT NOT NULL,session TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'idle',created INTEGER NOT NULL,updated INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS task_environments(task_id TEXT PRIMARY KEY REFERENCES tasks(id),environment TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS task_execution(task_id TEXT PRIMARY KEY REFERENCES tasks(id),reasoning_effort TEXT NOT NULL DEFAULT '',engine TEXT NOT NULL DEFAULT 'codex');
+ CREATE TABLE IF NOT EXISTS task_continuations(target_task_id TEXT PRIMARY KEY REFERENCES tasks(id),source_task_id TEXT NOT NULL REFERENCES tasks(id),source_engine TEXT NOT NULL,target_engine TEXT NOT NULL,transferred_runs INTEGER NOT NULL DEFAULT 0,transferred_knowledge INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+ CREATE INDEX IF NOT EXISTS task_continuations_source ON task_continuations(source_task_id,created);
  CREATE TABLE IF NOT EXISTS task_preferences(task_id TEXT PRIMARY KEY REFERENCES tasks(id),pinned INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),input TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL,result TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,finished INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL);
