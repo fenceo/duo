@@ -133,12 +133,15 @@ end;
 
 function WantDesktop: Boolean;
 begin
-  if UpdateMode then Result := OldDesktop else Result := ChoicePage.Values[0];
+  { A registered installation is a normal in-place upgrade.  Keep the
+    existing entry without making the user walk through a second preference
+    page; the tray/settings UI remains the place to change it. }
+  if UpdateMode or HasOldInstall then Result := OldDesktop else Result := ChoicePage.Values[0];
 end;
 
 function WantStartup: Boolean;
 begin
-  if UpdateMode then Result := OldStartup else Result := ChoicePage.Values[1];
+  if UpdateMode or HasOldInstall then Result := OldStartup else Result := ChoicePage.Values[1];
 end;
 
 function GetDesktop(Param: String): String;
@@ -330,8 +333,8 @@ begin
   ChoicePage := CreateInputOptionPage(DataConfirmPage.ID, '启动入口', '安装、升级和修复使用同一套入口。', '已安装时默认保留现有选项。安装器不会强制关闭正在运行的任务。', False, False);
   ChoicePage.Add('创建桌面快捷方式'); ChoicePage.Add('登录 Windows 后自动启动');
   ChoicePage.Values[0] := OldDesktop; ChoicePage.Values[1] := OldStartup;
-  MigrationPage := CreateInputOptionPage(ChoicePage.ID, '迁移旧Duo入口', '只迁移入口，不删除旧程序或数据。', '旧程序目录：' + OldTaskDir + #13#10 + '原数据目录：' + OldTaskData + #13#10#13#10 + '确认后会先备份旧任务 XML，再将启动任务和已识别快捷方式指向本次选择的程序和数据目录。取消安装或失败时恢复原启动任务。', False, False);
-  MigrationPage.Add('我确认将上述旧入口迁移到本次选择的程序和数据目录');
+  MigrationPage := CreateInputOptionPage(ChoicePage.ID, '迁移旧Duo入口', '只迁移启动入口，不搬运数据。', '旧程序目录：' + OldTaskDir + #13#10 + '原数据目录：' + OldTaskData + #13#10#13#10 + '确认后只会备份并更新启动任务和已识别快捷方式，使其指向本次选择的程序与数据目录；不会复制、合并或删除旧数据，也不会删除旧程序。取消安装或失败时恢复原启动任务。', False, False);
+  MigrationPage.Add('我确认只迁移启动任务和快捷方式，不复制或删除旧程序、旧数据');
   MigrationPage.Values[0] := False;
 #ifdef TestNamespace
   if ParamValue('TESTDATAMODE') = 'fresh' then DataModePage.SelectedValueIndex := 1;
@@ -365,9 +368,25 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
+  { The normal path is deliberately short:
+      * first install: show the data directory, but there is no meaningful
+        "data mode" or confirmation choice yet;
+      * an installed copy: keep its registered program/data/entry paths and
+        perform an in-place upgrade without asking the same questions again;
+      * a recognised portable/legacy entry: show the detected data path so it
+        is visible, then require only the explicit entry-migration consent.
+    TestNamespace keeps the old pages so the isolated lifecycle tests can
+    exercise every guarded data-switch branch. }
+#ifdef TestNamespace
+  Result := False;
+#else
   Result := (UpdateMode and ((PageID = wpSelectDir) or (PageID = DataModePage.ID) or (PageID = DataPage.ID) or (PageID = ChoicePage.ID))) or
-    ((PageID = DataConfirmPage.ID) and (DataModePage.SelectedValueIndex = 0)) or
+    ((PageID = DataModePage.ID) and (HasOldInstall or ((not HasPreviousData) and (not NeedsMigration)))) or
+    ((PageID = DataPage.ID) and HasOldInstall) or
+    ((PageID = DataConfirmPage.ID) and (HasOldInstall or (DataModePage.SelectedValueIndex = 0))) or
+    ((PageID = ChoicePage.ID) and HasOldInstall) or
     ((PageID = MigrationPage.ID) and not NeedsMigration);
+#endif
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

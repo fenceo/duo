@@ -24,7 +24,7 @@ $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($setup))
 if (!$binary.StartsWith('MZ') -or !$binary.Contains('Inno Setup Setup Data')) { throw 'Release artifact is not a native Inno Setup executable.' }
 $definition = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'installer\windows\Jianzuo.iss')
 $source = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'installer\windows\JianzuoMaintenance.cs')
-foreach ($contract in @('PrivilegesRequired=lowest','[Files]','[Icons]','[Registry]','if CurStep = ssInstall then ApplyStartup','--rollback','--commit','--update','TaskRecognized','MigrationPage.Values[0] := False','CloseApplications=no','WizardForm.DirBrowseButton.Enabled := False','DataPage.Buttons[0].Enabled','--confirm-data','--release-guard')) {
+foreach ($contract in @('PrivilegesRequired=lowest','[Files]','[Icons]','[Registry]','if CurStep = ssInstall then ApplyStartup','--rollback','--commit','--update','TaskRecognized','MigrationPage.Values[0] := False','CloseApplications=no','WizardForm.DirBrowseButton.Enabled := False','DataPage.Buttons[0].Enabled','--confirm-data','--release-guard','只迁移启动入口，不搬运数据。','不会复制、合并或删除旧数据','(PageID = DataModePage.ID) and (HasOldInstall or ((not HasPreviousData) and (not NeedsMigration)))','(PageID = ChoicePage.ID) and HasOldInstall')) {
     if (!$definition.Contains($contract)) { throw "Missing Inno safety contract: $contract" }
 }
 foreach ($contract in @('else if not FileExists(ResultFile) then','if not FileCopy(ResultFile, ProbeFile, False) then',"ProbeValue('Protocol') <> 'duo-install-probe-v1'","ValidProbeFlag('HasInstall')",'Error := ValidateProbeResult;','Maintenance command=','Probe protocol=')) {

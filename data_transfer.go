@@ -29,6 +29,8 @@ const (
 	workspaceMaxEvents       = 60000
 	workspaceMaxKnowledge    = 10000
 	workspaceMaxScratch      = 10000
+	workspaceMaxModes        = 20
+	workspaceMaxCommands     = 40
 )
 
 type workspaceArchive struct {
@@ -42,6 +44,16 @@ type workspaceArchive struct {
 	Scratch     []workspaceArchiveScratch    `json:"scratch"`
 	Notes       []workspaceArchiveNote       `json:"notes"`
 	Attachments []workspaceArchiveAttachment `json:"attachments"`
+	// Workbench carries only user-authored work modes and quick commands.
+	// Built-in modes are reconstructed by the current installation, while
+	// this catalog is deliberately kept free of environment and credential
+	// records.
+	Workbench workspaceArchiveWorkbench `json:"workbench,omitempty"`
+}
+
+type workspaceArchiveWorkbench struct {
+	Modes    []WorkMode     `json:"modes,omitempty"`
+	Commands []QuickCommand `json:"commands,omitempty"`
 }
 
 type workspaceArchiveTask struct {
@@ -172,6 +184,116 @@ func (s *Store) workspaceModeID(taskID string) string {
 	return archiveModeID(raw)
 }
 
+// workspaceWorkbenchSnapshot intentionally excludes built-ins. They are part
+// of the current Duo version and are recreated on import. User-defined modes
+// and commands contain prompt text only; they never contain environment
+// records, executable paths, API keys, sessions, or hardware credentials.
+func (s *Store) workspaceWorkbenchSnapshot() workspaceArchiveWorkbench {
+	catalog := s.catalog()
+	out := workspaceArchiveWorkbench{}
+	for _, mode := range catalog.Modes {
+		if mode.Builtin {
+			continue
+		}
+		mode.Builtin = false
+		mode.Name = redactWorkspaceText(mode.Name)
+		mode.Prompt = redactWorkspaceText(mode.Prompt)
+		out.Modes = append(out.Modes, mode)
+	}
+	for _, command := range catalog.Commands {
+		command.Name = redactWorkspaceText(command.Name)
+		command.Content = redactWorkspaceText(command.Content)
+		out.Commands = append(out.Commands, command)
+	}
+	return out
+}
+
+func archiveWorkbenchCatalog(w workspaceArchiveWorkbench) WorkCatalog {
+	return WorkCatalog{Modes: append([]WorkMode(nil), w.Modes...), Commands: append([]QuickCommand(nil), w.Commands...)}
+}
+
+// uniqueWorkbenchID keeps imports additive. Existing modes/commands are never
+// overwritten; imported references are remapped to their new IDs instead.
+func uniqueWorkbenchID(base string, used map[string]bool) string {
+	if !used[base] && safeWorkbenchID(base) {
+		return base
+	}
+	base = strings.Trim(base, "-_")
+	if base == "" {
+		base = "imported"
+	}
+	for i := 1; ; i++ {
+		suffix := fmt.Sprintf("-imported-%d", i)
+		limit := 64 - len(suffix)
+		candidateBase := base
+		if len(candidateBase) > limit {
+			candidateBase = candidateBase[:limit]
+		}
+		candidate := candidateBase + suffix
+		if safeWorkbenchID(candidate) && !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+// mergeWorkspaceWorkbench validates and adds imported user definitions. It
+// returns an old->new mode ID map used while remapping task/run options.
+func mergeWorkspaceWorkbench(current WorkCatalog, imported workspaceArchiveWorkbench) (WorkCatalog, map[string]string, error) {
+	importedCatalog := WorkCatalog{Modes: append([]WorkMode(nil), imported.Modes...), Commands: append([]QuickCommand(nil), imported.Commands...)}
+	if err := validateCatalog(&importedCatalog); err != nil {
+		return WorkCatalog{}, nil, err
+	}
+	// WorkCatalog returned by Store.catalog includes built-ins whose IDs may
+	// contain ':'; validate only the user-authored portion above.
+	merged := WorkCatalog{Modes: append([]WorkMode(nil), current.Modes...), Commands: append([]QuickCommand(nil), current.Commands...)}
+	usedModes, usedCommands := map[string]bool{}, map[string]bool{}
+	customModeCount, customCommandCount := 0, 0
+	for _, mode := range merged.Modes {
+		usedModes[mode.ID] = true
+		if !mode.Builtin {
+			customModeCount++
+		}
+	}
+	for _, command := range merged.Commands {
+		usedCommands[command.ID] = true
+		customCommandCount++
+	}
+	modeMap := map[string]string{}
+	for _, mode := range importedCatalog.Modes {
+		if customModeCount >= workspaceMaxModes {
+			return WorkCatalog{}, nil, errors.New("当前工作模式已达到上限，无法导入更多模式")
+		}
+		mode.Builtin = false
+		oldID := mode.ID
+		mode.ID = uniqueWorkbenchID(oldID, usedModes)
+		usedModes[mode.ID] = true
+		modeMap[oldID] = mode.ID
+		merged.Modes = append(merged.Modes, mode)
+		customModeCount++
+	}
+	for _, command := range importedCatalog.Commands {
+		if customCommandCount >= workspaceMaxCommands {
+			return WorkCatalog{}, nil, errors.New("当前快捷指令已达到上限，无法导入更多指令")
+		}
+		command.ID = uniqueWorkbenchID(command.ID, usedCommands)
+		usedCommands[command.ID] = true
+		merged.Commands = append(merged.Commands, command)
+		customCommandCount++
+	}
+	return merged, modeMap, nil
+}
+
+func persistedWorkbenchCatalog(c WorkCatalog) WorkCatalog {
+	out := WorkCatalog{Commands: append([]QuickCommand(nil), c.Commands...)}
+	for _, mode := range c.Modes {
+		if !mode.Builtin {
+			mode.Builtin = false
+			out.Modes = append(out.Modes, mode)
+		}
+	}
+	return out
+}
+
 func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte, error) {
 	tasks, err := s.tasks(true)
 	if err != nil {
@@ -181,6 +303,10 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 		return workspaceArchive{}, nil, errors.New("任务数量超过导出上限")
 	}
 	a := workspaceArchive{Protocol: workspaceArchiveProtocol, Kind: workspaceArchiveKind, ExportedAt: time.Now().UnixMilli()}
+	a.Workbench = s.workspaceWorkbenchSnapshot()
+	if len(a.Workbench.Modes) > workspaceMaxModes || len(a.Workbench.Commands) > workspaceMaxCommands {
+		return workspaceArchive{}, nil, errors.New("工作台自定义模式或快捷指令超过导出上限")
+	}
 	for _, task := range tasks {
 		a.Tasks = append(a.Tasks, workspaceArchiveTask{ID: task.ID, Title: redactWorkspaceText(task.Title), Model: redactWorkspaceText(task.Model), ReasoningEffort: task.ReasoningEffort, Engine: task.Engine, Status: task.Status, Created: task.Created, Updated: task.Updated, Pinned: task.Pinned, Archived: task.Archived, Deleted: task.Deleted, ModeID: s.workspaceModeID(task.ID)})
 		runs, err := s.runs(task.ID)
@@ -304,6 +430,50 @@ func marshalWorkspaceArchive(a workspaceArchive) ([]byte, error) {
 	return b, nil
 }
 
+// sanitizeWorkspaceArchive is also applied on import. Exported Duo archives
+// are already redacted, but accepting a hand-crafted ZIP must not provide a
+// way to place obvious credentials or machine paths into the local workspace.
+func sanitizeWorkspaceArchive(a *workspaceArchive) {
+	for i := range a.Tasks {
+		a.Tasks[i].Title = redactWorkspaceText(a.Tasks[i].Title)
+		a.Tasks[i].Model = redactWorkspaceText(a.Tasks[i].Model)
+	}
+	for i := range a.Runs {
+		a.Runs[i].Input = redactWorkspaceText(a.Runs[i].Input)
+		a.Runs[i].Result = redactWorkspaceText(a.Runs[i].Result)
+		a.Runs[i].Error = redactWorkspaceText(a.Runs[i].Error)
+		a.Runs[i].Kind = redactWorkspaceText(a.Runs[i].Kind)
+		a.Runs[i].Source = redactWorkspaceText(a.Runs[i].Source)
+	}
+	for i := range a.Events {
+		a.Events[i].Kind = redactWorkspaceText(a.Events[i].Kind)
+		a.Events[i].Text = redactWorkspaceText(a.Events[i].Text)
+	}
+	for i := range a.Knowledge {
+		a.Knowledge[i].Title = redactWorkspaceText(a.Knowledge[i].Title)
+		a.Knowledge[i].Content = redactWorkspaceText(a.Knowledge[i].Content)
+		a.Knowledge[i].Status = redactWorkspaceText(a.Knowledge[i].Status)
+		a.Knowledge[i].Source = redactWorkspaceText(a.Knowledge[i].Source)
+	}
+	for i := range a.Scratch {
+		a.Scratch[i].Title = redactWorkspaceText(a.Scratch[i].Title)
+		a.Scratch[i].Content = redactWorkspaceText(a.Scratch[i].Content)
+		a.Scratch[i].Status = redactWorkspaceText(a.Scratch[i].Status)
+		a.Scratch[i].Due = redactWorkspaceText(a.Scratch[i].Due)
+	}
+	for i := range a.Notes {
+		a.Notes[i].Content = redactWorkspaceText(a.Notes[i].Content)
+	}
+	for i := range a.Workbench.Modes {
+		a.Workbench.Modes[i].Name = redactWorkspaceText(a.Workbench.Modes[i].Name)
+		a.Workbench.Modes[i].Prompt = redactWorkspaceText(a.Workbench.Modes[i].Prompt)
+	}
+	for i := range a.Workbench.Commands {
+		a.Workbench.Commands[i].Name = redactWorkspaceText(a.Workbench.Commands[i].Name)
+		a.Workbench.Commands[i].Content = redactWorkspaceText(a.Workbench.Commands[i].Content)
+	}
+}
+
 func buildWorkspaceZip(a workspaceArchive, attachments map[string][]byte) ([]byte, error) {
 	if len(a.Attachments) != 0 || len(attachments) != 0 {
 		return nil, errors.New("v1 工作区导出不支持附件，请单独上传")
@@ -403,6 +573,7 @@ func readWorkspaceZip(raw []byte) (workspaceZipData, error) {
 	if err := decoder.Decode(&archive); err != nil || archive.Protocol != workspaceArchiveProtocol || archive.Kind != workspaceArchiveKind {
 		return workspaceZipData{}, errors.New("工作区索引版本不受支持")
 	}
+	sanitizeWorkspaceArchive(&archive)
 	if err := validateWorkspaceArchive(archive); err != nil {
 		return workspaceZipData{}, err
 	}
@@ -416,6 +587,29 @@ func validArchiveText(value string, max int) bool {
 func validateWorkspaceArchive(a workspaceArchive) error {
 	if len(a.Tasks) > workspaceMaxTasks || len(a.Runs) > workspaceMaxRuns || len(a.Events) > workspaceMaxEvents || len(a.Knowledge) > workspaceMaxKnowledge || len(a.Scratch) > workspaceMaxScratch {
 		return errors.New("工作区内容超过导入上限")
+	}
+	if len(a.Workbench.Modes) > workspaceMaxModes || len(a.Workbench.Commands) > workspaceMaxCommands {
+		return errors.New("工作台模式或快捷指令超过导入上限")
+	}
+	workbench := archiveWorkbenchCatalog(a.Workbench)
+	for _, mode := range a.Workbench.Modes {
+		if mode.Builtin {
+			return errors.New("导入工作台包含内置模式")
+		}
+	}
+	if err := validateCatalog(&workbench); err != nil {
+		return errors.New("导入工作台模式或快捷指令无效")
+	}
+	for i := range workbench.Modes {
+		if workbench.Modes[i].Builtin || strings.Contains(workbench.Modes[i].ID, ":") {
+			return errors.New("导入工作台包含内置模式")
+		}
+		workbench.Modes[i].Name = redactWorkspaceText(workbench.Modes[i].Name)
+		workbench.Modes[i].Prompt = redactWorkspaceText(workbench.Modes[i].Prompt)
+	}
+	for i := range workbench.Commands {
+		workbench.Commands[i].Name = redactWorkspaceText(workbench.Commands[i].Name)
+		workbench.Commands[i].Content = redactWorkspaceText(workbench.Commands[i].Content)
 	}
 	if len(a.Attachments) != 0 {
 		return errors.New("v1 工作区导入包不支持附件，请导入后重新上传")
@@ -490,9 +684,14 @@ func (s *Server) workspaceExport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(archive)
 }
 
-func currentImportMode(catalog WorkCatalog, id string) string {
+func currentImportMode(catalog WorkCatalog, id string, importedModeMaps ...map[string]string) string {
 	if !archiveIDPattern.MatchString(id) {
 		return "{}"
+	}
+	if len(importedModeMaps) != 0 {
+		if mapped := importedModeMaps[0][id]; mapped != "" {
+			id = mapped
+		}
 	}
 	for _, mode := range catalog.Modes {
 		if mode.ID == id {
@@ -537,12 +736,29 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	modeCatalog := s.app.store.catalog()
+	mergedCatalog, importedModeMap, err := mergeWorkspaceWorkbench(modeCatalog, data.Archive.Workbench)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	tx, err := s.app.store.Begin()
 	if err != nil {
 		fail(w, 500, "无法开始导入事务")
 		return
 	}
 	rollback := func(message string) { _ = tx.Rollback(); fail(w, http.StatusBadRequest, message) }
+	if len(data.Archive.Workbench.Modes) != 0 || len(data.Archive.Workbench.Commands) != 0 {
+		persisted := persistedWorkbenchCatalog(mergedCatalog)
+		catalogRaw, marshalErr := json.Marshal(persisted)
+		if marshalErr != nil {
+			rollback("导入工作台设置失败")
+			return
+		}
+		if _, err = tx.Exec("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", "workbench_catalog", string(catalogRaw)); err != nil {
+			rollback("导入工作台设置失败")
+			return
+		}
+	}
 	taskIDs, runIDs := map[string]string{}, map[string]string{}
 	for _, task := range data.Archive.Tasks {
 		id := uid()
@@ -579,7 +795,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 			rollback("导入任务状态失败")
 			return
 		}
-		if _, err = tx.Exec("INSERT INTO task_options(task_id,mode,deleted) VALUES(?,?,?)", id, currentImportMode(modeCatalog, task.ModeID), boolInt(task.Deleted)); err != nil {
+		if _, err = tx.Exec("INSERT INTO task_options(task_id,mode,deleted) VALUES(?,?,?)", id, currentImportMode(mergedCatalog, task.ModeID, importedModeMap), boolInt(task.Deleted)); err != nil {
 			rollback("导入任务模式失败")
 			return
 		}
@@ -602,7 +818,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 			rollback("导入对话失败")
 			return
 		}
-		modeRaw := currentImportMode(modeCatalog, run.ModeID)
+		modeRaw := currentImportMode(mergedCatalog, run.ModeID, importedModeMap)
 		if _, err = tx.Exec("INSERT INTO run_options(run_id,mode,attachments) VALUES(?,?,?)", id, modeRaw, "[]"); err != nil {
 			rollback("导入对话选项失败")
 			return
@@ -655,7 +871,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.app.changed()
-	jsonOut(w, http.StatusCreated, map[string]any{"ok": true, "tasks": len(data.Archive.Tasks), "runs": len(data.Archive.Runs), "events": len(data.Archive.Events), "knowledge": len(data.Archive.Knowledge), "scratch": len(data.Archive.Scratch), "attachments": len(data.Archive.Attachments)})
+	jsonOut(w, http.StatusCreated, map[string]any{"ok": true, "tasks": len(data.Archive.Tasks), "runs": len(data.Archive.Runs), "events": len(data.Archive.Events), "knowledge": len(data.Archive.Knowledge), "scratch": len(data.Archive.Scratch), "modes": len(data.Archive.Workbench.Modes), "commands": len(data.Archive.Workbench.Commands), "attachments": len(data.Archive.Attachments)})
 }
 
 func boolInt(value bool) int {
