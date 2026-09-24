@@ -304,6 +304,20 @@ function installWorkflow() {
     environmentField.className = 'create-field create-context-field';
     environmentField.innerHTML = '<span>环境</span>';
     environmentField.append(environment);
+    const environmentTools = document.createElement('div');
+    environmentTools.className = 'actions create-environment-tools';
+    const detectEnvironment = document.createElement('button');
+    detectEnvironment.type = 'button';
+    detectEnvironment.id = 'create-detect-environments';
+    detectEnvironment.className = 'subtle';
+    detectEnvironment.textContent = '重新检测';
+    detectEnvironment.title = '重新检测本机 Windows 和 WSL 环境';
+    const detectStatus = document.createElement('small');
+    detectStatus.id = 'create-environment-detection-status';
+    detectStatus.className = 'muted';
+    detectStatus.setAttribute('role', 'status');
+    environmentTools.append(detectEnvironment, detectStatus);
+    environmentField.append(environmentTools);
     const workspace = input('create-workspace'), workspaceLabel = workspace.previousElementSibling, directoryHint = workspace.nextElementSibling;
     workspaceLabel.remove();
     directoryHint.remove();
@@ -403,6 +417,7 @@ function installWorkflow() {
     meta.append(element('effort-hint'), element('create-error'));
     form.replaceChildren(head, context, createComposer, meta);
     button('create-cancel').onclick = cancelCreate;
+    button('create-detect-environments').onclick = ()=>void refreshCreateEnvironments(true);
     button('create-browse').onclick = ()=>openWorkspacePicker(input('create-environment').value, input('create-workspace').value, async (p, env)=>{
             input('create-environment').value = env;
             await loadCreateEnvironment();
@@ -1920,8 +1935,151 @@ try {
     document.documentElement.dataset.theme = 'light';
 }
 let detectedEnvironments = [];
+let createEnvironmentDiscoveryAt = 0;
+let createEnvironmentDiscoveryPromise = null;
+const createEnvironmentDiscoveryCooldown = 2 * 60 * 1000;
 function sameDetectedEnvironment(a, b) {
-    return a.type === b.type && (a.type === 'windows' || a.distro === b.distro && a.user === b.user);
+    if (a.type !== b.type) return false;
+    return a.type === 'windows' || a.distro.trim().toLowerCase() === b.distro.trim().toLowerCase();
+}
+function renderCreateEnvironmentOptions(preferred = '') {
+    const select = element('create-environment');
+    if (!select || !settings?.config) return;
+    const current = preferred || select.value || settings.config.default_environment;
+    select.innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
+    select.value = settings.config.environments.some((e)=>e.id === current) ? current : settings.config.default_environment;
+}
+function detectedEnvironmentID(environment, used) {
+    const slug = environment.type === 'windows' ? 'windows' : 'wsl-' + (environment.distro || 'linux').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    let id = slug || 'wsl-linux', suffix = 2;
+    while(used.has(id)){
+        id = `${slug}-${suffix++}`;
+    }
+    ;
+    return id.slice(0, 64);
+}
+function genericDetectedTool(path, kind, type) {
+    const value = path.trim().toLowerCase();
+    if (!value) return true;
+    const defaults = kind === 'codex' ? [
+        'codex',
+        'codex.exe'
+    ] : kind === 'claude' ? [
+        'claude',
+        'claude.exe'
+    ] : type === 'windows' ? [
+        'dsh',
+        'dsh.cmd',
+        'dsh.exe'
+    ] : [
+        'dsh',
+        'dsh.cmd'
+    ];
+    return defaults.includes(value);
+}
+function mergeDetectedEnvironment(base, item) {
+    const detected = item.environment, merged = {
+        ...base,
+        workspaces: [
+            ...base.workspaces || []
+        ],
+        models: base.models?.map((model)=>({
+                ...model
+            }))
+    };
+    if (!merged.name.trim() || /^新 (Windows|WSL|SSH) 环境$/.test(merged.name)) merged.name = detected.name;
+    if (!merged.user.trim()) merged.user = detected.user;
+    if (!merged.distro.trim()) merged.distro = detected.distro;
+    if (!(merged.default_engine || '').trim()) merged.default_engine = detected.default_engine;
+    if (genericDetectedTool(merged.codex, 'codex', merged.type) && item.codex?.path) merged.codex = item.codex.path;
+    if (genericDetectedTool(merged.claude || '', 'claude', merged.type) && item.claude?.path) merged.claude = item.claude.path;
+    if (genericDetectedTool(merged.harness || '', 'harness', merged.type) && item.harness?.path) merged.harness = item.harness.path;
+    if (!merged.workspaces.length && detected.workspaces?.length) merged.workspaces = [
+        ...detected.workspaces
+    ];
+    return merged;
+}
+function mergeDetectedEnvironments(config, items) {
+    const next = JSON.parse(JSON.stringify(config)), used = new Set(next.environments.map((environment)=>environment.id));
+    let changed = false;
+    for (const item of items || []){
+        const detected = item.environment;
+        if (detected.type !== 'windows' && detected.type !== 'wsl') continue;
+        const index = next.environments.findIndex((environment)=>sameDetectedEnvironment(environment, detected));
+        if (index >= 0) {
+            const merged = mergeDetectedEnvironment(next.environments[index], item);
+            if (JSON.stringify(merged) !== JSON.stringify(next.environments[index])) {
+                next.environments[index] = merged;
+                changed = true;
+            }
+        } else {
+            const environment = {
+                ...detected,
+                id: detectedEnvironmentID(detected, used),
+                workspaces: [
+                    ...detected.workspaces || []
+                ],
+                models: detected.models?.map((model)=>({
+                        ...model
+                    }))
+            };
+            used.add(environment.id);
+            next.environments.push(environment);
+            changed = true;
+        }
+    }
+    return {
+        config: next,
+        changed
+    };
+}
+function setCreateEnvironmentDiscoveryStatus(text, busy = false) {
+    const status = element('create-environment-detection-status');
+    if (status) status.textContent = text;
+    const control = button('create-detect-environments');
+    if (control) {
+        control.disabled = busy;
+        control.textContent = busy ? '检测中…' : '重新检测';
+    }
+}
+async function refreshCreateEnvironments(force = false) {
+    if (!creatingTask || !settings?.config) return;
+    if (createEnvironmentDiscoveryPromise) return createEnvironmentDiscoveryPromise;
+    if (!force && Date.now() - createEnvironmentDiscoveryAt < createEnvironmentDiscoveryCooldown) return;
+    createEnvironmentDiscoveryAt = Date.now();
+    const epoch = shellEpoch, preferred = input('create-environment').value;
+    setCreateEnvironmentDiscoveryStatus('正在检测 Windows / WSL，首次启动 WSL 可能需要一些时间…', true);
+    createEnvironmentDiscoveryPromise = (async ()=>{
+        try {
+            const result = await api('environments/discover', 'POST', {});
+            if (!shellCurrent(epoch) || !creatingTask) return;
+            detectedEnvironments = result.items || [];
+            const latest = await api('settings', 'GET', undefined, shellController.signal);
+            if (!shellCurrent(epoch) || !creatingTask) return;
+            const merged = mergeDetectedEnvironments(latest.config, detectedEnvironments);
+            if (merged.changed) {
+                const saved = await api('settings', 'PUT', merged.config);
+                if (!shellCurrent(epoch) || !creatingTask) return;
+                settings = saved?.config ? saved : {
+                    ...latest,
+                    config: merged.config
+                };
+            } else settings = latest;
+            const currentSelection = input('create-environment').value || preferred;
+            renderCreateEnvironmentOptions(currentSelection);
+            if (settings.config.environments.some((environment)=>environment.id === input('create-environment').value)) await loadCreateEnvironment(true);
+            setCreateEnvironmentDiscoveryStatus(merged.changed ? '已自动更新可用环境。' : '环境配置已是最新。');
+            if (result.message) setCreateEnvironmentDiscoveryStatus((merged.changed ? '已自动更新可用环境。' : '环境配置已是最新。') + ' ' + result.message);
+        } catch (error) {
+            if (shellCurrent(epoch) && creatingTask) setCreateEnvironmentDiscoveryStatus('自动检测失败，可点击“重新检测”重试：' + error.message);
+        } finally{
+            createEnvironmentDiscoveryPromise = null;
+            const control = button('create-detect-environments');
+            if (control && !control.disabled) control.textContent = '重新检测';
+            else if (control && creatingTask) control.disabled = false;
+        }
+    })();
+    return createEnvironmentDiscoveryPromise;
 }
 function installEnvironmentDiscovery() {
     const section = element('settings-environment');
@@ -5718,8 +5876,7 @@ async function showCreate() {
         input('create-input').value = '';
         input('create-files').value = '';
         input('create-error').textContent = '';
-        element('create-environment').innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
-        input('create-environment').value = settings.config.default_environment;
+        renderCreateEnvironmentOptions(settings.config.default_environment);
         setCreatePermission('auto');
         renderCreateFiles();
         setCreateSubmitState('idle');
@@ -5740,6 +5897,7 @@ async function showCreate() {
         renderList();
         input('create-input').focus();
         await loadCreateEnvironment();
+        void refreshCreateEnvironments();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
     }

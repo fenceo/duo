@@ -1,7 +1,84 @@
 type DetectedTool={path:string;state:string;label:string};
 type DetectedEnvironment={environment:Environment;codex:DetectedTool;claude:DetectedTool;harness?:DetectedTool;kimi?:DetectedTool;mimo?:DetectedTool;message:string};
 let detectedEnvironments:DetectedEnvironment[]=[];
-function sameDetectedEnvironment(a:Environment,b:Environment){return a.type===b.type&&(a.type==='windows'||a.distro===b.distro&&a.user===b.user)}
+let createEnvironmentDiscoveryAt=0;
+let createEnvironmentDiscoveryPromise:Promise<void>|null=null;
+const createEnvironmentDiscoveryCooldown=2*60*1000;
+function sameDetectedEnvironment(a:Environment,b:Environment){
+ if(a.type!==b.type)return false;
+ // A WSL distro is the stable host identity. The detected login user can be
+ // different from the user's old hint, so it must not create a duplicate env.
+ return a.type==='windows'||a.distro.trim().toLowerCase()===b.distro.trim().toLowerCase();
+}
+function renderCreateEnvironmentOptions(preferred=''){
+ const select=element<HTMLSelectElement>('create-environment');if(!select||!settings?.config)return;
+ const current=preferred||select.value||settings.config.default_environment;
+ select.innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
+ select.value=settings.config.environments.some(e=>e.id===current)?current:settings.config.default_environment;
+}
+function detectedEnvironmentID(environment:Environment,used:Set<string>){
+ const slug=environment.type==='windows'?'windows':('wsl-'+(environment.distro||'linux').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,48));
+ let id=slug||'wsl-linux',suffix=2;while(used.has(id)){id=`${slug}-${suffix++}`};return id.slice(0,64);
+}
+function genericDetectedTool(path:string,kind:'codex'|'claude'|'harness',type:string){
+ const value=path.trim().toLowerCase();if(!value)return true;
+ const defaults=kind==='codex'?['codex','codex.exe']:kind==='claude'?['claude','claude.exe']:type==='windows'?['dsh','dsh.cmd','dsh.exe']:['dsh','dsh.cmd'];
+ return defaults.includes(value);
+}
+function mergeDetectedEnvironment(base:Environment,item:DetectedEnvironment):Environment{
+ const detected=item.environment,merged:Environment={...base,workspaces:[...(base.workspaces||[])],models:base.models?.map(model=>({...model}))};
+ if(!merged.name.trim()||/^新 (Windows|WSL|SSH) 环境$/.test(merged.name))merged.name=detected.name;
+ if(!merged.user.trim())merged.user=detected.user;
+ if(!merged.distro.trim())merged.distro=detected.distro;
+ if(!(merged.default_engine||'').trim())merged.default_engine=detected.default_engine;
+ if(genericDetectedTool(merged.codex,'codex',merged.type)&&item.codex?.path)merged.codex=item.codex.path;
+ if(genericDetectedTool(merged.claude||'','claude',merged.type)&&item.claude?.path)merged.claude=item.claude.path;
+ if(genericDetectedTool(merged.harness||'','harness',merged.type)&&item.harness?.path)merged.harness=item.harness.path;
+ if(!merged.workspaces.length&&detected.workspaces?.length)merged.workspaces=[...detected.workspaces];
+ return merged;
+}
+function mergeDetectedEnvironments(config:Configuration,items:DetectedEnvironment[]):{config:Configuration;changed:boolean}{
+ const next:Configuration=JSON.parse(JSON.stringify(config)),used=new Set(next.environments.map(environment=>environment.id));let changed=false;
+ for(const item of items||[]){
+  const detected=item.environment;if(detected.type!=='windows'&&detected.type!=='wsl')continue;
+  const index=next.environments.findIndex(environment=>sameDetectedEnvironment(environment,detected));
+  if(index>=0){const merged=mergeDetectedEnvironment(next.environments[index],item);if(JSON.stringify(merged)!==JSON.stringify(next.environments[index])){next.environments[index]=merged;changed=true}}
+  else{const environment={...detected,id:detectedEnvironmentID(detected,used),workspaces:[...(detected.workspaces||[])],models:detected.models?.map(model=>({...model}))};used.add(environment.id);next.environments.push(environment);changed=true}
+ }
+ return {config:next,changed};
+}
+function setCreateEnvironmentDiscoveryStatus(text:string,busy=false){
+ const status=element('create-environment-detection-status');if(status)status.textContent=text;
+ const control=button('create-detect-environments');if(control){control.disabled=busy;control.textContent=busy?'检测中…':'重新检测'}
+}
+async function refreshCreateEnvironments(force=false){
+ if(!creatingTask||!settings?.config)return;
+ if(createEnvironmentDiscoveryPromise)return createEnvironmentDiscoveryPromise;
+ if(!force&&Date.now()-createEnvironmentDiscoveryAt<createEnvironmentDiscoveryCooldown)return;
+ createEnvironmentDiscoveryAt=Date.now();const epoch=shellEpoch,preferred=input('create-environment').value;
+ setCreateEnvironmentDiscoveryStatus('正在检测 Windows / WSL，首次启动 WSL 可能需要一些时间…',true);
+ createEnvironmentDiscoveryPromise=(async()=>{
+  try{
+   const result=await api<{items:DetectedEnvironment[];message:string}>('environments/discover','POST',{});
+   if(!shellCurrent(epoch)||!creatingTask)return;
+   detectedEnvironments=result.items||[];
+   // Read once more before applying so a settings change made in another tab
+   // is not overwritten by the background refresh.
+   const latest=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||!creatingTask)return;
+   const merged=mergeDetectedEnvironments(latest.config,detectedEnvironments);
+   if(merged.changed){
+    const saved=await api<Settings>('settings','PUT',merged.config);if(!shellCurrent(epoch)||!creatingTask)return;settings=saved?.config?saved:{...latest,config:merged.config};
+   }else settings=latest;
+   const currentSelection=input('create-environment').value||preferred;
+   renderCreateEnvironmentOptions(currentSelection);
+   if(settings.config.environments.some(environment=>environment.id===input('create-environment').value))await loadCreateEnvironment(true);
+   setCreateEnvironmentDiscoveryStatus(merged.changed?'已自动更新可用环境。':'环境配置已是最新。');
+   if(result.message)setCreateEnvironmentDiscoveryStatus((merged.changed?'已自动更新可用环境。':'环境配置已是最新。')+' '+result.message);
+  }catch(error){if(shellCurrent(epoch)&&creatingTask)setCreateEnvironmentDiscoveryStatus('自动检测失败，可点击“重新检测”重试：'+(error as Error).message)}
+  finally{createEnvironmentDiscoveryPromise=null;const control=button('create-detect-environments');if(control&&!control.disabled)control.textContent='重新检测';else if(control&&creatingTask)control.disabled=false}
+ })();
+ return createEnvironmentDiscoveryPromise;
+}
 function installEnvironmentDiscovery(){
  const section=element('settings-environment');section.insertAdjacentHTML('afterbegin','<div class="environment-detection"><div><strong>找到这台电脑上的 AI 工具</strong><button type="button" id="detect-local-environments">检测环境</button></div><p>检测 Windows 和 WSL，可能启动已安装的 WSL。SSH 使用下方“发现局域网 SSH”。</p><p id="environment-detection-status" role="status"></p><div id="detected-environments"></div></div>');
  button('detect-local-environments').onclick=async()=>{

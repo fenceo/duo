@@ -286,14 +286,17 @@ async function showCreate(){
   if(!creatingTask)createReturnTask=chosen;
   creatingTask=true;chosen='';detail=null;selection++;createFiles=[];
   input('create-input').value='';input('create-files').value='';input('create-error').textContent='';
-  element<HTMLSelectElement>('create-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
-  input('create-environment').value=settings.config.default_environment;
+  renderCreateEnvironmentOptions(settings.config.default_environment);
   setCreatePermission('auto');renderCreateFiles();setCreateSubmitState('idle');
   setCreatePageVisible(true);element('sidebar').classList.remove('open');
   for(const id of ['tabs','task-actions','conversation','composer-wrap'])element(id).classList.add('hidden');
   element('workspace').classList.remove('tool-open','tool-full');element('tool-dock').classList.add('hidden');
   element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录';element('task-workspace').title='';
   history.replaceState(null,'','/');renderList();input('create-input').focus();await loadCreateEnvironment();
+  // Detection is deliberately started after the existing configuration is
+  // usable. It may need to start WSL and can take several seconds, so it must
+  // never block the first task from being created.
+  void refreshCreateEnvironments();
   }catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
 }
 function createTaskTitle(text:string){

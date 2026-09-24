@@ -31,6 +31,9 @@ function installWorkflow(){
  const environment=input('create-environment'),environmentLabel=environment.previousElementSibling!;
  environmentLabel.remove();environment.setAttribute('aria-label','执行环境');
  const environmentField=document.createElement('div');environmentField.className='create-field create-context-field';environmentField.innerHTML='<span>环境</span>';environmentField.append(environment);
+ const environmentTools=document.createElement('div');environmentTools.className='actions create-environment-tools';
+ const detectEnvironment=document.createElement('button');detectEnvironment.type='button';detectEnvironment.id='create-detect-environments';detectEnvironment.className='subtle';detectEnvironment.textContent='重新检测';detectEnvironment.title='重新检测本机 Windows 和 WSL 环境';
+ const detectStatus=document.createElement('small');detectStatus.id='create-environment-detection-status';detectStatus.className='muted';detectStatus.setAttribute('role','status');environmentTools.append(detectEnvironment,detectStatus);environmentField.append(environmentTools);
  const workspace=input('create-workspace'),workspaceLabel=workspace.previousElementSibling!,directoryHint=workspace.nextElementSibling!;
  workspaceLabel.remove();directoryHint.remove();workspace.setAttribute('aria-label','工作目录');
  const workspaceControl=document.createElement('div');workspaceControl.className='create-directory-control';
@@ -73,6 +76,7 @@ function installWorkflow(){
  meta.append(element('effort-hint'),element('create-error'));
  form.replaceChildren(head,context,createComposer,meta);
  button('create-cancel').onclick=cancelCreate;
+ button('create-detect-environments').onclick=()=>void refreshCreateEnvironments(true);
  button('create-browse').onclick=()=>openWorkspacePicker(input('create-environment').value,input('create-workspace').value,async(p,env)=>{input('create-environment').value=env;await loadCreateEnvironment();input('create-workspace').value=p;await loadCreateModels()});
  button('create-attach').onclick=()=>input('create-files').click();input('create-files').onchange=()=>{addCreateFiles(Array.from(input('create-files').files||[]));input('create-files').value=''};
  element('create-permission-options').querySelectorAll<HTMLButtonElement>('[data-create-permission]').forEach(b=>b.onclick=()=>{
