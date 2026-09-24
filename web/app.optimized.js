@@ -330,6 +330,7 @@ function installWorkflow() {
     inputLabel.classList.add('sr-only');
     inputLabel.textContent = '任务要求';
     input('create-input').required = false;
+    input('create-input').placeholder = '描述希望完成的事情，也可以直接粘贴图片';
     const createComposer = document.createElement('div');
     createComposer.className = 'create-composer';
     const attachmentDrafts = document.createElement('div');
@@ -424,6 +425,13 @@ function installWorkflow() {
             element('create-form').requestSubmit();
         }
     };
+    input('create-input').addEventListener('paste', (e)=>{
+        const files = clipboardFiles(e);
+        if (files.length) {
+            e.preventDefault();
+            addCreateFiles(files);
+        }
+    });
     const bar = document.createElement('div');
     bar.className = 'composer-tools';
     bar.innerHTML = '<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><button type="button" id="mode-manage" title="管理工作模式">⚙</button><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
@@ -457,7 +465,7 @@ function installWorkflow() {
         }
     };
     input('message').addEventListener('paste', (e)=>{
-        const files = Array.from(e.clipboardData?.files || []);
+        const files = clipboardFiles(e);
         if (files.length) {
             e.preventDefault();
             void addAttachments(files);
@@ -619,7 +627,7 @@ async function showCreateAt(path, environment) {
 function openWorkspacePicker(environment, path, pick) {
     workspacePicked = pick;
     directoryEnvironment = environment;
-    input('workspace-environment').innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
+    input('workspace-environment').innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
     input('workspace-environment').value = environment;
     renderWorkspaceRecent();
     element('workspace-dialog').showModal();
@@ -731,6 +739,24 @@ function renderWorkflow() {
 function validateAttachmentFiles(files, existing = 0) {
     if (files.length + existing > 5) throw new Error('每条消息最多 5 个附件');
     if (files.some((f)=>f.size > 8 * 1024 * 1024)) throw new Error('单个附件最多 8 MiB');
+}
+function clipboardFiles(event) {
+    const direct = Array.from(event.clipboardData?.files || []);
+    if (direct.length) return direct;
+    const now = Date.now();
+    return Array.from(event.clipboardData?.items || []).map((item, index)=>{
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) return null;
+        const blob = item.getAsFile();
+        if (!blob) return null;
+        if (typeof File !== 'undefined' && blob instanceof File && blob.name) return blob;
+        const ext = item.type.split('/')[1]?.replace(/[^a-z0-9]+/gi, '') || 'png';
+        return new File([
+            blob
+        ], `pasted-image-${now}-${index}.${ext}`, {
+            type: item.type,
+            lastModified: now
+        });
+    }).filter((file)=>!!file);
 }
 async function uploadTaskFile(task, file) {
     const data = new FormData();
@@ -1972,9 +1998,10 @@ function renderConfiguredModels() {
         });
 }
 function renderDetectedEnvironments() {
+    const toolLabel = (name, tool)=>`<span class="detected-tool detected-tool-${escapeHTML(tool?.state || 'missing')}" title="${escapeHTML(tool?.path || '')}">${escapeHTML(name)}：${escapeHTML(tool?.label || '未发现安装')}</span>`;
     element('detected-environments').innerHTML = detectedEnvironments.map((item, index)=>{
         const env = item.environment, existing = editingEnvironments.find((e)=>sameDetectedEnvironment(e, env));
-        return `<div class="detected-environment"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML(env.user ? env.user + ' · ' + env.workspaces[0] : env.workspaces[0])}</small><small>Codex：${escapeHTML(item.codex.label)}<br>Claude：${escapeHTML(item.claude.label)}</small>${item.message ? '<small>' + escapeHTML(item.message) + '</small>' : ''}</div><button type="button" data-detected="${index}">${existing ? '查看配置' : '添加'}</button></div>`;
+        return `<div class="detected-environment"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML(env.user ? env.user + ' · ' + env.workspaces[0] : env.workspaces[0])}</small><div class="detected-tools">${toolLabel('Codex', item.codex)} ${toolLabel('Claude Code', item.claude)} ${toolLabel('DeepSeek Harness', item.harness)} ${toolLabel('Kimi', item.kimi)} ${toolLabel('MiMo', item.mimo)}</div>${item.message ? '<small>' + escapeHTML(item.message) + '</small>' : ''}</div><button type="button" data-detected="${index}">${existing ? '查看配置' : '添加'}</button></div>`;
     }).join('');
     element('detected-environments').querySelectorAll('[data-detected]').forEach((b)=>b.onclick = ()=>{
             const item = detectedEnvironments[Number(b.dataset.detected)];
@@ -4730,13 +4757,19 @@ function engineProfileActivationMessage(profile) {
     if (profile?.engine === 'deepseek-harness') return profile.kind === 'native' ? '新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。' : '新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
     return '账号/API 配置已切换，下一次运行生效。';
 }
+function detectedEngineStatus(engine) {
+    const target = settings.config.environments.find((e)=>e.id === settings.config.default_environment), item = target && detectedEnvironments.find((x)=>sameDetectedEnvironment(x.environment, target));
+    if (!item) return '尚未检测目标环境';
+    const tool = engine === 'codex' ? item.codex : engine === 'claude' ? item.claude : engine === 'deepseek-harness' ? item.harness : engine === 'kimi' ? item.kimi : item.mimo;
+    return tool?.label || '未发现安装';
+}
 function renderEngineCatalog() {
     if (!engineCatalog) return;
     const profiles = engineCatalog.profiles;
     element('engine-catalog').innerHTML = engineCatalog.engines.map((e)=>{
         const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
         const active = Object.entries(engineCatalog.active_profile).filter(([key])=>key.endsWith(':' + e.id)).map(([, value])=>value);
-        return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable ? '可执行' : '待接入适配器'}</small></div><span>${active.length ? '已配置' : '未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="muted">${escapeHTML(e.install_description || '')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/检查计划</button>${e.documentation_url ? `<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>` : ''}</div>${rows || '<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
+        return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable ? '可执行' : '待接入适配器'}</small></div><span>${active.length ? '已配置' : '未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="engine-detected-status">默认环境：${escapeHTML(detectedEngineStatus(e.id))}</p><p class="muted">${escapeHTML(e.install_description || '')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/配置指南</button>${e.documentation_url ? `<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>` : ''}</div>${rows || '<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
     }).join('');
     element('engine-catalog').querySelectorAll('[data-engine-plan]').forEach((b)=>b.onclick = ()=>void showEnginePlan(b.dataset.enginePlan));
     element('engine-catalog').querySelectorAll('[data-engine-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.engineActivate));
@@ -4843,6 +4876,17 @@ const names = {
     failed: '执行失败',
     interrupted: '已停止'
 };
+function environmentTypeLabel(type) {
+    return type === 'windows' ? 'Windows' : type === 'wsl' ? 'WSL' : 'SSH';
+}
+function environmentOptionLabel(environment) {
+    const type = environmentTypeLabel(environment.type);
+    const target = environment.type === 'wsl' && environment.distro ? environment.distro : environment.type === 'ssh' && environment.host ? environment.host : environment.name;
+    return `${type} · ${target || environment.name}`;
+}
+function environmentWorkspaceHint(environment) {
+    return environment.type === 'windows' ? 'Windows 绝对路径，例如 C:\\Users\\你\\work' : environment.type === 'wsl' ? 'WSL 绝对路径，例如 /home/你/work' : 'SSH 远端绝对路径，例如 /home/你/work';
+}
 let csrf = '', tasks = [], settings, chosen = '', detail = null, knowledgeItems = [], knowledgeEditing = null;
 let sequence = 0, selection = 0, dirty = false, sending = false, polling = false, authenticated = false, refreshList = 0, lastList = '', lastKnowledge = '', noticeTimer;
 let taskContext = [];
@@ -5544,7 +5588,7 @@ async function showCreate() {
         input('create-input').value = '';
         input('create-files').value = '';
         input('create-error').textContent = '';
-        element('create-environment').innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)} · ${escapeHTML(e.type.toUpperCase())}</option>`).join('');
+        element('create-environment').innerHTML = settings.config.environments.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
         input('create-environment').value = settings.config.default_environment;
         setCreatePermission('auto');
         renderCreateFiles();
@@ -5620,6 +5664,7 @@ async function loadCreateEnvironment(keepWorkspace = false) {
     const workspaceOptions = element('workspace-options');
     if (workspaceOptions) workspaceOptions.innerHTML = directories.map((p)=>`<option value="${escapeHTML(p)}"></option>`).join('');
     if (!keepWorkspace) input('create-workspace').value = env.workspaces[0] || '';
+    input('create-workspace').placeholder = environmentWorkspaceHint(env);
     setCreateSubmitState('idle');
     await loadCreateModels(true);
 }

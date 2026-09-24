@@ -25,6 +25,9 @@ type detectedEnvironment struct {
 	Environment Environment  `json:"environment"`
 	Codex       detectedTool `json:"codex"`
 	Claude      detectedTool `json:"claude"`
+	Harness     detectedTool `json:"harness"`
+	Kimi        detectedTool `json:"kimi"`
+	Mimo        detectedTool `json:"mimo"`
 	Message     string       `json:"message"`
 }
 type environmentDiscovery struct {
@@ -110,6 +113,17 @@ func detectedAuth(path, output string, err error) detectedTool {
 		result.State, result.Label = "configured", "已安装 · 已有登录配置"
 	}
 	return result
+}
+
+// detectedInstalledTool deliberately only reports executable presence. Unlike
+// Codex/Claude, these adapters do not have a stable, read-only login-status
+// command that works across their versions. Provider credentials stay in the
+// target environment and are checked only when the user runs that engine.
+func detectedInstalledTool(path string) detectedTool {
+	if strings.TrimSpace(path) == "" {
+		return detectedTool{State: "missing", Label: "未发现安装"}
+	}
+	return detectedTool{Path: path, State: "installed", Label: "已安装 · 需要配置或登录"}
 }
 
 func probeEnvironment(ctx context.Context, env Environment, args ...string) (string, error) {
@@ -229,6 +243,9 @@ shell=${SHELL:-/bin/sh}
 shell_ready=0
 if command -v "$shell" >/dev/null 2>&1; then shell_ready=1; fi
 printf 'proxy=%s\ngit_config=%s\nssh_agent=%s\nshell=%s\n' "$proxy" "$git_config" "$ssh_agent" "$shell_ready"
+find_cli "$HOME/.local/bin/dsh" "$HOME/.local/bin/dsh.cmd" "$(command -v dsh 2>/dev/null)" /usr/local/bin/dsh
+find_cli "$HOME/.local/bin/kimi" "$HOME/.local/bin/kimi.cmd" "$(command -v kimi 2>/dev/null)" "$(command -v kimi-code 2>/dev/null)" /usr/local/bin/kimi /usr/local/bin/kimi-code
+find_cli "$HOME/.local/bin/mimo" "$HOME/.local/bin/mimo.cmd" "$(command -v mimo 2>/dev/null)" "$(command -v mimo-code 2>/dev/null)" /usr/local/bin/mimo /usr/local/bin/mimo-code
 `
 
 func wslDiagnosticMessage(parts []string) string {
@@ -259,7 +276,8 @@ func discoverTool(ctx context.Context, probe environmentProbe, env Environment, 
 }
 func discoverOne(ctx context.Context, probe environmentProbe, env Environment) detectedEnvironment {
 	result := detectedEnvironment{Environment: env}
-	codex, claude := env.Codex, env.Claude
+	codex, claude, harness := env.Codex, env.Claude, env.Harness
+	kimi, mimo := "", ""
 	if env.Type == "wsl" {
 		out, err := probe(ctx, env, "sh", "-c", discoverWSLScript)
 		_, payload, ok := strings.Cut(out, "__JIANZUO_ENV__\n")
@@ -273,6 +291,18 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		env.User = parts[0]
 		env.Workspaces = []string{parts[1]}
 		codex, claude = parts[2], parts[3]
+		// The optional fields are appended after the stable diagnostics fields so
+		// older WSL fixtures and older shells remain readable. The four diagnostic
+		// lines (proxy, git, agent, shell) precede the optional tool paths.
+		if len(parts) > 8 && strings.HasPrefix(strings.TrimSpace(parts[8]), "/") {
+			harness = parts[8]
+		}
+		if len(parts) > 9 && strings.HasPrefix(strings.TrimSpace(parts[9]), "/") {
+			kimi = parts[9]
+		}
+		if len(parts) > 10 && strings.HasPrefix(strings.TrimSpace(parts[10]), "/") {
+			mimo = parts[10]
+		}
 		result.Message = wslDiagnosticMessage(parts)
 	}
 	var wg sync.WaitGroup
@@ -280,8 +310,12 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 	go func() { defer wg.Done(); result.Codex = discoverTool(ctx, probe, env, codex, "codex") }()
 	go func() { defer wg.Done(); result.Claude = discoverTool(ctx, probe, env, claude, "claude") }()
 	wg.Wait()
+	result.Harness = detectedInstalledTool(harness)
+	result.Kimi = detectedInstalledTool(kimi)
+	result.Mimo = detectedInstalledTool(mimo)
 	env.Codex = codex
 	env.Claude = claude
+	env.Harness = harness
 	env.DefaultEngine = "codex"
 	if result.Claude.State == "configured" && result.Codex.State != "configured" || codex == "" && claude != "" {
 		env.DefaultEngine = "claude"
@@ -314,6 +348,7 @@ func detectEnvironments(ctx context.Context) environmentDiscovery {
 	home, _ := os.UserHomeDir()
 	win.Codex = executableCandidate(win.Codex, filepath.Join(home, ".codex", "packages", "standalone", "current", "bin", "codex.exe"), "codex.exe")
 	win.Claude = executableCandidate(claudeBinary("windows"), "claude.exe")
+	win.Harness = executableCandidate(win.Harness, "dsh.cmd", "dsh.exe", "dsh")
 	work := filepath.Join(home, "Documents")
 	if info, err := os.Stat(work); err != nil || !info.IsDir() {
 		work = home
@@ -339,7 +374,12 @@ func detectEnvironments(ctx context.Context) environmentDiscovery {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			result.Items[i] = discoverOne(ctx, probeEnvironment, env)
+			item := discoverOne(ctx, probeEnvironment, env)
+			if env.Type == "windows" {
+				item.Kimi = detectedInstalledTool(executableCandidate("kimi.cmd", "kimi.exe", "kimi", "kimi-code.exe", "kimi-code"))
+				item.Mimo = detectedInstalledTool(executableCandidate("mimo.cmd", "mimo.exe", "mimo", "mimo-code.exe", "mimo-code"))
+			}
+			result.Items[i] = item
 		}(i, env)
 	}
 	wg.Wait()

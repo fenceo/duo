@@ -15,6 +15,20 @@ const input=(id:string)=>element<HTMLInputElement>(id);
 const button=(id:string)=>element<HTMLButtonElement>(id);
 const escapeHTML=(v:string)=>v.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]||c));
 const names:Record<string,string>={idle:'待开始',queued:'排队中',running:'执行中',done:'等待下一步',failed:'执行失败',interrupted:'已停止'};
+// Keep environment choices readable in the task form.  The type is part of
+// the label (rather than an opaque ID), and SSH shows its configured endpoint
+// so switching environments also makes it obvious where the directory lives.
+function environmentTypeLabel(type:Environment['type']){
+ return type==='windows'?'Windows':type==='wsl'?'WSL':'SSH';
+}
+function environmentOptionLabel(environment:Environment){
+ const type=environmentTypeLabel(environment.type);
+ const target=environment.type==='wsl'&&environment.distro?environment.distro:environment.type==='ssh'&&environment.host?environment.host:environment.name;
+ return `${type} · ${target||environment.name}`;
+}
+function environmentWorkspaceHint(environment:Environment){
+ return environment.type==='windows'?'Windows 绝对路径，例如 C:\\Users\\你\\work':environment.type==='wsl'?'WSL 绝对路径，例如 /home/你/work':'SSH 远端绝对路径，例如 /home/你/work';
+}
 let csrf='',tasks:Task[]=[],settings:Settings,chosen='',detail:Detail|null=null,knowledgeItems:Knowledge[]=[],knowledgeEditing:string|null=null;
 let sequence=0,selection=0,dirty=false,sending=false,polling=false,authenticated=false,refreshList=0,lastList='',lastKnowledge='',noticeTimer:ReturnType<typeof setTimeout>;
 let taskContext:ContextFile[]=[];
@@ -242,7 +256,7 @@ async function showCreate(){
   if(!creatingTask)createReturnTask=chosen;
   creatingTask=true;chosen='';detail=null;selection++;createFiles=[];
   input('create-input').value='';input('create-files').value='';input('create-error').textContent='';
-  element<HTMLSelectElement>('create-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)} · ${escapeHTML(e.type.toUpperCase())}</option>`).join('');
+  element<HTMLSelectElement>('create-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');
   input('create-environment').value=settings.config.default_environment;
   setCreatePermission('auto');renderCreateFiles();setCreateSubmitState('idle');
   setCreatePageVisible(true);element('sidebar').classList.remove('open');
@@ -270,6 +284,7 @@ async function loadCreateEnvironment(keepWorkspace=false){
  setCreatePermission(createPermission);
  input('create-effort').value='';
  const directories=[...new Set([...env.workspaces,...tasks.filter(t=>t.environment?.id===env.id).map(t=>t.workspace)])];const workspaceOptions=element<HTMLDataListElement>('workspace-options');if(workspaceOptions)workspaceOptions.innerHTML=directories.map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');if(!keepWorkspace)input('create-workspace').value=env.workspaces[0]||'';
+ input('create-workspace').placeholder=environmentWorkspaceHint(env);
  setCreateSubmitState('idle');await loadCreateModels(true);
 }
 async function createTask(e:Event){

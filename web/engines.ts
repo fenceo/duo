@@ -17,13 +17,19 @@ function engineProfileActivationMessage(profile?:EngineProfile){
  if(profile?.engine==='deepseek-harness')return profile.kind==='native'?'新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。':'新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
  return '账号/API 配置已切换，下一次运行生效。';
 }
+function detectedEngineStatus(engine:string){
+ const target=settings.config.environments.find(e=>e.id===settings.config.default_environment),item=target&&detectedEnvironments.find(x=>sameDetectedEnvironment(x.environment,target));
+ if(!item)return '尚未检测目标环境';
+ const tool=engine==='codex'?item.codex:engine==='claude'?item.claude:engine==='deepseek-harness'?item.harness:engine==='kimi'?item.kimi:item.mimo;
+ return tool?.label||'未发现安装';
+}
 function renderEngineCatalog(){
  if(!engineCatalog)return;
  const profiles=engineCatalog.profiles;
  element('engine-catalog').innerHTML=engineCatalog.engines.map(e=>{
   const rows=profiles.filter(p=>p.engine===e.id).map(p=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind==='native'?'':': '+escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
   const active=Object.entries(engineCatalog!.active_profile).filter(([key])=>key.endsWith(':'+e.id)).map(([,value])=>value);
-  return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable?'可执行':'待接入适配器'}</small></div><span>${active.length?'已配置':'未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="muted">${escapeHTML(e.install_description||'')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/检查计划</button>${e.documentation_url?`<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>`:''}</div>${rows||'<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
+  return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable?'可执行':'待接入适配器'}</small></div><span>${active.length?'已配置':'未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="engine-detected-status">默认环境：${escapeHTML(detectedEngineStatus(e.id))}</p><p class="muted">${escapeHTML(e.install_description||'')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/配置指南</button>${e.documentation_url?`<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>`:''}</div>${rows||'<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
  }).join('');
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-plan]').forEach(b=>b.onclick=()=>void showEnginePlan(b.dataset.enginePlan!));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-activate]').forEach(b=>b.onclick=()=>void activateEngineProfile(b.dataset.engineActivate!));

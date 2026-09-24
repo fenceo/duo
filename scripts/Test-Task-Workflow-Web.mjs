@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 
 const app=await readFile(new URL('../web/app.ts',import.meta.url),'utf8');
 const workflow=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
+assert.match(workflow,/create-input'\)\.addEventListener\('paste'/,'new-task composer accepts pasted clipboard images');
+assert.match(workflow,/function clipboardFiles\(event:ClipboardEvent\)/,'clipboard image normalization is shared by create and task composers');
+assert.match(workflow,/item\.type\.startsWith\('image\/'\)/,'clipboard image items are converted to uploadable files');
 function extract(source,start,end){const from=source.indexOf(start),to=source.indexOf(end,from+start.length);assert(from>=0&&to>from);return source.slice(from,to)}
 const source=[
  extract(app,'function harnessSessionClosed(', '// Describe'),

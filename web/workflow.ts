@@ -43,7 +43,7 @@ function installWorkflow(){
  const workspaceOptions=element('workspace-options')||Object.assign(document.createElement('datalist'),{id:'workspace-options'});
  context.append(environmentField,workspaceField,workspaceOptions);
  const inputLabel=input('create-input').previousElementSibling!;
- inputLabel.classList.add('sr-only');inputLabel.textContent='任务要求';input('create-input').required=false;
+ inputLabel.classList.add('sr-only');inputLabel.textContent='任务要求';input('create-input').required=false;input('create-input').placeholder='描述希望完成的事情，也可以直接粘贴图片';
  const createComposer=document.createElement('div');createComposer.className='create-composer';
  const attachmentDrafts=document.createElement('div');attachmentDrafts.id='create-attachment-drafts';attachmentDrafts.className='attachment-drafts';
  const toolbar=document.createElement('div');toolbar.className='create-composer-tools';
@@ -81,12 +81,19 @@ function installWorkflow(){
   setCreatePermission(value==='request'?'request':value==='full'?'full':value==='read'?'read':'auto');
  });
  input('create-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();element<HTMLFormElement>('create-form').requestSubmit()}};
+ // Browsers expose a screenshot copied from Snipping Tool/微信 as a
+ // clipboard item rather than a normal FileList.  Normalize both forms so
+ // the first task can use the same attachment pipeline as an existing task.
+ input('create-input').addEventListener('paste',e=>{
+  const files=clipboardFiles(e);
+  if(files.length){e.preventDefault();addCreateFiles(files)}
+ });
  const bar=document.createElement('div');bar.className='composer-tools';bar.innerHTML='<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><button type="button" id="mode-manage" title="管理工作模式">⚙</button><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
  element('composer').querySelector('.composer-bottom')!.before(bar);element('message').after(Object.assign(document.createElement('div'),{id:'attachment-drafts',className:'attachment-drafts'}));
  modeOptions(element<HTMLSelectElement>('message-mode'));modeOptions(element<HTMLSelectElement>('create-mode'));setCreatePermission(createPermission);
  button('attach-open').onclick=()=>input('attachment-input').click();input('attachment-input').onchange=()=>{const files=Array.from(input('attachment-input').files||[]);input('attachment-input').value='';void addAttachments(files)};
  const composer=element('composer');composer.ondragover=e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();composer.classList.add('dragover')}};composer.ondragleave=()=>composer.classList.remove('dragover');composer.ondrop=e=>{composer.classList.remove('dragover');if(e.dataTransfer?.files.length){e.preventDefault();void addAttachments(Array.from(e.dataTransfer.files))}};
- input('message').addEventListener('paste',e=>{const files=Array.from(e.clipboardData?.files||[]);if(files.length){e.preventDefault();void addAttachments(files)}});
+ input('message').addEventListener('paste',e=>{const files=clipboardFiles(e);if(files.length){e.preventDefault();void addAttachments(files)}});
  input('message').addEventListener('input',()=>{renderWorkflow();if(input('message').value==='/')openCommands()});
  button('mode-manage').onclick=()=>openPresetEditor('modes');button('command-open').onclick=openCommands;
  button('stop').onclick=async()=>{if(detail?.task.engine==='deepseek-harness'&&!confirm('停止会关闭 Harness 运行进程，原会话无法恢复；网页里的消息记录仍然保留。确定停止？'))return;const id=chosen;stoppingTask=id;renderWorkflow();try{await api('tasks/'+id+'/stop','POST',{});await poll()}catch(e){stoppingTask='';notify((e as Error).message);renderWorkflow()}};
@@ -148,7 +155,7 @@ function setCreateSubmitState(state:'idle'|'starting'){
 }
 async function showCreateAt(path:string,environment:string){await showCreate();input('create-environment').value=environment;await loadCreateEnvironment();input('create-workspace').value=path;await loadCreateModels()}
 function openWorkspacePicker(environment:string,path:string,pick:(path:string,environment:string)=>void){
- workspacePicked=pick;directoryEnvironment=environment;input('workspace-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');input('workspace-environment').value=environment;renderWorkspaceRecent();element<HTMLDialogElement>('workspace-dialog').showModal();void browseDirectory(path||settings.config.environments.find(e=>e.id===environment)?.workspaces[0]||'');
+ workspacePicked=pick;directoryEnvironment=environment;input('workspace-environment').innerHTML=settings.config.environments.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(environmentOptionLabel(e))}</option>`).join('');input('workspace-environment').value=environment;renderWorkspaceRecent();element<HTMLDialogElement>('workspace-dialog').showModal();void browseDirectory(path||settings.config.environments.find(e=>e.id===environment)?.workspaces[0]||'');
 }
 function renderWorkspaceRecent(){const env=settings.config.environments.find(e=>e.id===directoryEnvironment);const paths=[...new Set([...(env?.workspaces||[]),...tasks.filter(t=>t.environment.id===directoryEnvironment).map(t=>t.workspace)])];element('workspace-recent').innerHTML=paths.map(p=>`<button data-directory="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(p)}</button>`).join('');element('workspace-recent').querySelectorAll<HTMLElement>('[data-directory]').forEach(b=>b.onclick=()=>void browseDirectory(b.dataset.directory!))}
 async function browseDirectory(path:string){
@@ -166,6 +173,18 @@ function renderWorkflow(){
  renderCodexApprovals(detail);
 }
 function validateAttachmentFiles(files:File[],existing=0){if(files.length+existing>5)throw new Error('每条消息最多 5 个附件');if(files.some(f=>f.size>8*1024*1024))throw new Error('单个附件最多 8 MiB')}
+function clipboardFiles(event:ClipboardEvent):File[]{
+ const direct=Array.from(event.clipboardData?.files||[]);
+ if(direct.length)return direct;
+ const now=Date.now();
+ return Array.from(event.clipboardData?.items||[]).map((item,index)=>{
+  if(item.kind!=='file'||!item.type.startsWith('image/'))return null;
+  const blob=item.getAsFile();if(!blob)return null;
+  if(typeof File!=='undefined'&&blob instanceof File&&blob.name)return blob;
+  const ext=item.type.split('/')[1]?.replace(/[^a-z0-9]+/gi,'')||'png';
+  return new File([blob],`pasted-image-${now}-${index}.${ext}`,{type:item.type,lastModified:now});
+ }).filter((file):file is File=>!!file);
+}
 async function uploadTaskFile(task:string,file:File):Promise<Attachment>{const data=new FormData();data.append('file',file);const response=await fetch(`/api/tasks/${task}/attachments`,{method:'POST',credentials:'same-origin',headers:{'X-CSRF-Token':csrf},body:data});const result=await response.json();if(!response.ok)throw new Error(result.error||'上传失败');return result}
 async function addAttachments(files:File[],task=chosen){if(!task||!files.length)return;if(uploadingTasks.has(task)){notify('请等待当前附件上传完成');return}let uploadedCount=0,accepted=false;try{const engine=detail?.task.id===task?detail.task.engine:tasks.find(item=>item.id===task)?.engine;validateEngineAttachments(engine,files.length);validateAttachmentFiles(files,(attachmentDrafts.get(task)||[]).length+(pendingUploadFiles.get(task)||[]).length);accepted=true;uploadingTasks.add(task);renderWorkflow();for(const file of files){const uploaded=await uploadTaskFile(task,file);attachmentDrafts.set(task,[...(attachmentDrafts.get(task)||[]),uploaded]);uploadedCount++;if(task===chosen)renderWorkflow()}}catch(e){if(accepted)pendingUploadFiles.set(task,[...(pendingUploadFiles.get(task)||[]),...files.slice(uploadedCount)]);notify((e as Error).message)}finally{uploadingTasks.delete(task);if(task===chosen)renderWorkflow()}}
 async function retryPendingUploads(task:string){if(uploadingTasks.has(task))return;const files=pendingUploadFiles.get(task)||[];if(!files.length)return;try{const engine=detail?.task.id===task?detail.task.engine:tasks.find(item=>item.id===task)?.engine;validateEngineAttachments(engine,files.length);validateAttachmentFiles(files,(attachmentDrafts.get(task)||[]).length)}catch(e){notify((e as Error).message);return}pendingUploadFiles.delete(task);await addAttachments(files,task)}

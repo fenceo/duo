@@ -58,6 +58,18 @@ func TestDetectedAuthConservative(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectedInstalledToolDoesNotReadCredentials(t *testing.T) {
+	missing := detectedInstalledTool("")
+	if missing.State != "missing" || missing.Label != "未发现安装" {
+		t.Fatalf("missing tool = %#v", missing)
+	}
+	installed := detectedInstalledTool("/home/dev/.local/bin/dsh")
+	if installed.State != "installed" || installed.Path == "" || !strings.Contains(installed.Label, "需要配置") {
+		t.Fatalf("installed tool = %#v", installed)
+	}
+}
+
 func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
 	t.Setenv("SystemRoot", `C:\Windows`)
 	t.Setenv("WINDIR", `C:\Windows`)
@@ -83,7 +95,7 @@ func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
 			if e.User != "" {
 				t.Error("detection must use distro default user")
 			}
-			return "warning\n__JIANZUO_ENV__\ndev\n/home/dev\n/home/dev/.local/bin/codex\n/home/dev/.local/bin/claude\nproxy=1\ngit_config=1\nssh_agent=0\nshell=1\n", nil
+			return "warning\n__JIANZUO_ENV__\ndev\n/home/dev\n/home/dev/.local/bin/codex\n/home/dev/.local/bin/claude\nproxy=1\ngit_config=1\nssh_agent=0\nshell=1\n/home/dev/.local/bin/dsh\n/home/dev/.local/bin/kimi\n/home/dev/.local/bin/mimo\n", nil
 		}
 		if e.User != "dev" {
 			t.Error("auth must use detected user")
@@ -98,7 +110,7 @@ func TestDiscoveryUsesDistroDefaultUserAndExactCLI(t *testing.T) {
 		return "", errors.New("unexpected")
 	}
 	got := discoverOne(context.Background(), probe, env)
-	if got.Environment.DefaultEngine != "claude" || got.Environment.User != "dev" || got.Environment.Workspaces[0] != "/home/dev" || got.Codex.State != "login" {
+	if got.Environment.DefaultEngine != "claude" || got.Environment.User != "dev" || got.Environment.Workspaces[0] != "/home/dev" || got.Environment.Harness != "/home/dev/.local/bin/dsh" || got.Codex.State != "login" || got.Harness.State != "installed" || got.Kimi.State != "installed" || got.Mimo.State != "installed" {
 		t.Fatalf("bad detection: %+v", got)
 	}
 	if !strings.Contains(got.Message, "代理") || !strings.Contains(got.Message, "Git") || !strings.Contains(got.Message, "SSH agent") {

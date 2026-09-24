@@ -1,5 +1,5 @@
 type DetectedTool={path:string;state:string;label:string};
-type DetectedEnvironment={environment:Environment;codex:DetectedTool;claude:DetectedTool;message:string};
+type DetectedEnvironment={environment:Environment;codex:DetectedTool;claude:DetectedTool;harness?:DetectedTool;kimi?:DetectedTool;mimo?:DetectedTool;message:string};
 let detectedEnvironments:DetectedEnvironment[]=[];
 function sameDetectedEnvironment(a:Environment,b:Environment){return a.type===b.type&&(a.type==='windows'||a.distro===b.distro&&a.user===b.user)}
 function installEnvironmentDiscovery(){
@@ -32,7 +32,8 @@ function renderConfiguredModels(){
  target.querySelectorAll<HTMLButtonElement>('[data-remove-custom-model]').forEach(b=>b.onclick=()=>{const e=editingEnvironments.find(x=>x.id===editingID);if(!e?.models)return;e.models.splice(Number(b.dataset.removeCustomModel),1);renderConfiguredModels();element('custom-model-result').textContent='已移除，保存设置后生效'});
 }
 function renderDetectedEnvironments(){
- element('detected-environments').innerHTML=detectedEnvironments.map((item,index)=>{const env=item.environment,existing=editingEnvironments.find(e=>sameDetectedEnvironment(e,env));return `<div class="detected-environment"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML(env.user?env.user+' · '+env.workspaces[0]:env.workspaces[0])}</small><small>Codex：${escapeHTML(item.codex.label)}<br>Claude：${escapeHTML(item.claude.label)}</small>${item.message?'<small>'+escapeHTML(item.message)+'</small>':''}</div><button type="button" data-detected="${index}">${existing?'查看配置':'添加'}</button></div>`}).join('');
+ const toolLabel=(name:string,tool?:DetectedTool)=>`<span class="detected-tool detected-tool-${escapeHTML(tool?.state||'missing')}" title="${escapeHTML(tool?.path||'')}">${escapeHTML(name)}：${escapeHTML(tool?.label||'未发现安装')}</span>`;
+ element('detected-environments').innerHTML=detectedEnvironments.map((item,index)=>{const env=item.environment,existing=editingEnvironments.find(e=>sameDetectedEnvironment(e,env));return `<div class="detected-environment"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML(env.user?env.user+' · '+env.workspaces[0]:env.workspaces[0])}</small><div class="detected-tools">${toolLabel('Codex',item.codex)} ${toolLabel('Claude Code',item.claude)} ${toolLabel('DeepSeek Harness',item.harness)} ${toolLabel('Kimi',item.kimi)} ${toolLabel('MiMo',item.mimo)}</div>${item.message?'<small>'+escapeHTML(item.message)+'</small>':''}</div><button type="button" data-detected="${index}">${existing?'查看配置':'添加'}</button></div>`}).join('');
  element('detected-environments').querySelectorAll<HTMLButtonElement>('[data-detected]').forEach(b=>b.onclick=()=>{
   const item=detectedEnvironments[Number(b.dataset.detected)];if(!item)return;storeEnvironmentEditor();const existing=editingEnvironments.find(e=>sameDetectedEnvironment(e,item.environment));
   if(existing)editingID=existing.id;else{if(editingEnvironments.length>=30){notify('最多配置 30 个环境');return}const env={...item.environment,id:'env_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,6),workspaces:[...item.environment.workspaces]};editingEnvironments.push(env);editingID=env.id}
