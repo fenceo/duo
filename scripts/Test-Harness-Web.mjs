@@ -13,7 +13,10 @@ assert.equal(execution.engineDefaultModel({model:'gpt-example'},'deepseek-harnes
 const merged=execution.mergeTaskModels({engine:'deepseek-harness',model:'task-route',environment},[{id:'deepseek-flash',name:'Flash'}]);
 assert.deepEqual(merged.map(model=>model.id),['task-route','custom-route','deepseek-flash']);
 assert(!merged.some(model=>model.id==='gpt-example'),'Harness must never inherit the Codex default model');
-assert.deepEqual(execution.effortLevels('deepseek-harness',{reasoning_levels:['medium','ultra']}),['off','low','high','max'],'Harness adapter levels take precedence over a shared custom model catalog');
+assert.deepEqual(execution.effortLevels('deepseek-harness',{reasoning_levels:['medium','ultra']}),[],'unsupported shared effort values are not offered');
+assert.deepEqual(execution.effortLevels('deepseek-harness'),[],'unknown capabilities use the tool default');
+assert.deepEqual(execution.effortLevels('deepseek-harness',{reasoning_levels:[]}),[],'a model without declared reasoning must not offer max');
+assert.deepEqual(execution.effortLevels('deepseek-harness',{reasoning_levels:['off','high']}),['off','high']);
 assert.deepEqual(execution.effortLevels('codex',{reasoning_levels:['ultra']}),['ultra']);
 assert.match(execution.harnessSessionHint,/停止任务或重启服务后不能恢复原生上下文/);
 assert.match(execution.harnessSessionHint,/闲置 30 分钟/);

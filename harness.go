@@ -142,6 +142,10 @@ func harnessFingerprint(c Config, t Task) string {
 }
 
 func startHarness(ctx context.Context, c Config, t Task, emit func(string, string)) (*harnessWorker, error) {
+	provider, model, err := harnessRouteForConfig(c, t.Model)
+	if err != nil {
+		return nil, err
+	}
 	patch, err := harnessPolicy(t)
 	if err != nil {
 		return nil, err
@@ -240,7 +244,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		close(w.done)
 		cleanup()
 	}()
-	initctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	initctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	if len(bootstrap) > 0 {
 		if err = w.write(initctx, append(bootstrap, '\n')); err != nil {
@@ -250,7 +254,6 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			return nil, err
 		}
 	}
-	provider, model := harnessRouteForConfig(c, t.Model)
 	params := map[string]any{"cwd": t.Workspace, "provider": provider, "model": model}
 	if t.ReasoningEffort != "" {
 		params["reasoningEffort"] = t.ReasoningEffort
@@ -275,7 +278,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			err = fmt.Errorf("%w：%s", err, diagnostic)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("Harness SDK 在 30 秒内未完成握手；请检查此环境的 dsh SDK 安装。Windows 无响应时可先选 WSL。%w", err)
+			err = fmt.Errorf("Harness SDK 握手超时（%s / %s，最多等待 60 秒）；请检查此环境的 dsh --profile sdk 启动、账号目录权限及安装状态：%w", provider, model, err)
 		}
 		stopErr := w.stop()
 		if stopErr != nil {
@@ -497,7 +500,7 @@ func checkHarness(c Config) (string, error) {
 	if len(c.Workspaces) == 0 {
 		return "", errors.New("需要配置工作目录")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 65*time.Second)
 	defer cancel()
 	w, err := startHarness(ctx, c, Task{Workspace: c.Workspaces[0], Engine: "deepseek-harness"}, func(string, string) {})
 	if err != nil {

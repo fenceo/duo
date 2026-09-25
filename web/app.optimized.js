@@ -3187,12 +3187,12 @@ function engineDefaultModel(env, engine) {
 const harnessSessionHint = 'Harness 仅在同一个运行进程中连续对话；闲置 30 分钟、停止任务或重启服务后不能恢复原生上下文。可新建空白会话，旧记录仍保留但不会自动带入 AI 上下文。更换模型、provider 或权限请新建任务。';
 const harnessKnowledgeHint = 'Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine, model) {
-    if (engine === 'deepseek-harness') return [
-        'off',
-        'low',
-        'high',
-        'max'
-    ];
+    if (engine === 'deepseek-harness') return (model?.reasoning_levels || []).filter((level)=>[
+            'off',
+            'low',
+            'high',
+            'max'
+        ].includes(level));
     if (model && Array.isArray(model.reasoning_levels)) return model.reasoning_levels;
     return engine === 'claude' ? [
         'low',
@@ -3596,7 +3596,9 @@ async function loadCreateModels(reset = false, refresh = false) {
     try {
         const result = await api(modelsURL(target.environment.id, target.engine, target.workspace, refresh), 'GET', undefined, controller.signal);
         if (request !== modelRequest || !creatingTask || createSubmitting || currentCreateCatalogContext()?.key !== target.key) return;
-        const models = result.models || [], fallback = defaultModel || result.default_model || '';
+        const models = result.models || [], harnessCatalog = target.engine === 'deepseek-harness' && result.status === 'ready';
+        const fallback = harnessCatalog ? result.default_model || '' : defaultModel || result.default_model || '';
+        if (harnessCatalog && input('create-model').value === defaultModel && !models.some((model)=>model.id === defaultModel)) input('create-model').value = fallback;
         if (fallback && !models.some((model)=>model.id === fallback)) models.unshift({
             id: fallback,
             name: fallback + '（环境默认）',
@@ -3916,12 +3918,12 @@ function setCreateModels(models, defaultModel) {
 function updateReasoning() {
     const engine = input('create-engine').value, id = input('create-model').value === '__custom__' ? input('custom-model').value.trim() : input('create-model').value;
     const model = createModels.find((m)=>m.id === id), known = model?.reasoning_levels;
-    const levels = engine === 'deepseek-harness' ? effortLevels(engine) : known ?? effortLevels(engine);
+    const levels = effortLevels(engine, model);
     const previous = input('create-effort').value;
     input('create-effort').innerHTML = '<option value="">工具默认' + (model?.default_reasoning ? ' · ' + escapeHTML(effortLabels[model.default_reasoning] || model.default_reasoning) : '') + '</option>' + levels.map((v)=>`<option value="${escapeHTML(v)}">${escapeHTML(effortLabels[v] || v)} · ${escapeHTML(v)}</option>`).join('');
     input('create-effort').value = levels.includes(previous) ? previous : '';
     input('create-effort').disabled = levels.length === 0;
-    element('effort-hint').textContent = engine === 'deepseek-harness' ? 'Harness 支持 off / low / high / max，模型及 provider 需支持所选值。' + harnessSessionHint : known?.length === 0 ? '此模型不提供推理强度选择。' : known == null ? '默认沿用工具设置；手动选择需模型支持。' : '';
+    element('effort-hint').textContent = engine === 'deepseek-harness' ? (levels.length ? '仅显示此模型配置已声明的推理强度。' : '未声明可选推理强度，使用工具默认。') + harnessSessionHint : known?.length === 0 ? '此模型不提供推理强度选择。' : known == null ? '默认沿用工具设置；手动选择需模型支持。' : '';
 }
 let discoveryEpoch = 0, discoveryID = '', discoveryTimer, discoveryPick = null;
 function installDiscovery() {

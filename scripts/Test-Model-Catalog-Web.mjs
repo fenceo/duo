@@ -24,6 +24,23 @@ function fixture(){
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 {
+ const f=fixture();
+ f.node('create-engine').value='deepseek-harness';
+ f.environment.harness_model='deepseek-flash';f.environment.harness_provider='deepseek-official';
+ f.ctx.api=async()=>response('deepseek-v4.1-flash',{models:[{id:'deepseek-v4.1-flash',name:'Flash',reasoning_levels:[]}],source:'DSH settings.yaml',default_model:''});
+ await f.ctx.loadCreateModels(true);
+ assert.doesNotMatch(f.node('model-list').innerHTML,/deepseek-flash/,'refresh must not reinsert the obsolete default');
+ assert.equal(f.node('create-model').value,'','do not silently select an arbitrary provider model');
+ f.node('create-model').value='deepseek-v4.1-flash';f.node('create-effort').value='max';
+ f.ctx.updateReasoning();
+ assert.equal(f.node('create-effort').value,'','changing to an unknown-capability model clears unsupported max');
+ assert.equal(f.node('create-effort').disabled,true);
+ assert.doesNotMatch(f.node('create-effort').innerHTML,/value="max"/);
+ f.ctx.api=async()=>response('deepseek-v4.1-flash',{default_model:'deepseek-v4.1-flash'});
+ await f.ctx.loadCreateModels(false,true);
+ assert.equal(f.node('create-model').value,'deepseek-v4.1-flash','refresh preserves the explicit model');
+}
+{
  const f=fixture();await f.ctx.toggleModelMenu('create');await flush();
  assert.equal(f.calls.length,1);assert.match(f.calls[0].path,/engine=codex/);assert.match(f.calls[0].path,/workspace=%2Fwork%2Fspace\+here/);
  assert.match(f.node('model-list').innerHTML,/native-one/);assert.equal(f.node('model-menu').classList.contains('hidden'),false);

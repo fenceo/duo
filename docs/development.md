@@ -69,6 +69,18 @@ fixture 不启动 CLI、不读取真实模型缓存、不调用模型；列表�
 
 ## Windows 与 WSL 进程约定
 
+Windows Harness 的无提示词原生握手检查可在正常用户上下文运行。该测试只发送 `initialize` / `shutdown`，不创建会话或消耗模型额度；默认跳过。模型必须是本机 DSH 配置中的 ID，provider 留空用于验证 Duo 的自动路由：
+
+```powershell
+$env:DUO_HARNESS_WINDOWS_HANDSHAKE='1'
+$env:DUO_HARNESS_MODEL='<本机已配置模型 ID>'
+$env:DUO_HARNESS_BINARY='<本机 dsh.cmd 的绝对路径>'
+go test -run '^TestHarnessSDKNativeWindowsHandshake$' -count=1 -v
+Remove-Item Env:DUO_HARNESS_WINDOWS_HANDSHAKE,Env:DUO_HARNESS_MODEL,Env:DUO_HARNESS_BINARY
+```
+
+可用 `DUO_HARNESS_PROVIDER` 验证显式路由，`DUO_HARNESS_EFFORT` 验证特定推理强度；握手成功不代表密钥、余额或实际回复已验证。
+
 - 调用 `wsl.exe` 时只传递 `SystemRoot` 和 `WINDIR`。不要把 Windows 的完整 `PATH`、代理变量或受限沙箱变量传给 WSL；Linux 命令必须使用所选用户的登录环境。
 - 从 `command` 或 `environmentProbeCommand` 创建带超时的子进程时，统一使用 `commandWithContext`，以保留最小宿主环境和 `Dir`。
 - Windows 自启使用当前用户的 `Jianzuo User` 计划任务。配置一致时应复用现有任务，不从受限进程强制重注册。

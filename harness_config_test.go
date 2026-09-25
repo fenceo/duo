@@ -54,8 +54,8 @@ func TestHarnessModelCatalogAndReasoning(t *testing.T) {
 		t.Fatalf("wrong native/custom model merge: %#v", list.Models)
 	}
 	for _, model := range list.Models {
-		if !reflect.DeepEqual(model.ReasoningLevels, []string{"off", "low", "high", "max"}) {
-			t.Errorf("model has non-Harness reasoning: %#v", model)
+		if len(model.ReasoningLevels) != 0 {
+			t.Errorf("model advertises unverified reasoning: %#v", model)
 		}
 		if model.DefaultReasoning != "" {
 			t.Errorf("unsupported default reasoning retained: %#v", model)
@@ -182,24 +182,17 @@ func TestHarnessRouteDiscoversWindowsDSHSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := Environment{Type: "windows", HarnessProvider: defaultHarnessProvider, HarnessModel: defaultHarnessModel}
-	provider, model, models := harnessSettingsModelCatalog(env, map[string]string{"DSH_HOME": home})
-	if provider != "hl" || model != "deepseek-v4.1-flash" {
-		t.Fatalf("discovered Harness route = %s/%s", provider, model)
-	}
-	if len(models) != 2 || models[0].ID != "deepseek-v4.1-flash" || models[1].ID != "gpt-5.6-sol" {
-		t.Fatalf("discovered Harness models = %#v", models)
-	}
 	list, err := modelsForEngine(context.Background(), env, "deepseek-harness", map[string]string{"DSH_HOME": home})
-	if err != nil || list.DefaultModel != "deepseek-v4.1-flash" || len(list.Models) != 2 {
+	if err != nil || list.DefaultModel != "" || len(list.Models) != 2 {
 		t.Fatalf("Harness model catalog = %#v (%v)", list, err)
 	}
 	c := Config{HarnessProvider: defaultHarnessProvider, HarnessModel: defaultHarnessModel, EngineEnv: map[string]string{"DSH_HOME": home}}
-	provider, model = harnessRouteForConfig(c, defaultHarnessModel)
-	if provider != "hl" || model != "deepseek-v4.1-flash" {
+	provider, model, err := harnessRouteForConfig(c, "deepseek-v4.1-flash")
+	if err != nil || provider != "hl" || model != "deepseek-v4.1-flash" {
 		t.Fatalf("runtime Harness route = %s/%s", provider, model)
 	}
-	provider, model = harnessRouteForConfig(Config{HarnessProvider: "custom", HarnessModel: "custom-model", EngineEnv: map[string]string{"DSH_HOME": home}}, "custom-model")
-	if provider != "custom" || model != "custom-model" {
+	provider, model, err = harnessRouteForConfig(Config{HarnessProvider: "custom", HarnessModel: "custom-model", EngineEnv: map[string]string{"DSH_HOME": home}}, "custom-model")
+	if err != nil || provider != "custom" || model != "custom-model" {
 		t.Fatalf("explicit Harness route was replaced: %s/%s", provider, model)
 	}
 }

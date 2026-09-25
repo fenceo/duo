@@ -146,26 +146,7 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 		return modelsForEnvironment(ctx, env, profileEnv...)
 	}
 	if engine == "deepseek-harness" {
-		provider, model, configured := harnessSettingsModelCatalog(env, firstProfileEnv(profileEnv))
-		env.HarnessProvider, env.HarnessModel = provider, model
-		if len(configured) > 0 {
-			env.Models = append(configured, env.Models...)
-		}
-		list := mergeEngineCatalog(ModelList{Source: "Duo 中该环境的 Harness 配置", Status: "fallback", Models: []ModelOption{}}, env, engine, env.HarnessModel)
-		models := list.Models
-		for i := range models {
-			// Harness has its own effort vocabulary; do not use Codex's levels.
-			models[i].ReasoningLevels = []string{"off", "low", "high", "max"}
-			if !validEngineReasoning(engine, models[i].DefaultReasoning) {
-				models[i].DefaultReasoning = ""
-			}
-		}
-		list.Models = models
-		list.Message = "当前 Harness SDK 没有只读模型目录接口；这里仅列出 Duo 为该环境配置的模型，不是 provider 全部可用模型。实际可用性以目标账号为准。"
-		if len(list.Models) == 0 {
-			list.Status = "empty"
-		}
-		return list, nil
+		return configuredHarnessCatalog(env, firstProfileEnv(profileEnv))
 	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")
