@@ -22,7 +22,7 @@ func TestSessionStartedReadsCodexUUIDv7(t *testing.T) {
 
 func TestExternalContextFilesNamesForeignInstructions(t *testing.T) {
 	dir := t.TempDir()
-	if e := os.Mkdir(filepath.Join(dir, ".aha2-context"), 0o755); e != nil {
+	if e := os.Mkdir(filepath.Join(dir, ".cursor"), 0o755); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("rules"), 0o644); e != nil {
@@ -38,7 +38,7 @@ func TestExternalContextFilesNamesForeignInstructions(t *testing.T) {
 		names = append(names, file.Name)
 	}
 	slices.Sort(names)
-	if !slices.Equal(names, []string{".aha2-context", "AGENTS.md"}) {
+	if !slices.Equal(names, []string{".cursor", "AGENTS.md"}) {
 		t.Fatalf("found = %v", names)
 	}
 	clean := externalContextFiles(context.Background(), Task{Workspace: t.TempDir(), Environment: &Environment{Type: "windows"}})

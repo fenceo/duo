@@ -32,9 +32,8 @@ type ContextFile struct {
 	Label string `json:"label"`
 }
 
+// These are filename warnings only; no content is imported or executed.
 var externalContextNames = map[string]string{
-	// This is a filename warning only; no content is imported or executed.
-	".aha2-context":                   "AHA2 任务上下文",
 	"agents.md":                       "AGENTS.md 仓库指令",
 	"claude.md":                       "CLAUDE.md 仓库指令",
 	"gemini.md":                       "GEMINI.md 仓库指令",
