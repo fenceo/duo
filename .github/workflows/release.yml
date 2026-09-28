@@ -1,0 +1,79 @@
+name: Publish Windows release
+
+on:
+  push:
+    branches:
+      - 'release/v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duo-stable-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'fenceo/duo'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate the release branch
+        env:
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or $env:RELEASE_BRANCH -cne ('release/v' + $version)) {
+            throw 'Release branch must match the stable version in package.json.'
+          }
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:GITHUB_SHA) { throw 'Checkout differs from the pushed commit.' }
+          git switch -c $env:RELEASE_BRANCH
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare the named release branch.' }
+          git config user.name 'github-actions[bot]'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot configure the release tag author.' }
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot configure the release tag email.' }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+          package-manager-cache: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Install locked web dependencies
+        run: |
+          npm.cmd ci
+          if ($LASTEXITCODE -ne 0) { throw 'Web dependency installation failed.' }
+
+      - name: Prepare the verified Inno Setup compiler
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          .\scripts\Setup-InnoToolchain.ps1
+
+      - name: Check Go code
+        run: |
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go vet failed.' }
+
+      - name: Test, build and publish the stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\scripts\Publish-Release.ps1
