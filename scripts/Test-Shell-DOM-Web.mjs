@@ -24,7 +24,7 @@ const ctx=createContext({
  MutationObserver:class {observe(){}disconnect(){}},setInterval:()=>0,clearInterval(){},setTimeout:()=>0,clearTimeout(){},requestAnimationFrame:()=>0,
  fetch:async(path,options)=>{
   requests.push({path,method:options?.method||'GET'});
-  const responses={'/api/auth':{authenticated:true,csrf:'synthetic-token'},'/api/tasks':[], '/api/settings':{config:configuration,secret_configured:false,feishu_status:'disabled',chat:''}, '/api/workbench':{modes:[{id:'work',name:'Work',permission:'workspace',approval:'request',allow_network:true,prompt:''},{id:'codex:auto',name:'Auto',permission:'workspace',approval:'auto',allow_network:true,prompt:''}],commands:[]},'/api/scratch':[]};
+  const responses={'/api/auth':{authenticated:true,csrf:'synthetic-token'},'/api/tasks':[], '/api/settings':{config:configuration,data_dir:'C:/fixture/data',secret_configured:false,feishu_status:'disabled',chat:''}, '/api/workbench':{modes:[{id:'work',name:'Work',permission:'workspace',approval:'request',allow_network:true,prompt:''},{id:'codex:auto',name:'Auto',permission:'workspace',approval:'auto',allow_network:true,prompt:''}],commands:[]},'/api/scratch':[], '/api/library/automatic':{capture:true,recall:true},'/api/library/vault':{config:{enabled:false,directory:'',include_runs:false,include_automatic:false},report:{conflicts:[],warnings:[]},document_directory:''}};
   if(!(path in responses))throw new Error('Unexpected fixture request: '+path);
   return {ok:true,status:200,json:async()=>structuredClone(responses[path])};
  }
@@ -36,6 +36,21 @@ assert.equal(typeof document.getElementById('new-task')?.onclick,'function','mou
 assert(document.getElementById('sticky-board'),'mount must reach notes initialization after workflow');
 assert(document.getElementById('update-current'),'mount must reach the final update settings initializer');
 for(const id of ['library-open','library-task','library-create','library-dialog'])assert(document.getElementById(id),'knowledge entry point missing: '+id);
+for(const id of ['vault-settings','automatic-knowledge-settings'])assert.equal(document.getElementById(id).closest('.settings-section')?.id,'settings-knowledge','one central home for knowledge settings');
+assert.equal(document.querySelectorAll('#vault-directory').length,1,'directory controls must not be duplicated');
+assert.equal(document.querySelectorAll('[data-settings="knowledge"]').length,1);
+assert(!document.getElementById('library-dialog').contains(document.getElementById('vault-settings')),'search dialog must not contain a second settings editor');
+assert.equal(document.getElementById('note-tab').textContent,'本任务知识');
+assert.equal(typeof document.getElementById('knowledge-library-open').onclick,'function');
+assert.equal(typeof document.getElementById('library-manage-task').onclick,'function');
+assert.match(document.getElementById('knowledge-data-directory').parentElement.textContent,/共用此目录中的数据库/);
+ctx.showSettingsSection('knowledge');
+for(let n=0;n<5;n++)await new Promise(resolve=>setImmediate(resolve));
+assert(!document.getElementById('settings-knowledge').classList.contains('hidden'));
+assert(document.getElementById('settings-save').classList.contains('hidden'),'knowledge settings must not save unrelated engine configuration');
+assert.equal(document.getElementById('knowledge-data-directory').textContent,'C:/fixture/data');
+assert.equal(document.getElementById('automatic-capture').checked,true);
+assert.equal(document.getElementById('vault-save').disabled,false);
 assert.equal(document.getElementById('reload-models').closest('.model-picker')?.id,'model-picker');
 assert.equal(document.getElementById('test-models').closest('.model-picker')?.id,'model-picker');
 for(const id of ['reload-models','test-models','stop-model-test'])assert.equal(document.getElementById(id).closest('.model-catalog-actions')?.id,'model-catalog-actions',id+' must stay in the model menu, including after detached composer mount');
@@ -55,4 +70,4 @@ assert.equal(typeof document.getElementById('new-task')?.onclick,'function');
 assert.equal(document.querySelectorAll('#model-catalog-actions').length,1);
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: complete production shell mounts twice in real DOM; detached model controls reconnect; final task handler, notes, updates and sidebar order survive. No real network/model calls.');
+console.log('PASS: complete shell mounts twice; centralized knowledge settings, distinct task/global knowledge controls, detached controls, task handler, notes, updates and sidebar order. No model calls.');

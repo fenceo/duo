@@ -145,6 +145,47 @@ func TestVaultRoundTripAndConflictingEdits(t *testing.T) {
 	}
 }
 
+func TestVaultSettingsExposeActualDirectoryAndRetainOldFiles(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	task := taskFor(t, a)
+	k := libraryKnowledge(t, a, task, "preserve this conclusion", "verified")
+	request := toolsClient(t, a)
+	var response struct {
+		Config            VaultConfig `json:"config"`
+		DocumentDirectory string      `json:"document_directory"`
+	}
+	if err := json.Unmarshal(request("/api/library/vault", "GET", nil, 200), &response); err != nil || response.DocumentDirectory != "" {
+		t.Fatal(response, err)
+	}
+	first, second := t.TempDir(), t.TempDir()
+	var saved struct {
+		VaultConfig
+		DocumentDirectory string `json:"document_directory"`
+	}
+	for _, directory := range []string{first, second} {
+		if err := json.Unmarshal(request("/api/library/vault", "PUT", VaultConfig{Enabled: true, Directory: directory}, 200), &saved); err != nil || saved.DocumentDirectory != filepath.Join(directory, "Duo") || saved.Directory != directory {
+			t.Fatal(saved, err)
+		}
+		syncTestVault(t, a)
+	}
+	if err := json.Unmarshal(request("/api/library/vault", "GET", nil, 200), &response); err != nil || response.DocumentDirectory != filepath.Join(second, "Duo") {
+		t.Fatal(response, err)
+	}
+	for _, directory := range []string{first, second} {
+		if raw := readTestFile(t, filepath.Join(directory, "Duo", "knowledge", k.ID+".md")); !strings.Contains(raw, k.Content) {
+			t.Fatal("changing root lost a knowledge file", directory)
+		}
+	}
+	items, err := a.store.knowledgeList(task.ID)
+	if err != nil || len(items) != 1 || items[0].ID != k.ID || items[0].Content != k.Content {
+		t.Fatal("directory settings changed the underlying task knowledge", items, err)
+	}
+	request("/api/library/vault", "PUT", VaultConfig{Enabled: true, Directory: filepath.Join(second, "missing")}, 400)
+	if current := a.store.vaultConfig(); current.Directory != second {
+		t.Fatal("invalid root replaced saved settings", current)
+	}
+}
+
 func TestVaultGitAcrossTwoComputers(t *testing.T) {
 	git, err := exec.LookPath("git")
 	if err != nil {

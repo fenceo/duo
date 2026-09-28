@@ -9,7 +9,7 @@ import (
 )
 
 func TestSessionStartedReadsCodexUUIDv7(t *testing.T) {
-	// The session that answered AHA2_WSL_OK, including its start time.
+	// A fixed UUIDv7 fixture with a known creation timestamp.
 	if got := sessionStarted("01a0a2dd-08bd-7763-8d86-9ea9924030ee"); got != 1789438789821 {
 		t.Fatalf("sessionStarted = %d, want 1789438789821", got)
 	}

@@ -1,6 +1,7 @@
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
 let automaticSettingsRequest = 0, automaticSettingsReady = false, automaticSettingsSaving = false;
+let vaultSettingsRequest = 0, vaultSettingsReady = false, vaultSettingsSaving = false, vaultRefreshing = false;
 function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
@@ -8,9 +9,27 @@ function installLibrary() {
     element('new-task').insertAdjacentHTML('afterend', '<button type="button" id="library-open">知识库 · 历史与结论</button>');
     element('message').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-task">引用历史 / 知识</button>');
     element('create-input').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-create">引用历史 / 知识</button>');
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="library-dialog" class="library-dialog"><div class="library-header"><div><h2>知识库</h2><p>查找之前的任务记录、结论和 Obsidian 笔记，选好后引用到任务要求中。</p></div><button type="button" id="library-close" aria-label="关闭知识库">关闭</button></div><form id="library-search-form" class="library-search"><input id="library-query" aria-label="搜索知识和历史" placeholder="关键词、报错码；多个词用空格分隔" maxlength="160"><select id="library-kind" aria-label="资料类型"><option value="">全部资料</option><option value="knowledge">结论与经验</option><option value="run">任务记录</option><option value="note">Obsidian 笔记</option></select><select id="library-scope" aria-label="任务范围"><option value="">所有任务与 Vault</option></select><label><input type="checkbox" id="library-stale">包含过时结论</label><button type="submit">查询</button></form><p id="library-state" role="status"></p><div id="library-results" class="library-results"></div><details id="vault-settings"><summary>Obsidian Vault 与 Git 同步</summary><p>选择这台 Duo 服务所在电脑的 Vault。Duo 只读写其中的 <code>Duo/</code> 文件夹；其中的 Markdown 可在 Obsidian 编辑。启用后每分钟同步一次，也可手动刷新。</p><label>Vault 绝对路径<input id="vault-directory" placeholder="例如 E:\\Notes\\MyVault"></label><label><input type="checkbox" id="vault-enabled">启用 Markdown 同步与索引</label><label><input type="checkbox" id="vault-runs">将所有任务的已结束记录也写入 Vault（可能包含私人内容）</label><p>同步文件包含问题、回复和结论，不包含数据库、登录凭据、工具日志或附件。常见密钥会脱敏，提交 Git 前仍请检查文件。建议使用自己的私有仓库。</p><div class="actions"><button type="button" id="vault-save">保存设置</button><button type="button" id="vault-refresh">立即同步 / 重建索引</button></div><p id="vault-status" role="status"></p><pre id="vault-problems" class="hidden"></pre><p>跨电脑：用 Obsidian Git 或 Git 客户端提交并推送 Vault，在另一台电脑克隆 / 拉取，再选择该电脑上的 Vault 路径。Duo 不自动执行 Git 推送；发现冲突会保留两端内容。删除本地任务不会删除已导出的 Markdown 档案。</p></details></dialog>`);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="library-dialog" class="library-dialog"><div class="library-header"><div><h2>全局知识库</h2><p>查找之前的任务记录、结论和 Obsidian 笔记，选好后引用到任务要求中。</p></div><button type="button" id="library-close" aria-label="关闭知识库">关闭</button></div><form id="library-search-form" class="library-search"><input id="library-query" aria-label="搜索知识和历史" placeholder="关键词、报错码；多个词用空格分隔" maxlength="160"><select id="library-kind" aria-label="资料类型"><option value="">全部资料</option><option value="knowledge">结论与经验</option><option value="run">任务记录</option><option value="note">Obsidian 笔记</option></select><select id="library-scope" aria-label="任务范围"><option value="">所有任务与 Vault</option></select><label><input type="checkbox" id="library-stale">包含过时结论</label><button type="submit">查询</button></form><p id="library-state" role="status"></p><div id="library-results" class="library-results"></div><details id="vault-settings"><summary>Obsidian Vault 与 Git 同步</summary><p>选择这台 Duo 服务所在电脑的知识文件根目录。Duo 只读写其中的 <code>Duo/</code> 文件夹；其中的 Markdown 可用编辑器或 Obsidian 查看和编辑。启用后每分钟同步一次，也可手动刷新。</p><label>Vault 绝对路径<input id="vault-directory" placeholder="例如 E:\\Notes\\MyVault"></label><label><input type="checkbox" id="vault-enabled">启用 Markdown 同步与索引</label><label><input type="checkbox" id="vault-runs">同时保存全部任务的已结束对话记录（可能包含私人内容）</label><p>同步文件包含问题、回复和结论，不包含数据库、登录凭据、工具日志或附件。常见密钥会脱敏，提交 Git 前仍请检查文件。建议使用自己的私有仓库。</p><div class="actions"><button type="button" id="vault-save">保存设置</button><button type="button" id="vault-refresh">立即同步 / 重建索引</button></div><p id="vault-status" role="status"></p><pre id="vault-problems" class="hidden"></pre><p>跨电脑：用 Obsidian Git 或 Git 客户端提交并推送 Vault，在另一台电脑克隆 / 拉取，再选择该电脑上的 Vault 路径。Duo 不自动执行 Git 推送；发现冲突会保留两端内容。删除本地任务不会删除已导出的 Markdown 档案。</p></details></dialog>`);
     element('vault-settings').insertAdjacentHTML('beforebegin', `<details id="automatic-knowledge-settings"><summary>对话自动积累</summary><p>默认开启。完成一轮对话后，自动把本轮要求和最终回复记为待验证知识，不需要点保存。相同的问题与回复不会重复记录；不会另行调用模型做摘要。</p><label><input type="checkbox" id="automatic-capture" disabled>自动记录后续对话的问题与最终回复</label><label><input type="checkbox" id="automatic-recall" disabled>新建会话时自动补回当前任务知识</label><p>恢复时优先选已验证知识，再选最近记录，最多 3 条，每条最多 1200 字。排除过时条目，不读取其他任务；正常续聊不重复添加。恢复的文字计入本轮模型输入。</p><button type="button" id="automatic-save" disabled>保存设置</button><p id="automatic-status" role="status"></p></details>`);
-    input('vault-runs').closest('label').insertAdjacentHTML('afterend', '<label><input type="checkbox" id="vault-automatic">将对话自动记录的知识也写入 Vault（默认关闭）</label>');
+    input('vault-runs').closest('label').insertAdjacentHTML('afterend', '<label><input type="checkbox" id="vault-automatic">同步自动积累的知识（默认关闭；手工保存的知识始终纳入同步）</label>');
+    installLibrarySettings();
+    const headerActions = document.createElement('div');
+    headerActions.className = 'library-header-actions';
+    headerActions.innerHTML = '<button type="button" id="library-manage-task">管理本任务知识</button><button type="button" id="library-settings-open">知识库设置</button>';
+    button('library-close').before(headerActions);
+    headerActions.append(button('library-close'));
+    button('library-settings-open').onclick = ()=>void openLibrarySettings();
+    button('library-manage-task').onclick = ()=>{
+        if (!libraryTargetCurrent() || creatingTask || !chosen || !detail) return;
+        element('library-dialog').close();
+        switchTab('note');
+    };
+    element('notebook').querySelector('.note-head .actions').insertAdjacentHTML('beforeend', '<button type="button" id="knowledge-library-open">查全局知识库</button>');
+    element('notebook').querySelector('h2').textContent = '本任务知识';
+    element('notebook').querySelector('.note-head').insertAdjacentHTML('afterend', '<p class="muted knowledge-panel-help">这里是全局知识库中属于本任务的条目。自动记录会出现在这里，可按需纠错、验证或删除；日常聊天无需手动整理。</p>');
+    button('summarize').textContent = '手动整理';
+    button('summarize').title = '调用本任务的 AI 整理知识，完成后可检查并保存';
+    button('knowledge-library-open').onclick = ()=>void openLibrary();
     button('automatic-save').onclick = ()=>void saveAutomaticKnowledge();
     for (const id of [
         'library-open',
@@ -35,7 +54,51 @@ function installLibrary() {
         automaticSettingsRequest++;
         automaticSettingsReady = false;
         automaticSettingsSaving = false;
+        vaultSettingsRequest++;
+        vaultSettingsReady = false;
+        vaultSettingsSaving = false;
+        vaultRefreshing = false;
     });
+}
+function installLibrarySettings() {
+    const nav = element('settings-form').querySelector('.settings-nav');
+    nav.querySelector('[data-settings="data"]').insertAdjacentHTML('afterend', '<button type="button" data-settings="knowledge">知识库</button>');
+    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-knowledge" class="settings-section hidden"><h3>知识库</h3><p>统一管理所有任务的知识积累和文件目录。日常查找与引用在左侧“知识库”，纠错、验证和删除在“本任务知识”。</p><div class="knowledge-storage-info"><h4>本机运行数据</h4><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。知识文件目录用于 Markdown 同步；切换完整运行数据请到“数据与存储”。</p></div></section>`);
+    const section = element('settings-knowledge');
+    for (const id of [
+        'automatic-knowledge-settings',
+        'vault-settings'
+    ]){
+        const panel = element(id);
+        panel.open = true;
+        section.append(panel);
+    }
+    element('vault-settings').querySelector('summary').textContent = '知识文件目录与同步';
+    input('vault-directory').previousSibling.textContent = '知识文件根目录（服务所在电脑）';
+    input('vault-directory').placeholder = '例如 E:\\Notes\\DuoKnowledge';
+    input('vault-directory').closest('label').insertAdjacentHTML('afterend', '<p>实际文件目录：<code id="vault-document-directory">尚未设置</code></p><p class="muted">支持普通文件夹，也可选 Obsidian Vault。所有任务共用这一个根目录；Duo 只管理其中的 Duo/ 子目录。更换目录会重新同步当前内容，旧目录保留，不自动搬移文件。</p>');
+    button('vault-save').textContent = '保存知识库路径与同步设置';
+    input('vault-directory').onkeydown = (e)=>{
+        if (e.key === 'Enter' && !e.isComposing) {
+            e.preventDefault();
+            void saveVault();
+        }
+    };
+    setVaultControlsDisabled(true);
+}
+async function openLibrarySettings() {
+    const epoch = shellEpoch;
+    element('library-dialog').close();
+    await openSettings();
+    if (!shellCurrent(epoch) || !element('settings-dialog').open) return;
+    if (element('settings-knowledge').classList.contains('hidden')) showSettingsSection('knowledge');
+}
+async function loadKnowledgeSettings() {
+    element('knowledge-data-directory').textContent = settings.data_dir || '未能读取当前数据目录';
+    await Promise.all([
+        loadAutomaticKnowledge(),
+        loadVault()
+    ]);
 }
 async function openLibrary() {
     libraryTarget = {
@@ -47,11 +110,8 @@ async function openLibrary() {
     const scope = element('library-scope');
     scope.innerHTML = '<option value="">所有任务与 Vault</option>' + tasks.filter((t)=>!t.deleted).map((t)=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');
     element('library-dialog').showModal();
-    await Promise.all([
-        searchLibrary(),
-        loadVault(),
-        loadAutomaticKnowledge()
-    ]);
+    button('library-manage-task').disabled = !chosen || creatingTask || !detail;
+    await searchLibrary();
 }
 function setAutomaticSettingsDisabled(disabled) {
     for (const id of [
@@ -157,54 +217,88 @@ function showVaultReport(r) {
     element('vault-problems').textContent = details.join('\n');
     element('vault-problems').classList.toggle('hidden', !details.length);
 }
+function setVaultControlsDisabled(disabled) {
+    for (const id of [
+        'vault-directory',
+        'vault-enabled',
+        'vault-runs',
+        'vault-automatic',
+        'vault-save',
+        'vault-refresh'
+    ])input(id).disabled = disabled;
+}
+function showVaultLocation(directory, enabled) {
+    element('vault-document-directory').textContent = directory ? directory + (enabled ? '' : '（同步未启用）') : '尚未设置有效的知识文件根目录';
+}
 async function loadVault() {
-    const epoch = shellEpoch;
+    if (vaultSettingsSaving || vaultRefreshing) return;
+    const epoch = shellEpoch, token = ++vaultSettingsRequest;
+    vaultSettingsReady = false;
+    setVaultControlsDisabled(true);
+    element('vault-status').textContent = '正在读取知识库设置…';
     try {
         const v = await api('library/vault', 'GET', undefined, shellController.signal);
-        if (!shellCurrent(epoch)) return;
+        if (token !== vaultSettingsRequest || !shellCurrent(epoch)) return;
         input('vault-directory').value = v.config.directory;
         input('vault-enabled').checked = v.config.enabled;
         input('vault-runs').checked = v.config.include_runs;
         input('vault-automatic').checked = !!v.config.include_automatic;
+        showVaultLocation(v.document_directory, v.config.enabled);
         showVaultReport(v.report);
+        vaultSettingsReady = true;
     } catch (e) {
-        if (shellCurrent(epoch)) element('vault-status').textContent = e.message;
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) element('vault-status').textContent = e.message;
+    } finally{
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) setVaultControlsDisabled(!vaultSettingsReady);
     }
 }
 async function saveVault() {
-    const epoch = shellEpoch;
-    button('vault-save').disabled = true;
+    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing) return;
+    const epoch = shellEpoch, token = ++vaultSettingsRequest;
+    vaultSettingsSaving = true;
+    setVaultControlsDisabled(true);
     try {
-        await api('library/vault', 'PUT', {
+        const saved = await api('library/vault', 'PUT', {
             directory: input('vault-directory').value.trim(),
             enabled: input('vault-enabled').checked,
             include_runs: input('vault-runs').checked,
             include_automatic: input('vault-automatic').checked
         });
-        if (shellCurrent(epoch)) {
-            element('vault-status').textContent = '设置已保存。';
-            await refreshVault();
-        }
+        if (token !== vaultSettingsRequest || !shellCurrent(epoch)) return;
+        showVaultLocation(saved.document_directory, saved.enabled);
+        element('vault-status').textContent = '设置已保存，正在同步…';
+        await syncVaultView(epoch, token);
     } catch (e) {
-        if (shellCurrent(epoch)) element('vault-status').textContent = e.message;
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) element('vault-status').textContent = e.message;
     } finally{
-        if (shellCurrent(epoch)) button('vault-save').disabled = false;
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) {
+            vaultSettingsSaving = false;
+            setVaultControlsDisabled(false);
+        }
     }
 }
+async function syncVaultView(epoch, token) {
+    const report = await api('library/vault/refresh', 'POST', {});
+    if (token !== vaultSettingsRequest || !shellCurrent(epoch)) return;
+    showVaultReport(report);
+    if (element('library-dialog').open) await searchLibrary();
+    if (chosen) await loadKnowledge();
+}
 async function refreshVault() {
-    const epoch = shellEpoch;
-    button('vault-refresh').disabled = true;
+    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing) return;
+    const epoch = shellEpoch, token = ++vaultSettingsRequest;
+    vaultRefreshing = true;
+    setVaultControlsDisabled(true);
     element('vault-status').textContent = '正在同步 Markdown 与索引…';
     try {
-        const report = await api('library/vault/refresh', 'POST', {});
-        if (!shellCurrent(epoch)) return;
-        showVaultReport(report);
-        await searchLibrary();
-        if (chosen) await loadKnowledge();
+        await syncVaultView(epoch, token);
     } catch (e) {
-        if (shellCurrent(epoch)) element('vault-status').textContent = e.message;
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) element('vault-status').textContent = e.message;
     } finally{
-        if (shellCurrent(epoch)) button('vault-refresh').disabled = false;
+        if (token === vaultSettingsRequest && shellCurrent(epoch)) {
+            vaultRefreshing = false;
+            setVaultControlsDisabled(false);
+        }
     }
 }
 let updateLoading = false, updateInformation = null, updatePhase = 'idle', updateExpectedVersion = '';
@@ -5067,9 +5161,10 @@ function showSettingsSection(page) {
     const nav = element('settings-form').querySelector('.settings-nav');
     nav.querySelectorAll('button[data-settings]').forEach((b)=>b.classList.toggle('selected', b.dataset.settings === page));
     element('settings-form').querySelectorAll('.settings-section').forEach((section)=>section.classList.toggle('hidden', section.id !== 'settings-' + page));
-    button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines' || page === 'data');
+    button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines' || page === 'data' || page === 'knowledge');
     if (page === 'engines') void loadEngineSettings();
     else if (page === 'updates') void loadUpdateInformation();
+    else if (page === 'knowledge') void loadKnowledgeSettings();
 }
 function loadAccessSettings() {
     input('access-lan').value = settings.config.access?.lan || '';
@@ -5538,7 +5633,7 @@ function showShellFailure(error) {
 function renderShell() {
     renewShellScope();
     lastList = '';
-    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
+    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">本任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
  <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
  <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行Duo的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
  <dialog id="bind-dialog"><h2>在飞书继续这个任务</h2><p id="bind-status"></p><p>连接后，从网页或飞书发来的要求进入同一个任务；该任务的完成结果会发送到此私聊。</p><div class="dialog-footer"><button data-close="bind-dialog">关闭</button><button id="bind-setup">扫码创建并绑定当前任务</button><button id="unbind">断开当前任务</button><button class="primary" id="bind">连接此任务</button></div></dialog>
@@ -5818,7 +5913,7 @@ function switchTab(tab) {
     }
     button('chat-tab').classList.toggle('selected', !open);
     element('tool-title').textContent = ({
-        note: '任务知识',
+        note: '本任务知识',
         scratch: '待办',
         hardware: '硬件调试',
         files: '文件与改动',
@@ -5877,7 +5972,7 @@ function renderKnowledgeList() {
             hour: '2-digit',
             minute: '2-digit',
             hour12: false
-        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status === 'verified' ? '标为待验证' : '标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('') || '<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
+        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status === 'verified' ? '标为待验证' : '标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('') || '<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“设置 → 知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
     element('knowledge-list').querySelectorAll('[data-knowledge-edit]').forEach((b)=>b.onclick = ()=>editKnowledge(b.dataset.knowledgeEdit));
     element('knowledge-list').querySelectorAll('[data-knowledge-state]').forEach((b)=>b.onclick = ()=>void toggleKnowledgeState(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeState)));
     element('knowledge-list').querySelectorAll('[data-knowledge-use]').forEach((b)=>b.onclick = ()=>useKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeUse)));
@@ -5903,7 +5998,7 @@ function renderSessionBanner() {
     const foreign = taskContext.length ? `<span class="session-warning" title="${escapeHTML(taskContext.map((f)=>f.label + ' · ' + f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map((f)=>f.name).join('、'))}</span>` : '';
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
     const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
-    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在知识库关闭。';
+    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
     banner.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
     const html = `<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session ? `<button type="button" id="session-reset" class="subtle"${busy || sessionResetTask === detail.task.id ? ' disabled' : ''}>${sessionResetTask === detail.task.id ? '正在新建…' : '新建会话'}</button>` : ''}`;
     if (banner.innerHTML !== html) banner.innerHTML = html;
@@ -5916,7 +6011,7 @@ async function resetSession() {
         notify('请先停止执行并取消排队，再新建会话。');
         return;
     }
-    if (!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 对话自动积累关闭自动恢复。')) return;
+    if (!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在设置 → 知识库 → 对话自动积累关闭自动恢复。')) return;
     const id = detail.task.id, token = ++selection;
     sessionResetTask = id;
     renderTask();
@@ -5976,7 +6071,7 @@ function renderTask() {
     const knowledge = latestKnowledgeRun(), saved = knowledge ? knowledgeForRun(knowledge.id) : null, pending = !!knowledge && (!saved || saved.content !== knowledge.result);
     element('draft-banner').classList.toggle('hidden', !pending);
     element('draft-preview').classList.toggle('hidden', !pending);
-    button('note-tab').textContent = '任务知识' + (knowledgeItems.length ? ' · ' + knowledgeItems.length : '');
+    button('note-tab').textContent = '本任务知识' + (knowledgeItems.length ? ' · ' + knowledgeItems.length : '');
     button('summarize').disabled = active;
     if (knowledge && pending) {
         const preview = element('draft-content');
@@ -6439,6 +6534,7 @@ async function openSettings() {
         element('check-result').textContent = '';
         element('settings-error').textContent = '';
         element('settings-dialog').showModal();
+        if (document.querySelector('[data-settings="knowledge"].selected')) void loadKnowledgeSettings();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
     }

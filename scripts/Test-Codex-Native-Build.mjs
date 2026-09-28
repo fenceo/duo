@@ -43,6 +43,9 @@ try{
  assert.deepEqual(automatic,{capture:true,recall:true},'automatic accumulation works without setup');
  assert.equal((await fetch(base+'/api/library/automatic',{method:'PUT',headers,body:JSON.stringify({capture:false,recall:false})})).status,200);
  assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:false,recall:false});
+ const vault=await fetch(base+'/api/library/vault',{headers}).then(r=>r.json());
+ assert.equal(vault.document_directory,'','unconfigured knowledge files have no managed directory');
+ assert.equal(vault.config.enabled,false,'knowledge files remain opt-in');
  const engines=await fetch(base+'/api/engines',{headers}).then(r=>r.json());
  assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'acp');
  const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
@@ -60,7 +63,8 @@ try{
  assert.ok(source.includes('renderCodexApprovals'),'built assets include approvals');
  assert.ok(source.includes('setting-harness-provider'),'served entrypoint includes Harness configuration');
  assert.ok(source.includes('automatic-capture')&&source.includes('vault-automatic'),'built assets include automatic accumulation and separate Vault export settings');
- console.log('PASS: isolated executable starts; login/CSRF, native mode catalog, stale approval rejection and embedded approval UI verified. No model turn sent.');
+ assert.ok(source.includes('settings-knowledge')&&source.includes('vault-document-directory')&&source.includes('library-manage-task'),'built assets include central knowledge settings and task management navigation');
+ console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge, directory metadata and embedded settings UI verified. No model turn sent.');
 }finally{
  child.stdin.end();
  const timer=setTimeout(()=>child.kill(),5000);

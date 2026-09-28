@@ -54,3 +54,29 @@ function fixture(){
  let body;ctx.api=async(path,method,data)=>{if(method==='PUT')body=data;return path.startsWith('library/search')?{documents:[],truncated:false}:{conflicts:[],warnings:[]}};node('vault-automatic').checked=true;await ctx.saveVault();assert.equal(body.include_automatic,true);assert.equal(body.include_runs,false,'automatic export and full run export remain independent');
 }
 console.log('PASS: citation provenance and isolation, escaped previews, automatic settings defaults/opt-out, failed/stale requests, write lock, and separate Vault export control.');
+{
+ const {ctx,node}=fixture(),old=deferred();let count=0;const response=directory=>({config:{directory,enabled:true,include_runs:false,include_automatic:false},document_directory:directory+'/Duo',report:{conflicts:[],warnings:[]}});
+ ctx.api=()=>++count===1?old.promise:Promise.resolve(response('fresh'));
+ const pending=ctx.loadVault();await ctx.loadVault();old.resolve(response('stale'));await pending;
+ assert.equal(node('vault-directory').value,'fresh');assert.equal(node('vault-document-directory').textContent,'fresh/Duo');
+}
+{
+ const {ctx,node}=fixture();let calls=0;ctx.api=async()=>{calls++;throw new Error('cannot load directory')};await ctx.loadVault();await ctx.saveVault();await ctx.refreshVault();
+ assert.equal(calls,1,'failed reads must never save unchecked defaults or trigger synchronization');assert.equal(node('vault-save').disabled,true);assert.match(node('vault-status').textContent,/cannot load/);
+}
+{
+ const {ctx,node}=fixture();ctx.api=async()=>({config:{directory:'first',enabled:true},document_directory:'first/Duo',report:{conflicts:[],warnings:[]}});await ctx.loadVault();
+ const gate=deferred(),calls=[];ctx.api=(path,method)=>{calls.push({path,method});return method==='PUT'?gate.promise:Promise.resolve({conflicts:[],warnings:[]})};
+ const saving=ctx.saveVault();await ctx.saveVault();await ctx.loadVault();await ctx.refreshVault();assert.equal(calls.length,1,'save locks prevent duplicate writes, reloads, and concurrent sync');assert.equal(node('vault-directory').disabled,true);
+ gate.resolve({enabled:true,document_directory:'second/Duo'});await saving;assert.equal(calls.length,2);assert.equal(calls[1].path,'library/vault/refresh');assert.equal(node('vault-document-directory').textContent,'second/Duo');assert.equal(node('vault-save').disabled,false);
+}
+{
+ const {ctx,node}=fixture();ctx.api=async()=>({config:{directory:'first',enabled:true},report:{conflicts:[],warnings:[]}});await ctx.loadVault();
+ const gate=deferred();let calls=0;ctx.api=()=>{calls++;return gate.promise};const saving=ctx.saveVault();ctx.shellEpoch++;node('vault-status').textContent='new login';
+ gate.resolve({enabled:true,document_directory:'old/Duo'});await saving;assert.equal(calls,1,'stale save cannot trigger a sync after login changes');assert.equal(node('vault-status').textContent,'new login');
+}
+{
+ const {ctx,node,calls}=fixture();ctx.detail={task:{id:'one'}};await ctx.openLibrary();assert.equal(calls.length,1);assert.match(calls[0].path,/library\/search/,'search must not reload settings or discard unsaved directory edits');assert.equal(node('library-manage-task').disabled,false);
+ ctx.creatingTask=true;await ctx.openLibrary();assert.equal(node('library-manage-task').disabled,true);
+}
+console.log('PASS: directory settings reject stale reads/writes, duplicate saves and failed loads; search remains separate from settings.');

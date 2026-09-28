@@ -48,6 +48,15 @@ func (s *Store) vaultConfig() VaultConfig {
 	return c
 }
 
+// Report the actual managed subtree, not just the folder selected by the user.
+// This is presentation metadata; vaultRoot still validates every write path.
+func vaultDocumentDirectory(c VaultConfig) string {
+	if !filepath.IsAbs(c.Directory) {
+		return ""
+	}
+	return filepath.Join(c.Directory, "Duo")
+}
+
 // Reject links and junctions at every component, including the vault root.
 // The managed subtree must never point into another directory.
 func plainVaultPath(path string) error {
@@ -499,7 +508,8 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/library/vault", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		s.app.vaultMu.Lock()
 		defer s.app.vaultMu.Unlock()
-		jsonOut(w, 200, map[string]any{"config": s.app.store.vaultConfig(), "report": s.app.vaultReport})
+		c := s.app.store.vaultConfig()
+		jsonOut(w, 200, map[string]any{"config": c, "report": s.app.vaultReport, "document_directory": vaultDocumentDirectory(c)})
 	}))
 	m.HandleFunc("PUT /api/library/vault", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var c VaultConfig
@@ -537,7 +547,10 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 			return
 		}
 		s.app.vaultReport = VaultReport{}
-		jsonOut(w, 200, c)
+		jsonOut(w, 200, struct {
+			VaultConfig
+			DocumentDirectory string `json:"document_directory"`
+		}{c, vaultDocumentDirectory(c)})
 	}))
 	m.HandleFunc("POST /api/library/vault/refresh", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
