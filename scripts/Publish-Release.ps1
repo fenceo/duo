@@ -31,7 +31,13 @@ try {
     & scripts/Build-Portable.ps1 -Go $Go
     if($LASTEXITCODE -ne 0){throw 'Build failed'}
     $builtStatus=& git status --porcelain
-    if($LASTEXITCODE -ne 0 -or $builtStatus){throw 'Build changed source or generated assets; review and commit them before publishing'}
+    if($LASTEXITCODE -ne 0){throw 'Cannot inspect the checkout after building'}
+    if($builtStatus){
+        Write-Output 'Build checkout changes:'
+        $builtStatus | Write-Output
+        & git diff --stat
+        throw 'Build changed source or generated assets; review and commit them before publishing'
+    }
     $service=Join-Path $root 'dist\Duo-portable-windows-x64\duo-service.exe'
     # windowsgui executables do not reliably attach stdout to a PowerShell
     # expression; explicitly pipe the child output for this release guard.
