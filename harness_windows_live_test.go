@@ -10,10 +10,10 @@ import (
 )
 
 // This opt-in diagnostic uses the production Windows launcher but only sends
-// initialize/shutdown. It never creates a session or submits a model prompt.
-func TestHarnessSDKNativeWindowsHandshake(t *testing.T) {
+// initialize/close. It never creates a session or submits a model prompt.
+func TestHarnessACPNativeWindowsHandshake(t *testing.T) {
 	if runtime.GOOS != "windows" || os.Getenv("DUO_HARNESS_WINDOWS_HANDSHAKE") != "1" {
-		t.Skip("opt-in no-prompt Windows SDK diagnostic")
+		t.Skip("opt-in no-prompt Windows ACP diagnostic")
 	}
 	model := os.Getenv("DUO_HARNESS_MODEL")
 	provider := os.Getenv("DUO_HARNESS_PROVIDER")
@@ -38,8 +38,8 @@ func TestHarnessSDKNativeWindowsHandshake(t *testing.T) {
 		t.Fatalf("native Windows initialize failed (zero prompts): %s", publicProbeError(err))
 	}
 	defer w.stop()
-	if _, err = w.request(ctx, "shutdown", nil); err != nil {
+	if err = w.close(); err != nil {
 		t.Fatalf("shutdown failed (zero prompts): %s", publicProbeError(err))
 	}
-	t.Logf("Windows SDK initialize/shutdown passed in %s; zero prompts", time.Since(started).Round(time.Millisecond))
+	t.Logf("Windows ACP initialize/close passed in %s; zero prompts", time.Since(started).Round(time.Millisecond))
 }

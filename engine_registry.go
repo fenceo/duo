@@ -87,12 +87,12 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
-			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 原生 SDK；同一运行时支持连续对话，停止或服务重启后不能恢复；暂不支持交互审批、图片和硬件工具",
-			Transport: "sdk_jsonrpc", Runnable: true,
+			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 原生 ACP；支持模型切换、停止和重启后恢复会话；暂不支持交互审批、图片和硬件工具",
+			Transport: "acp", Runnable: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"stream", "live_session", "cancel", "sandbox"},
+			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox"},
 			CredentialKinds:    []string{"native", "dsh_home"},
-			InstallDescription: "使用 dsh --profile sdk 的 JSON-RPC 接口；请在目标环境安装 Harness 并完成 provider 配置。Windows 默认使用 npm 的 dsh.cmd 入口。",
+			InstallDescription: "使用支持 session/resume 的 dsh --profile acp 接口；请在目标环境安装 Harness 并完成 provider 配置。Windows 默认使用 npm 的 dsh.cmd 入口。",
 			DocumentationURL:   "https://github.com/deepseek-ai/deepseek-harness",
 		},
 		{

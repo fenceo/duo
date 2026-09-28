@@ -12,7 +12,7 @@ import (
 // This is deliberately excluded from ordinary test runs. Setting the opt-in
 // acknowledges two small, real model turns using the selected WSL user's native
 // credentials. The test never opens credential files or prints raw diagnostics.
-func TestHarnessSDKPaidWSLRoundTrip(t *testing.T) {
+func TestHarnessACPPaidWSLRoundTrip(t *testing.T) {
 	if os.Getenv("JIANZUO_TEST_HARNESS_PAID_WSL") != "1" {
 		t.Skip("explicit authorization required: JIANZUO_TEST_HARNESS_PAID_WSL=1")
 	}
@@ -68,7 +68,7 @@ func TestHarnessSDKPaidWSLRoundTrip(t *testing.T) {
 		defer cancel()
 		started := time.Now()
 		toolSeen := false
-		session, result, err := runHarnessSDK(ctx, c, task, prompt, func(kind, _ string) {
+		session, result, err := runHarnessACP(ctx, c, task, prompt, func(kind, _ string) {
 			if kind == "tool" {
 				toolSeen = true
 				cancel()
@@ -120,9 +120,9 @@ func TestHarnessSDKPaidWSLRoundTrip(t *testing.T) {
 	t.Log("PASS: exactly two prompt submissions, same live worker and native session, second prompt omitted the marker")
 }
 
-// This native-route diagnostic sends initialize/shutdown only. It never creates
+// This native-route diagnostic sends initialize/close only. It never creates
 // a session or sends a prompt, and only reports fixed, non-sensitive categories.
-func TestHarnessSDKNativeRouteHandshake(t *testing.T) {
+func TestHarnessACPNativeRouteHandshake(t *testing.T) {
 	if os.Getenv("JIANZUO_TEST_HARNESS_NATIVE_ROUTE") != "1" {
 		t.Skip("set JIANZUO_TEST_HARNESS_NATIVE_ROUTE=1 for a no-prompt native route diagnostic")
 	}
@@ -159,7 +159,7 @@ func TestHarnessSDKNativeRouteHandshake(t *testing.T) {
 		t.Fatalf("initialize failed: category=%s provider=%s model=%s reasoningEffort=default; zero prompt submissions", category, provider, model)
 	}
 	if err := w.stop(); err != nil {
-		t.Fatal("initialize passed but SDK cleanup failed; raw diagnostics withheld; zero prompt submissions")
+		t.Fatal("initialize passed but ACP cleanup failed; raw diagnostics withheld; zero prompt submissions")
 	}
-	t.Logf("initialize/shutdown PASS provider=%s model=%s reasoningEffort=default; zero prompt submissions", provider, model)
+	t.Logf("initialize/close PASS provider=%s model=%s reasoningEffort=default; zero prompt submissions", provider, model)
 }

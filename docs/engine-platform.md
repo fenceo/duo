@@ -57,58 +57,34 @@ Windows 安装版和便携版共用版本查询、来源约束、SHA-256 校验�
 
 0.19 更名为 Duo 后，旧版须手动运行新安装器首次过渡；不删除旧数据、不重建账号。后续的引擎安装功能仍须展示执行环境、安装命令和确认步骤，不能与工作台自身升级混在一起。
 
-## Harness SDK 接入（2026-09-23）
+## Harness ACP 接入（2026-09-28）
 
-当前适配本机 `@deepseek-ai/dsh 0.1.5-rc.2` 的 SDK stdio JSON-RPC，
-不是此版本并不支持的 `headless --json`。模型通过 `initialize` 的
-`provider/model/reasoningEffort` 传入。默认路由为 `deepseek-official/deepseek-flash`，
-支持自定义模型 ID；推理为工具默认或 `off/low/high/max`。
+使用 `dsh --profile acp` 的原生会话接口，已在本机 `@deepseek-ai/dsh 0.1.5-rc.2` 验证。
+启动握手要求 ACP v1 及 `session/resume`、`session/close` 能力；旧版接口不满足时明确要求升级。
+模型路由保留 Windows 原生配置解析，使用 ACP 的 `session/set_config_option` 设置 provider/model，
+推理强度只接受当前模型声明的选项；更换模型会清除旧的推理覆盖。
 
-任务详情仅对 Harness 返回顶层 `runtime`（`new/live/busy/closed`、`can_continue`、`reason`），
-它是运行进程快照，不是由“已有聊天记录”推断可恢复。失效会话提交返回 409，
-不创建失败消息或运行；`busy` 仍可排队。显式新建空白会话与提交/停止串行，
-执行中、排队中、归档或已删除的任务不能重置。重置只清空原生会话标识，先关闭闲置进程，
-不会清理历史、知识或在后台重放历史。
+- 任务空闲时可以直接切换模型，保留同一个原生 session ID。执行中或排队中需先等待或停止。
+- 首次消息调用 `session/new`；进程消失后调用 `session/resume`，恢复 Harness 自己的持久化事件日志。
+  旧 SDK 任务也使用原 session ID 尝试恢复，不重放 Duo 聊天记录，不自动创建替代空白会话。
+- 最多保留 16 个运行进程，闲置 30 分钟回收。回收、停止或 Duo 重启不会清空任务会话标识。
+  `session/cancel` 取消当前轮，`session/close` 保存并释放会话，故障时才强制清理进程树。
+- 恢复依赖原执行环境、账号目录和原生会话文件。文件缺失、损坏或不可读取时保留任务和聊天记录，
+  显示恢复错误。用户仍可主动“新建空白会话”，保留网页记录但清空 AI 会话标识。
+- 任务详情中的 `runtime` 使用 `new/live/busy/resumable`。`resumable` 表示下次发送时尝试恢复，
+  不代表已经读取或验证磁盘记录。失去进程不会阻止消息提交。
+- Windows npm 入口解析为 Node 和标准 `dsh` 入口，不通过 shell 拼接任务；WSL/SSH 在目标环境运行 ACP。
+- `native` 继承原生配置；`dsh_home` 指定原生账号目录。Duo 不读取、复制或返回凭据文件。
+  活跃进程保持原账号；恢复时需确保原账号目录可用。
+- 每次启动使用临时策略 patch 固定只读/工作区/完全访问边界，越界审批拒绝。
+  不提供 ACP 客户端文件、终端或自动批准能力。关闭可选 telemetry 和 session-log-deepseek 上传。
+- 当前仍不支持 Duo 附件、硬件授权、交互审批、离线网络保证和独立知识总结。
+  `harness:read` 是可联网只读模式，不改变 Codex 的离线 plan 模式。
+- ACP 输出正文、思考和工具更新，最终状态以对应 prompt 响应为准；不把上下文占用量冒充计费 token 用量。
 
-- Windows npm 入口使用 `dsh.cmd`，内部解析为 Node + npm 入口，不通过 cmd 拼接任务。
-- WSL/SSH 使用目标环境的 `dsh`，默认路径缺失时查找该用户的 `~/.local/bin/dsh`。
-- 账号由执行环境管理：`native` 继承本地默认配置，`dsh_home` 设置 `DSH_HOME`。
-  Duo不读取、复制或返回凭据文件。切换账号后请新建 Harness 任务。
-- 同进程连续对话、已提交的正文/工具事件、token 统计及终止进程树已接入。
-  这不是逐 token 输出，也不具备 Codex 的交互审批或自动风险评审。
-- 一个会话保持一个进程，最多 16 个；闲置 30 分钟释放。停止、服务重启、
-  闲置回收后不能原生恢复，可在原任务中显式新建空白会话，网页旧记录与知识保留，
-  但不会自动带入 AI 上下文。禁止静默重放历史冒充恢复。
-- 每次启动追加临时策略 patch：固定只读/工作区/完全访问边界，越界审批拒绝，
-  不允许保存的原生 permission preset 覆盖。完全访问只能由用户显式选择。
-  原生 Windows ACL 沙箱是有限边界，不等于强隔离虚拟机。
-- `harness:read` 是明确可联网的只读模式，不改变原 `plan` 的离线语义。
-  不支持离线保证、附件、自动知识总结或Duo硬件授权时明确拒绝，普通笔记仍可使用。
-- 启动时关闭可选 telemetry 和 session-log-deepseek 上传，不修改用户原生配置。
+测试使用 Go 子进程 fixture 验证原生 ID、路由切换、历史恢复、取消、错误、外来会话过滤和客户端权限拒绝。
+`TestHarnessACPNativeLocalProvider` 使用实际安装的 Harness、临时空白 DSH_HOME 和回环模拟 OpenAI 服务，
+验证原生持久化与多轮记忆，不读取用户项目或凭据、不发送付费请求。见开发文档中的 opt-in 命令。
+WSL/SSH 共用协议和策略边界，本轮原生验收范围为 Windows。
 
-验证：Go 子进程 fixture 覆盖双轮、取消、错误、子会话隔离、回执乱序及策略；
-HTTP 成品验收覆盖登录、CSRF、创建和模型配置约束；前端测试覆盖模型和模式选择。
-本机 WSL 已通过真实 `initialize + shutdown`（隔离配置，无模型请求）。
-本机 Windows 官方 SDK 在有/无策略 patch 时均未完成握手，仍需排查，不能视为可用。
-经用户授权，已使用 WSL 原生配置完成两轮真实最小文字验收：第一轮返回指定标记，
-第二轮未再次提供标记仍准确复述；同一 native session、同一 SDK worker，零工具事件。
-测试工作目录独立于用户项目。仅验证所选路线，不代表其它模型/账号都可用。
-验收同时发现并修复两类配置误判：应使用原生实际 provider/model，不能把网关路线
-当作官方直连；没有声明推理档位的路线必须省略 reasoningEffort，而不是传入 `off`。
-基础检查仍然只做 SDK 握手，不代表密钥、余额和模型调用已验证。
-SSH 真机和硬件操作尚未验证。
-
-可选原生检查：设置 `JIANZUO_TEST_HARNESS_NATIVE=1`，WSL 再设置
-`JIANZUO_TEST_HARNESS_WSL_DISTRO=Ubuntu-22.04`，运行
-`go test -run TestHarnessSDKNativeHandshake -v`。它使用临时配置和虚拟凭据，
-不会发送 `session/prompt`。仅验证 WSL 时使用子测试选择器
-`-run TestHarnessSDKNativeHandshake/wsl`。
-
-真实双轮验收另有 `TestHarnessSDKPaidWSLRoundTrip`，默认跳过。只有获得用户
-明确授权后，设置 `JIANZUO_TEST_HARNESS_PAID_WSL=1`、
-`JIANZUO_TEST_HARNESS_WSL_DISTRO`、`JIANZUO_TEST_HARNESS_WSL_USER`、
-`JIANZUO_TEST_HARNESS_PROVIDER` 和 `JIANZUO_TEST_HARNESS_MODEL` 才运行。
-它使用隔离的临时工作目录和原生凭据；第一轮失败立即终止，不切换模型重试。
-凭据应在对应执行环境的 Harness 原生配置中设置，不要填写到任务或上传到 Git。
-通用 provider 未声明推理档位时必须选择“工具默认”（不发送 reasoningEffort），
-不能把 `off` 当作对所有路线都通用的默认值。
+真实模型测试仍必须先取得明确授权；无提示词握手只验证进程及 ACP 能力，不证明账号、余额或回复可用。

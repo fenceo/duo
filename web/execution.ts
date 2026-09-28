@@ -23,7 +23,7 @@ const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:str
 };
 function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
 function engineDefaultModel(env:Environment,engine:string){return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
-const harnessSessionHint='Harness 仅在同一个运行进程中连续对话；闲置 30 分钟、停止任务或重启服务后不能恢复原生上下文。可新建空白会话，旧记录仍保留但不会自动带入 AI 上下文。更换模型、provider 或权限请新建任务。';
+const harnessSessionHint='Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
 const harnessKnowledgeHint='Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
  if(engine==='deepseek-harness')return (model?.reasoning_levels||[]).filter(level=>['off','low','high','max'].includes(level));
@@ -38,7 +38,7 @@ function installExecution(){
  input('create-workspace').addEventListener('change',()=>void loadCreateModels());
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
- element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+ element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
  button('check-codex').textContent='检查 Codex';
  button('check-codex').insertAdjacentHTML('afterend',' <button type="button" id="check-claude">检查 Claude</button>');
  button('check-claude').onclick=async()=>{button('check-claude').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'claude'});element('check-result').textContent=(r.ok?'Claude 已配置\n':'Claude 检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-claude').disabled=false}};
@@ -241,7 +241,7 @@ async function toggleModelMenu(target:ModelPickerTarget){
  input(ids.search).value='';
  if(target==='task'){
   if(!detail)return;
-  if(detail.task.engine==='deepseek-harness'){notify(harnessSessionHint);return}
+  if(detail.task.engine==='deepseek-harness'&&(detail.task.status==='running'||detail.task.status==='queued')){notify('请等待当前任务结束或停止任务后再切换模型');return}
   element(ids.menu).classList.remove('hidden');button(ids.button).setAttribute('aria-expanded','true');input(ids.search).focus();
   void refreshTaskModels();
   return;
@@ -293,12 +293,12 @@ function taskCatalogContextKey(task:Task){return task.id+':'+catalogContextKey(s
 function mergeTaskModels(task:Task,list:EngineModel[]):EngineModel[]{
  const models=[...list],known=new Set(models.map(m=>m.id));
  const configured=engineDefaultModel(task.environment,task.engine||'codex');
- if(configured&&!known.has(configured)){models.unshift({id:configured,name:configured+'（环境默认）'});known.add(configured)}
+ if(configured&&!known.has(configured)&&!(task.engine==='deepseek-harness'&&list.length>0)){models.unshift({id:configured,name:configured+'（环境默认）'});known.add(configured)}
  if(task.model&&!known.has(task.model))models.unshift({id:task.model,name:task.model+'（当前）'});
  return models;
 }
 async function refreshTaskModels(refresh=false){
- if(!detail||detail.task.engine==='deepseek-harness')return;
+ if(!detail)return;
  const task=detail.task,key=taskCatalogContextKey(task),state=modelCatalogState.task;
  if(modelProbeStates.task.busy&&modelProbeStates.task.key===key)return;
  if(state.loading&&state.key===key&&!refresh)return;
@@ -329,7 +329,6 @@ async function chooseTaskEffort(effort:string){
  await applyTaskModel(detail.task.model,effort);
 }
 async function applyTaskModel(model:string,effort:string|undefined){
- if(detail?.task.engine==='deepseek-harness'){notify(harnessSessionHint);return}
  const id=chosen,body:Record<string,string>={model:model==='__custom__'?'':model};
  if(effort!==undefined)body.reasoning_effort=effort;
  try{await api('tasks/'+id,'PATCH',body);if(id===chosen)await poll();notify('已更新此任务'+(effort===undefined?'的模型':'的推理强度'))}

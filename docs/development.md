@@ -59,7 +59,7 @@ Remove-Item Env:\JIANZUO_TEST_UI_FIXTURE
 
 启动后终端输出临时回环地址和合成密码。任务、知识、配置和工作区均使用测试临时目录；
 普通文字返回模拟回复，`[wait]` 开头的消息等待停止，`[fail]` 开头模拟执行失败。
-预置失效 Harness 会话可验收“新建空白会话”后保留旧记录/知识/草稿。
+预置冷态 Harness 会话可验收恢复提示及“新建空白会话”后保留旧记录/知识/草稿。
 fixture 不启动 CLI、不读取真实模型缓存、不调用模型；列表测试仅返回延迟的合成成功/失败/超时，设备和配置写入被禁止；
 最多运行 10 分钟，也可用登录 cookie、Origin 和 CSRF 提交 `POST /__fixture/finish` 提前结束。
 它只存在于 `_test.go`，不进入发行程序。不要把该开关带入普通全量测试环境。
@@ -69,17 +69,27 @@ fixture 不启动 CLI、不读取真实模型缓存、不调用模型；列表�
 
 ## Windows 与 WSL 进程约定
 
-Windows Harness 的无提示词原生握手检查可在正常用户上下文运行。该测试只发送 `initialize` / `shutdown`，不创建会话或消耗模型额度；默认跳过。模型必须是本机 DSH 配置中的 ID，provider 留空用于验证 Duo 的自动路由：
+Windows Harness 的无提示词原生握手检查可在正常用户上下文运行。该测试只进行 ACP `initialize` 握手及关闭进程，不创建会话或消耗模型额度；默认跳过。模型必须是本机 DSH 配置中的 ID，provider 留空用于验证 Duo 的自动路由：
 
 ```powershell
 $env:DUO_HARNESS_WINDOWS_HANDSHAKE='1'
 $env:DUO_HARNESS_MODEL='<本机已配置模型 ID>'
 $env:DUO_HARNESS_BINARY='<本机 dsh.cmd 的绝对路径>'
-go test -run '^TestHarnessSDKNativeWindowsHandshake$' -count=1 -v
+go test -run '^TestHarnessACPNativeWindowsHandshake$' -count=1 -v
 Remove-Item Env:DUO_HARNESS_WINDOWS_HANDSHAKE,Env:DUO_HARNESS_MODEL,Env:DUO_HARNESS_BINARY
 ```
 
-可用 `DUO_HARNESS_PROVIDER` 验证显式路由，`DUO_HARNESS_EFFORT` 验证特定推理强度；握手成功不代表密钥、余额或实际回复已验证。
+可用 `DUO_HARNESS_PROVIDER` 指定启动路由；握手不创建会话，不验证模型路由、推理强度、密钥、余额或实际回复。
+
+隔离的原生回归使用本机 Harness 与回环模拟模型，不访问付费模型、不读取原有账号配置：
+
+```powershell
+$env:DUO_HARNESS_NATIVE_FIXTURE='1'
+go test -run '^TestHarnessACPNativeLocalProvider$' -count=1 -v
+Remove-Item Env:DUO_HARNESS_NATIVE_FIXTURE
+```
+
+测试创建临时 DSH_HOME 和工作目录，覆盖模型切换、闲置回收、重建进程及取消后续聊；须在正常 Windows 用户环境执行，受限工具沙箱可能阻止 Harness 的目录探测。
 
 - 调用 `wsl.exe` 时只传递 `SystemRoot` 和 `WINDIR`。不要把 Windows 的完整 `PATH`、代理变量或受限沙箱变量传给 WSL；Linux 命令必须使用所选用户的登录环境。
 - 从 `command` 或 `environmentProbeCommand` 创建带超时的子进程时，统一使用 `commandWithContext`，以保留最小宿主环境和 `Dir`。

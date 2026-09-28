@@ -1,7 +1,7 @@
 package main
 
-// The installed SDK has no load-session, interrupt or approval RPC. A native
-// conversation therefore owns a live runtime; lost sessions fail explicitly.
+// ACP owns durable native sessions. Processes are only a cache: a cold session
+// is resumed from Harness persistence, never reconstructed from Duo's UI log.
 import (
 	"bufio"
 	"context"
@@ -19,8 +19,7 @@ import (
 	"time"
 )
 
-const harnessLostSession = "Harness 运行会话已结束（停止任务、服务重启或空闲超过 30 分钟）。当前 SDK 不支持跨进程恢复，请新建空白会话；原聊天记录仍保留，但不会自动带入 AI 上下文。"
-const harnessUnsupportedReasoningMessage = "此模型不支持所选推理强度，请选择工具默认后新建任务"
+const harnessUnsupportedReasoningMessage = "此模型不支持所选推理强度，请选择工具默认后重试"
 
 func isHarnessUnsupportedReasoning(message string) bool {
 	message = strings.ToLower(message)
@@ -52,6 +51,9 @@ type harnessWorker struct {
 	idle         *time.Timer
 	nextID       int
 	generation   int
+	session      string
+	selection    string
+	retiring     bool
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
@@ -60,10 +62,10 @@ func harnessPolicy(t Task) ([]byte, error) {
 	mode := "workspace-write"
 	if t.Mode != nil {
 		if t.Mode.Approval == "auto" {
-			return nil, errors.New("Harness SDK 不支持原生自动风险评审")
+			return nil, errors.New("Harness ACP 不支持原生自动风险评审")
 		}
 		if t.Mode.AllowNetwork != nil && !*t.Mode.AllowNetwork {
-			return nil, errors.New("Harness SDK 暂不支持禁用网络保证，请选择允许联网的模式或使用 Codex")
+			return nil, errors.New("Harness ACP 暂不支持禁用网络保证，请选择允许联网的模式或使用 Codex")
 		}
 		switch t.Mode.Permission {
 		case "read":
@@ -83,7 +85,7 @@ func harnessPolicy(t Task) ([]byte, error) {
 	})
 }
 
-// Read exactly one line so the SDK receives the remaining stdin intact. The
+// Read exactly one line so ACP receives the remaining stdin intact. The
 // wrapper owns and removes its private policy file after its child exits.
 const harnessLauncher = `import sys,os,json,tempfile,subprocess,shutil
 line=bytearray()
@@ -103,7 +105,7 @@ if os.path.isabs(cfg['binary']):
 fd,path=tempfile.mkstemp(prefix='jianzuo-harness-',suffix='.json')
 try:
  with os.fdopen(fd,'w') as f: json.dump(cfg['patch'],f)
- p=subprocess.Popen([cfg['binary'],'--profile','sdk','--patch',path],start_new_session=True)
+p=subprocess.Popen([cfg['binary'],'--profile','acp','--patch',path],start_new_session=True)
  print(json.dumps({'type':'jianzuo.process','pid':p.pid}),flush=True)
  sys.exit(p.wait())
 finally:
@@ -137,7 +139,8 @@ func harnessExecutable(binary string) ([]string, error) {
 }
 
 func harnessFingerprint(c Config, t Task) string {
-	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.HarnessProvider, c.HarnessModel, c.EngineEnv, t.Workspace, t.Model, t.ReasoningEffort, t.Mode})
+	policy, _ := harnessPolicy(t)
+	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.EngineEnv, t.Workspace, json.RawMessage(policy)})
 	return string(b)
 }
 
@@ -147,6 +150,15 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		return nil, err
 	}
 	patch, err := harnessPolicy(t)
+	if err != nil {
+		return nil, err
+	}
+	var rows []any
+	if err := json.Unmarshal(patch, &rows); err != nil {
+		return nil, err
+	}
+	rows = append(rows, map[string]any{"id": "acp", "config": map[string]any{"provider": provider, "model": model}})
+	patch, err = json.Marshal(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +206,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			cleanup()
 			return nil, err
 		}
-		cmd = exec.Command(args[0], append(args[1:], "--profile", "sdk", "--patch", f.Name())...)
+		cmd = exec.Command(args[0], append(args[1:], "--profile", "acp", "--patch", f.Name())...)
 		cmd.Dir = t.Workspace
 		applyEngineEnv(cmd, env)
 	}
@@ -254,20 +266,24 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			return nil, err
 		}
 	}
-	params := map[string]any{"cwd": t.Workspace, "provider": provider, "model": model}
-	if t.ReasoningEffort != "" {
-		params["reasoningEffort"] = t.ReasoningEffort
-	}
-	emit("progress", "正在连接 Harness SDK："+provider+" / "+model)
+	params := map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}, "clientInfo": map[string]any{"name": "duo", "version": version}}
+	emit("progress", "正在连接 Harness："+provider+" / "+model)
 	res, err := w.request(initctx, "initialize", params)
 	if err == nil {
 		var info struct {
-			ServerInfo struct {
+			ProtocolVersion int `json:"protocolVersion"`
+			AgentInfo       struct {
 				Name string `json:"name"`
-			} `json:"serverInfo"`
+			} `json:"agentInfo"`
+			AgentCapabilities struct {
+				SessionCapabilities struct {
+					Resume *json.RawMessage `json:"resume"`
+					Close  *json.RawMessage `json:"close"`
+				} `json:"sessionCapabilities"`
+			} `json:"agentCapabilities"`
 		}
-		if json.Unmarshal(res, &info) != nil || info.ServerInfo.Name != "deepseek-harness-sdk-runtime" {
-			err = errors.New("Harness SDK 握手不兼容")
+		if json.Unmarshal(res, &info) != nil || info.ProtocolVersion != 1 || info.AgentInfo.Name != "deepseek-harness-acp" || info.AgentCapabilities.SessionCapabilities.Resume == nil || info.AgentCapabilities.SessionCapabilities.Close == nil {
+			err = errors.New("Harness ACP 接口缺少会话恢复能力，请升级目标环境的 dsh")
 		}
 	}
 	if err != nil {
@@ -278,7 +294,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			err = fmt.Errorf("%w：%s", err, diagnostic)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("Harness SDK 握手超时（%s / %s，最多等待 60 秒）；请检查此环境的 dsh --profile sdk 启动、账号目录权限及安装状态：%w", provider, model, err)
+			err = fmt.Errorf("Harness ACP 握手超时（%s / %s，最多等待 60 秒）；请检查此环境的 dsh --profile acp 启动、账号目录权限及安装状态：%w", provider, model, err)
 		}
 		stopErr := w.stop()
 		if stopErr != nil {
@@ -331,7 +347,7 @@ func (w *harnessWorker) scan(r io.Reader, stdout bool) {
 		if !stdout {
 			stream = "stderr"
 		}
-		failure := fmt.Errorf("Harness SDK %s 读取失败：%w", stream, err)
+		failure := fmt.Errorf("Harness ACP %s 读取失败：%w", stream, err)
 		w.mu.Lock()
 		w.readErr = failure
 		w.mu.Unlock()
@@ -386,7 +402,7 @@ func (w *harnessWorker) failure() error {
 	if w.readErr != nil {
 		return w.readErr
 	}
-	return fmt.Errorf("Harness SDK 意外退出：%v %s", w.exitErr, w.diagnostic)
+	return fmt.Errorf("Harness ACP 意外退出：%v %s", w.exitErr, w.diagnostic)
 }
 func (w *harnessWorker) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id, err := w.send(ctx, method, params)
@@ -403,12 +419,31 @@ func (w *harnessWorker) request(ctx context.Context, method string, params any) 
 			if !ok {
 				return nil, w.failure()
 			}
+			if msg.Method != "" && len(msg.ID) > 0 {
+				if err := w.rejectClientRequest(ctx, msg); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if string(msg.ID) != fmt.Sprint(id) {
 				continue
 			}
 			if msg.Error != nil {
-				if method == "initialize" && isHarnessUnsupportedReasoning(msg.Error.Message) {
-					return nil, fmt.Errorf("Harness initialize [UNSUPPORTED_REASONING_EFFORT]：%s", harnessUnsupportedReasoningMessage)
+				if msg.Error.Message == "Internal error" {
+					var detail struct {
+						Message string `json:"message"`
+						Details string `json:"details"`
+					}
+					if json.Unmarshal(msg.Error.Data, &detail) == nil {
+						if detail.Message != "" {
+							msg.Error.Message += ": " + detail.Message
+						} else if detail.Details != "" {
+							msg.Error.Message += ": " + detail.Details
+						}
+					}
+				}
+				if isHarnessUnsupportedReasoning(msg.Error.Message) {
+					return nil, fmt.Errorf("Harness %s [UNSUPPORTED_REASONING_EFFORT]：%s", method, harnessUnsupportedReasoningMessage)
 				}
 				return nil, fmt.Errorf("Harness %s：%s", method, msg.Error.Message)
 			}
@@ -471,7 +506,7 @@ func closeHarnessRuntimes() {
 		if w.idle != nil {
 			w.idle.Stop()
 		}
-		_ = w.stop()
+		_ = w.close()
 		w.lease.Unlock()
 	}
 }
@@ -493,7 +528,7 @@ func closeIdleHarnessSession(session string) error {
 	if w.idle != nil {
 		w.idle.Stop()
 	}
-	return w.stop()
+	return w.close()
 }
 
 func checkHarness(c Config) (string, error) {
@@ -506,294 +541,8 @@ func checkHarness(c Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer w.stop()
-	shutdown, cancelShutdown := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelShutdown()
-	if _, err = w.request(shutdown, "shutdown", nil); err != nil {
+	if err = w.close(); err != nil {
 		return "", err
 	}
-	return "Harness SDK 握手成功（未发送模型请求）。这不代表 API 密钥、余额或模型调用已验证；停止/重启后需新建空白会话，不能恢复原生上下文。", nil
-}
-
-func runHarnessSDK(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session, result string, runErr error) {
-	session = t.Session
-	if _, err := harnessPolicy(t); err != nil {
-		return session, "", err
-	}
-	if len(t.Files) > 0 || c.HardwareAI != nil {
-		return session, "", errors.New("Harness 暂不支持Duo附件或硬件授权，请使用文字任务或其它引擎")
-	}
-	harnessRuntimes.Lock()
-	w := harnessRuntimes.workers[session]
-	if session != "" && w == nil {
-		harnessRuntimes.Unlock()
-		return session, "", errors.New(harnessLostSession)
-	}
-	// Account activation applies to new conversations. A live SDK process
-	// already owns its original credential environment; changing the active
-	// profile must neither interrupt it nor silently replace its account.
-	if w != nil {
-		c.EngineEnv = w.c.EngineEnv
-	}
-	if w != nil && w.fingerprint != harnessFingerprint(c, t) {
-		harnessRuntimes.Unlock()
-		return session, "", errors.New("Harness 会话建立后不能更换模型、账号、工作目录或权限，请新建任务")
-	}
-	if w != nil && !w.lease.TryLock() {
-		harnessRuntimes.Unlock()
-		return session, "", errors.New("Harness 会话正忙，请等待当前轮结束")
-	}
-	if w == nil {
-		if len(harnessRuntimes.workers)+harnessRuntimes.starting >= 16 {
-			harnessRuntimes.Unlock()
-			return "", "", errors.New("最多保留 16 个 Harness 运行会话，请等待空闲会话释放或重启服务")
-		}
-		harnessRuntimes.starting++
-		harnessRuntimes.Unlock()
-		var err error
-		w, err = startHarness(ctx, c, t, emit)
-		harnessRuntimes.Lock()
-		harnessRuntimes.starting--
-		if err != nil {
-			harnessRuntimes.Unlock()
-			return "", "", err
-		}
-		w.lease.Lock()
-		session = "jianzuo-" + uid()
-		harnessRuntimes.workers[session] = w
-	}
-	if w.idle != nil {
-		w.idle.Stop()
-	}
-	w.generation++
-	generation := w.generation
-	harnessRuntimes.Unlock()
-	defer w.lease.Unlock()
-	defer func() {
-		if runErr != nil || t.ID == "" {
-			if err := w.stop(); err != nil {
-				runErr = fmt.Errorf("%v；%w", runErr, err)
-			}
-			harnessRuntimes.Lock()
-			delete(harnessRuntimes.workers, session)
-			harnessRuntimes.Unlock()
-			return
-		}
-		w.idle = time.AfterFunc(30*time.Minute, func() {
-			harnessRuntimes.Lock()
-			if harnessRuntimes.workers[session] != w || w.generation != generation || !w.lease.TryLock() {
-				harnessRuntimes.Unlock()
-				return
-			}
-			delete(harnessRuntimes.workers, session)
-			harnessRuntimes.Unlock()
-			_ = w.stop()
-			w.lease.Unlock()
-		})
-	}()
-	select {
-	case <-w.done:
-		return session, "", errors.New(harnessLostSession)
-	default:
-	}
-	emit("session", session)
-	id, err := w.send(ctx, "session/prompt", map[string]any{"sessionId": session, "contentBlocks": []any{map[string]any{"type": "text", "text": input}}})
-	if err != nil {
-		return session, "", err
-	}
-	state := harnessTurn{session: session}
-	var pending []codexRPC
-	receiptTimer := time.NewTimer(30 * time.Second)
-	defer receiptTimer.Stop()
-	receiptDeadline := receiptTimer.C
-	for {
-		select {
-		case <-receiptDeadline:
-			return session, "", errors.New("Harness 未在 30 秒内确认消息入队")
-		case <-ctx.Done():
-			return session, state.result, ctx.Err()
-		case err := <-w.fault:
-			return session, state.result, err
-		case msg, ok := <-w.frames:
-			if !ok {
-				return session, state.result, w.failure()
-			}
-			if string(msg.ID) == fmt.Sprint(id) {
-				if msg.Error != nil {
-					return session, state.result, fmt.Errorf("Harness prompt：%s", msg.Error.Message)
-				}
-				var receipt struct {
-					MessageID string `json:"messageId"`
-				}
-				_ = json.Unmarshal(msg.Result, &receipt)
-				if receipt.MessageID == "" {
-					return session, "", errors.New("Harness 未返回消息入队回执")
-				}
-				state.receipt = receipt.MessageID
-				receiptTimer.Stop()
-				receiptDeadline = nil
-				for _, frame := range pending {
-					state.consume(frame, emit)
-				}
-				pending = nil
-			} else if state.receipt == "" {
-				if len(pending) >= 4096 {
-					return session, "", errors.New("Harness 入队回执前事件过多")
-				}
-				pending = append(pending, msg)
-			} else {
-				state.consume(msg, emit)
-			}
-			if state.receipt != "" && state.active && state.ended && state.idle {
-				if state.failure != "" {
-					return session, state.result, errors.New(state.failure)
-				}
-				if state.result == "" {
-					return session, "", errors.New("Harness 未返回最终回复")
-				}
-				return session, state.result, nil
-			}
-		}
-	}
-}
-
-type harnessTurn struct {
-	session, receipt, result, failure string
-	active, ended, idle               bool
-	usage                             RunUsage
-}
-
-// Provider codes are identifiers, never a free-form field for credentials or
-// diagnostics. Reject long strings and punctuation instead of echoing them.
-func harnessErrorCode(code string) string {
-	if len(code) == 0 || len(code) > 64 || code[0] < 'A' || code[0] > 'Z' {
-		return ""
-	}
-	for _, r := range code {
-		if r != '_' && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
-			return ""
-		}
-	}
-	return code
-}
-
-func (s *harnessTurn) consume(msg codexRPC, emit func(string, string)) {
-	var p struct {
-		Session string `json:"sessionId"`
-		Status  string `json:"status"`
-		Event   struct {
-			Type string          `json:"type"`
-			Data json.RawMessage `json:"data"`
-		} `json:"event"`
-	}
-	if json.Unmarshal(msg.Params, &p) != nil || p.Session != s.session {
-		return
-	}
-	if msg.Method == "session.status" {
-		if s.active {
-			s.idle = p.Status == "idle"
-		}
-		return
-	}
-	if msg.Method != "session.event" {
-		return
-	}
-	var d struct {
-		ID       string `json:"id"`
-		Inserted []struct {
-			ID string `json:"id"`
-		} `json:"inserted"`
-		Name      string          `json:"name"`
-		Arguments string          `json:"arguments"`
-		Usage     json.RawMessage `json:"usage"`
-		Message   struct {
-			Content []struct {
-				Type    string          `json:"type"`
-				Text    string          `json:"text"`
-				Content json.RawMessage `json:"content"`
-				IsError bool            `json:"isError"`
-			} `json:"content"`
-		} `json:"message"`
-		Reason struct {
-			Kind  string `json:"kind"`
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		} `json:"reason"`
-	}
-	if json.Unmarshal(p.Event.Data, &d) != nil {
-		return
-	}
-	if p.Event.Type == "agent/inbox/spliced" {
-		for _, m := range d.Inserted {
-			if m.ID == s.receipt {
-				s.active = true
-			}
-		}
-	}
-	if p.Event.Type == "user/message" && d.ID == s.receipt {
-		s.active = true
-	}
-	if !s.active {
-		return
-	}
-	switch p.Event.Type {
-	case "turn/start":
-		s.ended = false
-		s.idle = false
-	case "assistant/message":
-		var parts []string
-		for _, b := range d.Message.Content {
-			if b.Type == "text" {
-				parts = append(parts, b.Text)
-			} else if b.Type == "reasoning" {
-				emit("progress", b.Text)
-			}
-		}
-		if text := strings.Join(parts, "\n"); text != "" {
-			s.result = text
-			emit("assistant", text)
-		}
-		if usage := parseUsage("deepseek-harness", d.Usage); usage != nil {
-			s.usage.Input += usage.Input
-			s.usage.Output += usage.Output
-			s.usage.Cached += usage.Cached
-			s.usage.CacheWrite += usage.CacheWrite
-			s.usage.Total += usage.Total
-			encoded, _ := json.Marshal(s.usage)
-			emit("usage", string(encoded))
-		}
-	case "tool/call":
-		emit("tool", d.Name+"\n"+d.Arguments)
-	case "tool/result":
-		for _, b := range d.Message.Content {
-			if b.Type == "tool-result" {
-				text := string(b.Content)
-				if len(text) > 24000 {
-					text = text[:24000] + "…"
-				}
-				if b.IsError {
-					text = "工具执行失败：" + text
-				}
-				emit("tool", text)
-			}
-		}
-	case "turn/end":
-		s.ended = true
-		if d.Reason.Kind != "completed" {
-			code := harnessErrorCode(d.Reason.Error.Code)
-			if code == "MISSING_CREDENTIAL" {
-				s.failure = "Harness 缺少凭据 [MISSING_CREDENTIAL]：请在此任务对应的执行环境中配置 Harness 原生凭据，再新建任务重试。"
-				break
-			}
-			s.failure = "Harness 未完成本轮：" + d.Reason.Kind
-			if code != "" {
-				s.failure += " [" + code + "]"
-			}
-			if d.Reason.Error.Message != "" {
-				s.failure += "：" + d.Reason.Error.Message
-			}
-		}
-	}
+	return "Harness ACP 握手成功，支持原生会话恢复和模型切换（未发送模型请求，尚未验证 API 密钥、余额或实际回复）。", nil
 }

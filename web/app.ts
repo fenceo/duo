@@ -4,7 +4,7 @@ type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string
 type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number};
-type EngineRuntime={state:'new'|'live'|'busy'|'closed';can_continue:boolean;reason:string};
+type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
 type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];chat:string;session_started?:number;runtime?:EngineRuntime};
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
@@ -220,7 +220,7 @@ function renderSessionBanner(){
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const foreign=taskContext.length?`<span class="session-warning" title="${escapeHTML(taskContext.map(f=>f.label+' · '+f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map(f=>f.name).join('、'))}</span>`:'';
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
- const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'空白会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'空白会话已就绪';
+ const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'空白会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'空白会话已就绪';
  const explanation=harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
  banner.dataset.state=closed?'closed':busy?'busy':'live';
  const html=`<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session?`<button type="button" id="session-reset" class="subtle"${busy||sessionResetTask===detail.task.id?' disabled':''}>${sessionResetTask===detail.task.id?'正在新建…':'新建空白会话'}</button>`:''}`;

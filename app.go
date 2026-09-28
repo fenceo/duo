@@ -169,9 +169,6 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if task.Archived || task.Deleted {
 		return Run{}, errors.New("任务已归档，请先在网页恢复任务")
 	}
-	if runtime := harnessRuntimeStatus(task); runtime != nil && !runtime.CanContinue {
-		return Run{}, errHarnessSessionClosed
-	}
 	mode, e := a.store.resolveMode(options.ModeID, task.Mode)
 	if e != nil {
 		return Run{}, e
@@ -196,8 +193,8 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 			return Run{}, err
 		}
 		if task.Session != "" && task.Mode != nil {
-			previous, _ := json.Marshal(task.Mode)
-			next, _ := json.Marshal(mode)
+			previous, _ := harnessPolicy(Task{Mode: task.Mode, Workspace: task.Workspace})
+			next, _ := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace})
 			if string(previous) != string(next) {
 				return Run{}, errors.New("Harness 运行会话不能切换权限，请新建任务")
 			}

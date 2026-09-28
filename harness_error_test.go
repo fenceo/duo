@@ -12,25 +12,12 @@ import (
 
 func harnessTestTurnFailure(t *testing.T, code, message string) string {
 	t.Helper()
-	state := harnessTurn{session: "root", receipt: "accepted", active: true}
-	raw, err := json.Marshal(map[string]any{
-		"sessionId": "root", "event": map[string]any{"type": "turn/end", "data": map[string]any{
-			"reason": map[string]any{"kind": "error", "error": map[string]any{"code": code, "message": message}},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.consume(codexRPC{Method: "session.event", Params: raw}, func(string, string) {})
-	if !state.ended {
-		t.Fatal("error did not finish the turn")
-	}
-	return state.failure
+	return harnessACPError(code + ": " + message).Error()
 }
 
 func TestHarnessMissingCredentialCodeOverridesSensitiveMessage(t *testing.T) {
 	failure := harnessTestTurnFailure(t, "MISSING_CREDENTIAL", "invalid model configuration: bearer-secret-do-not-print")
-	for _, want := range []string{"MISSING_CREDENTIAL", "执行环境", "原生凭据", "新建任务"} {
+	for _, want := range []string{"MISSING_CREDENTIAL", "执行环境", "原生凭据", "重试"} {
 		if !strings.Contains(failure, want) {
 			t.Errorf("missing credential guidance %q in %q", want, failure)
 		}
@@ -74,17 +61,6 @@ func TestHarnessInitializeUnsupportedReasoningPreservesExplicitChoice(t *testing
 		}
 		if err := json.Unmarshal(bytes.TrimSpace(writer.Bytes()), &request); err != nil || request.Params.Effort != "off" || w.nextID != 1 {
 			t.Fatalf("explicit effort was changed or silently retried: %s, %v", writer.String(), err)
-		}
-	}
-}
-
-func TestHarnessFailureCodeOnlyPreservesShortIdentifiers(t *testing.T) {
-	if failure := harnessTestTurnFailure(t, "MODEL_NOT_FOUND", "model not found"); !strings.Contains(failure, "[MODEL_NOT_FOUND]") {
-		t.Fatalf("valid provider code was lost: %q", failure)
-	}
-	for _, invalid := range []string{"Bearer secret-code", "sk-secret-key", "CODE\nSECRET", strings.Repeat("A", 65), "1234", "错误码"} {
-		if failure := harnessTestTurnFailure(t, invalid, "safe diagnostic"); strings.Contains(failure, invalid) {
-			t.Errorf("untrusted error code echoed: %q", failure)
 		}
 	}
 }

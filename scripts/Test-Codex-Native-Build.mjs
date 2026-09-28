@@ -40,12 +40,12 @@ try{
  assert.equal(catalog.modes.find(m=>m.id==='harness:read').allow_network,true);
  const headers={Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base};
  const engines=await fetch(base+'/api/engines',{headers}).then(r=>r.json());
- assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'sdk_jsonrpc');
+ assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'acp');
  const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
  assert.equal((await createHarness('plan')).status,400,'Harness must not promise network isolation');
  const created=await createHarness('harness:read');assert.equal(created.status,201);
  const {task}=await created.json();assert.equal(task.engine,'deepseek-harness');
- assert.equal((await fetch(base+'/api/tasks/'+task.id,{method:'PATCH',headers,body:JSON.stringify({model:'other-model'})})).status,409,'SDK task model is immutable');
+ assert.equal((await fetch(base+'/api/tasks/'+task.id,{method:'PATCH',headers,body:JSON.stringify({model:'other-model'})})).status,200,'idle Harness task can change model');
  const noCSRF=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(noCSRF.status,403);
  const expired=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});

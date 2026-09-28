@@ -197,7 +197,7 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 		return runCodexAppServer(ctx, c, t, input, emit)
 	}
 	if t.Engine == "deepseek-harness" {
-		return runHarnessSDK(ctx, c, t, input, emit)
+		return runHarnessACP(ctx, c, t, input, emit)
 	}
 	cmd, commandErr := engineCommand(c, t)
 	if commandErr != nil {

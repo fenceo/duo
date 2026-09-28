@@ -39,7 +39,7 @@ func TestHarnessRuntimeStatusUsesNativeWorkerState(t *testing.T) {
 		t.Fatalf("new runtime = %#v", got)
 	}
 	task.Session = "missing-" + uid()
-	if got := harnessRuntimeStatus(task); got.State != "closed" || got.CanContinue || !strings.Contains(got.Reason, "空白会话") {
+	if got := harnessRuntimeStatus(task); got.State != "resumable" || !got.CanContinue || !strings.Contains(got.Reason, "恢复") {
 		t.Fatalf("missing runtime = %#v", got)
 	}
 	for _, scenario := range []string{"live", "busy", "stopped", "exited", "stdout-closed", "read-failed"} {
@@ -49,7 +49,7 @@ func TestHarnessRuntimeStatusUsesNativeWorkerState(t *testing.T) {
 			w.diagnostic = "private diagnostic secret"
 			task := Task{Engine: "deepseek-harness", Session: uid()}
 			registerHarnessStatusFixture(t, task.Session, w)
-			want := "closed"
+			want := "resumable"
 			switch scenario {
 			case "live":
 				want = "live"
@@ -67,7 +67,7 @@ func TestHarnessRuntimeStatusUsesNativeWorkerState(t *testing.T) {
 				w.readErr = errors.New("private stream error")
 			}
 			got := harnessRuntimeStatus(task)
-			if got.State != want || got.CanContinue != (want != "closed") {
+			if got.State != want || !got.CanContinue {
 				t.Fatalf("runtime = %#v, want %s", got, want)
 			}
 			raw, _ := json.Marshal(got)
@@ -78,7 +78,7 @@ func TestHarnessRuntimeStatusUsesNativeWorkerState(t *testing.T) {
 	}
 }
 
-func TestHarnessRuntimeDetailIsAdditiveAndClosedSubmitWritesNothing(t *testing.T) {
+func TestHarnessRuntimeDetailAllowsColdContinuation(t *testing.T) {
 	f := &fakeRunner{}
 	a := fixture(t, f)
 	harnessTask := createHarnessStoredTask(t, a)
@@ -105,17 +105,8 @@ func TestHarnessRuntimeDetailIsAdditiveAndClosedSubmitWritesNothing(t *testing.T
 	if _, err := a.store.Exec("UPDATE tasks SET session=? WHERE id=?", "expired-"+uid(), harnessTask.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := getRuntime(); got.State != "closed" || got.CanContinue {
+	if got := getRuntime(); got.State != "resumable" || !got.CanContinue {
 		t.Fatalf("expired detail = %#v", got)
-	}
-	request("/api/tasks/"+harnessTask.ID+"/messages", "POST", map[string]any{"content": "must not be queued"}, 409)
-	if _, err := a.submit(harnessTask.ID, "must not be queued from Feishu", "chat", "feishu"); !errors.Is(err, errHarnessSessionClosed) {
-		t.Fatalf("closed native session accepted outside HTTP: %v", err)
-	}
-	runs, _ := a.store.runs(harnessTask.ID)
-	events, _ := a.store.events(harnessTask.ID, 0)
-	if len(runs) != 0 || len(events) != 0 || len(f.inputs) != 0 {
-		t.Fatalf("rejected submit changed history: runs=%d events=%d calls=%d", len(runs), len(events), len(f.inputs))
 	}
 	request("/api/tasks/"+harnessTask.ID+"/session/reset", "POST", map[string]any{}, 200)
 	if got := getRuntime(); got.State != "new" || !got.CanContinue {
@@ -248,7 +239,7 @@ func TestSessionResetClosesHarnessAndRetainsHistoryWithoutReplay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("reset left the previous native process alive")
 	}
-	if got := harnessRuntimeStatus(Task{Engine: "deepseek-harness", Session: session}); got.State != "closed" {
+	if got := harnessRuntimeStatus(Task{Engine: "deepseek-harness", Session: session}); got.State != "resumable" {
 		t.Fatalf("old runtime still registered after reset: %#v", got)
 	}
 	afterRuns, _ := a.store.runs(task.ID)

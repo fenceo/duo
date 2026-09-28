@@ -5,9 +5,6 @@ import (
 	"fmt"
 )
 
-const harnessClosedSessionReason = "Harness 运行会话已结束，不能恢复原生上下文。请新建空白会话后继续；旧记录仍保留，不会自动带入 AI 上下文。"
-
-var errHarnessSessionClosed = errors.New(harnessClosedSessionReason)
 var errSessionResetBlocked = errors.New("无法新建空白会话")
 
 // TaskRuntimeStatus is a read-only snapshot, not persisted task state. No
@@ -25,7 +22,7 @@ func harnessRuntimeStatus(task Task) *TaskRuntimeStatus {
 	if task.Session == "" {
 		return &TaskRuntimeStatus{State: "new", CanContinue: true, Reason: "尚未建立 Harness 运行会话，首条消息将启动一个空白会话。"}
 	}
-	closed := &TaskRuntimeStatus{State: "closed", CanContinue: false, Reason: harnessClosedSessionReason}
+	closed := &TaskRuntimeStatus{State: "resumable", CanContinue: true, Reason: "发送消息时将恢复 Harness 原生会话；如原生会话文件缺失，会明确提示，聊天记录仍保留。"}
 	harnessRuntimes.Lock()
 	defer harnessRuntimes.Unlock()
 	w := harnessRuntimes.workers[task.Session]
@@ -52,7 +49,7 @@ func harnessRuntimeStatus(task Task) *TaskRuntimeStatus {
 		return &TaskRuntimeStatus{State: "busy", CanContinue: true, Reason: "Harness 正在执行；继续发送的消息将排队。"}
 	}
 	w.lease.Unlock()
-	return &TaskRuntimeStatus{State: "live", CanContinue: true, Reason: "Harness 运行会话可继续；空闲 30 分钟后会关闭。"}
+	return &TaskRuntimeStatus{State: "live", CanContinue: true, Reason: "Harness 原生会话可继续；闲置释放进程后会在下次发送时恢复。"}
 }
 
 // resetSession deliberately clears only the native session identity. It never

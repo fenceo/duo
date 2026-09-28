@@ -192,7 +192,12 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		if task.Engine == "deepseek-harness" && (v.Model != nil || v.ReasoningEffort != nil) {
-			fail(w, 409, "Harness 任务的模型和推理配置固定，请新建任务")
+			updated, err := s.app.updateHarnessModel(id, v.Title, v.Model, v.ReasoningEffort)
+			if err != nil {
+				fail(w, 409, err.Error())
+				return
+			}
+			jsonOut(w, 200, updated)
 			return
 		}
 		if v.Title != nil {
@@ -250,11 +255,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		run, e := s.app.submitWithOptions(r.PathValue("id"), v.Content, "chat", "web", v.SubmitOptions)
 		if e != nil {
-			status := http.StatusBadRequest
-			if errors.Is(e, errHarnessSessionClosed) {
-				status = http.StatusConflict
-			}
-			fail(w, status, e.Error())
+			fail(w, http.StatusBadRequest, e.Error())
 			return
 		}
 		jsonOut(w, 202, run)

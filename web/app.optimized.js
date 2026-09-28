@@ -493,7 +493,6 @@ function installWorkflow() {
     button('mode-manage').onclick = ()=>openPresetEditor('modes');
     button('command-open').onclick = openCommands;
     button('stop').onclick = async ()=>{
-        if (detail?.task.engine === 'deepseek-harness' && !confirm('停止会关闭 Harness 运行进程，原会话无法恢复；网页里的消息记录仍然保留。确定停止？')) return;
         const id = chosen;
         stoppingTask = id;
         renderWorkflow();
@@ -708,13 +707,13 @@ function renderWorkflow() {
         }
         control.disabled = detail.task.archived || harness;
         const hint = element('mode-engine-hint');
-        hint.textContent = harness ? 'Harness 无交互审批 · 仅运行进程内可续聊 · 网络由原生策略和执行环境控制' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.textContent = harness ? 'Harness 无交互审批 · 支持原生会话恢复 · 网络由原生策略和执行环境控制' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
         hint.title = harness ? harnessSessionHint : hint.textContent;
         hint.classList.toggle('hidden', detail.task.engine === 'codex');
         control.title = harness || detail.task.engine === 'claude' ? hint.title : '本轮 Codex 工作模式与原生审批方式';
         button('task-model-button').title = harness ? harnessSessionHint : '本任务使用的 AI 工具、模型和推理强度';
         const footnote = element('composer-wrap').querySelector('.footnote');
-        if (footnote) footnote.textContent = harness ? 'Harness SDK 会话 · 仅当前运行进程内可续聊' : '在服务所在电脑执行 · 保留所选工具的原生会话';
+        if (footnote) footnote.textContent = harness ? 'Harness 原生会话 · 支持停止和重启后续聊' : '在服务所在电脑执行 · 保留所选工具的原生会话';
     }
     const active = detail?.runs.some((r)=>[
             'queued',
@@ -3184,7 +3183,7 @@ function taskEngineName(engine) {
 function engineDefaultModel(env, engine) {
     return engine === 'claude' ? env.claude_model || '' : engine === 'deepseek-harness' ? env.harness_model || 'deepseek-flash' : env.model;
 }
-const harnessSessionHint = 'Harness 仅在同一个运行进程中连续对话；闲置 30 分钟、停止任务或重启服务后不能恢复原生上下文。可新建空白会话，旧记录仍保留但不会自动带入 AI 上下文。更换模型、provider 或权限请新建任务。';
+const harnessSessionHint = 'Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
 const harnessKnowledgeHint = 'Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
 function effortLevels(engine, model) {
     if (engine === 'deepseek-harness') return (model?.reasoning_levels || []).filter((level)=>[
@@ -3231,7 +3230,7 @@ function installExecution() {
     input('create-workspace').addEventListener('change', ()=>void loadCreateModels());
     installModelPicker();
     element('setting-model').previousElementSibling.textContent = 'Codex 默认模型（可留空）';
-    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness SDK JSON-RPC 执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
     button('check-codex').textContent = '检查 Codex';
     button('check-codex').insertAdjacentHTML('afterend', ' <button type="button" id="check-claude">检查 Claude</button>');
     button('check-claude').onclick = async ()=>{
@@ -3723,8 +3722,8 @@ async function toggleModelMenu(target) {
     input(ids.search).value = '';
     if (target === 'task') {
         if (!detail) return;
-        if (detail.task.engine === 'deepseek-harness') {
-            notify(harnessSessionHint);
+        if (detail.task.engine === 'deepseek-harness' && (detail.task.status === 'running' || detail.task.status === 'queued')) {
+            notify('请等待当前任务结束或停止任务后再切换模型');
             return;
         }
         element(ids.menu).classList.remove('hidden');
@@ -3799,7 +3798,7 @@ function mergeTaskModels(task, list) {
         ...list
     ], known = new Set(models.map((m)=>m.id));
     const configured = engineDefaultModel(task.environment, task.engine || 'codex');
-    if (configured && !known.has(configured)) {
+    if (configured && !known.has(configured) && !(task.engine === 'deepseek-harness' && list.length > 0)) {
         models.unshift({
             id: configured,
             name: configured + '（环境默认）'
@@ -3813,7 +3812,7 @@ function mergeTaskModels(task, list) {
     return models;
 }
 async function refreshTaskModels(refresh = false) {
-    if (!detail || detail.task.engine === 'deepseek-harness') return;
+    if (!detail) return;
     const task = detail.task, key = taskCatalogContextKey(task), state = modelCatalogState.task;
     if (modelProbeStates.task.busy && modelProbeStates.task.key === key) return;
     if (state.loading && state.key === key && !refresh) return;
@@ -3858,10 +3857,6 @@ async function chooseTaskEffort(effort) {
     await applyTaskModel(detail.task.model, effort);
 }
 async function applyTaskModel(model, effort) {
-    if (detail?.task.engine === 'deepseek-harness') {
-        notify(harnessSessionHint);
-        return;
-    }
     const id = chosen, body = {
         model: model === '__custom__' ? '' : model
     };
@@ -5694,7 +5689,7 @@ function renderSessionBanner() {
     }) : '';
     const foreign = taskContext.length ? `<span class="session-warning" title="${escapeHTML(taskContext.map((f)=>f.label + ' · ' + f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map((f)=>f.name).join('、'))}</span>` : '';
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
-    const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '空白会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '空白会话已就绪';
+    const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '空白会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '空白会话已就绪';
     const explanation = harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
     banner.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
     const html = `<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session ? `<button type="button" id="session-reset" class="subtle"${busy || sessionResetTask === detail.task.id ? ' disabled' : ''}>${sessionResetTask === detail.task.id ? '正在新建…' : '新建空白会话'}</button>` : ''}`;
