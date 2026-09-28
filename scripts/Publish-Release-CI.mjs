@@ -35,7 +35,12 @@ child.on('error', () => {
 child.on('close', code => {
   if (code !== 0) {
     const summary = redact(tail).slice(-12000);
-    process.stdout.write('\n::error title=Release process failed::' + annotation(summary || 'No release process output was captured.') + '\n');
+    // Check annotations truncate long messages. Emit small chunks, with the
+    // final failure first, so every captured diagnostic remains readable.
+    const chunks = (summary || 'No release process output was captured.').match(/[\s\S]{1,2000}/gu).reverse();
+    for (const [index, chunk] of chunks.entries()) {
+      process.stdout.write(`\n::error title=Release process failed (${index + 1}/${chunks.length}; latest output first)::${annotation(chunk)}\n`);
+    }
     process.exitCode = code || 1;
   }
 });
