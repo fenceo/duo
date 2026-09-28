@@ -29,4 +29,28 @@ function fixture(){
  const {ctx,node}=fixture(),old=deferred();let count=0;ctx.api=()=>++count===1?old.promise:Promise.resolve({documents:[{id:'safe',title:'<img onerror=1>',task_title:'test',kind:'knowledge',status:'observed',origin:'vault',path:'a.md',snippet:'<script>bad</script>'}],truncated:false});
  const first=ctx.searchLibrary();await ctx.searchLibrary();old.resolve({documents:[],truncated:false});await first;assert.match(node('library-results').innerHTML,/&lt;img/);assert(!node('library-results').innerHTML.includes('<script>'));assert.match(node('library-results').innerHTML,/data-library-reference="safe"/);
 }
-console.log('PASS: citations retain provenance, never send a model turn, remain isolated across task/create/login changes, and escape imported Markdown previews.');
+{
+ const {ctx,node,calls}=fixture();ctx.api=async(path,method,body)=>{calls.push({path,method,body});return {capture:true,recall:false}};
+ await ctx.loadAutomaticKnowledge();assert.equal(node('automatic-capture').checked,true);assert.equal(node('automatic-recall').checked,false);assert.equal(node('automatic-save').disabled,false);
+ node('automatic-capture').checked=false;await ctx.saveAutomaticKnowledge();assert.equal(calls.length,2);assert.equal(calls[1].method,'PUT');assert.equal(calls[1].body.capture,false);assert.equal(calls[1].body.recall,false);
+}
+{
+ const {ctx,node,calls}=fixture();ctx.api=async()=>{throw new Error('cannot load settings')};await ctx.loadAutomaticKnowledge();await ctx.saveAutomaticKnowledge();
+ assert.equal(node('automatic-save').disabled,true);assert.equal(calls.length,0,'failed load cannot overwrite settings with unchecked defaults');assert.match(node('automatic-status').textContent,/cannot load/);
+}
+{
+ const {ctx,node}=fixture(),old=deferred();let count=0;ctx.api=()=>++count===1?old.promise:Promise.resolve({capture:false,recall:false});
+ const first=ctx.loadAutomaticKnowledge();await ctx.loadAutomaticKnowledge();old.resolve({capture:true,recall:true});await first;assert.equal(node('automatic-capture').checked,false,'late load must not enable capture');
+}
+{
+ const {ctx,node}=fixture();ctx.api=async()=>({capture:true,recall:true});await ctx.loadAutomaticKnowledge();const gate=deferred();let writes=0;ctx.api=()=>{writes++;return gate.promise};
+ const saving=ctx.saveAutomaticKnowledge();await ctx.saveAutomaticKnowledge();await ctx.loadAutomaticKnowledge();assert.equal(writes,1,'saving blocks duplicate writes and reloads');assert.equal(node('automatic-capture').disabled,true);gate.resolve({});await saving;assert.equal(node('automatic-save').disabled,false);
+}
+{
+ const {ctx,node}=fixture(),gate=deferred();ctx.api=()=>gate.promise;const loading=ctx.loadAutomaticKnowledge();ctx.shellEpoch++;node('automatic-status').textContent='new login';gate.resolve({capture:true,recall:true});await loading;assert.equal(node('automatic-status').textContent,'new login');
+}
+{
+ const {ctx,node}=fixture();ctx.api=async()=>({config:{enabled:true,directory:'fixture',include_runs:false,include_automatic:false},report:{conflicts:[],warnings:[]}});await ctx.loadVault();assert.equal(node('vault-automatic').checked,false);
+ let body;ctx.api=async(path,method,data)=>{if(method==='PUT')body=data;return path.startsWith('library/search')?{documents:[],truncated:false}:{conflicts:[],warnings:[]}};node('vault-automatic').checked=true;await ctx.saveVault();assert.equal(body.include_automatic,true);assert.equal(body.include_runs,false,'automatic export and full run export remain independent');
+}
+console.log('PASS: citation provenance and isolation, escaped previews, automatic settings defaults/opt-out, failed/stale requests, write lock, and separate Vault export control.');

@@ -196,7 +196,7 @@ function switchTab(tab:string){
 
 let knowledgeFilter='all';
 function knowledgeStateLabel(v:string){return v==='verified'?'已验证':v==='stale'?'已过时':'待验证'}
-function knowledgeSourceLabel(v:string){return ({run:'来自执行记录',feishu:'来自飞书',organize:'整理生成',migrated:'历史任务知识'} as Record<string,string>)[v]||'手工记录'}
+function knowledgeSourceLabel(v:string){return ({auto:'对话自动记录',run:'来自执行记录',feishu:'来自飞书',organize:'整理生成',migrated:'历史任务知识'} as Record<string,string>)[v]||'手工记录'}
 function knowledgeStampOf(list:Knowledge[]){return list.map(k=>k.id+':'+k.revision).join(',')}
 function storeKnowledge(list:Knowledge[]){const stamp=knowledgeStampOf(list);if(stamp===lastKnowledge)return;lastKnowledge=stamp;knowledgeItems=list;renderKnowledgeList();applyConversationFilter()}
 function knowledgeForRun(runId:string){return knowledgeItems.find(k=>k.run_id===runId)||null}
@@ -207,7 +207,7 @@ function renderKnowledgeList(){
  const verified=knowledgeItems.filter(k=>k.status==='verified').length;
  element('note-status').textContent=knowledgeItems.length?`共 ${knowledgeItems.length} 条知识 · 已验证 ${verified} 条`:'一份任务，一份可复用的记录。';
  const items=knowledgeFilter==='all'?knowledgeItems:knowledgeItems.filter(k=>k.status===knowledgeFilter);
- element('knowledge-list').innerHTML=items.map(k=>`<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button class="knowledge-title" data-knowledge-edit="${escapeHTML(k.id)}" title="编辑这条知识">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><div class="knowledge-body">${markdown(k.content)}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status==='verified'?'标为待验证':'标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('')||'<p class="muted">还没有沉淀知识。跑完一轮后点对话里的“沉淀为知识”，或点“整理任务知识”让 AI 总结这几轮。</p>';
+ element('knowledge-list').innerHTML=items.map(k=>`<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button class="knowledge-title" data-knowledge-edit="${escapeHTML(k.id)}" title="编辑这条知识">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><div class="knowledge-body">${markdown(k.content)}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status==='verified'?'标为待验证':'标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('')||'<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-edit]').forEach(b=>b.onclick=()=>editKnowledge(b.dataset.knowledgeEdit!));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-state]').forEach(b=>b.onclick=()=>void toggleKnowledgeState(knowledgeItems.find(k=>k.id===b.dataset.knowledgeState)));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-use]').forEach(b=>b.onclick=()=>useKnowledge(knowledgeItems.find(k=>k.id===b.dataset.knowledgeUse)));
@@ -221,25 +221,25 @@ function renderSessionBanner(){
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const foreign=taskContext.length?`<span class="session-warning" title="${escapeHTML(taskContext.map(f=>f.label+' · '+f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map(f=>f.name).join('、'))}</span>`:'';
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
- const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'空白会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'空白会话已就绪';
- const explanation=harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
+ const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'新会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'新会话已就绪';
+ const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 新建会话时可自动补回当前任务知识，可在知识库关闭。';
  banner.dataset.state=closed?'closed':busy?'busy':'live';
- const html=`<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session?`<button type="button" id="session-reset" class="subtle"${busy||sessionResetTask===detail.task.id?' disabled':''}>${sessionResetTask===detail.task.id?'正在新建…':'新建空白会话'}</button>`:''}`;
+ const html=`<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session?`<button type="button" id="session-reset" class="subtle"${busy||sessionResetTask===detail.task.id?' disabled':''}>${sessionResetTask===detail.task.id?'正在新建…':'新建会话'}</button>`:''}`;
  if(banner.innerHTML!==html)banner.innerHTML=html;
  banner.classList.remove('hidden');
  if(button('session-reset'))button('session-reset').onclick=()=>void resetSession();
 }
 async function resetSession(){
  if(!detail||!detail.task.session||sessionResetTask)return;
- if(detail.runs.some(r=>r.status==='running'||r.status==='queued')){notify('请先停止执行并取消排队，再新建空白会话。');return}
- if(!confirm('新建空白会话？任务记录和任务知识都会保留，未发送的草稿也保留。下一轮 AI 不会自动记得之前的对话，这不是恢复旧会话。'))return;
+ if(detail.runs.some(r=>r.status==='running'||r.status==='queued')){notify('请先停止执行并取消排队，再新建会话。');return}
+ if(!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 对话自动积累关闭自动恢复。'))return;
  const id=detail.task.id,token=++selection;sessionResetTask=id;renderTask();
  try{
   const task=await api<Task>('tasks/'+id+'/session/reset','POST',{});
   if(chosen!==id||selection!==token||!detail)return;
   detail.task=task;detail.session_started=0;
-  if(task.engine==='deepseek-harness')detail.runtime={state:'new',can_continue:true,reason:'下一条要求将开启新的原生会话；旧记录不自动带入 AI 上下文。'};
-  notify('空白会话已就绪；记录、知识和未发送的草稿均保留。');
+  if(task.engine==='deepseek-harness')detail.runtime={state:'new',can_continue:true,reason:'下一条要求将开启新的原生会话，按自动恢复设置补回任务知识。'};
+  notify('新会话已就绪；记录、知识和未发送的草稿均保留。');
  }catch(e){if(chosen===id)notify((e as Error).message)}finally{sessionResetTask='';if(chosen===id&&selection===token)renderTask()}
 }
 async function loadTaskContext(id:string){
@@ -255,7 +255,7 @@ function renderTask(){
  const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='任务知识'+(knowledgeItems.length?' · '+knowledgeItems.length:'');button('summarize').disabled=active;
  if(knowledge&&pending){const preview=element('draft-content');if(preview.dataset.run!==knowledge.id){preview.innerHTML=markdown(knowledge.result);preview.dataset.run=knowledge.id}element('draft-label').textContent=saved?'这轮执行的总结已保存，草稿可编辑合并':'执行总结 · 未保存';button('save-draft').disabled=!!saved}
  input('message').disabled=t.archived;button('send').disabled=sending||t.archived;button('summarize').disabled=active||t.archived;if(t.archived)element('run-status').textContent='任务已归档，记录保留；恢复后可以继续执行。';
- if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建空白会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建空白会话后再发送…'}
+ if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建会话后再发送…'}
  const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived||harness;button('summarize').title=harness?harnessKnowledgeHint:'根据任务记录生成知识草稿';
  let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('notebook').querySelector('.note-head')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
  renderWorkflow();renderCodexApprovals(detail);renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
@@ -333,7 +333,7 @@ async function createTask(e:Event){
  }catch(error){if(created&&uploadedCount<files.length)pendingUploadFiles.set(created,files.slice(uploadedCount));if(!shellCurrent(epoch))return;if(created){dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);createSubmitting=false;setCreateSubmitState('idle');await choose(created);notify('任务已创建，提交未完成；要求和未上传附件已保留，请检查记录后再发送：'+(error as Error).message)}else{element('create-error').textContent=(error as Error).message}}finally{if(shellCurrent(epoch)){createSubmitting=false;setCreateSubmitState('idle')}}
 }
 async function send(text:string,clear:boolean){
- if(harnessSessionClosed()||sessionResetTask===chosen&&!!chosen){notify('请先新建空白会话，再发送要求；输入内容会保留。');return}
+ if(harnessSessionClosed()||sessionResetTask===chosen&&!!chosen){notify('请先新建会话，再发送要求；输入内容会保留。');return}
  if(pendingUploadFiles.get(chosen)?.length){notify('请先重试上传或移除待上传附件，避免遗漏文件。');return}
  const files=[...(attachmentDrafts.get(chosen)||[])];if(!chosen||!detail||sending||uploadingTasks.has(chosen)||(!text.trim()&&!files.length))return;try{validateEngineAttachments(detail.task.engine,files.length)}catch(e){notify((e as Error).message);return}const epoch=shellEpoch,id=chosen,original=input('message').value,mode=selectedMessageMode();sending=true;renderTask();
  try{await api('tasks/'+id+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode,attachment_ids:files.map(f=>f.id)});attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(shellCurrent(epoch)&&chosen===id&&input('message').value===original)input('message').value=''}if(shellCurrent(epoch))await poll()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{if(shellCurrent(epoch)){sending=false;if(chosen===id)renderTask()}}

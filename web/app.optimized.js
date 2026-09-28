@@ -1,5 +1,6 @@
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
+let automaticSettingsRequest = 0, automaticSettingsReady = false, automaticSettingsSaving = false;
 function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
@@ -8,6 +9,9 @@ function installLibrary() {
     element('message').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-task">引用历史 / 知识</button>');
     element('create-input').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-create">引用历史 / 知识</button>');
     element('root').insertAdjacentHTML('beforeend', `<dialog id="library-dialog" class="library-dialog"><div class="library-header"><div><h2>知识库</h2><p>查找之前的任务记录、结论和 Obsidian 笔记，选好后引用到任务要求中。</p></div><button type="button" id="library-close" aria-label="关闭知识库">关闭</button></div><form id="library-search-form" class="library-search"><input id="library-query" aria-label="搜索知识和历史" placeholder="关键词、报错码；多个词用空格分隔" maxlength="160"><select id="library-kind" aria-label="资料类型"><option value="">全部资料</option><option value="knowledge">结论与经验</option><option value="run">任务记录</option><option value="note">Obsidian 笔记</option></select><select id="library-scope" aria-label="任务范围"><option value="">所有任务与 Vault</option></select><label><input type="checkbox" id="library-stale">包含过时结论</label><button type="submit">查询</button></form><p id="library-state" role="status"></p><div id="library-results" class="library-results"></div><details id="vault-settings"><summary>Obsidian Vault 与 Git 同步</summary><p>选择这台 Duo 服务所在电脑的 Vault。Duo 只读写其中的 <code>Duo/</code> 文件夹；其中的 Markdown 可在 Obsidian 编辑。启用后每分钟同步一次，也可手动刷新。</p><label>Vault 绝对路径<input id="vault-directory" placeholder="例如 E:\\Notes\\MyVault"></label><label><input type="checkbox" id="vault-enabled">启用 Markdown 同步与索引</label><label><input type="checkbox" id="vault-runs">将所有任务的已结束记录也写入 Vault（可能包含私人内容）</label><p>同步文件包含问题、回复和结论，不包含数据库、登录凭据、工具日志或附件。常见密钥会脱敏，提交 Git 前仍请检查文件。建议使用自己的私有仓库。</p><div class="actions"><button type="button" id="vault-save">保存设置</button><button type="button" id="vault-refresh">立即同步 / 重建索引</button></div><p id="vault-status" role="status"></p><pre id="vault-problems" class="hidden"></pre><p>跨电脑：用 Obsidian Git 或 Git 客户端提交并推送 Vault，在另一台电脑克隆 / 拉取，再选择该电脑上的 Vault 路径。Duo 不自动执行 Git 推送；发现冲突会保留两端内容。删除本地任务不会删除已导出的 Markdown 档案。</p></details></dialog>`);
+    element('vault-settings').insertAdjacentHTML('beforebegin', `<details id="automatic-knowledge-settings"><summary>对话自动积累</summary><p>默认开启。完成一轮对话后，自动把本轮要求和最终回复记为待验证知识，不需要点保存。相同的问题与回复不会重复记录；不会另行调用模型做摘要。</p><label><input type="checkbox" id="automatic-capture" disabled>自动记录后续对话的问题与最终回复</label><label><input type="checkbox" id="automatic-recall" disabled>新建会话时自动补回当前任务知识</label><p>恢复时优先选已验证知识，再选最近记录，最多 3 条，每条最多 1200 字。排除过时条目，不读取其他任务；正常续聊不重复添加。恢复的文字计入本轮模型输入。</p><button type="button" id="automatic-save" disabled>保存设置</button><p id="automatic-status" role="status"></p></details>`);
+    input('vault-runs').closest('label').insertAdjacentHTML('afterend', '<label><input type="checkbox" id="vault-automatic">将对话自动记录的知识也写入 Vault（默认关闭）</label>');
+    button('automatic-save').onclick = ()=>void saveAutomaticKnowledge();
     for (const id of [
         'library-open',
         'library-task',
@@ -28,6 +32,9 @@ function installLibrary() {
         libraryRequest++;
         libraryTarget = null;
         libraryHits = [];
+        automaticSettingsRequest++;
+        automaticSettingsReady = false;
+        automaticSettingsSaving = false;
     });
 }
 async function openLibrary() {
@@ -42,8 +49,55 @@ async function openLibrary() {
     element('library-dialog').showModal();
     await Promise.all([
         searchLibrary(),
-        loadVault()
+        loadVault(),
+        loadAutomaticKnowledge()
     ]);
+}
+function setAutomaticSettingsDisabled(disabled) {
+    for (const id of [
+        'automatic-capture',
+        'automatic-recall',
+        'automatic-save'
+    ])input(id).disabled = disabled;
+}
+async function loadAutomaticKnowledge() {
+    if (automaticSettingsSaving) return;
+    const token = ++automaticSettingsRequest, epoch = shellEpoch;
+    automaticSettingsReady = false;
+    setAutomaticSettingsDisabled(true);
+    element('automatic-status').textContent = '正在读取设置…';
+    try {
+        const config = await api('library/automatic', 'GET', undefined, shellController.signal);
+        if (token !== automaticSettingsRequest || !shellCurrent(epoch)) return;
+        input('automatic-capture').checked = config.capture;
+        input('automatic-recall').checked = config.recall;
+        automaticSettingsReady = true;
+        element('automatic-status').textContent = config.capture ? '自动记录已开启，对后续完成的对话生效。' : '自动记录已关闭，已有记录继续保留。';
+    } catch (e) {
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) element('automatic-status').textContent = e.message;
+    } finally{
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) setAutomaticSettingsDisabled(!automaticSettingsReady);
+    }
+}
+async function saveAutomaticKnowledge() {
+    if (!automaticSettingsReady || automaticSettingsSaving) return;
+    const epoch = shellEpoch, token = ++automaticSettingsRequest;
+    automaticSettingsSaving = true;
+    setAutomaticSettingsDisabled(true);
+    try {
+        await api('library/automatic', 'PUT', {
+            capture: input('automatic-capture').checked,
+            recall: input('automatic-recall').checked
+        });
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) element('automatic-status').textContent = '设置已保存。关闭不会删除已有知识，也不会从原生会话中移除之前已带入的内容。';
+    } catch (e) {
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) element('automatic-status').textContent = '保存失败，请重试：' + e.message;
+    } finally{
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) {
+            automaticSettingsSaving = false;
+            setAutomaticSettingsDisabled(false);
+        }
+    }
 }
 async function searchLibrary() {
     const token = ++libraryRequest, epoch = shellEpoch;
@@ -111,6 +165,7 @@ async function loadVault() {
         input('vault-directory').value = v.config.directory;
         input('vault-enabled').checked = v.config.enabled;
         input('vault-runs').checked = v.config.include_runs;
+        input('vault-automatic').checked = !!v.config.include_automatic;
         showVaultReport(v.report);
     } catch (e) {
         if (shellCurrent(epoch)) element('vault-status').textContent = e.message;
@@ -123,7 +178,8 @@ async function saveVault() {
         await api('library/vault', 'PUT', {
             directory: input('vault-directory').value.trim(),
             enabled: input('vault-enabled').checked,
-            include_runs: input('vault-runs').checked
+            include_runs: input('vault-runs').checked,
+            include_automatic: input('vault-automatic').checked
         });
         if (shellCurrent(epoch)) {
             element('vault-status').textContent = '设置已保存。';
@@ -1585,7 +1641,8 @@ function runFooter(run) {
     const durationTip = run.started ? '从本轮实际开始执行计算' : '旧记录未保存开始时间，包含排队时间';
     const runId = typeof run.id === 'string' ? run.id : '';
     const settled = runId && typeof knowledgeForRun === 'function' ? knowledgeForRun(runId) : null;
-    const knowledge = runId ? `<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled ? 'disabled' : ''} title="${settled ? '这轮结果已经沉淀到任务知识' : '把这轮结果存成一条任务知识'}">${settled ? '已沉淀' : '沉淀为知识'}</button>` : '';
+    const automatic = settled?.source === 'auto';
+    const knowledge = runId && run.status === 'done' && run.result ? `<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled ? 'disabled' : ''} title="${settled ? '这轮结果已经沉淀到任务知识' : '把这轮结果存成一条任务知识'}">${automatic ? '已自动记录' : settled ? '已沉淀' : '沉淀为知识'}</button>` : '';
     return `<span title="${escapeHTML(usageTip)}">用量 ${usage ? formatTokens(usage.total) + ' tok' : '未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished - (run.started || run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
@@ -5780,6 +5837,7 @@ function knowledgeStateLabel(v) {
 }
 function knowledgeSourceLabel(v) {
     return ({
+        auto: '对话自动记录',
         run: '来自执行记录',
         feishu: '来自飞书',
         organize: '整理生成',
@@ -5819,7 +5877,7 @@ function renderKnowledgeList() {
             hour: '2-digit',
             minute: '2-digit',
             hour12: false
-        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status === 'verified' ? '标为待验证' : '标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('') || '<p class="muted">还没有沉淀知识。跑完一轮后点对话里的“沉淀为知识”，或点“整理任务知识”让 AI 总结这几轮。</p>';
+        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status === 'verified' ? '标为待验证' : '标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('') || '<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
     element('knowledge-list').querySelectorAll('[data-knowledge-edit]').forEach((b)=>b.onclick = ()=>editKnowledge(b.dataset.knowledgeEdit));
     element('knowledge-list').querySelectorAll('[data-knowledge-state]').forEach((b)=>b.onclick = ()=>void toggleKnowledgeState(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeState)));
     element('knowledge-list').querySelectorAll('[data-knowledge-use]').forEach((b)=>b.onclick = ()=>useKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeUse)));
@@ -5844,10 +5902,10 @@ function renderSessionBanner() {
     }) : '';
     const foreign = taskContext.length ? `<span class="session-warning" title="${escapeHTML(taskContext.map((f)=>f.label + ' · ' + f.name).join('\n'))}">工作目录有外部 AI 指令：${escapeHTML(taskContext.map((f)=>f.name).join('、'))}</span>` : '';
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
-    const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '空白会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '空白会话已就绪';
-    const explanation = harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。新建空白会话后，AI 不会自动记得之前的对话。';
+    const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
+    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在知识库关闭。';
     banner.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
-    const html = `<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session ? `<button type="button" id="session-reset" class="subtle"${busy || sessionResetTask === detail.task.id ? ' disabled' : ''}>${sessionResetTask === detail.task.id ? '正在新建…' : '新建空白会话'}</button>` : ''}`;
+    const html = `<span class="session-text"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(explanation)}</span></span>${foreign}${detail.task.session ? `<button type="button" id="session-reset" class="subtle"${busy || sessionResetTask === detail.task.id ? ' disabled' : ''}>${sessionResetTask === detail.task.id ? '正在新建…' : '新建会话'}</button>` : ''}`;
     if (banner.innerHTML !== html) banner.innerHTML = html;
     banner.classList.remove('hidden');
     if (button('session-reset')) button('session-reset').onclick = ()=>void resetSession();
@@ -5855,10 +5913,10 @@ function renderSessionBanner() {
 async function resetSession() {
     if (!detail || !detail.task.session || sessionResetTask) return;
     if (detail.runs.some((r)=>r.status === 'running' || r.status === 'queued')) {
-        notify('请先停止执行并取消排队，再新建空白会话。');
+        notify('请先停止执行并取消排队，再新建会话。');
         return;
     }
-    if (!confirm('新建空白会话？任务记录和任务知识都会保留，未发送的草稿也保留。下一轮 AI 不会自动记得之前的对话，这不是恢复旧会话。')) return;
+    if (!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 对话自动积累关闭自动恢复。')) return;
     const id = detail.task.id, token = ++selection;
     sessionResetTask = id;
     renderTask();
@@ -5870,9 +5928,9 @@ async function resetSession() {
         if (task.engine === 'deepseek-harness') detail.runtime = {
             state: 'new',
             can_continue: true,
-            reason: '下一条要求将开启新的原生会话；旧记录不自动带入 AI 上下文。'
+            reason: '下一条要求将开启新的原生会话，按自动恢复设置补回任务知识。'
         };
-        notify('空白会话已就绪；记录、知识和未发送的草稿均保留。');
+        notify('新会话已就绪；记录、知识和未发送的草稿均保留。');
     } catch (e) {
         if (chosen === id) notify(e.message);
     } finally{
@@ -5934,9 +5992,9 @@ function renderTask() {
     button('summarize').disabled = active || t.archived;
     if (t.archived) element('run-status').textContent = '任务已归档，记录保留；恢复后可以继续执行。';
     if (harnessSessionClosed()) {
-        element('run-status').textContent = '当前运行会话不可继续，请先新建空白会话。已输入的要求会保留。';
+        element('run-status').textContent = '当前运行会话不可继续，请先新建会话。已输入的要求会保留。';
         element('run-status').classList.add('error');
-        input('message').placeholder = '可先写下要求，新建空白会话后再发送…';
+        input('message').placeholder = '可先写下要求，新建会话后再发送…';
     }
     const harness = t.engine === 'deepseek-harness';
     button('summarize').disabled = active || t.archived || harness;
@@ -6205,7 +6263,7 @@ async function createTask(e) {
 }
 async function send(text, clear) {
     if (harnessSessionClosed() || sessionResetTask === chosen && !!chosen) {
-        notify('请先新建空白会话，再发送要求；输入内容会保留。');
+        notify('请先新建会话，再发送要求；输入内容会保留。');
         return;
     }
     if (pendingUploadFiles.get(chosen)?.length) {

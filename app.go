@@ -320,11 +320,21 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				cfg.HardwareAI, release, err = a.prepareHardwareAI(ctx, task, r.ID, cfg)
 			}
 			if err == nil {
+				input := r.Input
+				if r.Kind == "chat" {
+					contextText, ids, recallErr := a.store.automaticKnowledgeContext(ctx, task)
+					if recallErr != nil {
+						_ = a.store.event(id, r.ID, "progress", "自动恢复任务知识失败，本轮继续使用原始要求。")
+					} else if contextText != "" {
+						input = contextText + input
+						_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
+					}
+				}
 				runCtx, cancelRun := context.WithCancel(ctx)
 				runCtx = withCodexInteraction(runCtx, func(requestCtx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 					return a.requestCodexInteraction(requestCtx, id, r.ID, method, params)
 				})
-				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, r.Input), func(kind, text string) {
+				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
 					if kind == "usage" {
 						_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
 						a.changed()
@@ -358,11 +368,20 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 		}
 	}
 	a.mu.Lock()
+	var captured Knowledge
+	var captureErr error
 	tx, e := a.store.Begin()
 	if e == nil {
-		_, e = tx.Exec("UPDATE runs SET status=?,result=?,error=?,finished=? WHERE id=?", status, result, failure, now(), r.ID)
+		var previous string
+		e = tx.QueryRow("SELECT status FROM runs WHERE id=? AND task_id=?", r.ID, id).Scan(&previous)
+		if e == nil {
+			_, e = tx.Exec("UPDATE runs SET status=?,result=?,error=?,finished=? WHERE id=?", status, result, failure, now(), r.ID)
+		}
 		if e == nil {
 			_, e = tx.Exec("UPDATE tasks SET status=?,updated=?,session=CASE WHEN ?='' THEN session ELSE ? END WHERE id=?", status, now(), session, session, id)
+		}
+		if e == nil && status == "done" && (previous == "running" || previous == "queued") {
+			captured, captureErr = captureAutomaticKnowledge(tx, id, r.ID)
 		}
 		if e == nil {
 			e = tx.Commit()
@@ -373,6 +392,10 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 	a.mu.Unlock()
 	if e != nil {
 		_ = a.store.event(id, r.ID, "error", "保存运行结果失败："+e.Error())
+	} else if captureErr != nil {
+		_ = a.store.event(id, r.ID, "progress", "本轮结果已保存，但自动记录知识失败；可在对话底部手动保存。")
+	} else if captured.ID != "" {
+		_ = a.store.event(id, r.ID, "progress", "已自动记录到任务知识（待验证），来源 ID："+captured.ID)
 	}
 	_ = a.store.event(id, r.ID, "status", status+" "+failure)
 	a.changed()

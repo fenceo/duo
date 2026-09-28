@@ -44,3 +44,4 @@ __pycache__/
 .env.*
 
 !/docs/knowledge-vault.md
+!/docs/automatic-knowledge.md

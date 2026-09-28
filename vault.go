@@ -21,9 +21,10 @@ import (
 const vaultFileLimit = 2 * 1024 * 1024
 
 type VaultConfig struct {
-	Enabled     bool   `json:"enabled"`
-	Directory   string `json:"directory"`
-	IncludeRuns bool   `json:"include_runs"`
+	IncludeAutomatic bool   `json:"include_automatic"`
+	Enabled          bool   `json:"enabled"`
+	Directory        string `json:"directory"`
+	IncludeRuns      bool   `json:"include_runs"`
 }
 type VaultReport struct {
 	Updated   int64    `json:"updated"`
@@ -338,6 +339,9 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 			return report, err
 		}
 		if d.Kind == "run" && !c.IncludeRuns {
+			continue
+		}
+		if d.Automatic && !c.IncludeAutomatic {
 			continue
 		}
 		localHash := documentHash(d)

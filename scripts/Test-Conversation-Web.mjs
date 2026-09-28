@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import assert from 'node:assert/strict';
+import {createContext,runInContext} from 'node:vm';
 const source=await readFile(new URL('../web/conversation.ts',import.meta.url),'utf8');
 const mod=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(source,{mode:'transform'})+'\nexport {readConversationFilter,finalConversationEvents,conversationCategory,conversationEventVisible};').toString('base64'));
 const event=(seq,kind,text,run_id='a')=>({seq,kind,text,run_id});
@@ -19,4 +20,8 @@ assert.equal(mod.conversationCategory(events[4],mod.finalConversationEvents(even
 assert.deepEqual([...mod.finalConversationEvents([event(1,'assistant','相同','a'),event(2,'assistant','相同','b')],[{id:'a',status:'done',result:'相同'},{id:'b',status:'done',result:'相同'}])].sort(),[1,2]);
 for(const bad of [null,'invalid','null','{}','{"tools":"false","process":false}'])assert.deepEqual(mod.readConversationFilter(bad),{tools:false,process:false});
 assert.deepEqual(mod.readConversationFilter('{"tools":true,"process":false}'),{tools:true,process:false});
-console.log('PASS: independent filters, final vs intermediate replies, run completion, failures/stops preserved, legacy messages, invalid preferences.');
+const footerContext=createContext({escapeHTML:s=>s,knowledgeForRun:()=>({source:'auto'})});
+runInContext(stripTypeScriptTypes(source,{mode:'transform'}),footerContext);
+assert.match(footerContext.runFooter({id:'saved',status:'done',result:'answer',created:1,finished:2}),/已自动记录/);
+assert.doesNotMatch(footerContext.runFooter({id:'failed',status:'failed',result:'partial',created:1,finished:2}),/data-knowledge-run/);
+console.log('PASS: independent filters, final vs intermediate replies, run completion, failures/stops, legacy preferences, automatic capture badge and invalid-result save guard.');

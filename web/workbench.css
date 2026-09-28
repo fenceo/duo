@@ -451,3 +451,5 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .tool-full #tool-body .scratch-grid,.scratch-grid{grid-template-columns:minmax(0,1fr)}
  .empty{padding:36px 16px 24px}.empty h2{font-size:25px}
 }
+
+.library-dialog #automatic-knowledge-settings{border-top:1px solid var(--border,#8885);padding:14px 0}.library-dialog #automatic-knowledge-settings label{display:block;margin:12px 0}.library-dialog #automatic-knowledge-settings input[type=checkbox]{width:auto}.library-dialog #automatic-knowledge-settings p{line-height:1.65}

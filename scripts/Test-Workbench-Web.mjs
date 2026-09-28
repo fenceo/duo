@@ -26,7 +26,7 @@ assert.match(workflowSource,/createStatus\.className='create-status'/);
 const conv=await load('conversation.ts','formatTokens,formatDuration,runFooter');
 assert.equal(conv.formatTokens(2300),'2.3K');assert.equal(conv.formatTokens(0),'0');assert.equal(conv.formatTokens(2500000),'2.5M');
 assert.equal(conv.formatDuration(131000),'2分11秒');assert.equal(conv.formatDuration(-1),'0秒');
-const run={status:'done',created:1000,started:5000,finished:136000,usage:{input:2100,output:200,cached:2000,total:2300}};
+const run={status:'done',result:'final answer',created:1000,started:5000,finished:136000,usage:{input:2100,output:200,cached:2000,total:2300}};
 const footer=conv.runFooter(run);assert.match(footer,/用量 2.3K tok/);assert.match(footer,/用时 2分11秒/);assert.match(footer,/时间/);
 assert.doesNotMatch(footer,/run-knowledge/);
 globalThis.knowledgeForRun=()=>null;

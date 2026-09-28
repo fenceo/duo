@@ -201,6 +201,10 @@ func TestSessionResetSerializesWithSubmissionState(t *testing.T) {
 func TestSessionResetClosesHarnessAndRetainsHistoryWithoutReplay(t *testing.T) {
 	f := &fakeRunner{}
 	a := fixture(t, f)
+	// Opting out preserves a completely blank native session after reset.
+	if err := a.store.set("automatic_knowledge", `{"capture":false,"recall":false}`); err != nil {
+		t.Fatal(err)
+	}
 	task := createHarnessStoredTask(t, a)
 	if _, err := a.submit(task.ID, "old conversation text", "chat", "web"); err != nil {
 		t.Fatal(err)

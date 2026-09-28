@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-var errSessionResetBlocked = errors.New("无法新建空白会话")
+var errSessionResetBlocked = errors.New("无法新建会话")
 
 // TaskRuntimeStatus is a read-only snapshot, not persisted task state. No
 // environment, credential reference, process ID or native diagnostics escape.
@@ -20,7 +20,7 @@ func harnessRuntimeStatus(task Task) *TaskRuntimeStatus {
 		return nil
 	}
 	if task.Session == "" {
-		return &TaskRuntimeStatus{State: "new", CanContinue: true, Reason: "尚未建立 Harness 运行会话，首条消息将启动一个空白会话。"}
+		return &TaskRuntimeStatus{State: "new", CanContinue: true, Reason: "尚未建立 Harness 运行会话，首条消息将启动一个新的原生会话。"}
 	}
 	closed := &TaskRuntimeStatus{State: "resumable", CanContinue: true, Reason: "发送消息时将恢复 Harness 原生会话；如原生会话文件缺失，会明确提示，聊天记录仍保留。"}
 	harnessRuntimes.Lock()

@@ -89,6 +89,7 @@ function runFooter(run:Run):string{
  const durationTip=run.started?'从本轮实际开始执行计算':'旧记录未保存开始时间，包含排队时间';
  const runId=typeof run.id==='string'?run.id:'';
  const settled=runId&&typeof knowledgeForRun==='function'?knowledgeForRun(runId):null;
- const knowledge=runId?`<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled?'disabled':''} title="${settled?'这轮结果已经沉淀到任务知识':'把这轮结果存成一条任务知识'}">${settled?'已沉淀':'沉淀为知识'}</button>`:'';
+ const automatic=(settled as {source?:string}|null)?.source==='auto';
+ const knowledge=runId&&run.status==='done'&&run.result?`<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled?'disabled':''} title="${settled?'这轮结果已经沉淀到任务知识':'把这轮结果存成一条任务知识'}">${automatic?'已自动记录':settled?'已沉淀':'沉淀为知识'}</button>`:'';
  return `<span title="${escapeHTML(usageTip)}">用量 ${usage?formatTokens(usage.total)+' tok':'未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished-(run.started||run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}</time>${knowledge}`;
 }

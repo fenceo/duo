@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS library_links(id TEXT PRIMARY KEY,path TEXT NOT NULL,
 
 // Portable documents are evidence, never executable tasks or native sessions.
 type LibraryDocument struct {
+	Automatic bool   `json:"-" yaml:"-"`
 	ID        string `json:"id" yaml:"duo_id"`
 	Kind      string `json:"kind" yaml:"duo_kind"`
 	TaskID    string `json:"task_id" yaml:"duo_task"`
@@ -46,12 +47,12 @@ func documentHash(d LibraryDocument) string {
 // Use full queries, not the task-panel page size. No credentials, tool logs,
 // attachments or machine-specific execution configuration are exported.
 func (s *Store) localLibrary(ctx context.Context) ([]LibraryDocument, error) {
-	rows, err := s.QueryContext(ctx, `SELECT 'knowledge:'||k.id,'knowledge',k.task_id,t.title,k.run_id,k.title,k.status,k.revision,k.updated,k.content
+	rows, err := s.QueryContext(ctx, `SELECT 'knowledge:'||k.id,'knowledge',k.task_id,t.title,k.run_id,k.title,k.status,k.revision,k.updated,k.content,k.source='auto'
 FROM knowledge_entries k JOIN tasks t ON t.id=k.task_id
 WHERE NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1)
 UNION ALL
 SELECT 'run:'||r.id,'run',r.task_id,t.title,r.id,t.title||' · '||r.status,r.status,1,r.finished,
-'## 用户要求'||char(10)||r.input||char(10)||char(10)||'## 回复 / 执行结果'||char(10)||r.result||char(10)||char(10)||'## 执行错误'||char(10)||r.error
+'## 用户要求'||char(10)||r.input||char(10)||char(10)||'## 回复 / 执行结果'||char(10)||r.result||char(10)||char(10)||'## 执行错误'||char(10)||r.error,0
 FROM runs r JOIN tasks t ON t.id=r.task_id
 WHERE r.status IN ('done','failed','interrupted') AND NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1)`)
 	if err != nil {
@@ -61,7 +62,7 @@ WHERE r.status IN ('done','failed','interrupted') AND NOT EXISTS(SELECT 1 FROM t
 	docs := []LibraryDocument{}
 	for rows.Next() {
 		var d LibraryDocument
-		if err = rows.Scan(&d.ID, &d.Kind, &d.TaskID, &d.TaskTitle, &d.RunID, &d.Title, &d.Status, &d.Revision, &d.Updated, &d.Content); err != nil {
+		if err = rows.Scan(&d.ID, &d.Kind, &d.TaskID, &d.TaskTitle, &d.RunID, &d.Title, &d.Status, &d.Revision, &d.Updated, &d.Content, &d.Automatic); err != nil {
 			return nil, err
 		}
 		d.Origin = "local"
@@ -244,4 +245,5 @@ func (s *Server) libraryRoutes(m *http.ServeMux) {
 		jsonOut(w, 200, map[string]any{"document": d, "reference": text, "truncated": cut})
 	}))
 	s.vaultRoutes(m)
+	s.automaticKnowledgeRoutes(m)
 }

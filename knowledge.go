@@ -42,7 +42,7 @@ func knowledgeState(s string) string {
 
 func knowledgeOrigin(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "run", "feishu", "organize", "migrated":
+	case "run", "feishu", "organize", "migrated", "auto":
 		return strings.ToLower(strings.TrimSpace(s))
 	default:
 		return "manual"
@@ -62,6 +62,8 @@ func knowledgeStateLabel(status string) string {
 
 func knowledgeSourceLabel(source string) string {
 	switch knowledgeOrigin(source) {
+	case "auto":
+		return "对话自动记录"
 	case "run":
 		return "来自执行记录"
 	case "feishu":
