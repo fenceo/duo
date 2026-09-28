@@ -130,6 +130,11 @@ type codexWireRead struct {
 	Err     error
 }
 
+// Native history and completed tool output can exceed Scanner's small default
+// frame sizes. Keep a finite per-frame bound; resume additionally opts out of
+// replaying history that Duo already stores and does not consume here.
+const codexMaxProtocolFrameBytes = 64 * 1024 * 1024
+
 type codexInteractionResult struct {
 	Key        string
 	Generation uint64
@@ -222,7 +227,8 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 	}
 	emit("progress", "正在连接 Codex 原生会话…")
 	done := make(chan struct{})
-	reads := make(chan codexWireRead, 32)
+	// Backpressure keeps several large frames from accumulating in memory.
+	reads := make(chan codexWireRead, 1)
 	stderrDone := make(chan struct{})
 	stdoutDone := make(chan struct{})
 	wait := make(chan error, 1)
@@ -244,7 +250,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 		defer close(stdoutDone)
 		defer close(reads)
 		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 65536), 4*1024*1024)
+		scanner.Buffer(make([]byte, 65536), codexMaxProtocolFrameBytes)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			var envelope struct {
@@ -267,8 +273,12 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			}
 		}
 		if err := scanner.Err(); err != nil {
+			message := fmt.Errorf("Codex 协议读取失败：%w", err)
+			if errors.Is(err, bufio.ErrTooLong) {
+				message = fmt.Errorf("Codex 返回的单条消息超过 %d MiB，已停止本轮；原会话和任务记录仍保留", codexMaxProtocolFrameBytes/(1024*1024))
+			}
 			select {
-			case reads <- codexWireRead{Err: fmt.Errorf("Codex 协议读取失败：%w", err)}:
+			case reads <- codexWireRead{Err: message}:
 			case <-done:
 			}
 		}
@@ -464,6 +474,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					if session != "" {
 						method = "thread/resume"
 						threadParams["threadId"] = session
+						// This only omits turns from the RPC response. Codex still
+						// restores its persisted model context for the same thread.
+						threadParams["excludeTurns"] = true
 					}
 					err = request("jianzuo-thread", method, threadParams)
 				case "jianzuo-thread":
@@ -510,6 +523,24 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				}
 				if err != nil {
 					return session, result, err
+				}
+				continue
+			}
+			// MCP startup notifications use a nullable string error, unlike the
+			// object error in turn notifications. An optional MCP failure must
+			// not be mistaken for corrupt Codex event parameters. Required MCP
+			// startup failures are reported by the native thread RPC itself.
+			if m.Method == "mcpServer/statusUpdated" && (len(m.ID) == 0 || string(m.ID) == "null") {
+				var status struct {
+					ThreadID string  `json:"threadId"`
+					Name     string  `json:"name"`
+					Error    *string `json:"error"`
+				}
+				if json.Unmarshal(m.Params, &status) != nil {
+					return session, result, errors.New("Codex 返回无效 MCP 状态参数")
+				}
+				if status.Error != nil && (status.ThreadID == "" || status.ThreadID == session) {
+					emit("progress", redact("Codex MCP "+status.Name+"："+*status.Error))
 				}
 				continue
 			}

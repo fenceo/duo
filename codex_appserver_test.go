@@ -59,7 +59,31 @@ func runCodexAppServerFixture() {
 	if scenario == "wrong-thread" {
 		threadID = "different-thread"
 	}
-	reply(thread, map[string]any{"thread": map[string]any{"id": threadID}})
+	if scenario == "oversized-frame" {
+		// Stream the oversized frame without allocating it all in the child.
+		fmt.Fprint(os.Stdout, `{"id":"jianzuo-thread","result":{"padding":"`)
+		chunk := strings.Repeat("x", 64*1024)
+		for i := 0; i <= codexMaxProtocolFrameBytes/len(chunk); i++ {
+			if _, err := io.WriteString(os.Stdout, chunk); err != nil {
+				return
+			}
+		}
+		fmt.Fprintln(os.Stdout, `"}}`)
+		var next codexRPC
+		if err := decoder.Decode(&next); err != io.EOF {
+			fail("unexpected request after oversized frame")
+		}
+		return
+	}
+	threadResult := map[string]any{"id": threadID}
+	if scenario == "large-history" {
+		// An older server may still hydrate the response. It must not abort a
+		// resumed task or replay old assistant messages into the new run.
+		threadResult["turns"] = []any{map[string]any{"id": "old-turn", "items": []any{map[string]any{
+			"id": "old-item", "type": "agentMessage", "text": strings.Repeat("h", 5*1024*1024),
+		}}}}
+	}
+	reply(thread, map[string]any{"thread": threadResult})
 	if scenario == "blocked-turn" {
 		time.Sleep(15 * time.Second) // Deliberately never read the large turn/start.
 		return
@@ -96,6 +120,14 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "mcp-startup-error":
+		notify("mcpServer/statusUpdated", map[string]any{"threadId": threadID, "name": "optional-fixture", "status": "failed", "error": "fixture MCP unavailable"})
+		notify("mcpServer/statusUpdated", map[string]any{"threadId": nil, "name": "ready-fixture", "status": "ready", "error": nil})
+	case "large-item":
+		notify("item/completed", map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{
+			"id": "large-tool", "type": "commandExecution", "command": "large fixture output", "status": "completed",
+			"aggregatedOutput": "large-output-begin:" + strings.Repeat("x", 5*1024*1024) + ":large-output-end",
+		}})
 	case "approval":
 		for index, method := range []string{"item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request"} {
 			if index == 1 {
@@ -268,6 +300,12 @@ func TestCodexAppServerNativeRoundTrip(t *testing.T) {
 			if (tc.session == "") != (body.Method == "thread/start") {
 				t.Fatal(body.Method)
 			}
+			if tc.session != "" && string(body.Thread["excludeTurns"]) != "true" {
+				t.Error("resume must preserve the native thread without hydrating its entire history")
+			}
+			if tc.session == "" && body.Thread["excludeTurns"] != nil {
+				t.Error("resume-only options must not be sent to thread/start")
+			}
 			args := strings.Join(body.Args, "|")
 			if !strings.Contains(args, "sandbox_workspace_write.network_access="+fmt.Sprint(tc.network)) || strings.Contains(args, "literal $()") || strings.Contains(args, "exec|") {
 				t.Fatal(args)
@@ -283,6 +321,77 @@ func TestCodexAppServerNativeRoundTrip(t *testing.T) {
 				t.Fatal(usage)
 			}
 		})
+	}
+}
+
+func TestCodexAppServerLargeMessages(t *testing.T) {
+	for _, scenario := range []string{"large-history", "large-item"} {
+		t.Run(scenario, func(t *testing.T) {
+			config := codexFixtureConfig(t, scenario)
+			task := Task{Workspace: t.TempDir(), Session: "existing-large-thread"}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var mu sync.Mutex
+			assistantCount, largeTools := 0, 0
+			session, result, err := runCodexAppServer(ctx, config, task, "continue", func(kind, value string) {
+				mu.Lock()
+				defer mu.Unlock()
+				if kind == "assistant" {
+					assistantCount++
+				}
+				if kind == "tool" && strings.Contains(value, "large-output-begin:") && strings.HasSuffix(value, ":large-output-end") {
+					largeTools++
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if session != task.Session || !json.Valid([]byte(result)) {
+				t.Fatalf("resume lost its original identity or result: %q", session)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if assistantCount != 1 || (scenario == "large-item" && largeTools != 1) {
+				t.Fatalf("assistant=%d large tool=%d", assistantCount, largeTools)
+			}
+		})
+	}
+}
+
+func TestCodexAppServerOversizedFrame(t *testing.T) {
+	config := codexFixtureConfig(t, "oversized-frame")
+	task := Task{Workspace: t.TempDir(), Session: "retained-native-thread"}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, result, err := runCodexAppServer(ctx, config, task, "continue", func(string, string) {})
+	if err == nil || !strings.Contains(err.Error(), "单条消息超过 64 MiB") || strings.Contains(err.Error(), "xxxxx") {
+		t.Fatalf("expected bounded, content-free size diagnostic, got %v", err)
+	}
+	if session != task.Session || result != "" {
+		t.Fatalf("oversized frame replaced the session or produced a result: %q", session)
+	}
+}
+
+func TestCodexAppServerOptionalMCPFailure(t *testing.T) {
+	config := codexFixtureConfig(t, "mcp-startup-error")
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	warnings := 0
+	_, result, err := runCodexAppServer(ctx, config, Task{Workspace: t.TempDir()}, "hello", func(kind, value string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if kind == "progress" && strings.Contains(value, "fixture MCP unavailable") {
+			warnings++
+		}
+	})
+	if err != nil || !json.Valid([]byte(result)) {
+		t.Fatalf("optional MCP failure aborted the turn: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if warnings != 1 {
+		t.Fatalf("expected one visible MCP warning, got %d", warnings)
 	}
 }
 
