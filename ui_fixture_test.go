@@ -220,7 +220,7 @@ func TestUIFixture(t *testing.T) {
 			return
 		}
 		if strings.HasPrefix(path, "/api/") {
-			core := path == "/api/auth" || path == "/api/login" || path == "/api/logout" || path == "/api/tasks" || path == "/api/trash" || path == "/api/workbench" || strings.HasPrefix(path, "/api/tasks/") || strings.HasPrefix(path, "/api/sticky") || (path == "/api/settings" || path == "/api/scratch") && r.Method == http.MethodGet
+			core := strings.HasPrefix(path, "/api/library/") && r.Method == http.MethodGet || path == "/api/auth" || path == "/api/login" || path == "/api/logout" || path == "/api/tasks" || path == "/api/trash" || path == "/api/workbench" || strings.HasPrefix(path, "/api/tasks/") || strings.HasPrefix(path, "/api/sticky") || (path == "/api/settings" || path == "/api/scratch") && r.Method == http.MethodGet
 			for _, forbidden := range []string{"/terminal", "/hardware", "/context", "/files", "/browse", "/search"} {
 				if strings.Contains(path, forbidden) {
 					core = false

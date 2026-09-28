@@ -88,7 +88,15 @@ func runKnowledgeTitle(kind, input string, created int64) string {
 }
 
 func (s *Store) knowledgeList(task string) ([]Knowledge, error) {
-	rows, err := s.Query("SELECT id,task_id,title,content,status,source,run_id,revision,created,updated FROM knowledge_entries WHERE task_id=? ORDER BY updated DESC,created DESC LIMIT 500", task)
+	return s.knowledgeListPage(task, false)
+}
+
+func (s *Store) knowledgeListPage(task string, all bool) ([]Knowledge, error) {
+	query := "SELECT id,task_id,title,content,status,source,run_id,revision,created,updated FROM knowledge_entries WHERE task_id=? ORDER BY updated DESC,created DESC"
+	if !all {
+		query += " LIMIT 500"
+	}
+	rows, err := s.Query(query, task)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +166,15 @@ func (s *Store) writeKnowledge(v Knowledge, create bool) error {
 	v.Status = knowledgeState(v.Status)
 	v.Source = knowledgeOrigin(v.Source)
 	if create {
+		if v.RunID != "" {
+			var count int
+			if err = tx.QueryRow("SELECT count(*) FROM knowledge_entries WHERE task_id=? AND run_id=?", v.TaskID, v.RunID).Scan(&count); err != nil {
+				return err
+			}
+			if count > 0 {
+				return errConflict
+			}
+		}
 		_, err = tx.Exec("INSERT INTO knowledge_entries(id,task_id,title,content,status,source,run_id,revision,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)", v.ID, v.TaskID, v.Title, v.Content, v.Status, v.Source, v.RunID, v.Revision, v.Created, v.Updated)
 	} else {
 		var result sql.Result
@@ -237,6 +254,9 @@ func (s *Store) knowledgeFromRun(taskID, runID string) (Knowledge, error) {
 	result = truncateKnowledgeContent(result)
 	k := Knowledge{ID: uid(), TaskID: taskID, Title: runKnowledgeTitle(kind, input, created), Content: result, Status: "observed", Source: "run", RunID: runID, Revision: 1, Created: now(), Updated: now()}
 	if err := s.writeKnowledge(k, true); err != nil {
+		if errors.Is(err, errConflict) {
+			return s.knowledgeForRun(taskID, runID)
+		}
 		return Knowledge{}, err
 	}
 	return k, nil
@@ -330,7 +350,7 @@ func (s *Server) knowledgeRoutes(m *http.ServeMux) {
 			fail(w, 404, "任务不存在")
 			return
 		}
-		items, err := s.app.store.knowledgeList(id)
+		items, err := s.app.store.knowledgeListPage(id, r.URL.Query().Get("download") == "1")
 		if err != nil {
 			fail(w, 500, err.Error())
 			return
@@ -359,12 +379,20 @@ func (s *Server) knowledgeRoutes(m *http.ServeMux) {
 		v.ID = r.PathValue("kid")
 		v.TaskID = r.PathValue("id")
 		if v.ID == "" {
+			if v.RunID != "" {
+				var valid int
+				if err := s.app.store.QueryRow("SELECT count(*) FROM runs WHERE id=? AND task_id=? AND status='done'", v.RunID, v.TaskID).Scan(&valid); err != nil || valid != 1 {
+					fail(w, 400, "知识来源不是本任务已完成的执行记录")
+					return
+				}
+				v.Source = "run"
+			}
 			v.ID = uid()
 			v.Revision = 1
 			v.Created = now()
 			v.Updated = v.Created
 			if err := s.app.store.writeKnowledge(v, true); err != nil {
-				fail(w, 500, err.Error())
+				fail(w, 409, err.Error())
 				return
 			}
 			s.app.changed()

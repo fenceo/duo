@@ -38,13 +38,13 @@ FROM task_continuations WHERE target_task_id=?`, target).Scan(&c.TargetTaskID, &
 // Duo. A later confirmation endpoint can submit this text after the user has
 // reviewed it.
 type ContinuationPreview struct {
-	SourceTaskID         string `json:"source_task_id"`
-	SourceEngine         string `json:"source_engine"`
-	SourceTitle          string `json:"source_title"`
-	Runs                 int    `json:"transferred_runs"`
-	Knowledge            int    `json:"transferred_knowledge"`
-	Context              string `json:"context"`
-	Truncated             bool   `json:"context_truncated"`
+	SourceTaskID string `json:"source_task_id"`
+	SourceEngine string `json:"source_engine"`
+	SourceTitle  string `json:"source_title"`
+	Runs         int    `json:"transferred_runs"`
+	Knowledge    int    `json:"transferred_knowledge"`
+	Context      string `json:"context"`
+	Truncated    bool   `json:"context_truncated"`
 }
 
 var (
@@ -122,6 +122,15 @@ func (a *App) continuationPreview(id string, modes ...string) (ContinuationPrevi
 	} else if len(completed) > limit {
 		completed = completed[len(completed)-limit:]
 	}
+	filtered := knowledge[:0]
+	for _, item := range knowledge {
+		if knowledgeState(item.Status) == "stale" || mode != "full" && knowledgeState(item.Status) != "verified" {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	knowledge = filtered
+	clipped := false
 	sort.SliceStable(knowledge, func(i, j int) bool {
 		if knowledgeState(knowledge[i].Status) != knowledgeState(knowledge[j].Status) {
 			return knowledgeState(knowledge[i].Status) == "verified"
@@ -130,6 +139,7 @@ func (a *App) continuationPreview(id string, modes ...string) (ContinuationPrevi
 	})
 	if len(knowledge) > 12 {
 		knowledge = knowledge[:12]
+		clipped = true
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "你正在接手 Duo 任务“%s”。原执行引擎：%s。\n", redactContinuation(task.Title), continuationEngineLabel(task.Engine))
@@ -137,15 +147,17 @@ func (a *App) continuationPreview(id string, modes ...string) (ContinuationPrevi
 	if len(knowledge) > 0 {
 		b.WriteString("\n## 已沉淀知识\n")
 		for _, item := range knowledge {
-			content, _ := clipContinuation(redactContinuation(item.Content), 2400)
+			content, cut := clipContinuation(redactContinuation(item.Content), 2400)
+			clipped = clipped || cut
 			fmt.Fprintf(&b, "\n### %s（%s）\n%s\n", redactContinuation(item.Title), knowledgeStateLabel(item.Status), content)
 		}
 	}
 	if len(completed) > 0 {
 		b.WriteString("\n## 最近对话与执行结果\n")
 		for _, run := range completed {
-			input, _ := clipContinuation(redactContinuation(run.Input), 1800)
-			result, _ := clipContinuation(redactContinuation(run.Result), 3000)
+			input, inputCut := clipContinuation(redactContinuation(run.Input), 1800)
+			result, resultCut := clipContinuation(redactContinuation(run.Result), 3000)
+			clipped = clipped || inputCut || resultCut
 			if run.Error != "" {
 				result = strings.TrimSpace(result + "\n错误：" + redactContinuation(run.Error))
 			}
@@ -153,5 +165,5 @@ func (a *App) continuationPreview(id string, modes ...string) (ContinuationPrevi
 		}
 	}
 	context, truncated := clipContinuation(redactContinuation(b.String()), 24000)
-	return ContinuationPreview{SourceTaskID: task.ID, SourceEngine: task.Engine, SourceTitle: task.Title, Runs: len(completed), Knowledge: len(knowledge), Context: context, Truncated: truncated}, nil
+	return ContinuationPreview{SourceTaskID: task.ID, SourceEngine: task.Engine, SourceTitle: task.Title, Runs: len(completed), Knowledge: len(knowledge), Context: context, Truncated: truncated || clipped}, nil
 }

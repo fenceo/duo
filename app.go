@@ -17,6 +17,8 @@ type worker struct {
 	stopping bool
 }
 type App struct {
+	vaultMu         sync.Mutex
+	vaultReport     VaultReport
 	codexRequests   *CodexRequests
 	hardwareAI      *HardwareAI
 	hardwareAddress string
@@ -39,7 +41,10 @@ type App struct {
 
 func newApp(s *Store, c *ConfigFile, r Runner) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{codexRequests: newCodexRequests(), hardwareAI: newHardwareAI(), hardwareAddress: c.get().Listen, discovery: newSSHDiscovery(), terminals: newTerminals(), hardware: newHardware(s), store: s, config: c, runner: r, workers: map[string]*worker{}, slots: make(chan struct{}, 2), ctx: ctx, cancel: cancel, notify: make(chan struct{}, 1)}
+	a := &App{codexRequests: newCodexRequests(), hardwareAI: newHardwareAI(), hardwareAddress: c.get().Listen, discovery: newSSHDiscovery(), terminals: newTerminals(), hardware: newHardware(s), store: s, config: c, runner: r, workers: map[string]*worker{}, slots: make(chan struct{}, 2), ctx: ctx, cancel: cancel, notify: make(chan struct{}, 1)}
+	a.wg.Add(1)
+	go a.vaultLoop()
+	return a
 }
 func (a *App) changed() {
 	select {
@@ -409,7 +414,11 @@ func (a *App) knowledge(id, source string) (Run, error) {
 				b.WriteString("\n\n…（其余知识已省略，请只整理以上内容）")
 				break
 			}
-			b.WriteString("\n\n### " + k.Title + "（" + knowledgeStateLabel(k.Status) + "）\n" + k.Content)
+			section, cut := clipContinuation("### "+k.Title+"（"+knowledgeStateLabel(k.Status)+"）\n"+k.Content, min(2400, max(0, (12000-b.Len())/4-30)))
+			b.WriteString("\n\n" + section)
+			if cut {
+				b.WriteString("\n（该条知识仅纳入部分内容）")
+			}
 		}
 		text = b.String()
 	}

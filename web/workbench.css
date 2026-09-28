@@ -187,6 +187,9 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 #sticky-scope{grid-column:3 / 5;grid-row:2}
 .sticky-list{min-width:0;min-height:0}
 
+/* Cross-task knowledge and portable Markdown vault. */
+.library-dialog{width:min(900px,94vw);max-height:90vh;padding:24px}.library-header{display:flex;align-items:start;justify-content:space-between;gap:16px}.library-header p{max-width:650px}.library-search{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.library-search input:not([type=checkbox]){flex:1;min-width:180px}.library-search label{display:flex;gap:6px;align-items:center}.library-search input[type=checkbox],#vault-settings input[type=checkbox]{width:auto}.library-results{display:grid;gap:12px;max-height:48vh;overflow:auto;margin:12px 0}.library-card{border:1px solid var(--border,#8885);border-radius:10px;padding:14px;overflow-wrap:anywhere}.library-card h3{margin:0 0 6px}.library-snippet{white-space:pre-wrap}.library-card small{display:block;margin-bottom:8px}.library-compose-button{font-size:12px;margin:4px 0;align-self:flex-start}.library-dialog #vault-settings{border-top:1px solid var(--border,#8885);padding-top:14px}.library-dialog #vault-settings label{display:block;margin:12px 0}.library-dialog #vault-settings input:not([type=checkbox]){width:100%}#vault-problems{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto}@media(max-width:760px){.library-dialog{padding:14px}.library-header{gap:8px}.library-search select{max-width:100%}.library-results{max-height:42vh}}
+
 /* Readable shared chrome. Chat sizing, dock sizing and drag handles remain user controlled. */
 body{color:var(--ink);background:var(--canvas)}
 button:disabled{cursor:not-allowed}

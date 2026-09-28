@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 // Run every production feature initializer against a real connected/detached
 // DOM implementation. HTTP is a synthetic in-memory fixture; no browser, CLI,
 // credentials, model turn, storage directory or external network is accessed.
-const files=['updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
+const files=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
 const source=(await Promise.all(files.map(name=>readFile(new URL('../web/'+name+'.ts',import.meta.url),'utf8')))).join('\n');
 const {document,window}=parseHTML('<!doctype html><html><body><div id="root"></div><div id="notice"></div></body></html>');
 // linkedom implements real node attachment and selectors, but intentionally
@@ -35,6 +35,7 @@ assert(!document.getElementById('shell-retry'),'full mount failed: '+document.ge
 assert.equal(typeof document.getElementById('new-task')?.onclick,'function','mount must reach the final task event bindings');
 assert(document.getElementById('sticky-board'),'mount must reach notes initialization after workflow');
 assert(document.getElementById('update-current'),'mount must reach the final update settings initializer');
+for(const id of ['library-open','library-task','library-create','library-dialog'])assert(document.getElementById(id),'knowledge entry point missing: '+id);
 assert.equal(document.getElementById('reload-models').closest('.model-picker')?.id,'model-picker');
 assert.equal(document.getElementById('test-models').closest('.model-picker')?.id,'model-picker');
 for(const id of ['reload-models','test-models','stop-model-test'])assert.equal(document.getElementById(id).closest('.model-catalog-actions')?.id,'model-catalog-actions',id+' must stay in the model menu, including after detached composer mount');
