@@ -56,7 +56,14 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.1'
-          cache: false
+          cache: true
+
+      - name: Reuse the prepared Go environment during packaging
+        run: |
+          $goEnvironment = go env -json GOCACHE GOPATH | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the prepared Go environment.' }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Encoding UTF8 -Value ('GOCACHE=' + $goEnvironment.GOCACHE)
+          Add-Content -LiteralPath $env:GITHUB_ENV -Encoding UTF8 -Value ('GOPATH=' + $goEnvironment.GOPATH)
 
       - name: Install locked web dependencies
         run: |
@@ -76,4 +83,4 @@ jobs:
       - name: Test, build and publish the stable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: .\scripts\Publish-Release.ps1
+        run: node .\scripts\Publish-Release-CI.mjs
