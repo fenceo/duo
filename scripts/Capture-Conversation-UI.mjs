@@ -14,7 +14,7 @@ const output=path.resolve('build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
 const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
-const baseRef=process.env.DUO_UI_BASE||'v0.22.10';
+const baseRef=process.env.DUO_UI_BASE||'v0.22.11';
 for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.css']){
  const result=spawnSync('git',['show',baseRef+':web/'+file],{encoding:'utf8',windowsHide:true});
  if(result.status!==0)throw Error('Cannot read UI comparison baseline: '+baseRef);
@@ -25,6 +25,7 @@ if(!browser)throw Error('A standard installed Chromium browser is required for U
 const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','dark',1280,800],['normal','light',390,844],['normal','dark',390,844],['menu','light',1280,800],['menu','dark',390,844],['long','light',390,844],['closed','light',390,844],['create','light',1280,800],['create','light',390,844],['createbottom','light',390,844],['settings','light',1280,800],['settings','dark',390,844]];
 cases.push(['library','light',1280,800],['library','dark',1280,800],['library','light',390,844],['librarypreview','light',1280,800],['librarypreview','dark',390,844],['knowledge','light',1280,800],['knowledge','dark',390,844],['knowledgeexpanded','light',390,844]);
 cases.push(['sidebar','light',1280,800],['sidebar','dark',1280,800],['sidebar','dark',390,844],['sidebarempty','light',390,844],['sidebarnarrow','light',1024,600],['sidebarfull','dark',1280,800],['appmenu','light',1280,800],['appmenu','dark',390,844]);
+cases.push(['sidebarwide','light',1280,800],['sidebarmigrated','dark',1280,800],['hardware','light',1280,800],['hardware','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -47,6 +48,24 @@ for(const [view,theme,width,height] of cases){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
   if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
   if(view==='sidebarnarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
+  if(view==='sidebarwide')runInContext('appearance.sidebar=380;applyAppearance(appearance)',ctx);
+  if(view==='sidebarmigrated')runInContext("localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:'right',tools:'left'}));installDockLayout()",ctx);
+  assert.equal(document.getElementById('sticky-board').parentElement.id,'sidebar');
+  assert(!document.querySelector('[data-dock-grip="sticky"]'));
+  assert(!document.querySelector('.workspace-heading'));
+ }
+ if(view==='hardware'){
+  // Synthetic read-only log view: no browser terminal, device or model connection.
+  ctx.loadDevices=async()=>{};
+  runInContext(`deviceID='fixture-uart';devices=[{id:deviceID,name:'开发板串口',kind:'console',protocol:'serial',device:'COM99',baud:115200}];
+   input('device-picker').innerHTML='<option value="fixture-uart">开发板串口</option>';input('device-view').value='text';
+   hardwareView={id:deviceID,task:chosen,alive:true,connected:true,ready:true,generation:'synthetic',controller:chosen,controllerTitle:'Duo 优化',busy:false,paused:false,written:100,term:{options:{},dispose(){}},resize:{disconnect(){}}};
+   deviceEvents=Array.from({length:12},(_,i)=>({seq:i+1,direction:'rx',hex:'',text:'[fixture] board ready',created:1790310000000+i*1000}));
+   switchTab('hardware');syncDocks();renderDeviceLog();
+  `,ctx);
+  // deviceLog decodes raw bytes; set only the synthetic output text for capture.
+  document.getElementById('device-console').textContent=Array.from({length:12},(_,i)=>'12:00:'+String(i).padStart(2,'0')+' RX  [fixture] board ready').join('\n');
+  assert(!document.querySelector('.hardware-ai-overview'));
  }
  if(view==='create'||view==='createbottom')runInContext(`for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
  if(view==='settings'){
@@ -77,7 +96,7 @@ for(const [view,theme,width,height] of cases){
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
- const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','new-task','search','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu','app-menu-toggle','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu','app-menu-toggle','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
@@ -118,11 +137,18 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('sidebar')){
    const board=items['sticky-board'],list=items['task-list'];
    for(const id of ['app-version','sticky-board','sticky-list','sticky-new','sticky-save-status']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
-   assert(list.height>=90,'task list has too little height');assert(list.y<220,'sidebar header takes too much space');assert(list.y+list.height<=board.y+1,'task list overlaps notes');
+   assert(list.height>=90,'task list has too little height');assert(list.y<160,'sidebar header takes too much space');assert(list.y+list.height<=board.y+1,'task list overlaps notes');
+   for(const id of ['tasks-active','tasks-archived','trash-open'])assert(Math.abs(items[id].y-items['new-task'].y)<2,'task navigation wraps');
+   assert(Math.abs(items['first-task-title'].y-items['first-task-environment'].y)<6,'task environment wraps to another line');
+   assert(items['first-task-environment'].width>=28,'task environment loses all readable space');
    assert(items['sticky-list'].height>=32,'notes have no writing room');
    if(view==='sidebarnarrow')assert(items['first-task-title'].width>=60,'narrow sidebar hides task titles behind status labels');
    if(view==='sidebar'&&width>760)assert(items['first-quick-note'].height<=42,'single-line notes have excessive height');
    if(width<=760){assert(items.sidebar.height===height,'phone drawer must fill the viewport');assert(items.conversation.height>height*.5,'opening the task drawer must not push the conversation down')}
+  }
+  if(view==='hardware'){
+   for(const id of ['hardware-panel','device-picker','device-refresh','device-ai','device-console']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1,id+' exceeds the viewport')}
+   assert(items['device-console'].height>=180,'hardware controls leave too little space for logs');
   }
   if(view==='appmenu')for(const id of ['settings-open','theme-toggle','library-open']){const b=items[id];assert(b.visible&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'global menu entry is clipped: '+id)}
   if(view==='createbottom')for(const id of ['library-create','create-submit']){
@@ -132,7 +158,7 @@ for(const [view,theme,width,height] of cases){
 }
 }finally{await renderer.close()}
 const before=measurements.find(x=>x.view==='before'),after=measurements.find(x=>x.name==='normal-light-1280');
-if(before&&after){if(after.items.conversation.height<before.items.conversation.height-2)failures.push('desktop conversation lost vertical space');if(after.items['task-list'].y>=before.items['task-list'].y-50)failures.push('sidebar navigation did not become materially shorter');}
+if(before&&after){if(after.items.conversation.height<before.items.conversation.height-2)failures.push('desktop conversation lost vertical space');if(after.items['task-list'].y>before.items['task-list'].y-36)failures.push('sidebar navigation did not become materially shorter');}
 const report={source:process.env.GITHUB_SHA||'local',baseRef,measurements,failures};
 await fs.writeFile(path.join(output,'geometry.json'),JSON.stringify(report,null,2));
 const summary=JSON.stringify(measurements.map(x=>({name:x.name,width:x.width,height:x.height,chatHeight:x.items.conversation?.height})));

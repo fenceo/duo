@@ -1,22 +1,13 @@
-type WorkspaceGroup={key:string;name:string;environment:string;path:string;tasks:Task[]};
-const collapsedWorkspaces=new Set<string>();
-try{const saved=JSON.parse(localStorage.getItem('jianzuo-folders-v1')||'[]');if(Array.isArray(saved))saved.filter(x=>typeof x==='string').forEach(x=>collapsedWorkspaces.add(x))}catch{}
-function groupWorkspaceTasks(items:Task[]):WorkspaceGroup[]{
- const groups=new Map<string,WorkspaceGroup>();
- for(const task of [...items].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated-a.updated)){
-  const env=task.environment,path=task.workspace;
-  // The environment identity is part of the key: two machines can have /work.
-  const key=JSON.stringify([env?.id||'',env?.type||'',env?.host||'',env?.distro||'',env?.user||'',path]);
-  let group=groups.get(key);if(!group){group={key,name:path.replace(/[\\/]+$/,'').split(/[\\/]/).at(-1)||path,environment:env?.name||'本机',path,tasks:[]};groups.set(key,group)}group.tasks.push(task);
- }
- return [...groups.values()];
-}
 function taskItemMenu(t:Task):string{
  const busy=!t.archived&&(t.status==='running'||t.status==='queued');
  return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换工具继续</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items:Task[]):string{
- return groupWorkspaceTasks(items).map(g=>`<section class="workspace-group"><button class="workspace-heading" data-workspace="${escapeHTML(g.key)}" aria-expanded="${!collapsedWorkspaces.has(g.key)}" title="${escapeHTML(g.environment+' · '+g.path)}"><span class="folder-arrow">${collapsedWorkspaces.has(g.key)?'›':'⌄'}</span><span class="folder-name">${escapeHTML(g.name)}</span><small>${escapeHTML(g.environment)}</small></button><div class="workspace-tasks ${collapsedWorkspaces.has(g.key)?'hidden':''}">${g.tasks.map(t=>`<div class="task-row"><button class="task ${t.id===chosen?'selected':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><small class="task-state ${t.status==='running'||t.status==='queued'?'active':''}">${t.archived?'已归档':names[t.status]||escapeHTML(t.status)}</small></button>${taskItemMenu(t)}</div>`).join('')}</div></section>`).join('');
+ return [...items].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated-a.updated).map(t=>{
+  const env=t.environment,environment=env?.name||'本机',location=[environment,env?.type,env?.distro,env?.host,env?.user,t.workspace].filter(Boolean).join(' · ');
+  const folder=t.workspace.replace(/[\\/]+$/,'').split(/[\\/]/).at(-1)||t.workspace;
+  return `<div class="task-row"><button class="task ${t.id===chosen?'selected':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title+'\n'+location)}" aria-label="${escapeHTML(t.title+'，'+location)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment">${escapeHTML(environment)}</small></button>${taskItemMenu(t)}</div>`;
+ }).join('');
 }
 function installLayout(){
  let theme='light';try{theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{}document.documentElement.dataset.theme=theme;
@@ -65,7 +56,7 @@ function installLayout(){
    if(kind==='handoff')void openHandoff(id);else if(kind==='copy-link')void copyTaskLink(id);else if(kind==='rename')void openTaskRename(id);else if(kind==='pin')void changeTaskPreference('pinned',id);else if(kind==='archive')void changeTaskPreference('archived',id);else if(kind==='trash')void trashCurrentTask(id);
    return;
   }
-  const target=node.closest<HTMLElement>('[data-workspace]');if(!target)return;const key=target.dataset.workspace!;if(collapsedWorkspaces.has(key))collapsedWorkspaces.delete(key);else collapsedWorkspaces.add(key);try{localStorage.setItem('jianzuo-folders-v1',JSON.stringify([...collapsedWorkspaces]))}catch{}renderList()});
+ });
  // 任务菜单挂在可滚动列表里会被裁切，打开时改成贴合按钮的固定定位。
  const closeTaskMenus=()=>element('task-list').querySelectorAll<HTMLDetailsElement>('.task-item-menu[open]').forEach(d=>d.removeAttribute('open'));
  element('task-list').addEventListener('toggle',e=>{

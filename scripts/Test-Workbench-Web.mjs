@@ -85,16 +85,16 @@ assert.match(busy,/data-task-action="archive" data-task-id="a" disabled/);
 assert.match(busy,/data-task-action="trash" data-task-id="a" disabled/);
 assert.doesNotMatch(busy,/data-task-action="rename" data-task-id="a" disabled/);
 assert.match(layout.taskItemMenu(task('a',{status:'queued'})),/disabled/);
-// Rows carry the task button and its menu; grouping stays per environment and path.
+// Each task keeps its own row, environment, full location and action menu.
 const list=layout.workspaceTaskList([task('a',{pinned:true}),task('b',{archived:true})]);
 assert.equal(list.match(/class="task-row"/g).length,2);
 assert.match(list,/class="task selected"[^>]*data-task="a"/);
 assert.doesNotMatch(list,/data-task="b"[^>]*selected/);
 assert.match(list,/↑ 任务 a/);
-assert.match(list,/<small class="task-state[^"]*">已归档<\/small>/);
-// Same environment and path share one group; a different machine keeps its own group.
+assert.doesNotMatch(list,/task-state/);
+assert.match(list,/<small class="task-environment">WSL<\/small>/);
 const grouped=layout.workspaceTaskList([task('a'),task('c',{workspace:'/work/a'}),{...task('d'),environment:{id:'e2',name:'Windows',type:'local',host:'',distro:'',user:''},workspace:'/other'}]);
-assert.equal(grouped.match(/class="workspace-group"/g).length,2);
+assert.doesNotMatch(grouped,/workspace-group|workspace-heading/);
 assert.equal(grouped.match(/class="task-row"/g).length,3);
 assert.match(grouped,/WSL/);assert.match(grouped,/Windows/);
 console.log('PASS: task model merge, per-turn real usage/duration, unavailable history, appearance bounds, attachment limits, per-task sidebar menu.');

@@ -8,8 +8,7 @@ type HardwareGrant={read:boolean;write:boolean;power:boolean};
 let hardwareAIGrants:Record<string,HardwareGrant>={},hardwareAIEditing:{task:string;device:DeviceConfig}|null=null;
 type HardwareTaskUse={id:string;title:string;archived:boolean;ai:HardwareGrant;active_ai?:HardwareGrant};
 type HardwareOverview={config:DeviceConfig;connected:boolean;controller_task:string;controller_title:string;tasks:HardwareTaskUse[]};
-let hardwareOverview:HardwareOverview[]=[],hardwareOverviewTask='',hardwareOverviewLoading=false,hardwareAISaving=false,hardwareLibraryAttaching=false;
-let hardwareOverviewTimer:ReturnType<typeof setInterval>|undefined;
+let hardwareOverview:HardwareOverview[]=[],hardwareOverviewTask='',hardwareAISaving=false,hardwareLibraryAttaching=false;
 function hexBytes(hex:string){return Uint8Array.from(hex.match(/.{1,2}/g)||[],pair=>parseInt(pair,16))}
 function bytesHex(bytes:Uint8Array){return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('')}
 function hardwarePlainText(events:DeviceEvent[]){
@@ -24,10 +23,8 @@ function installHardware(){
  element('device-readonly').parentElement!.insertAdjacentHTML('beforebegin','<div id="relay-fields" class="hidden"><label for="relay-contact">实际接线</label><select id="relay-contact"><option value="">请选择接线方式…</option><option value="no">COM + NO（常开）</option><option value="nc">COM + NC（常闭）</option></select><div class="form-grid"><label>继电器地址<input id="relay-channel" type="number" min="1" max="254" value="1"></label><label>断电间隔（秒）<input id="relay-delay" type="number" min="1" max="60" value="3"></label></div><p class="muted">CH340 / A0 协议，9600 · 8N1。COM 口变更后在此修改，设备名称和任务关联会保留。</p></div>');
  input('device-kind').onchange=()=>{if(input('device-kind').value==='relay'){input('device-baud').value='9600';input('hardware-bits').value='8';input('hardware-parity').value='none';input('hardware-stop').value='1';if(!input('device-name').value)input('device-name').value='板子电源'}deviceFields()};
  button('device-library').onclick=()=>void openHardwareLibrary();button('hardware-library-close').onclick=()=>element<HTMLDialogElement>('hardware-library-dialog').close();
- element('device-library').insertAdjacentHTML('afterend','<button id="device-ai">AI 使用</button>');
- element('hardware-panel').insertAdjacentHTML('afterbegin','<section class="hardware-ai-overview"><div class="hardware-overview-head"><strong>本任务 AI 硬件</strong><span id="hardware-ai-count"></span><button id="hardware-overview-refresh" title="刷新设备连接和任务授权">刷新</button></div><div id="hardware-ai-list"></div><small id="hardware-ai-tip">无需提前连接。点设备设置 AI 权限。</small></section>');
- button('hardware-overview-refresh').onclick=()=>void loadDevices();
- element('hardware-ai-list').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-ai-device]');if(b){selectDevice(b.dataset.aiDevice!);void editHardwareAI()}};
+ element('device-library').insertAdjacentHTML('afterend','<button id="device-ai">AI 使用</button><button id="device-refresh" title="重新读取设备与权限" aria-label="刷新设备">↻</button>');
+ button('device-refresh').onclick=()=>void loadDevices();
  element('hardware-library-list').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('button');if(!b)return;if(b.dataset.attach)void attachHardwareFromLibrary(b.dataset.attach);else if(b.dataset.hardwareTask){element<HTMLDialogElement>('hardware-library-dialog').close();deviceID=b.dataset.device!;void choose(b.dataset.hardwareTask,'hardware')}};
  element('root').insertAdjacentHTML('beforeend',`<dialog id="hardware-ai-dialog"><form id="hardware-ai-form"><h2>允许本任务 AI 使用</h2><p id="hardware-ai-name"></p><label class="check-row"><input type="checkbox" id="hardware-ai-read">连接、读取日志和查询状态</label><label class="check-row" id="hardware-ai-write-row"><input type="checkbox" id="hardware-ai-write">发送串口 / 控制台命令</label><label class="check-row" id="hardware-ai-power-row"><input type="checkbox" id="hardware-ai-power">上电、断电和断电重启</label><p>适用于本任务的 Codex 和 Claude。新增权限从下一轮使用；收回权限会立即撤销本轮硬件凭据。操作记录留在任务和硬件日志中。</p><p class="error" id="hardware-ai-error"></p><div class="dialog-footer"><button type="button" id="hardware-ai-cancel">取消</button><button class="primary" id="hardware-ai-save">保存</button></div></form></dialog>`);
  button('device-ai').onclick=()=>void editHardwareAI();button('hardware-ai-cancel').onclick=()=>element<HTMLDialogElement>('hardware-ai-dialog').close();input('hardware-ai-read').onchange=renderHardwareAIForm;element('hardware-ai-form').onsubmit=e=>{e.preventDefault();void saveHardwareAI()};
@@ -63,8 +60,7 @@ function installHardware(){
  button('device-analyze').onclick=()=>{const selected=input('device-view').value==='terminal'?hardwareView?.term.getSelection():window.getSelection()?.toString();const text=(selected||hardwarePlainText(hardwareLogEvents())).slice(-24000);if(!text){notify('先接收日志，或选中要分析的文字');return}bringToChat('请分析以下硬件调试输出：\n\n'+text)};
  element('hardware-panel').querySelectorAll<HTMLButtonElement>('[data-hardware-key]').forEach(b=>b.onclick=()=>{const key=b.dataset.hardwareKey!;const data=key==='enter'?hardwareEnter():({tab:'\t',up:'\x1b[A',down:'\x1b[B','ctrl-c':'\x03',esc:'\x1b'} as Record<string,string>)[key];queueHardwareInput(new TextEncoder().encode(data));hardwareView?.term.focus()});
  clearInterval(hardwarePollTimer);hardwarePollTimer=setInterval(()=>void pollDevice(),100);
- clearInterval(hardwareOverviewTimer);hardwareOverviewTimer=setInterval(()=>{if(authenticated&&chosen&&!document.hidden&&!hardwareOverviewLoading&&!hardwareAISaving&&(toolsTab==='hardware'||element<HTMLDialogElement>('hardware-library-dialog')?.open))void loadDevices(true)},4000);
- disposeWithShell(()=>{clearInterval(hardwarePollTimer);clearInterval(hardwareOverviewTimer)});
+ disposeWithShell(()=>clearInterval(hardwarePollTimer));
 }
 function hardwareEnter(){return ({cr:'\r',lf:'\n',crlf:'\r\n'} as Record<string,string>)[input('hardware-enter').value]||'\r'}
 function hardwareKeyEvent(e:KeyboardEvent,selected:string,enter:string,backspace:string,send:(bytes:Uint8Array)=>void){
@@ -104,17 +100,16 @@ async function saveDevice(connect:boolean){
  try{const d=await api<DeviceConfig>(`tasks/${task}/hardware`+(deviceEditing?'/'+deviceEditing.id:''),deviceEditing?'PUT':'POST',c);element<HTMLDialogElement>('device-dialog').close();if(chosen!==task)return;deviceID=d.id;await loadDevices();if(connect)connectSelectedDevice()}catch(e){element('device-error').textContent=(e as Error).message}finally{hardwareSaving=false;saveButtons.forEach(b=>b.disabled=false)}
 }
 function connectSelectedDevice(){if(devices.find(d=>d.id===deviceID)?.protocol==='ssh'){input('device-password').value='';element<HTMLDialogElement>('device-password-dialog').showModal()}else void deviceAction('connect',{})}
-async function loadDevices(silent=false){
- const task=chosen,request=++hardwareLoadRequest;if(!task)return;hardwareOverviewLoading=true;
+async function loadDevices(){
+ const task=chosen,request=++hardwareLoadRequest;if(!task)return;
  if(hardwareOverviewTask!==task){devices=[];hardwareAIGrants={};closeHardwareView();input('device-picker').disabled=true;renderHardwareState()}
- button('hardware-overview-refresh').disabled=true;
+ button('device-refresh').disabled=true;
  try{const list=await api<HardwareOverview[]>('hardware/overview');if(chosen!==task||request!==hardwareLoadRequest)return;
   hardwareOverview=list;hardwareOverviewTask=task;devices=list.filter(d=>d.tasks.some(t=>t.id===task)).map(d=>d.config);hardwareAIGrants={};for(const item of list){const use=item.tasks.find(t=>t.id===task);if(use)hardwareAIGrants[item.config.id]=use.ai}
   const picker=input('device-picker'),html=devices.map(d=>`<option value="${d.id}">${escapeHTML(d.name)}</option>`).join('')||'<option value="">添加串口或网络设备</option>';
   if(picker.dataset.snapshot!==html){picker.innerHTML=html;picker.dataset.snapshot=html}picker.disabled=false;
-  if(!devices.some(d=>d.id===deviceID))deviceID=devices[0]?.id||'';selectDevice(deviceID);renderHardwareOverview();if(element<HTMLDialogElement>('hardware-library-dialog').open)renderHardwareLibrary();
-  element('hardware-ai-tip').textContent='无需提前连接。点设备设置 AI 权限。';
- }catch(e){if(chosen===task&&request===hardwareLoadRequest){element('hardware-ai-tip').textContent='刷新失败，当前显示可能已过期。';if(!silent)notify((e as Error).message)}}finally{if(request===hardwareLoadRequest){hardwareOverviewLoading=false;if(element('hardware-overview-refresh'))button('hardware-overview-refresh').disabled=false}}
+  if(!devices.some(d=>d.id===deviceID))deviceID=devices[0]?.id||'';selectDevice(deviceID);if(element<HTMLDialogElement>('hardware-library-dialog').open)renderHardwareLibrary();return true;
+ }catch(e){if(chosen===task&&request===hardwareLoadRequest)notify('设备读取失败：'+(e as Error).message);return false}finally{if(request===hardwareLoadRequest){if(element('device-refresh'))button('device-refresh').disabled=false}}
 }
 function closeHardwareView(){const h=hardwareView;if(h){h.alive=false;h.resize.disconnect();clearTimeout(h.flushTimer);h.pending=[];h.term.dispose();hardwareView=null}}
 function selectDevice(id:string){
@@ -141,7 +136,7 @@ function hardwareCanWrite(h:HardwareView|null){return !!h&&toolsTab==='hardware'
 function renderHardwareState(){
  if(!element('hardware-panel'))return;const h=hardwareView,d=devices.find(d=>d.id===deviceID),relayDevice=d?.kind==='relay',terminal=input('device-view').value==='terminal'&&!relayDevice;
  element('hardware-task-filter').classList.toggle('hidden',terminal);element<HTMLSelectElement>('device-view').querySelector<HTMLOptionElement>('option[value=terminal]')!.disabled=!!relayDevice;
- button('device-ai').disabled=!d||!!detail?.task.archived;button('device-ai').textContent=hardwareAIGrants[deviceID]?.read?'AI 权限':'AI 使用';renderHardwareOverview();
+ button('device-ai').disabled=!d||!!detail?.task.archived;button('device-ai').textContent=hardwareAIGrants[deviceID]?.read?'AI 权限':'AI 使用';
  element('relay-panel').classList.toggle('hidden',!relayDevice);element('hardware-send-details').classList.toggle('hidden',!!relayDevice);element('hardware-panel').querySelector('.hardware-keys')!.classList.toggle('hidden',!!relayDevice);
  element('hardware-terminal').classList.toggle('hidden',!terminal);element('device-console').classList.toggle('hidden',terminal);element('hardware-panel').classList.toggle('hardware-log-view',!terminal);
  element('device-description').textContent=d?(d.protocol==='serial'?`${d.device} · ${d.baud} · ${d.data_bits||8}${({none:'N',even:'E',odd:'O',mark:'M',space:'S'} as Record<string,string>)[d.parity||'none']}${d.stop_bits||'1'}`:`${d.protocol.toUpperCase()} · ${d.host}:${d.port}`):'';
@@ -172,8 +167,9 @@ function renderDeviceLog(){const h=hardwareView;if(h&&!h.paused){for(const e of 
 async function pollDevice(){
  const h=hardwareView;if(!authenticated||toolsTab!=='hardware'||!h||h.task!==chosen||h.requesting||document.hidden)return;h.requesting=true;
  try{const r=await api<{events:DeviceEvent[];connected:boolean;connection_id:string;controller_task:string;controller_title:string;relay:HardwareView['relay']}>(`tasks/${h.task}/hardware/${h.id}/events?after=${deviceSeq}`+(h.ready?'&wait=1':'&tail=1'));if(hardwareView!==h||chosen!==h.task)return;
+  const changed=!h.ready||h.generation!==r.connection_id||h.connected!==r.connected||h.controller!==r.controller_task||h.controllerTitle!==r.controller_title||JSON.stringify(h.relay)!==JSON.stringify(r.relay);
   if(h.generation&&h.generation!==r.connection_id)cancelHardwareInput();h.generation=r.connection_id;h.connected=r.connected;h.controller=r.controller_task;h.controllerTitle=r.controller_title;h.relay=r.relay;h.ready=true;
-  deviceEvents.push(...r.events);deviceEvents=deviceEvents.slice(-2000);if(r.events.length)deviceSeq=r.events.at(-1)!.seq;renderDeviceLog();renderHardwareState();
+  if(r.events.length){deviceEvents.push(...r.events);deviceEvents=deviceEvents.slice(-2000);deviceSeq=r.events.at(-1)!.seq;renderDeviceLog()}if(changed)renderHardwareState();
  }catch(e){if(hardwareView===h){h.connected=false;h.ready=false;cancelHardwareInput();renderHardwareState();element('device-status').textContent=(e as Error).message}}finally{h.requesting=false}
 }
 async function deviceAction(action:string,data:unknown){const h=hardwareView;if(!h||h.busy)return;if(action==='send'&&!hardwareCanWrite(h))return;h.busy=true;renderHardwareState();try{await api(`tasks/${h.task}/hardware/${h.id}/${action}`,'POST',{...(data as object),connection_id:h.generation});if(hardwareView===h){if(action==='disconnect'){h.connected=false;h.generation=''}if(action==='connect')h.term.focus()}}catch(e){notify((e as Error).message)}finally{h.busy=false;if(hardwareView===h){renderHardwareState();void pollDevice()}}}
@@ -181,7 +177,7 @@ async function deviceAction(action:string,data:unknown){const h=hardwareView;if(
 function hardwareLogEvents(){return input('hardware-task-log').checked&&(input('device-view').value!=='terminal'||devices.find(d=>d.id===deviceID)?.kind==='relay')?deviceEvents.filter(e=>e.task_id===chosen):deviceEvents}
 async function editHardwareAI(){const d=devices.find(d=>d.id===deviceID);if(!d||detail?.task.archived)return;const task=chosen;try{const grants=await api<Record<string,HardwareGrant>>(`tasks/${task}/hardware-ai`);if(task!==chosen||d.id!==deviceID)return;hardwareAIGrants=grants;hardwareAIEditing={task,device:d};const g=grants[d.id];element('hardware-ai-name').textContent='任务：'+(detail?.task.title||task)+'\n设备：'+d.name+' · '+(d.device||d.host);for(const key of ['read','write','power'] as const)input('hardware-ai-'+key).checked=!!g?.[key];element('hardware-ai-write-row').classList.toggle('hidden',d.kind==='relay');element('hardware-ai-power-row').classList.toggle('hidden',d.kind!=='relay');element('hardware-ai-error').textContent='';renderHardwareAIForm();element<HTMLDialogElement>('hardware-ai-dialog').showModal()}catch(e){notify((e as Error).message)}}
 function renderHardwareAIForm(){const d=hardwareAIEditing?.device,read=input('hardware-ai-read').checked;for(const key of ['write','power']){const el=input('hardware-ai-'+key);el.disabled=!read||!!d?.read_only;if(el.disabled)el.checked=false}if(d?.kind==='relay')input('hardware-ai-write').checked=false;else input('hardware-ai-power').checked=false}
-async function saveHardwareAI(){const editing=hardwareAIEditing;if(!editing||hardwareAISaving)return;hardwareAISaving=true;++hardwareLoadRequest;hardwareOverviewLoading=false;button('hardware-ai-save').disabled=true;
+async function saveHardwareAI(){const editing=hardwareAIEditing;if(!editing||hardwareAISaving)return;hardwareAISaving=true;++hardwareLoadRequest;button('device-refresh').disabled=false;button('hardware-ai-save').disabled=true;
  try{await api<HardwareGrant>(`tasks/${editing.task}/hardware/${editing.device.id}/ai`,'PUT',{read:input('hardware-ai-read').checked,write:input('hardware-ai-write').checked,power:input('hardware-ai-power').checked});element<HTMLDialogElement>('hardware-ai-dialog').close();if(chosen===editing.task)await loadDevices();notify('AI 硬件权限已保存')}
  catch(e){element('hardware-ai-error').textContent=(e as Error).message}finally{hardwareAISaving=false;button('hardware-ai-save').disabled=false}}
 
@@ -195,20 +191,12 @@ function hardwareConnectionText(item:HardwareOverview,task:string){
  if(!connected){const use=item.tasks.find(t=>t.id===task);return '未连接'+(use?.ai.read&&!use.archived?' · AI 可按需连接':'')}
  return '已连接 · '+(owner===task?'本任务控制':owner?'由「'+(title||owner)+'」控制':'控制权空闲');
 }
-function renderHardwareOverview(){
- const host=element('hardware-ai-list');if(!host)return;
- if(hardwareOverviewTask!==chosen){element('hardware-ai-count').textContent='';host.textContent='正在读取设备和权限…';delete host.dataset.snapshot;return}
- const list=hardwareOverview.filter(d=>d.tasks.some(t=>t.id===chosen)),enabled=list.filter(d=>d.tasks.some(t=>t.id===chosen&&!t.archived&&t.ai.read)).length;
- element('hardware-ai-count').textContent=`已授权 ${enabled} / ${list.length}`;
- const html=list.map(item=>{const d=item.config,use=item.tasks.find(t=>t.id===chosen)!;return `<button class="hardware-ai-device ${d.id===deviceID?'selected':''}" data-ai-device="${d.id}" ${use.archived?'disabled':''}><span><strong>${escapeHTML(d.name)}</strong><small>${escapeHTML((d.device||d.host)+' · '+hardwareConnectionText(item,chosen))}</small>${use.active_ai?`<small class="hardware-active-grant">本轮：${escapeHTML(hardwareGrantText(use.active_ai,d))}</small>`:''}</span><span class="hardware-grant ${use.ai.read&&!use.archived?'enabled':''}">${escapeHTML(hardwareGrantText(use.ai,d,use.archived))}</span></button>`}).join('')||'<p class="muted">当前任务尚未添加设备，可从设备库选择。</p>';
- if(host.dataset.snapshot!==html){host.innerHTML=html;host.dataset.snapshot=html}
-}
 function renderHardwareLibrary(){
  if(hardwareLibraryAttaching)return;const host=element('hardware-library-list');
  const html=hardwareOverview.map(item=>{const d=item.config,attached=item.tasks.some(t=>t.id===chosen);return `<article class="library-device"><div class="library-device-head"><div><strong>${escapeHTML(d.name)}</strong><small>${escapeHTML(d.kind==='relay'?'板子电源':d.protocol.toUpperCase())} · ${escapeHTML(d.device||d.host)}</small><small>${escapeHTML(hardwareConnectionText(item,chosen))}</small></div><button data-attach="${d.id}" ${attached||detail?.task.archived?'disabled':''}>${attached?'本任务已添加':'添加到本任务'}</button></div><div class="library-task-list">${item.tasks.map(t=>`<div class="library-task"><button data-hardware-task="${t.id}" data-device="${d.id}" title="打开此任务的硬件面板">${escapeHTML(t.title)}${t.id===chosen?'（本任务）':''}</button><span class="hardware-grant ${t.ai.read&&!t.archived?'enabled':''}">${escapeHTML(hardwareGrantText(t.ai,d,t.archived))}</span>${t.active_ai?`<small>本轮：${escapeHTML(hardwareGrantText(t.active_ai,d))}</small>`:''}</div>`).join('')||'<small>尚未关联任务</small>'}</div></article>`}).join('')||'<p>还没有设备。在硬件面板点击 ＋ 添加。</p>';
  if(host.dataset.snapshot!==html){host.innerHTML=html;host.dataset.snapshot=html}
 }
-async function openHardwareLibrary(){const task=chosen;await loadDevices();if(task!==chosen||hardwareOverviewTask!==task)return;renderHardwareLibrary();element<HTMLDialogElement>('hardware-library-dialog').showModal()}
+async function openHardwareLibrary(){const task=chosen,loaded=await loadDevices();if(!loaded||task!==chosen||hardwareOverviewTask!==task)return;renderHardwareLibrary();element<HTMLDialogElement>('hardware-library-dialog').showModal()}
 async function attachHardwareFromLibrary(id:string){
  if(hardwareLibraryAttaching)return;const task=chosen;hardwareLibraryAttaching=true;element('hardware-library-list').querySelectorAll<HTMLButtonElement>('[data-attach]').forEach(b=>b.disabled=true);
  try{await api(`tasks/${task}/hardware/${id}/attach`,'POST',{});element<HTMLDialogElement>('hardware-library-dialog').close();if(chosen===task){deviceID=id;await loadDevices()}}catch(e){notify((e as Error).message)}finally{hardwareLibraryAttaching=false;delete element('hardware-library-list').dataset.snapshot;renderHardwareLibrary()}

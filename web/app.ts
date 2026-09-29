@@ -32,6 +32,7 @@ function environmentWorkspaceHint(environment:Environment){
 }
 let csrf='',appVersion='',tasks:Task[]=[],settings:Settings,chosen='',detail:Detail|null=null,knowledgeItems:Knowledge[]=[],knowledgeEditing:string|null=null;
 let sequence=0,selection=0,dirty=false,sending=false,polling=false,authenticated=false,refreshList=0,lastList='',lastKnowledge='',noticeTimer:ReturnType<typeof setTimeout>;
+let refreshTask=0,refreshKnowledge=0,polledTask='',pollRequested=false;
 let taskContext:ContextFile[]=[];
 let knowledgeDraftRun='';
 let knowledgeEditTarget:{task:string;selection:number;epoch:number;item:Knowledge|null;run:string}|null=null,knowledgeSaving=false;
@@ -54,6 +55,7 @@ function renewShellScope(){
  for(const cleanup of shellCleanups.splice(0))try{cleanup()}catch{/* Continue releasing the remaining shell resources. */}
  shellController=new AbortController();shellEpoch++;selection++;modelRequest++;taskModelRequest++;modelTestRequest++;
  polling=false;settingsPolling=false;createSubmitting=false;sending=false;sessionResetTask='';
+ refreshList=0;refreshTask=0;refreshKnowledge=0;polledTask='';pollRequested=false;
 }
 function notify(text:string){element('notice').textContent=text;element('notice').classList.add('show');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>element('notice').classList.remove('show'),6500)}
 function taskLink(id=chosen,view='chat'){
@@ -172,7 +174,7 @@ function setCreatePageVisible(visible:boolean){
 function renderList(){
  if(!element('task-list'))return;
  const query=input('search').value.trim(),archived=tasks.filter(t=>t.archived).length;
- button('tasks-active').textContent='任务 · '+(tasks.length-archived);button('tasks-archived').textContent='已归档 · '+archived;
+ for(const [view,label,count] of [['active','任务',tasks.length-archived],['archived','归档',archived]] as const){const control=button('tasks-'+view);if(control.textContent!==label)control.textContent=label;const title=label+' · '+count;control.title=title;control.setAttribute('aria-label',title)}
  for(const view of ['active','archived'])button('tasks-'+view).classList.toggle('selected',taskView===view&&!query);
  element('search-summary').classList.toggle('hidden',!query);button('search-clear').classList.toggle('hidden',!query);
  let html='';
@@ -189,7 +191,7 @@ async function choose(id:string,view='chat'){
  element('conversation').innerHTML='<p id="loading" class="muted">正在读取任务记录…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
  for(const key of ['tabs','task-actions','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
- try{const [d,k]=await Promise.all([api<Detail>('tasks/'+id),api<Knowledge[]>('tasks/'+id+'/knowledge')]);if(token!==selection)return;detail=d;storeKnowledge(k||[]);element('conversation').innerHTML='';appendEvents(d.events);renderTask();switchTab(view);}
+ try{const [d,k]=await Promise.all([api<Detail>('tasks/'+id),api<Knowledge[]>('tasks/'+id+'/knowledge')]);if(token!==selection)return;detail=d;polledTask=id;refreshTask=refreshKnowledge=Date.now();storeKnowledge(k||[]);element('conversation').innerHTML='';appendEvents(d.events);renderTask();switchTab(view);}
  catch(e){if(token===selection)notify((e as Error).message)}
 }
 function switchTab(tab:string){
@@ -288,12 +290,29 @@ function appendEvents(events:EventRecord[]){
  for(const ev of events){if(ev.seq<=sequence)continue;sequence=ev.seq;addConversationEvent(ev)}
  applyConversationFilter();
 }
-async function poll(){
- if(!authenticated||polling||document.hidden||sessionResetTask===chosen&&!!chosen)return;polling=true;const epoch=shellEpoch,signal=shellController.signal,id=chosen,token=selection,approvalRevision=codexApprovalRevision;
- try{if(Date.now()-refreshList>4000){const loaded=await api<Task[]>('tasks','GET',undefined,signal);if(!shellCurrent(epoch))return;tasks=loaded;refreshList=Date.now();renderList()}
-  if(id){const [d,k]=await Promise.all([api<Detail>('tasks/'+id+'?after='+sequence,'GET',undefined,signal),api<Knowledge[]>('tasks/'+id+'/knowledge','GET',undefined,signal)]);if(!shellCurrent(epoch)||token!==selection||approvalRevision!==codexApprovalRevision)return;detail=d;if(k)storeKnowledge(k);appendEvents(d.events);renderTask()}
-  if(element('connection')){element('connection').textContent='';element('connection').classList.add('hidden')}
- }catch(e){if(shellCurrent(epoch)&&element('connection')){element('connection').textContent='连接中断，正在重试';element('connection').classList.remove('hidden')}}finally{if(shellCurrent(epoch))polling=false}
+async function poll(background=false){
+ if(!authenticated||document.hidden||sessionResetTask===chosen&&!!chosen)return;
+ if(polling){if(!background)pollRequested=true;return}
+ polling=true;const epoch=shellEpoch,signal=shellController.signal,id=chosen,token=selection,approvalRevision=codexApprovalRevision;
+ let requested=false;
+ const current=()=>shellCurrent(epoch)&&token===selection&&approvalRevision===codexApprovalRevision;
+ try{
+  if(!background||Date.now()-refreshList>=30000){refreshList=Date.now();requested=true;const loaded=await api<Task[]>('tasks','GET',undefined,signal);if(!shellCurrent(epoch))return;tasks=loaded;renderList()}
+  if(!current())return;
+  const busy=detail?.task.status==='running'||detail?.task.status==='queued';
+  const changedTask=id!==polledTask;
+  let completed=false;
+  if(id&&(!background||changedTask||Date.now()-refreshTask>=(busy?1000:15000))){
+   refreshTask=Date.now();polledTask=id;requested=true;
+   const d=await api<Detail>('tasks/'+id+'?after='+sequence,'GET',undefined,signal);if(!current())return;
+   completed=busy&&d.task.status!=='running'&&d.task.status!=='queued';detail=d;appendEvents(d.events);renderTask();
+  }
+  if(id&&(!background||changedTask||completed||Date.now()-refreshKnowledge>=30000)){
+   refreshKnowledge=Date.now();requested=true;
+   const k=await api<Knowledge[]>('tasks/'+id+'/knowledge','GET',undefined,signal);if(!current())return;if(k)storeKnowledge(k);
+  }
+  if(requested&&element('connection')){element('connection').textContent='';element('connection').classList.add('hidden')}
+ }catch(e){if(shellCurrent(epoch)&&element('connection')){element('connection').textContent='连接中断，正在重试';element('connection').classList.remove('hidden')}}finally{if(shellCurrent(epoch)){polling=false;if(pollRequested){pollRequested=false;void poll()}}}
 }
 async function showCreate(){
  if(!mayLeave())return;
@@ -505,7 +524,7 @@ async function setBinding(bind:boolean){
 }
 window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving){e.preventDefault();e.returnValue=''}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll()});
-setInterval(()=>void poll(),1000);
+setInterval(()=>void poll(true),1000);
 setInterval(()=>void pollSettingsStatus(),5000);
 const initialShellEpoch=shellEpoch;
 void boot().catch(e=>{if(!shellCurrent(initialShellEpoch))return;element('root').innerHTML='<div class="empty"><h2>暂时无法连接工作台</h2><p>'+escapeHTML(e.message)+'</p><button id="retry">重新连接</button></div>';button('retry').onclick=()=>location.reload()});

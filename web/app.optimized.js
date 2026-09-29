@@ -2639,48 +2639,25 @@ async function stopCodexApprovalRun(card) {
         if (detail?.task.id === card.request.task_id) renderWorkflow();
     }
 }
-const collapsedWorkspaces = new Set();
-try {
-    const saved = JSON.parse(localStorage.getItem('jianzuo-folders-v1') || '[]');
-    if (Array.isArray(saved)) saved.filter((x)=>typeof x === 'string').forEach((x)=>collapsedWorkspaces.add(x));
-} catch  {}
-function groupWorkspaceTasks(items) {
-    const groups = new Map();
-    for (const task of [
-        ...items
-    ].sort((a, b)=>Number(b.pinned) - Number(a.pinned) || b.updated - a.updated)){
-        const env = task.environment, path = task.workspace;
-        const key = JSON.stringify([
-            env?.id || '',
-            env?.type || '',
-            env?.host || '',
-            env?.distro || '',
-            env?.user || '',
-            path
-        ]);
-        let group = groups.get(key);
-        if (!group) {
-            group = {
-                key,
-                name: path.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || path,
-                environment: env?.name || '本机',
-                path,
-                tasks: []
-            };
-            groups.set(key, group);
-        }
-        group.tasks.push(task);
-    }
-    return [
-        ...groups.values()
-    ];
-}
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
     return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换工具继续</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items) {
-    return groupWorkspaceTasks(items).map((g)=>`<section class="workspace-group"><button class="workspace-heading" data-workspace="${escapeHTML(g.key)}" aria-expanded="${!collapsedWorkspaces.has(g.key)}" title="${escapeHTML(g.environment + ' · ' + g.path)}"><span class="folder-arrow">${collapsedWorkspaces.has(g.key) ? '›' : '⌄'}</span><span class="folder-name">${escapeHTML(g.name)}</span><small>${escapeHTML(g.environment)}</small></button><div class="workspace-tasks ${collapsedWorkspaces.has(g.key) ? 'hidden' : ''}">${g.tasks.map((t)=>`<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><small class="task-state ${t.status === 'running' || t.status === 'queued' ? 'active' : ''}">${t.archived ? '已归档' : names[t.status] || escapeHTML(t.status)}</small></button>${taskItemMenu(t)}</div>`).join('')}</div></section>`).join('');
+    return [
+        ...items
+    ].sort((a, b)=>Number(b.pinned) - Number(a.pinned) || b.updated - a.updated).map((t)=>{
+        const env = t.environment, environment = env?.name || '本机', location1 = [
+            environment,
+            env?.type,
+            env?.distro,
+            env?.host,
+            env?.user,
+            t.workspace
+        ].filter(Boolean).join(' · ');
+        const folder = t.workspace.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || t.workspace;
+        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1)}" aria-label="${escapeHTML(t.title + '，' + location1)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment">${escapeHTML(environment)}</small></button>${taskItemMenu(t)}</div>`;
+    }).join('');
 }
 function installLayout() {
     let theme = 'light';
@@ -2807,17 +2784,6 @@ function installLayout() {
             else if (kind === 'trash') void trashCurrentTask(id);
             return;
         }
-        const target = node.closest('[data-workspace]');
-        if (!target) return;
-        const key = target.dataset.workspace;
-        if (collapsedWorkspaces.has(key)) collapsedWorkspaces.delete(key);
-        else collapsedWorkspaces.add(key);
-        try {
-            localStorage.setItem('jianzuo-folders-v1', JSON.stringify([
-                ...collapsedWorkspaces
-            ]));
-        } catch  {}
-        renderList();
     });
     const closeTaskMenus = ()=>element('task-list').querySelectorAll('.task-item-menu[open]').forEach((d)=>d.removeAttribute('open'));
     element('task-list').addEventListener('toggle', (e)=>{
@@ -3121,8 +3087,7 @@ let hardwareView = null, hardwarePortsRequest = 0, hardwareEditingTask = '', har
 let hardwarePollTimer, hardwareSaving = false;
 const hardwareDrafts = new Map();
 let hardwareAIGrants = {}, hardwareAIEditing = null;
-let hardwareOverview = [], hardwareOverviewTask = '', hardwareOverviewLoading = false, hardwareAISaving = false, hardwareLibraryAttaching = false;
-let hardwareOverviewTimer;
+let hardwareOverview = [], hardwareOverviewTask = '', hardwareAISaving = false, hardwareLibraryAttaching = false;
 function hexBytes(hex) {
     return Uint8Array.from(hex.match(/.{1,2}/g) || [], (pair)=>parseInt(pair, 16));
 }
@@ -3157,16 +3122,8 @@ function installHardware() {
     };
     button('device-library').onclick = ()=>void openHardwareLibrary();
     button('hardware-library-close').onclick = ()=>element('hardware-library-dialog').close();
-    element('device-library').insertAdjacentHTML('afterend', '<button id="device-ai">AI 使用</button>');
-    element('hardware-panel').insertAdjacentHTML('afterbegin', '<section class="hardware-ai-overview"><div class="hardware-overview-head"><strong>本任务 AI 硬件</strong><span id="hardware-ai-count"></span><button id="hardware-overview-refresh" title="刷新设备连接和任务授权">刷新</button></div><div id="hardware-ai-list"></div><small id="hardware-ai-tip">无需提前连接。点设备设置 AI 权限。</small></section>');
-    button('hardware-overview-refresh').onclick = ()=>void loadDevices();
-    element('hardware-ai-list').onclick = (e)=>{
-        const b = e.target.closest('[data-ai-device]');
-        if (b) {
-            selectDevice(b.dataset.aiDevice);
-            void editHardwareAI();
-        }
-    };
+    element('device-library').insertAdjacentHTML('afterend', '<button id="device-ai">AI 使用</button><button id="device-refresh" title="重新读取设备与权限" aria-label="刷新设备">↻</button>');
+    button('device-refresh').onclick = ()=>void loadDevices();
     element('hardware-library-list').onclick = (e)=>{
         const b = e.target.closest('button');
         if (!b) return;
@@ -3336,14 +3293,7 @@ function installHardware() {
         });
     clearInterval(hardwarePollTimer);
     hardwarePollTimer = setInterval(()=>void pollDevice(), 100);
-    clearInterval(hardwareOverviewTimer);
-    hardwareOverviewTimer = setInterval(()=>{
-        if (authenticated && chosen && !document.hidden && !hardwareOverviewLoading && !hardwareAISaving && (toolsTab === 'hardware' || element('hardware-library-dialog')?.open)) void loadDevices(true);
-    }, 4000);
-    disposeWithShell(()=>{
-        clearInterval(hardwarePollTimer);
-        clearInterval(hardwareOverviewTimer);
-    });
+    disposeWithShell(()=>clearInterval(hardwarePollTimer));
 }
 function hardwareEnter() {
     return ({
@@ -3478,10 +3428,9 @@ function connectSelectedDevice() {
         element('device-password-dialog').showModal();
     } else void deviceAction('connect', {});
 }
-async function loadDevices(silent = false) {
+async function loadDevices() {
     const task = chosen, request = ++hardwareLoadRequest;
     if (!task) return;
-    hardwareOverviewLoading = true;
     if (hardwareOverviewTask !== task) {
         devices = [];
         hardwareAIGrants = {};
@@ -3489,7 +3438,7 @@ async function loadDevices(silent = false) {
         input('device-picker').disabled = true;
         renderHardwareState();
     }
-    button('hardware-overview-refresh').disabled = true;
+    button('device-refresh').disabled = true;
     try {
         const list = await api('hardware/overview');
         if (chosen !== task || request !== hardwareLoadRequest) return;
@@ -3509,18 +3458,14 @@ async function loadDevices(silent = false) {
         picker.disabled = false;
         if (!devices.some((d)=>d.id === deviceID)) deviceID = devices[0]?.id || '';
         selectDevice(deviceID);
-        renderHardwareOverview();
         if (element('hardware-library-dialog').open) renderHardwareLibrary();
-        element('hardware-ai-tip').textContent = '无需提前连接。点设备设置 AI 权限。';
+        return true;
     } catch (e) {
-        if (chosen === task && request === hardwareLoadRequest) {
-            element('hardware-ai-tip').textContent = '刷新失败，当前显示可能已过期。';
-            if (!silent) notify(e.message);
-        }
+        if (chosen === task && request === hardwareLoadRequest) notify('设备读取失败：' + e.message);
+        return false;
     } finally{
         if (request === hardwareLoadRequest) {
-            hardwareOverviewLoading = false;
-            if (element('hardware-overview-refresh')) button('hardware-overview-refresh').disabled = false;
+            if (element('device-refresh')) button('device-refresh').disabled = false;
         }
     }
 }
@@ -3651,7 +3596,6 @@ function renderHardwareState() {
     element('device-view').querySelector('option[value=terminal]').disabled = !!relayDevice;
     button('device-ai').disabled = !d || !!detail?.task.archived;
     button('device-ai').textContent = hardwareAIGrants[deviceID]?.read ? 'AI 权限' : 'AI 使用';
-    renderHardwareOverview();
     element('relay-panel').classList.toggle('hidden', !relayDevice);
     element('hardware-send-details').classList.toggle('hidden', !!relayDevice);
     element('hardware-panel').querySelector('.hardware-keys').classList.toggle('hidden', !!relayDevice);
@@ -3804,6 +3748,7 @@ async function pollDevice() {
     try {
         const r = await api(`tasks/${h.task}/hardware/${h.id}/events?after=${deviceSeq}` + (h.ready ? '&wait=1' : '&tail=1'));
         if (hardwareView !== h || chosen !== h.task) return;
+        const changed = !h.ready || h.generation !== r.connection_id || h.connected !== r.connected || h.controller !== r.controller_task || h.controllerTitle !== r.controller_title || JSON.stringify(h.relay) !== JSON.stringify(r.relay);
         if (h.generation && h.generation !== r.connection_id) cancelHardwareInput();
         h.generation = r.connection_id;
         h.connected = r.connected;
@@ -3811,11 +3756,13 @@ async function pollDevice() {
         h.controllerTitle = r.controller_title;
         h.relay = r.relay;
         h.ready = true;
-        deviceEvents.push(...r.events);
-        deviceEvents = deviceEvents.slice(-2000);
-        if (r.events.length) deviceSeq = r.events.at(-1).seq;
-        renderDeviceLog();
-        renderHardwareState();
+        if (r.events.length) {
+            deviceEvents.push(...r.events);
+            deviceEvents = deviceEvents.slice(-2000);
+            deviceSeq = r.events.at(-1).seq;
+            renderDeviceLog();
+        }
+        if (changed) renderHardwareState();
     } catch (e) {
         if (hardwareView === h) {
             h.connected = false;
@@ -3905,7 +3852,7 @@ async function saveHardwareAI() {
     if (!editing || hardwareAISaving) return;
     hardwareAISaving = true;
     ++hardwareLoadRequest;
-    hardwareOverviewLoading = false;
+    button('device-refresh').disabled = false;
     button('hardware-ai-save').disabled = true;
     try {
         await api(`tasks/${editing.task}/hardware/${editing.device.id}/ai`, 'PUT', {
@@ -3941,26 +3888,6 @@ function hardwareConnectionText(item, task) {
     }
     return '已连接 · ' + (owner === task ? '本任务控制' : owner ? '由「' + (title || owner) + '」控制' : '控制权空闲');
 }
-function renderHardwareOverview() {
-    const host = element('hardware-ai-list');
-    if (!host) return;
-    if (hardwareOverviewTask !== chosen) {
-        element('hardware-ai-count').textContent = '';
-        host.textContent = '正在读取设备和权限…';
-        delete host.dataset.snapshot;
-        return;
-    }
-    const list = hardwareOverview.filter((d)=>d.tasks.some((t)=>t.id === chosen)), enabled = list.filter((d)=>d.tasks.some((t)=>t.id === chosen && !t.archived && t.ai.read)).length;
-    element('hardware-ai-count').textContent = `已授权 ${enabled} / ${list.length}`;
-    const html = list.map((item)=>{
-        const d = item.config, use = item.tasks.find((t)=>t.id === chosen);
-        return `<button class="hardware-ai-device ${d.id === deviceID ? 'selected' : ''}" data-ai-device="${d.id}" ${use.archived ? 'disabled' : ''}><span><strong>${escapeHTML(d.name)}</strong><small>${escapeHTML((d.device || d.host) + ' · ' + hardwareConnectionText(item, chosen))}</small>${use.active_ai ? `<small class="hardware-active-grant">本轮：${escapeHTML(hardwareGrantText(use.active_ai, d))}</small>` : ''}</span><span class="hardware-grant ${use.ai.read && !use.archived ? 'enabled' : ''}">${escapeHTML(hardwareGrantText(use.ai, d, use.archived))}</span></button>`;
-    }).join('') || '<p class="muted">当前任务尚未添加设备，可从设备库选择。</p>';
-    if (host.dataset.snapshot !== html) {
-        host.innerHTML = html;
-        host.dataset.snapshot = html;
-    }
-}
 function renderHardwareLibrary() {
     if (hardwareLibraryAttaching) return;
     const host = element('hardware-library-list');
@@ -3974,9 +3901,8 @@ function renderHardwareLibrary() {
     }
 }
 async function openHardwareLibrary() {
-    const task = chosen;
-    await loadDevices();
-    if (task !== chosen || hardwareOverviewTask !== task) return;
+    const task = chosen, loaded = await loadDevices();
+    if (!loaded || task !== chosen || hardwareOverviewTask !== task) return;
     renderHardwareLibrary();
     element('hardware-library-dialog').showModal();
 }
@@ -5295,6 +5221,11 @@ function installProductivity() {
     input('search').maxLength = 160;
     input('search').setAttribute('aria-label', '统一搜索');
     input('search').insertAdjacentHTML('afterend', '<nav class="task-views" aria-label="任务视图"><button id="tasks-active" class="selected">任务</button><button id="tasks-archived">已归档</button></nav><div id="search-summary" class="muted hidden"></div><button id="search-clear" class="subtle hidden">清空搜索</button>');
+    const create = button('new-task');
+    create.textContent = '＋';
+    create.title = '新建任务';
+    create.setAttribute('aria-label', '新建任务');
+    element('tasks-active').parentElement.append(create);
     input('search').oninput = ()=>{
         searchRequest++;
         clearTimeout(searchTimer);
@@ -5319,6 +5250,7 @@ function installProductivity() {
         taskView = view;
         button('search-clear').click();
         renderList();
+        void poll();
     };
     element('task-model').insertAdjacentHTML('beforebegin', '<button id="files-tab">文件与改动</button>');
     button('files-tab').onclick = ()=>switchTab('files');
@@ -5968,6 +5900,7 @@ function environmentWorkspaceHint(environment) {
 }
 let csrf = '', appVersion = '', tasks = [], settings, chosen = '', detail = null, knowledgeItems = [], knowledgeEditing = null;
 let sequence = 0, selection = 0, dirty = false, sending = false, polling = false, authenticated = false, refreshList = 0, lastList = '', lastKnowledge = '', noticeTimer;
+let refreshTask = 0, refreshKnowledge = 0, polledTask = '', pollRequested = false;
 let taskContext = [];
 let knowledgeDraftRun = '';
 let knowledgeEditTarget = null, knowledgeSaving = false;
@@ -6006,6 +5939,11 @@ function renewShellScope() {
     createSubmitting = false;
     sending = false;
     sessionResetTask = '';
+    refreshList = 0;
+    refreshTask = 0;
+    refreshKnowledge = 0;
+    polledTask = '';
+    pollRequested = false;
 }
 function notify(text) {
     element('notice').textContent = text;
@@ -6437,8 +6375,24 @@ function setCreatePageVisible(visible) {
 function renderList() {
     if (!element('task-list')) return;
     const query = input('search').value.trim(), archived = tasks.filter((t)=>t.archived).length;
-    button('tasks-active').textContent = '任务 · ' + (tasks.length - archived);
-    button('tasks-archived').textContent = '已归档 · ' + archived;
+    for (const [view, label, count] of [
+        [
+            'active',
+            '任务',
+            tasks.length - archived
+        ],
+        [
+            'archived',
+            '归档',
+            archived
+        ]
+    ]){
+        const control = button('tasks-' + view);
+        if (control.textContent !== label) control.textContent = label;
+        const title = label + ' · ' + count;
+        control.title = title;
+        control.setAttribute('aria-label', title);
+    }
     for (const view of [
         'active',
         'archived'
@@ -6507,6 +6461,8 @@ async function choose(id, view = 'chat') {
         ]);
         if (token !== selection) return;
         detail = d;
+        polledTask = id;
+        refreshTask = refreshKnowledge = Date.now();
         storeKnowledge(k || []);
         element('conversation').innerHTML = '';
         appendEvents(d.events);
@@ -6807,30 +6763,48 @@ function appendEvents(events) {
     }
     applyConversationFilter();
 }
-async function poll() {
-    if (!authenticated || polling || document.hidden || sessionResetTask === chosen && !!chosen) return;
+async function poll(background = false) {
+    if (!authenticated || document.hidden || sessionResetTask === chosen && !!chosen) return;
+    if (polling) {
+        if (!background) pollRequested = true;
+        return;
+    }
     polling = true;
     const epoch = shellEpoch, signal = shellController.signal, id = chosen, token = selection, approvalRevision = codexApprovalRevision;
+    let requested = false;
+    const current = ()=>shellCurrent(epoch) && token === selection && approvalRevision === codexApprovalRevision;
     try {
-        if (Date.now() - refreshList > 4000) {
+        if (!background || Date.now() - refreshList >= 30000) {
+            refreshList = Date.now();
+            requested = true;
             const loaded = await api('tasks', 'GET', undefined, signal);
             if (!shellCurrent(epoch)) return;
             tasks = loaded;
-            refreshList = Date.now();
             renderList();
         }
-        if (id) {
-            const [d, k] = await Promise.all([
-                api('tasks/' + id + '?after=' + sequence, 'GET', undefined, signal),
-                api('tasks/' + id + '/knowledge', 'GET', undefined, signal)
-            ]);
-            if (!shellCurrent(epoch) || token !== selection || approvalRevision !== codexApprovalRevision) return;
+        if (!current()) return;
+        const busy = detail?.task.status === 'running' || detail?.task.status === 'queued';
+        const changedTask = id !== polledTask;
+        let completed = false;
+        if (id && (!background || changedTask || Date.now() - refreshTask >= (busy ? 1000 : 15000))) {
+            refreshTask = Date.now();
+            polledTask = id;
+            requested = true;
+            const d = await api('tasks/' + id + '?after=' + sequence, 'GET', undefined, signal);
+            if (!current()) return;
+            completed = busy && d.task.status !== 'running' && d.task.status !== 'queued';
             detail = d;
-            if (k) storeKnowledge(k);
             appendEvents(d.events);
             renderTask();
         }
-        if (element('connection')) {
+        if (id && (!background || changedTask || completed || Date.now() - refreshKnowledge >= 30000)) {
+            refreshKnowledge = Date.now();
+            requested = true;
+            const k = await api('tasks/' + id + '/knowledge', 'GET', undefined, signal);
+            if (!current()) return;
+            if (k) storeKnowledge(k);
+        }
+        if (requested && element('connection')) {
             element('connection').textContent = '';
             element('connection').classList.add('hidden');
         }
@@ -6840,7 +6814,13 @@ async function poll() {
             element('connection').classList.remove('hidden');
         }
     } finally{
-        if (shellCurrent(epoch)) polling = false;
+        if (shellCurrent(epoch)) {
+            polling = false;
+            if (pollRequested) {
+                pollRequested = false;
+                void poll();
+            }
+        }
     }
 }
 async function showCreate() {
@@ -7638,7 +7618,7 @@ window.addEventListener('beforeunload', (e)=>{
 document.addEventListener('visibilitychange', ()=>{
     if (!document.hidden) void poll();
 });
-setInterval(()=>void poll(), 1000);
+setInterval(()=>void poll(true), 1000);
 setInterval(()=>void pollSettingsStatus(), 5000);
 const initialShellEpoch = shellEpoch;
 void boot().catch((e)=>{
@@ -8048,10 +8028,7 @@ const dockSideLabels = {
 };
 const dockPanelSides = {
     sticky: [
-        'sidebar',
-        'left',
-        'right',
-        'bottom'
+        'sidebar'
     ],
     tools: [
         'left',
@@ -8111,9 +8088,7 @@ function dockZoneID(side) {
     return side === 'sidebar' ? 'sidebar' : 'dock-' + side;
 }
 function effectiveDockSide(panel) {
-    const side = dockLayout[panel];
-    if (panel === 'sticky' && (side === 'left' || side === 'right') && dockNarrow.matches) return 'bottom';
-    return side;
+    return panel === 'sticky' ? 'sidebar' : dockLayout[panel];
 }
 function syncDocks() {
     const visible = (zone)=>Array.from(zone.children).some((node)=>{
@@ -8130,14 +8105,14 @@ function syncDocks() {
     }
 }
 function applyDockLayout(save = false) {
+    dockLayout.sticky = 'sidebar';
     for (const panel of [
         'sticky',
         'tools'
     ]){
         const node = element(dockPanelIDs[panel]), zone = element(dockZoneID(effectiveDockSide(panel)));
         if (!node || !zone) continue;
-        if (zone.id === 'sidebar') zone.append(node);
-        else zone.append(node);
+        if (node.parentElement !== zone) zone.append(node);
     }
     for (const side of [
         'sidebar',
@@ -8206,10 +8181,6 @@ function installDockDrag() {
     };
     const hosts = [
         [
-            'sticky',
-            element('sticky-board')?.querySelector('header') || null
-        ],
-        [
             'tools',
             element('tool-dock')?.querySelector('.tool-dock-head') || null
         ]
@@ -8264,15 +8235,14 @@ function installDockUI() {
         if (zone) zone.dataset.dockZone = side;
     }
     const form = element('appearance-form');
-    if (form && !document.getElementById('appearance-sticky-zone')) {
+    if (form && !document.getElementById('appearance-tools-zone')) {
         const section = document.createElement('div');
         section.className = 'dock-layout-section';
         const options = (panel)=>dockPanelSides[panel].map((side)=>`<option value="${side}">${dockSideLabels[side]}</option>`).join('');
-        section.innerHTML = `<h3 class="section-title">面板位置</h3><div class="form-grid"><div><label for="appearance-sticky-zone">便签栏</label><select id="appearance-sticky-zone">${options('sticky')}</select></div><div><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select></div></div><p>拖动面板标题左侧的 ⠿ 手柄可以直接换栏，双击手柄按顺序切换。窄窗口沿用单栏布局。</p>`;
+        section.innerHTML = `<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签固定在左侧任务栏，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
         const footer = form.querySelector('.dialog-footer');
         form.insertBefore(section, footer);
         for (const panel of [
-            'sticky',
             'tools'
         ]){
             const select = element('appearance-' + panel + '-zone');
@@ -8285,7 +8255,7 @@ function installDockUI() {
 function installDockLayout() {
     dockLayout = loadDockLayout();
     installDockUI();
-    applyDockLayout(false);
+    applyDockLayout(true);
     for (const id of [
         'sticky-board',
         'tool-dock'

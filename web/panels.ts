@@ -170,13 +170,13 @@ function resetPanelLayout(){
  notify('面板布局已恢复默认。');
 }
 
-/* Free three-column layout: every panel can live in the task column, either tool column, or under the conversation. */
+/* Notes stay in the task column. Only the tool panel can change columns. */
 type DockSide='sidebar'|'left'|'right'|'bottom';
 type DockPanel='sticky'|'tools';
 const dockPanelIDs:Record<DockPanel,string>={sticky:'sticky-board',tools:'tool-dock'};
 const dockPanelLabels:Record<DockPanel,string>={sticky:'便签栏',tools:'工具面板'};
 const dockSideLabels:Record<DockSide,string>={sidebar:'任务栏',left:'左栏',right:'右栏',bottom:'对话下方'};
-const dockPanelSides:Record<DockPanel,DockSide[]>={sticky:['sidebar','left','right','bottom'],tools:['left','right']};
+const dockPanelSides:Record<DockPanel,DockSide[]>={sticky:['sidebar'],tools:['left','right']};
 const dockZoneSides:Record<string,DockSide>={sidebar:'sidebar','dock-left':'left','dock-right':'right','dock-bottom':'bottom'};
 const defaultDockLayout:Record<DockPanel,DockSide>={sticky:'sidebar',tools:'right'};
 let dockLayout:Record<DockPanel,DockSide>={...defaultDockLayout},dockDrag:DockPanel|''='';
@@ -190,17 +190,17 @@ function parseDockLayout(raw:string|null):Record<DockPanel,DockSide>{
 function loadDockLayout():Record<DockPanel,DockSide>{try{return parseDockLayout(localStorage.getItem('jianzuo-dock-layout-v1'))}catch{return {...defaultDockLayout}}}
 function persistDockLayout(){try{localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify(dockLayout))}catch{}}
 function dockZoneID(side:DockSide){return side==='sidebar'?'sidebar':'dock-'+side}
-function effectiveDockSide(panel:DockPanel):DockSide{const side=dockLayout[panel];if(panel==='sticky'&&(side==='left'||side==='right')&&dockNarrow.matches)return 'bottom';return side}
+function effectiveDockSide(panel:DockPanel):DockSide{return panel==='sticky'?'sidebar':dockLayout[panel]}
 function syncDocks(){
  const visible=(zone:HTMLElement)=>Array.from(zone.children).some(node=>{const child=node as HTMLElement;return !child.classList.contains('panel-resizer')&&!child.classList.contains('hidden')&&!child.hidden});
  for(const side of ['left','right','bottom'] as DockSide[]){const zone=element(dockZoneID(side));if(zone)zone.classList.toggle('hidden',!visible(zone))}
 }
 function applyDockLayout(save=false){
+ dockLayout.sticky='sidebar';
  for(const panel of ['sticky','tools'] as DockPanel[]){
   const node=element(dockPanelIDs[panel]),zone=element(dockZoneID(effectiveDockSide(panel)));
   if(!node||!zone)continue;
-  if(zone.id==='sidebar')zone.append(node);
-  else zone.append(node);
+  if(node.parentElement!==zone)zone.append(node);
  }
  for(const side of ['sidebar','left','right','bottom'] as DockSide[]){
   const zone=element(dockZoneID(side));if(!zone)continue;
@@ -238,7 +238,7 @@ function installDockDrag(){
    zone.classList.toggle('dock-target',!!panel&&!!side&&dockPanelSides[panel].includes(side));
   }
  };
- const hosts:[DockPanel,Element|null][]=[['sticky',element('sticky-board')?.querySelector('header')||null],['tools',element('tool-dock')?.querySelector('.tool-dock-head')||null]];
+ const hosts:[DockPanel,Element|null][]=[['tools',element('tool-dock')?.querySelector('.tool-dock-head')||null]];
  for(const [panel,host] of hosts){
   const grip=dockGrip(panel,host);if(!grip||grip.dataset.dockBound)continue;
   grip.dataset.dockBound='1';
@@ -263,12 +263,12 @@ function installDockDrag(){
 function installDockUI(){
  for(const [id,side] of Object.entries(dockZoneSides)){const zone=element(id);if(zone)zone.dataset.dockZone=side}
  const form=element('appearance-form');
- if(form&&!document.getElementById('appearance-sticky-zone')){
+ if(form&&!document.getElementById('appearance-tools-zone')){
   const section=document.createElement('div');section.className='dock-layout-section';
   const options=(panel:DockPanel)=>dockPanelSides[panel].map(side=>`<option value="${side}">${dockSideLabels[side]}</option>`).join('');
-  section.innerHTML=`<h3 class="section-title">面板位置</h3><div class="form-grid"><div><label for="appearance-sticky-zone">便签栏</label><select id="appearance-sticky-zone">${options('sticky')}</select></div><div><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select></div></div><p>拖动面板标题左侧的 ⠿ 手柄可以直接换栏，双击手柄按顺序切换。窄窗口沿用单栏布局。</p>`;
+  section.innerHTML=`<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签固定在左侧任务栏，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
   const footer=form.querySelector('.dialog-footer');form.insertBefore(section,footer);
-  for(const panel of ['sticky','tools'] as DockPanel[]){
+  for(const panel of ['tools'] as DockPanel[]){
    const select=element<HTMLSelectElement>('appearance-'+panel+'-zone');
    select.onchange=()=>moveDockPanel(panel,select.value as DockSide);
   }
@@ -276,7 +276,7 @@ function installDockUI(){
  installDockDrag();syncDockSelects();
 }
 function installDockLayout(){
- dockLayout=loadDockLayout();installDockUI();applyDockLayout(false);
+ dockLayout=loadDockLayout();installDockUI();applyDockLayout(true);
  for(const id of ['sticky-board','tool-dock']){
   const node=element(id);
   const observer=new MutationObserver(()=>syncDocks());observer.observe(node,{attributes:true,attributeFilter:['class']});disposeWithShell(()=>observer.disconnect());

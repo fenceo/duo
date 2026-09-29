@@ -15,7 +15,7 @@ const source=[
  extract(app,'// A mounted login/workbench shell','function notify('),
  extract(app,'async function api<','function markdown('),
  extract(app,'async function boot(','function renderShell('),
- extract(app,'async function poll(){','async function showCreate('),
+ extract(app,'async function poll(background=false){','async function showCreate('),
  extract(app,'async function openSettings(','function environmentPickers('),
  extract(app,'async function saveSettings(','async function openBinding('),
  extract(engines,'async function loadEngineSettings(','function populateEngineProfileForm('),
@@ -32,7 +32,7 @@ function fixture(){
  const ctx=createContext({
   AbortController,URLSearchParams,Date,Error,console,selection:0,modelRequest:0,taskModelRequest:0,modelTestRequest:0,
   polling:false,settingsPolling:false,createSubmitting:false,sending:false,sessionResetTask:'',csrf:'synthetic-token',
-  authenticated:true,chosen:'',refreshList:0,sequence:0,codexApprovalRevision:0,
+  authenticated:true,chosen:'',detail:null,refreshList:0,refreshTask:0,refreshKnowledge:0,polledTask:'',pollRequested:false,sequence:0,codexApprovalRevision:0,
   settings:{config:configuration,secret_configured:false,feishu_status:'before',chat:''},tasks:[],workCatalog:{},editingEnvironments:[],editingID:'',
   engineCatalog:null,engineSettingsRequest:0,document:{hidden:false,querySelector(){return null}},location:{search:''},
   element:node,button:node,input:node,notify:message=>notices.push(message),escapeHTML:value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
@@ -120,6 +120,15 @@ for(const status of [401,403,409]){
  await pending;
  assert.equal(f.ctx.tasks,fresh);assert.equal(f.ctx.polling,true,'old poll finally must not release the new poll');
  assert.equal(f.counts.render,0);
+}
+for(const changed of ['selection','codexApprovalRevision']){
+ const f=fixture(),gate=deferred(),original={task:{id:'task',status:'running'}};let reads=0;
+ f.ctx.chosen='task';f.ctx.detail=original;
+ f.ctx.api=path=>{if(path==='tasks')return Promise.resolve([]);reads++;return gate.promise};
+ const pending=f.ctx.poll();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,1);f.ctx[changed]++;
+ gate.resolve({task:{id:'task',status:'done'},events:[]});await pending;
+ assert.equal(f.ctx.detail,original,'late polling must not replace a changed selection or approval state');
+ assert.equal(reads,1,'stale polling must not continue fetching knowledge');
 }
 {
  const f=fixture(),gate=deferred();f.ctx.api=()=>gate.promise;

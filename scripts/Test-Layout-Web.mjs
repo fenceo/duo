@@ -15,7 +15,7 @@ const declarations=(selector,source=css)=>{
  }));
 };
 assert.equal(declarations('#sticky-board.quick-notes>header').display,'grid');
-assert.equal(declarations('#sticky-board.quick-notes>header')['grid-template-columns'],'16px auto minmax(0,1fr) 40px');
+assert.equal(declarations('#sticky-board.quick-notes>header')['grid-template-columns'],'auto minmax(0,1fr) 40px');
 assert.equal(declarations('#sticky-board.quick-notes #sticky-count')['white-space'],'nowrap');
 assert.equal(declarations('#sticky-board.quick-notes #sticky-list')['overflow'],'auto');
 assert.equal(declarations('#sticky-board.quick-notes[data-collapsed="true"]').height,'auto');
