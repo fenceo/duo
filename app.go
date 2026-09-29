@@ -25,6 +25,8 @@ type worker struct {
 type App struct {
 	vaultMu         sync.Mutex
 	vaultReport     VaultReport
+	vaultCacheRoot  string
+	vaultCache      map[string]vaultCachedFile
 	codexRequests   *CodexRequests
 	hardwareAI      *HardwareAI
 	hardwareAddress string
@@ -360,6 +362,9 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						input = contextText + input
 						_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
 					}
+					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture && automatic.Organize {
+						input = memoryPrompt(r.ID) + input
+					}
 				}
 				if task.Engine == "codex" && r.Kind == "chat" {
 					control := newCodexTurnControl(func(text string) error {
@@ -384,6 +389,9 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					if kind == "session" {
 						_, _ = a.store.Exec("UPDATE tasks SET session=? WHERE id=?", text, id)
 						return
+					}
+					if kind == "assistant" && r.Kind == "chat" {
+						text, _ = splitTaskMemory(text, r.ID)
 					}
 					_ = a.store.event(id, r.ID, kind, text)
 					a.changed()
@@ -416,6 +424,10 @@ func (a *App) clearRunControl(id string, w *worker) {
 	w.runID, w.runKind = "", ""
 }
 func (a *App) finish(id string, r Run, session, result string, err error) {
+	var memory *taskMemory
+	if r.Kind == "chat" {
+		result, memory = splitTaskMemory(result, r.ID)
+	}
 	status := "done"
 	failure := ""
 	if err != nil {
@@ -441,6 +453,9 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 		}
 		if e == nil && status == "done" && (previous == "running" || previous == "queued") {
 			captured, captureErr = captureAutomaticKnowledge(tx, id, r.ID)
+			if captureErr == nil {
+				captureErr = captureTaskMemory(tx, id, r.ID, memory)
+			}
 		}
 		if e == nil {
 			e = tx.Commit()
@@ -454,7 +469,7 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 	} else if captureErr != nil {
 		_ = a.store.event(id, r.ID, "progress", "本轮结果已保存，但自动记录知识失败；可在对话底部手动保存。")
 	} else if captured.ID != "" {
-		_ = a.store.event(id, r.ID, "progress", "已自动记录到任务知识（待验证），来源 ID："+captured.ID)
+		_ = a.store.event(id, r.ID, "progress", "已自动记录到任务资料，来源 ID："+captured.ID)
 	}
 	_ = a.store.event(id, r.ID, "status", status+" "+failure)
 	a.changed()

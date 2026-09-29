@@ -58,6 +58,11 @@ func fixture(t *testing.T, r Runner) *App {
 	if e != nil {
 		t.Fatal(e)
 	}
+	// Most fixtures test literal prompts and avoid background filesystem writes.
+	// Notebook-specific tests explicitly enable and exercise the production defaults.
+	if _, e = s.Exec(`INSERT INTO settings VALUES('automatic_knowledge','{"capture":true,"recall":true,"organize":false}'); INSERT INTO settings VALUES('knowledge_vault','{"enabled":false}')`); e != nil {
+		t.Fatal(e)
+	}
 	a := newApp(s, c, r)
 	newFeishu(a)
 	t.Cleanup(func() { a.close(); s.Close() })

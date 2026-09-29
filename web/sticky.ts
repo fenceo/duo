@@ -23,8 +23,8 @@ function installStickyBoard(){
  button('sticky-undo').onclick=()=>{if(!stickyDeleted)return;quickNotes.items.splice(Math.min(stickyDeleted.index,quickNotes.items.length),0,stickyDeleted.note);stickyDeleted=null;touchSticky();renderStickyBoard()};
  disposeWithShell(()=>{clearTimeout(stickyTimer);stickyRequest++;stickyLoading=false});
  if(typeof ResizeObserver!=='undefined'){
-  let width=0;const observer=new ResizeObserver(entries=>{const next=entries[0]?.contentRect.width||0;if(next>0&&next!==width){width=next;element('sticky-list').querySelectorAll<HTMLTextAreaElement>('textarea').forEach(fitQuickNote)}});
-  observer.observe(element('sticky-list'));disposeWithShell(()=>observer.disconnect());
+  let width=0,timer:ReturnType<typeof setTimeout>;const observer=new ResizeObserver(entries=>{const next=entries[0]?.contentRect.width||0;if(next>0&&next!==width){width=next;clearTimeout(timer);timer=setTimeout(()=>fitQuickNotes(),120)}});
+  observer.observe(element('sticky-list'));disposeWithShell(()=>{observer.disconnect();clearTimeout(timer)});
  }
  // A temporary logout may interrupt a save; keep its draft in memory.
  if(stickyDirty){stickyError='便签草稿尚未保存，请重试';renderStickyBoard()}else {stickyReady=false;void loadStickyBoard()}
@@ -83,6 +83,7 @@ function addQuickNote(){
  renderStickyBoard();const field=element<HTMLTextAreaElement>('sticky-input-'+note.id);field.focus();field.scrollIntoView?.({block:'nearest'});
 }
 function fitQuickNote(field:HTMLTextAreaElement){field.style.height='auto';if(Number.isFinite(field.scrollHeight))field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}
+function fitQuickNotes(){const fields=Array.from(element('sticky-list').querySelectorAll<HTMLTextAreaElement>('textarea'));fields.forEach(field=>field.style.height='auto');const heights=fields.map(field=>Math.max(32,Math.min(96,field.scrollHeight)));fields.forEach((field,i)=>{if(Number.isFinite(heights[i]))field.style.height=heights[i]+'px'})}
 function renderStickyBoard(){
  const list=element('sticky-list');if(!list)return;
  if(stickyReady&&!quickNotes.items.length)quickNotes.items.push(blankQuickNote());

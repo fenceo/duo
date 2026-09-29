@@ -21,6 +21,7 @@ import (
 const vaultFileLimit = 2 * 1024 * 1024
 
 type VaultConfig struct {
+	TaskFolders      bool   `json:"task_folders"`
 	IncludeAutomatic bool   `json:"include_automatic"`
 	Enabled          bool   `json:"enabled"`
 	Directory        string `json:"directory"`
@@ -41,10 +42,22 @@ type vaultFile struct {
 	Raw        string
 	Properties map[string]any
 }
+type vaultCachedFile struct {
+	Info fs.FileInfo
+	File vaultFile
+}
 
 func (s *Store) vaultConfig() VaultConfig {
-	var c VaultConfig
-	_ = json.Unmarshal([]byte(s.setting("knowledge_vault")), &c)
+	c := VaultConfig{TaskFolders: true}
+	raw := s.setting("knowledge_vault")
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &c)
+	} else {
+		c.Enabled, c.IncludeAutomatic, c.IncludeRuns = true, true, true
+	}
+	if c.Directory == "" && (c.Enabled || raw == "") {
+		c.Directory = filepath.Join(s.directory, "knowledge")
+	}
 	return c
 }
 
@@ -137,13 +150,24 @@ func parseVaultFile(path, raw string) (vaultFile, error) {
 		body = text[4+end+5:]
 	}
 	d := &f.Document
+	switch tags := f.Properties["tags"].(type) {
+	case string:
+		d.Tags = notebookTags(strings.Fields(strings.ReplaceAll(tags, ",", " ")), "")
+	case []any:
+		for _, tag := range tags {
+			if value, ok := tag.(string); ok {
+				d.Tags = append(d.Tags, value)
+			}
+		}
+		d.Tags = notebookTags(d.Tags, "")
+	}
 	d.Content = strings.TrimSpace(body)
 	d.Path = path
 	d.Origin = "vault"
 	if d.Title == "" {
 		d.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	if d.Kind != "knowledge" && d.Kind != "run" {
+	if d.Kind != "knowledge" && d.Kind != "run" && d.Kind != "task" && d.Kind != "insight" && d.Kind != "topic" && d.Kind != "index" {
 		d.Kind = "note"
 		d.Status = knowledgeState(d.Status)
 	}
@@ -170,7 +194,15 @@ func renderVaultFile(d LibraryDocument, properties map[string]any) (string, erro
 	if err = yaml.Unmarshal(raw, &own); err != nil {
 		return "", err
 	}
+	if len(d.Tags) > 0 {
+		own["tags"] = d.Tags
+	}
 	for k, v := range own {
+		if k == "tags" {
+			if _, ok := properties[k]; ok {
+				continue
+			}
+		}
 		properties[k] = v
 	}
 	properties["duo_format"] = 1
@@ -182,6 +214,10 @@ func renderVaultFile(d LibraryDocument, properties map[string]any) (string, erro
 }
 
 func scanVault(ctx context.Context, root string) (map[string]vaultFile, []string, error) {
+	return scanVaultCached(ctx, root, nil)
+}
+
+func scanVaultCached(ctx context.Context, root string, cache map[string]vaultCachedFile) (map[string]vaultFile, []string, error) {
 	files := map[string]vaultFile{}
 	warnings := []string{}
 	total := int64(0)
@@ -226,6 +262,15 @@ func scanVault(ctx context.Context, root string) (map[string]vaultFile, []string
 		if total > 128*1024*1024 || len(files) >= 10000 {
 			return errors.New("Duo 文档超过 128 MiB 或 10000 个文件，请拆分资料目录")
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if prior, ok := cache[rel]; ok && prior.Info.Size() == info.Size() && prior.Info.ModTime().Equal(info.ModTime()) && os.SameFile(prior.Info, info) {
+			files[rel] = prior.File
+			return nil
+		}
 		file, err := os.Open(path)
 		if err != nil {
 			return err
@@ -238,11 +283,6 @@ func scanVault(ctx context.Context, root string) (map[string]vaultFile, []string
 		if len(b) > vaultFileLimit {
 			return errors.New("读取时文件增大，请重试")
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
 		f, err := parseVaultFile(rel, string(b))
 		if err != nil {
 			warnings = append(warnings, rel+"："+err.Error())
@@ -252,8 +292,16 @@ func scanVault(ctx context.Context, root string) (map[string]vaultFile, []string
 			f.Document.Updated = info.ModTime().UnixMilli()
 		}
 		files[rel] = f
+		if cache != nil {
+			cache[rel] = vaultCachedFile{Info: info, File: f}
+		}
 		return nil
 	})
+	for rel := range cache {
+		if _, ok := files[rel]; !ok {
+			delete(cache, rel)
+		}
+	}
 	return files, warnings, err
 }
 
@@ -313,7 +361,7 @@ func writeVaultFile(root, rel, expected, content string) error {
 	return os.Rename(tmp, path)
 }
 
-func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
+func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultReport, err error) {
 	a.vaultMu.Lock()
 	defer a.vaultMu.Unlock()
 	report = VaultReport{Updated: now(), Conflicts: []string{}, Warnings: []string{}}
@@ -327,6 +375,14 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 	if !c.Enabled {
 		return report, nil
 	}
+	if filepath.Clean(c.Directory) == filepath.Clean(filepath.Join(a.store.directory, "knowledge")) {
+		if err = plainVaultPath(c.Directory); err != nil {
+			return report, err
+		}
+		if err = os.MkdirAll(c.Directory, 0700); err != nil {
+			return report, err
+		}
+	}
 	root, err := vaultRoot(c)
 	if err != nil {
 		return report, err
@@ -334,7 +390,18 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return report, err
 	}
-	files, warnings, err := scanVault(ctx, root)
+	var cache map[string]vaultCachedFile
+	if len(background) > 0 && background[0] {
+		if a.vaultCacheRoot != root {
+			a.vaultCacheRoot = root
+			a.vaultCache = map[string]vaultCachedFile{}
+		}
+		cache = a.vaultCache
+	} else {
+		a.vaultCacheRoot = ""
+		a.vaultCache = nil
+	}
+	files, warnings, err := scanVaultCached(ctx, root, cache)
 	report.Warnings = warnings
 	if err != nil {
 		return report, err
@@ -342,6 +409,13 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 	docs, err := a.store.localLibrary(ctx)
 	if err != nil {
 		return report, err
+	}
+	if c.TaskFolders && c.IncludeAutomatic {
+		notebooks, e := a.store.notebookDocuments(ctx)
+		if e != nil {
+			return report, e
+		}
+		docs = append(docs, notebooks...)
 	}
 	for _, d := range docs {
 		if err = ctx.Err(); err != nil {
@@ -353,25 +427,63 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 		if d.Automatic && !c.IncludeAutomatic {
 			continue
 		}
+		if c.TaskFolders && d.Kind == "knowledge" && d.Automatic {
+			continue
+		}
 		localHash := documentHash(d)
-		d.Title = redactContinuation(d.Title)
-		d.TaskTitle = redactContinuation(d.TaskTitle)
-		d.Content = redactContinuation(d.Content)
+		if c.TaskFolders {
+			d.Title = portableKnowledge(d.Title, "")
+			d.TaskTitle = portableKnowledge(d.TaskTitle, "")
+			d.Content = portableKnowledge(d.Content, "")
+			decorateLibraryDocument(&d)
+		} else {
+			d.Title = redactContinuation(d.Title)
+			d.TaskTitle = redactContinuation(d.TaskTitle)
+			d.Content = redactContinuation(d.Content)
+		}
 		if len(d.Content) > vaultFileLimit-8192 {
 			report.Warnings = append(report.Warnings, d.ID+"：内容过大，保留本地原文，未导出")
 			continue
 		}
 		name := strings.TrimPrefix(d.ID, d.Kind+":")
 		// IDs come from the database, but imported data must not form paths.
-		if len(name) != 24 || strings.IndexFunc(name, func(r rune) bool { return !strings.ContainsRune("0123456789abcdef", r) }) >= 0 {
+		if !d.Generated && !validNotebookID(name) {
 			report.Warnings = append(report.Warnings, "无法导出非标准 ID："+d.ID)
 			continue
 		}
 		rel := d.Kind + "/" + name + ".md"
+		if c.TaskFolders {
+			rel = notebookPath(d)
+			if rel == "" {
+				continue
+			}
+		}
 		var link vaultLink
 		e := a.store.QueryRow("SELECT path,local_hash,file_hash FROM library_links WHERE id=?", d.ID).Scan(&link.Path, &link.Local, &link.File)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return report, e
+		}
+		// Upgrade old tracked paths only when the exact file is unchanged. Rename
+		// preserves user properties and never overwrites another document.
+		if e == nil && c.TaskFolders && rel != link.Path {
+			old, ok := files[link.Path]
+			if ok && hash(old.Raw) == link.File {
+				target := filepath.Join(root, filepath.FromSlash(rel))
+				if _, check := os.Lstat(target); os.IsNotExist(check) {
+					if moveErr := writeVaultFile(root, rel, "", old.Raw); moveErr == nil {
+						source := filepath.Join(root, filepath.FromSlash(link.Path))
+						if b, readErr := os.ReadFile(source); readErr == nil && hash(string(b)) == link.File && plainVaultPath(source) == nil {
+							if removeErr := os.Remove(source); removeErr == nil {
+								delete(files, link.Path)
+								old.Document.Path = rel
+								files[rel] = old
+								link.Path = rel
+								link.Local = ""
+							}
+						}
+					}
+				}
+			}
 		}
 		if e == nil {
 			rel = link.Path
@@ -401,6 +513,12 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 			continue
 		}
 		if exists && e == nil && fileHash != link.File {
+			// Auto-maintained summaries/indexes are not allowed to erase edits in an
+			// external editor. Keep the edited document visible and report the conflict.
+			if d.Generated && localHash != link.Local {
+				report.Conflicts = append(report.Conflicts, rel+"：自动文档与外部编辑都已变化，保留外部文件")
+				continue
+			}
 			if localHash != link.Local && (strings.TrimSpace(file.Document.Content) != strings.TrimSpace(d.Content) || file.Document.Title != d.Title || file.Document.Status != d.Status) {
 				report.Conflicts = append(report.Conflicts, rel+"：Duo 和 Obsidian 都已修改")
 				continue
@@ -444,13 +562,15 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 				report.Exported++
 			}
 		}
-		if _, err = a.store.Exec("INSERT INTO library_links VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,local_hash=excluded.local_hash,file_hash=excluded.file_hash", d.ID, rel, localHash, fileHash); err != nil {
+		if _, err = a.store.Exec("INSERT INTO library_links VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,local_hash=excluded.local_hash,file_hash=excluded.file_hash WHERE library_links.path<>excluded.path OR library_links.local_hash<>excluded.local_hash OR library_links.file_hash<>excluded.file_hash", d.ID, rel, localHash, fileHash); err != nil {
 			return report, err
 		}
 	}
 	// Re-read after writes; removals and unparseable/conflicted Git files disappear
 	// from the derived index instead of returning old cached content.
-	files, warnings, err = scanVault(ctx, root)
+	if report.Exported > 0 {
+		files, warnings, err = scanVault(ctx, root)
+	}
 	for _, warning := range warnings {
 		found := false
 		for _, prior := range report.Warnings {
@@ -471,15 +591,39 @@ func (a *App) syncVault(ctx context.Context) (report VaultReport, err error) {
 		return report, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("DELETE FROM library_files"); err != nil {
-		return report, err
+	// Idle scans no longer rewrite the entire SQLite index.
+	indexedRows, e := tx.Query("SELECT path FROM library_files")
+	if e != nil {
+		return report, e
+	}
+	removed := []string{}
+	for indexedRows.Next() {
+		var path string
+		if e = indexedRows.Scan(&path); e != nil {
+			break
+		}
+		if _, ok := files[path]; !ok {
+			removed = append(removed, path)
+		}
+	}
+	if e == nil {
+		e = indexedRows.Err()
+	}
+	indexedRows.Close()
+	if e != nil {
+		return report, e
+	}
+	for _, path := range removed {
+		if _, err = tx.Exec("DELETE FROM library_files WHERE path=?", path); err != nil {
+			return report, err
+		}
 	}
 	for path, f := range files {
 		b, e := json.Marshal(f.Document)
 		if e != nil {
 			return report, e
 		}
-		if _, err = tx.Exec("INSERT INTO library_files VALUES(?,?)", path, string(b)); err != nil {
+		if _, err = tx.Exec("INSERT INTO library_files VALUES(?,?) ON CONFLICT(path) DO UPDATE SET document=excluded.document WHERE library_files.document<>excluded.document", path, string(b)); err != nil {
 			return report, err
 		}
 		report.Indexed++
@@ -493,7 +637,7 @@ func (a *App) vaultLoop() {
 	for {
 		if a.store.vaultConfig().Enabled && !a.updating.Load() {
 			ctx, cancel := context.WithTimeout(a.ctx, 45*time.Second)
-			_, _ = a.syncVault(ctx)
+			_, _ = a.syncVault(ctx, true)
 			cancel()
 		}
 		select {
@@ -517,7 +661,15 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 			return
 		}
 		c.Directory = strings.TrimSpace(c.Directory)
+		if c.Directory == "" {
+			c.Directory = filepath.Join(s.app.store.directory, "knowledge")
+		}
 		if c.Enabled {
+			if filepath.Clean(c.Directory) == filepath.Clean(filepath.Join(s.app.store.directory, "knowledge")) {
+				if err := plainVaultPath(c.Directory); err == nil {
+					_ = os.MkdirAll(c.Directory, 0700)
+				}
+			}
 			if _, err := vaultRoot(c); err != nil {
 				fail(w, 400, err.Error())
 				return

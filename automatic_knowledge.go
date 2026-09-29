@@ -13,8 +13,9 @@ import (
 // Recording is local and uses the final answer already produced by the engine.
 // It never starts another model turn or promotes a claim to verified knowledge.
 type AutomaticKnowledgeConfig struct {
-	Capture bool `json:"capture"`
-	Recall  bool `json:"recall"`
+	Capture  bool `json:"capture"`
+	Recall   bool `json:"recall"`
+	Organize bool `json:"organize"`
 }
 
 type automaticKnowledgeReader interface {
@@ -22,7 +23,7 @@ type automaticKnowledgeReader interface {
 }
 
 func automaticKnowledgeConfig(q automaticKnowledgeReader) (AutomaticKnowledgeConfig, error) {
-	c := AutomaticKnowledgeConfig{Capture: true, Recall: true}
+	c := AutomaticKnowledgeConfig{Capture: true, Recall: true, Organize: true}
 	var raw string
 	err := q.QueryRow("SELECT value FROM settings WHERE key='automatic_knowledge'").Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -108,6 +109,9 @@ func (s *Store) automaticKnowledgeContext(ctx context.Context, task Task) (strin
 	if err != nil || !c.Recall {
 		return "", nil, err
 	}
+	if text, ids, e := s.notebookRecall(ctx, task.ID); e != nil || text != "" {
+		return text, ids, e
+	}
 	rows, err := s.QueryContext(ctx, `SELECT id,run_id,title,status,content FROM knowledge_entries
 WHERE task_id=? AND status IN ('observed','verified') AND trim(content)<>''
 AND NOT EXISTS(SELECT 1 FROM task_options WHERE task_id=? AND deleted=1)
@@ -155,8 +159,9 @@ func (s *Server) automaticKnowledgeRoutes(m *http.ServeMux) {
 		// Require both fields so a partial/stale client cannot silently toggle the
 		// other setting. null is not an instruction to enable a default.
 		var v struct {
-			Capture *bool `json:"capture"`
-			Recall  *bool `json:"recall"`
+			Capture  *bool `json:"capture"`
+			Recall   *bool `json:"recall"`
+			Organize *bool `json:"organize"`
 		}
 		if !body(w, r, &v) {
 			return
@@ -165,7 +170,15 @@ func (s *Server) automaticKnowledgeRoutes(m *http.ServeMux) {
 			fail(w, 400, "请提供自动记录和会话恢复设置")
 			return
 		}
-		c := AutomaticKnowledgeConfig{Capture: *v.Capture, Recall: *v.Recall}
+		c, err := automaticKnowledgeConfig(s.app.store)
+		if err != nil {
+			fail(w, 500, "无法读取现有自动积累设置")
+			return
+		}
+		c.Capture, c.Recall = *v.Capture, *v.Recall
+		if v.Organize != nil {
+			c.Organize = *v.Organize
+		}
 		raw, _ := json.Marshal(c)
 		if err := s.app.store.set("automatic_knowledge", string(raw)); err != nil {
 			fail(w, 500, fmt.Sprint("保存自动积累设置失败：", err))

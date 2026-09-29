@@ -14,7 +14,7 @@ const output=path.resolve('build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
 const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
-const baseRef=process.env.DUO_UI_BASE||'v0.22.13';
+const baseRef=process.env.DUO_UI_BASE||'v0.22.14';
 for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.css']){
  const result=spawnSync('git',['show',baseRef+':web/'+file],{encoding:'utf8',windowsHide:true});
  if(result.status!==0)throw Error('Cannot read UI comparison baseline: '+baseRef);
@@ -30,6 +30,7 @@ cases.push(['home','light',1280,800],['home','dark',390,844],['normal','dark',32
 cases.push(['headernarrow','light',1101,800]);
 cases.push(['live','light',1280,800],['live','dark',390,844],['live','light',320,844],['questions','light',1280,800],['questions','dark',390,844],['questions','light',320,844],['questionsmany','light',390,844]);
 cases.push(['questionsfull','light',1280,800],['questionsfull','dark',390,844],['questionsmanyfull','light',320,844]);
+cases.push(['composerlarge','light',1280,800],['composerlarge','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -50,6 +51,7 @@ for(const [view,theme,width,height] of cases){
  if(view==='home')runInContext("chosen='';detail=null;renderShell();renderList()",ctx);
  if(view==='context')runInContext("taskContext=[{name:'AGENTS.md',label:'项目指令'}];renderSessionBanner()",ctx);
  if(view==='headernarrow')runInContext('appearance.sidebar=420;applyAppearance(appearance)',ctx);
+ if(view==='composerlarge'){document.getElementById('message').style.height='280px';document.getElementById('message').textContent='较长的任务要求：\n'+('记录前提、共识、未决事项，并检查来源与适用条件。\n'.repeat(12))}
  if(view==='live'||view.startsWith('questions')){
   runInContext(`detail.task.status='running';detail.runs[0].status='running';detail.interaction={run_id:'r1',can_steer:true,can_interrupt:true,steering:false,interrupting:false};input('message').value='先检查失败的测试，保持修改范围。';renderTask()`,ctx);
   if(view.startsWith('questions')){
@@ -100,8 +102,9 @@ for(const [view,theme,width,height] of cases){
   }else{
    const baseAPI=ctx.api;
    ctx.api=async(route,...args)=>{
-    if(route.startsWith('library/search'))return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:'knowledge',origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4};
+    if(route.startsWith('library/search'))return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:'task',layer:'tasks',path:'tasks/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4};
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
+    if(route.startsWith('library/document'))return {content:entries[0].content};
     return baseAPI(route,...args);
    };
    await ctx.openLibrary();
@@ -124,6 +127,7 @@ for(const [view,theme,width,height] of cases){
   assert.equal(metrics.width,width,'browser must use the requested CSS viewport width');
   assert.equal(metrics.height,height,'browser must use the requested CSS viewport height');
   const items=metrics.items;
+  if(view==='composerlarge'){assert(items.message.height>=270,'composer resize height was clamped to its old limit');assert(items.conversation.height>=100,'enlarged draft eliminates readable conversation');assert(items.send.y+items.send.height<=height,'resized draft pushes send action off screen')}
   assert(metrics.bodyWidth<=metrics.width+1,'page overflows horizontally');
   if(view==='live'||view.startsWith('questions')){
    for(const id of ['live-steer','live-interrupt','send','stop']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width&&b.y+b.height<=height,id+' is clipped');if(width<=760)assert(b.height>=44,id+' is too short for touch')}

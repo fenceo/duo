@@ -12,18 +12,22 @@ function readPanelSize(key:string,limits:PanelLimits):number{
 function writePanelSize(key:string,value:number){try{localStorage.setItem(key,String(Math.round(value)))}catch{}}
 function clearPanelSize(key:string){try{localStorage.removeItem(key)}catch{}}
 function persistPanelSizes(){try{localStorage.setItem('jianzuo-appearance-v1',JSON.stringify(appearance));localStorage.setItem('jianzuo-theme',appearance.theme)}catch{}}
-function draggablePanel(handle:HTMLElement,axis:'x'|'y',callbacks:{start?:()=>void;move:(event:PointerEvent)=>void;end?:()=>void}){
+function draggablePanel(handle:HTMLElement,axis:'x'|'y',callbacks:{start?:(event:PointerEvent)=>void;move:(event:PointerEvent)=>void;end?:()=>void}){
+ let active=false,frame=0,pending:PointerEvent|null=null;
+ const flush=()=>{frame=0;const event=pending;pending=null;if(active&&event)callbacks.move(event)};
  handle.addEventListener('pointerdown',event=>{
   if(event.button!==0||event.defaultPrevented)return;
   event.preventDefault();
   try{handle.setPointerCapture(event.pointerId)}catch{}
+  active=true;
   handle.classList.add('dragging');
   document.body.classList.add(axis==='x'?'resizing-x':'resizing-y');
-  callbacks.start?.();
+  callbacks.start?.(event);
  });
- handle.addEventListener('pointermove',event=>{if(handle.hasPointerCapture(event.pointerId))callbacks.move(event)});
+ handle.addEventListener('pointermove',event=>{if(active&&handle.hasPointerCapture(event.pointerId)){pending=event;if(!frame)frame=requestAnimationFrame(flush)}});
  const finish=(event:PointerEvent)=>{
-  if(!handle.hasPointerCapture(event.pointerId))return;
+  if(!active)return;
+  if(frame)cancelAnimationFrame(frame);flush();active=false;
   try{handle.releasePointerCapture(event.pointerId)}catch{}
   handle.classList.remove('dragging');
   document.body.classList.remove('resizing-x','resizing-y');
@@ -32,6 +36,7 @@ function draggablePanel(handle:HTMLElement,axis:'x'|'y',callbacks:{start?:()=>vo
  handle.addEventListener('pointerup',finish);
  handle.addEventListener('pointercancel',finish);
  handle.addEventListener('lostpointercapture',finish);
+ disposeWithShell(()=>{if(frame)cancelAnimationFrame(frame);active=false;pending=null;document.body.classList.remove('resizing-x','resizing-y')});
 }
 function panelHandle(id:string,label:string,hint:string,orientation:'vertical'|'horizontal'):HTMLElement{
  const handle=document.createElement('div');
@@ -45,7 +50,8 @@ function panelHandle(id:string,label:string,hint:string,orientation:'vertical'|'
 }
 function setSidebarWidth(value:number,save:boolean){
  appearance.sidebar=Math.round(clampPanel(value,sidebarLimits));
- applyAppearance(appearance);
+ document.documentElement.style.setProperty('--sidebar-width',appearance.sidebar+'px');
+ element('sidebar').dataset.narrow=String(appearance.sidebar<220);
  document.getElementById('sidebar-resizer')?.setAttribute('aria-valuenow',String(appearance.sidebar));
  input('appearance-sidebar').value=String(appearance.sidebar);
  if(save)persistPanelSizes();
@@ -57,8 +63,10 @@ function installSidebarResizer(){
  handle.setAttribute('aria-valuemin',String(sidebarLimits.min));
  handle.setAttribute('aria-valuemax',String(sidebarLimits.max));
  handle.setAttribute('aria-valuenow',String(Math.round(appearance.sidebar)));
+ let left=0;
  draggablePanel(handle,'x',{
-  move:event=>setSidebarWidth(event.clientX-sidebar.getBoundingClientRect().left,false),
+  start:()=>{left=sidebar.getBoundingClientRect().left},
+  move:event=>setSidebarWidth(event.clientX-left,false),
   end:()=>persistPanelSizes(),
  });
  handle.ondblclick=()=>setSidebarWidth(defaultAppearance.sidebar,true);
@@ -70,7 +78,7 @@ function installSidebarResizer(){
 }
 function setToolWidth(value:number,save:boolean){
  appearance.tool=Math.round(clampPanel(value,toolLimits)*10)/10;
- applyAppearance(appearance);
+ element('workspace').style.setProperty('--tool-width',appearance.tool+'%');
  for(const id of ['tool-resizer','dock-left-resizer','dock-right-resizer'])document.getElementById(id)?.setAttribute('aria-valuenow',String(Math.round(appearance.tool)));
  const slider=document.getElementById('appearance-tool') as HTMLInputElement|null;if(slider)slider.value=String(appearance.tool);
  if(save)persistPanelSizes();
@@ -86,8 +94,10 @@ function installDockResizers(){
   handle.setAttribute('aria-valuemin',String(toolLimits.min));
   handle.setAttribute('aria-valuemax',String(toolLimits.max));
   handle.setAttribute('aria-valuenow',String(Math.round(appearance.tool)));
+  let rect:DOMRect;
   draggablePanel(handle,'x',{
-   move:event=>{const rect=workspace.getBoundingClientRect();if(!rect.width)return;setToolWidth((side==='left'?event.clientX-rect.left:rect.right-event.clientX)/rect.width*100,false)},
+   start:()=>{rect=workspace.getBoundingClientRect()},
+   move:event=>{if(!rect.width)return;setToolWidth((side==='left'?event.clientX-rect.left:rect.right-event.clientX)/rect.width*100,false)},
    end:()=>persistPanelSizes(),
   });
   handle.ondblclick=()=>setToolWidth(defaultAppearance.tool,true);
@@ -284,5 +294,22 @@ function installDockLayout(){
  listenWithShell(dockNarrow,'change',()=>applyDockLayout(false));
 }
 function installPanelLayout(){
- installSidebarResizer();installDockResizers();installStickyResizer();installHardwareResizer();installDockLayout();
+ installSidebarResizer();installDockResizers();installStickyResizer();installHardwareResizer();installDockLayout();installComposerResizer();
+}
+
+// Use the same accessible edge on desktop and touch screens. Persist only on
+// release; typing and dragging never rebuild the transcript or the shell.
+function installComposerResizer(){
+ const composer=element('composer'),box=element<HTMLTextAreaElement>('message');
+ const handle=panelHandle('composer-resizer','调整输入框高度','拖动上边缘调整输入框高度','horizontal');
+ composer.prepend(handle);
+ const limits=()=>({min:60,max:Math.max(80,Math.min(600,Math.round(innerHeight*0.55)))});
+ const apply=(height:number,save=false)=>{height=Math.round(clampPanel(height,limits()));box.style.height=height+'px';handle.setAttribute('aria-valuenow',String(height));if(save)writePanelSize('duo-composer-height',height)};
+ const restore=()=>{box.style.removeProperty('height');clearPanelSize('duo-composer-height');handle.removeAttribute('aria-valuenow')};
+ const saved=readPanelSize('duo-composer-height',{min:60,max:600});if(saved)apply(saved);
+ let startY=0,startHeight=0;
+ draggablePanel(handle,'y',{start:event=>{startY=event.clientY;startHeight=box.getBoundingClientRect().height},move:event=>apply(startHeight+startY-event.clientY),end:()=>writePanelSize('duo-composer-height',box.getBoundingClientRect().height)});
+ handle.ondblclick=restore;
+ handle.onkeydown=event=>{if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();apply(box.getBoundingClientRect().height+(event.key==='ArrowUp'?24:-24),true)}else if(event.key==='Home'||event.key==='Enter'){event.preventDefault();restore()}};
+ listenWithShell(window,'resize',()=>{if(box.style.height)apply(parseFloat(box.style.height))});
 }

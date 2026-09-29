@@ -189,7 +189,7 @@ func TestAutomaticKnowledgeSettingsPersistAndRequireAuthenticatedCompleteRequest
 	task := taskFor(t, a)
 	finishAutomaticFixture(t, a, task, "opted out", "do not capture", "chat", nil)
 	items, _ := a.store.knowledgeList(task.ID)
-	if len(items) != 0 || a.store.setting("automatic_knowledge") != `{"capture":false,"recall":false}` {
+	if len(items) != 0 || a.store.setting("automatic_knowledge") != `{"capture":false,"recall":false,"organize":false}` {
 		t.Fatal("disabled setting not persisted or respected", items)
 	}
 	handler := (&Server{app: a}).Handler()

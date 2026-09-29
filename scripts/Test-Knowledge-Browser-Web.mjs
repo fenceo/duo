@@ -16,13 +16,14 @@ ctx.api=async(path,method='GET',body)=>{
  if(path==='library/vault')return {config:{enabled:false},report:{}};
  if(path.startsWith('library/search'))return {documents:new URLSearchParams(path.split('?')[1]).get('offset')==='0'?[hits[0]]:[hits[1]],total:2,truncated:path.endsWith('offset=0'),next_offset:path.endsWith('offset=0')?1:2};
  if(path.startsWith('library/reference'))return {preview:'## 历史资料\n<script>not executable</script>',reference:'\n\n【引用资料】\n来源：knowledge:k1；待验证\n历史资料\n',truncated:false};
+ if(path.startsWith('library/document'))return {...hits[0],content:'## 历史资料\n<script>not executable</script>'};
  throw Error('Unexpected fixture request '+path);
 };
 run("chosen='task';tasks=[{id:chosen,title:'合成任务'}];detail={task:tasks[0],runs:[],events:[]}");
 node('vault-directory').value='unsaved path';
 await ctx.openLibrary();
-assert.equal(node('library-kind').value,'knowledge','knowledge does not default to duplicate original runs');
-assert(calls.find(c=>c.path.startsWith('library/search')).path.includes('kind=knowledge'));
+assert.equal(node('library-layer').value,'tasks','the library starts with task documents');
+assert(calls.find(c=>c.path.startsWith('library/search')).path.includes('layer=tasks'));
 assert.equal(node('vault-directory').value,'unsaved path','overview cannot overwrite settings drafts');
 assert.match(node('library-overview').textContent,/不自动补回/);
 assert.equal(document.querySelector('#library-results img'),null,'listing escapes titles');

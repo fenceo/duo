@@ -1,0 +1,26 @@
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {runInContext} from 'node:vm';
+import assert from 'node:assert/strict';
+
+const {ctx,document,window}=await createWebShellFixture();
+const node=id=>document.getElementById(id),run=s=>runInContext(s,ctx);
+let frames=new Map(),frameID=0;ctx.requestAnimationFrame=callback=>{frames.set(++frameID,callback);return frameID};ctx.cancelAnimationFrame=id=>frames.delete(id);ctx.innerHeight=800;
+const flush=()=>{const callbacks=[...frames.values()];frames.clear();callbacks.forEach(f=>f())};
+const handle=node('sidebar-resizer');let capture=false,writes=0,appearanceCalls=0;
+handle.setPointerCapture=()=>{capture=true};handle.hasPointerCapture=()=>capture;handle.releasePointerCapture=()=>{capture=false};
+const original=ctx.setSidebarWidth;ctx.setSidebarWidth=(...args)=>{writes++;original(...args)};ctx.applyAppearance=()=>{appearanceCalls++};
+const event=(kind,x,y=0)=>{const e=new window.Event(kind,{bubbles:true,cancelable:true});Object.assign(e,{button:0,pointerId:1,clientX:x,clientY:y});return e};
+handle.dispatchEvent(event('pointerdown',248));for(let i=0;i<100;i++)handle.dispatchEvent(event('pointermove',250+i));
+assert.equal(writes,0,'pointer bursts wait for the next paint');assert.equal(frames.size,1,'one scheduled frame for 100 moves');flush();assert.equal(writes,1);assert.equal(appearanceCalls,0,'resizing never resets every appearance property');
+handle.dispatchEvent(event('pointermove',380));handle.dispatchEvent(event('pointerup',380));assert.equal(writes,2,'release flushes the last position');assert(!document.body.classList.contains('resizing-x'));
+assert.match(ctx.localStorage.getItem('jianzuo-appearance-v1'),/380/);
+let requests=0;ctx.api=async()=>{requests++;return []};document.body.classList.add('resizing-x');await ctx.poll();assert.equal(requests,0,'no background task rendering during drag');document.body.classList.remove('resizing-x');
+const composer=node('composer-resizer'),box=node('message');composer.setPointerCapture=()=>{capture=true};composer.hasPointerCapture=()=>capture;composer.releasePointerCapture=()=>{capture=false};box.getBoundingClientRect=()=>({height:parseFloat(box.style.height)||60});box.value='长输入不会丢失';
+composer.dispatchEvent(event('pointerdown',0,500));composer.dispatchEvent(event('pointermove',0,260));flush();assert.equal(box.style.height,'300px');composer.dispatchEvent(event('pointerup',0,260));assert.equal(ctx.localStorage.getItem('duo-composer-height'),'300');assert.equal(box.value,'长输入不会丢失');composer.ondblclick();assert(!box.style.height);assert.equal(ctx.localStorage.getItem('duo-composer-height'),null);
+assert(node('knowledge-filter').classList.contains('hidden'));assert(!document.querySelector('[data-knowledge-state]'));assert.equal(node('library-layer').value,'tasks');
+const doc={id:'notebook:tasks/test/summary.md',path:'tasks/test/summary.md',kind:'task',layer:'tasks',hash:'v1',task_id:'test',task_title:'Synthetic',title:'摘要',tags:['性能'],updated:1,content:'## 摘要\n'+('很长的文档\n'.repeat(4000))};ctx.doc=doc;
+run("chosen='test';detail={task:{id:chosen},runs:[],events:[]};tasks=[{id:chosen,title:'Synthetic'}];libraryTarget={task:chosen,create:false,selection,epoch:shellEpoch};libraryHits=[doc]");
+ctx.api=async path=>{assert(path.startsWith('library/document?'));return doc};await ctx.previewLibrary(doc.id);assert(!node('library-read-more').classList.contains('hidden'));assert(!node('library-download').classList.contains('hidden'));node('library-read-more').onclick();assert(node('library-read-more').classList.contains('hidden'));assert(node('library-preview-content').textContent.length>20000,'full reading is independent of the citation budget');
+let resolve;ctx.api=()=>new Promise(r=>resolve=r);const pending=ctx.previewLibrary(doc.id);assert(node('library-download').classList.contains('hidden'),'old content cannot download under a new name');ctx.clearLibraryPreview();resolve({...doc,content:'late result'});await pending;assert.equal(node('library-preview-content').textContent,'');
+run('authenticated=false;renewShellScope()');assert.equal(frames.size,0,'dispose cancels queued resize writes');
+console.log('PASS: 100 pointer moves coalesce to one size update; no whole-theme rerender or polling during drag; persisted/resizable draft; document layers, full reading, stale download and preview guards. Synthetic only.');

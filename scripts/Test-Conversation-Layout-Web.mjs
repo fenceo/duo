@@ -9,7 +9,7 @@ assert.equal(document.querySelector('.tools-menu'),null,'no extra More menu to r
 assert.equal(node('library-task').closest('.composer-bottom'),document.querySelector('#composer .composer-bottom'));
 assert.equal(node('library-task').parentElement,node('command-open').parentElement);
 assert.equal(node('library-create').parentElement,node('create-submit').parentElement);
-assert.equal(node('message').previousElementSibling,null,'the draft has no reference-button row above it');
+assert.equal(node('message').previousElementSibling?.id,'composer-resizer','the only element above the draft is its thin resize edge');
 assert(node('task-title').parentElement.classList.contains('task-identity'));
 assert.equal(node('task-title').parentElement,node('task-workspace').parentElement);
 for(const id of ['session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-info-open']){

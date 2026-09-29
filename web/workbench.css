@@ -405,6 +405,12 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .knowledge-title[aria-expanded="true"]{color:var(--accent)}.knowledge-actions{flex-wrap:wrap;max-width:100%;min-width:0}.knowledge-actions button{min-height:32px}.knowledge-card[data-state="verified"] .knowledge-state{color:var(--ink);border-color:var(--line)}
 
 /* Compact task navigation and a directly editable shared notepad. */
+.library-layers{display:flex;gap:6px;flex-wrap:wrap;flex:none}.library-layers button{font-size:12px;min-height:36px;padding:6px 12px}.library-layers button.selected{background:var(--tint);color:var(--accent);border-color:var(--accent)}
+.library-document-path{display:block;font-size:11px;color:var(--muted);overflow-wrap:anywhere}.library-tags{font-size:11px;margin:6px 0;color:var(--accent)}
+.library-filters{grid-template-columns:1fr 1fr}.library-filters #library-tag{min-width:0}
+#composer{position:relative}#composer-resizer{display:block;position:absolute;top:-5px;left:12px;right:12px;height:12px;cursor:ns-resize;touch-action:none;z-index:2}#composer-resizer::after{content:'';position:absolute;left:calc(50% - 22px);width:44px;top:5px;height:3px;background:var(--line);border-radius:3px}#composer-resizer:hover::after,#composer-resizer:focus-visible::after{background:var(--accent)}
+#composer #message{resize:none;min-height:60px;max-height:min(600px,55dvh);overflow:auto}
+.resizing-x *,.resizing-y *{transition:none}.resizing-x .conversation,.resizing-y .conversation{overflow-anchor:none}
 .sidebar{padding:12px 10px 10px;gap:8px}
 .sidebar .brand{display:flex;align-items:center;padding:0 3px 3px;gap:8px;min-height:34px;flex:none}
 .sidebar .brand strong{font-size:18px;letter-spacing:.2px}.sidebar .brand .logo{width:28px;height:28px;border-radius:8px;font-size:16px}

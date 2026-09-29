@@ -73,20 +73,21 @@ type workspaceArchiveTask struct {
 }
 
 type workspaceArchiveRun struct {
-	ID          string    `json:"id"`
-	TaskID      string    `json:"task_id"`
-	Input       string    `json:"input"`
-	Kind        string    `json:"kind"`
-	Source      string    `json:"source"`
-	Status      string    `json:"status"`
-	Result      string    `json:"result"`
-	Error       string    `json:"error"`
-	Created     int64     `json:"created"`
-	Finished    int64     `json:"finished"`
-	Started     int64     `json:"started"`
-	Usage       *RunUsage `json:"usage,omitempty"`
-	ModeID      string    `json:"mode_id,omitempty"`
-	Attachments []string  `json:"attachments,omitempty"`
+	Memory      *taskMemory `json:"memory,omitempty"`
+	ID          string      `json:"id"`
+	TaskID      string      `json:"task_id"`
+	Input       string      `json:"input"`
+	Kind        string      `json:"kind"`
+	Source      string      `json:"source"`
+	Status      string      `json:"status"`
+	Result      string      `json:"result"`
+	Error       string      `json:"error"`
+	Created     int64       `json:"created"`
+	Finished    int64       `json:"finished"`
+	Started     int64       `json:"started"`
+	Usage       *RunUsage   `json:"usage,omitempty"`
+	ModeID      string      `json:"mode_id,omitempty"`
+	Attachments []string    `json:"attachments,omitempty"`
 }
 
 type workspaceArchiveEvent struct {
@@ -154,7 +155,7 @@ var (
 	archiveSecretPattern      = regexp.MustCompile(`(?i)(\b(?:api[_-]?key|secret|password|passwd|token|authorization|bearer|private[_-]?key)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
 	archiveKnownTokenPattern  = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b`)
 	archivePrivateKeyPattern  = regexp.MustCompile(`(?s)-----BEGIN [^-]+ PRIVATE KEY-----.*?-----END [^-]+ PRIVATE KEY-----`)
-	archiveWindowsPathPattern = regexp.MustCompile(`(?i)(?:[A-Z]:[\\/]|\\\\)[^\s"'<>]+`)
+	archiveWindowsPathPattern = regexp.MustCompile(`(?i)(?:\b[A-Z]:[\\/]|\\\\)[^\s"'<>]+`)
 	archiveUnixPathPattern    = regexp.MustCompile(`(?m)(^|[\s"'(])/(?:home|mnt|users|root|tmp|var|opt|workspace|work)/[^\s"'<>]+`)
 )
 
@@ -324,6 +325,14 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 		}
 		for _, run := range runs {
 			r := workspaceArchiveRun{ID: run.ID, TaskID: task.ID, Input: redactWorkspaceText(run.Input), Kind: run.Kind, Source: run.Source, Status: run.Status, Result: redactWorkspaceText(run.Result), Error: redactWorkspaceText(run.Error), Created: run.Created, Finished: run.Finished, Started: run.Started, Usage: run.Usage, ModeID: ""}
+			var raw string
+			if e := s.QueryRow("SELECT payload FROM task_memories WHERE run_id=? AND task_id=?", run.ID, task.ID).Scan(&raw); e == nil {
+				var memory taskMemory
+				if json.Unmarshal([]byte(raw), &memory) == nil {
+					clean := portableTaskMemory(memory, task.Workspace)
+					r.Memory = &clean
+				}
+			}
 			if run.Mode != nil {
 				r.ModeID = archiveModeID(mustJSON(run.Mode))
 			}
@@ -645,6 +654,12 @@ func validateWorkspaceArchive(a workspaceArchive) error {
 			return errors.New("导入对话字段无效")
 		}
 		runs[run.ID] = true
+		if run.Memory != nil {
+			raw, e := json.Marshal(run.Memory)
+			if e != nil || len(raw) > 48000 || len(run.Memory.Insights) > 3 || len(run.Memory.Prerequisites) > 8 || len(run.Memory.Decisions) > 8 || len(run.Memory.OpenQuestions) > 8 {
+				return errors.New("导入任务摘要无效")
+			}
+		}
 	}
 	for _, e := range a.Events {
 		if !tasks[e.TaskID] || !runs[e.RunID] || !validArchiveText(e.Text, 2<<20) {
@@ -870,6 +885,16 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 		if _, err = tx.Exec("INSERT INTO knowledge_entries(id,task_id,title,content,status,source,run_id,revision,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)", id, taskIDs[k.TaskID], k.Title, k.Content, knowledgeState(k.Status), knowledgeOrigin(k.Source), runID, maxInt64(k.Revision, 1), k.Created, k.Updated); err != nil {
 			rollback("导入知识失败")
 			return
+		}
+	}
+	for _, run := range data.Archive.Runs {
+		if run.Memory != nil {
+			clean := portableTaskMemory(*run.Memory, "")
+			raw, _ := json.Marshal(clean)
+			if _, err = tx.Exec("INSERT INTO task_memories(run_id,task_id,payload,updated) VALUES(?,?,?,?)", runIDs[run.ID], taskIDs[run.TaskID], string(raw), run.Finished); err != nil {
+				rollback("导入任务摘要失败")
+				return
+			}
 		}
 	}
 	for _, v := range data.Archive.Scratch {

@@ -9,6 +9,11 @@ import (
 )
 
 func TestRedactWorkspaceTextRemovesSecretsAndMachinePaths(t *testing.T) {
+	for _, link := range []string{"https://example.com/docs", "http://example.com/page", "[来源](https://github.com/fenceo/duo)"} {
+		if got := redactWorkspaceText(link); got != link {
+			t.Fatal("public source link was mistaken for a drive path", got)
+		}
+	}
 	input := `token=sk-abcdefghijklmnop C:\Users\alice\project /home/alice/project -----BEGIN RSA PRIVATE KEY----- secret -----END RSA PRIVATE KEY-----`
 	got := redactWorkspaceText(input)
 	for _, want := range []string{"sk-abcdefghijklmnop", `C:\Users\alice\project`, "/home/alice/project", "BEGIN RSA PRIVATE KEY"} {

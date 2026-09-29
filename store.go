@@ -9,6 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -67,7 +68,14 @@ type Note struct {
 	Revision int64  `json:"revision"`
 	Updated  int64  `json:"updated"`
 }
-type Store struct{ *sql.DB }
+type Store struct {
+	*sql.DB
+	directory      string
+	notebookMu     sync.Mutex
+	notebookStamp  int64
+	notebookCached bool
+	notebookCache  []LibraryDocument
+}
 
 func openStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -126,7 +134,7 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
 		db.Close()
 		return nil, err
 	}
-	if _, err = db.Exec(workbenchSchema + librarySchema); err != nil {
+	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -134,7 +142,12 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
 		db.Close()
 		return nil, err
 	}
-	return &Store{db}, nil
+	absoluteDir, err := filepath.Abs(dir)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{DB: db, directory: absoluteDir}, nil
 }
 
 // SQLite has no "ADD COLUMN IF NOT EXISTS", so long-lived installs get the new
