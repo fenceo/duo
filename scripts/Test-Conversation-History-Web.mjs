@@ -65,6 +65,18 @@ assert.equal(tool.querySelector('pre'),null,'closed tool stays closed after a la
 tool.open=true;tool.dispatchEvent(new window.Event('toggle'));await tick();assert.match(tool.querySelector('pre').textContent,/complete synthetic output/);
 assert.equal(calls.filter(path=>path==='tasks/fixture?event=93').length,1,'full record is cached for reopening');
 
+// Per-turn history preserves current run state and the already explored cursor.
+const oldRecords={...structuredClone(initial),runs:[{...initial.runs[4],status:'running'}],events:[{seq:89,run_id:'r9',kind:'assistant',text:'earlier progress',created:10}],conversation:{before:'',has_older:false,sequence:100,has_more:false,records:{r9:{before:89,has_older:false}}}};
+run('conversationRecordPages.set("r9",{before:91,has_older:true})');
+ctx.api=async path=>{calls.push(path);assert.equal(path,'tasks/fixture?recent=1&run=r9&before_event=91');return oldRecords};
+await ctx.loadOlderConversationRecords('r9',run('conversationTurns.get("r9")'));
+assert.equal(run('detail.runs.find(r=>r.id==="r9").status'),'done');assert.equal(run('sequence'),100);
+assert.equal(run('conversationItems.get(89).event.text'),'earlier progress');
+ctx.repeatedPage=structuredClone(initial);ctx.repeatedPage.conversation.records.r9={before:91,has_older:true};
+run('receiveConversationDetail(repeatedPage,"older")');
+assert.equal(run('conversationRecordPages.get("r9").before'),89,'revisiting a round cannot rewind its loaded-history boundary');
+assert.equal(run('conversationRecordPages.get("r9").has_older'),false);
+
 // Network failures preserve recent content and leave a retryable old-page action.
 run('conversationHistory.expanded=true;conversationHistory.hasOlder=true;conversationHistory.before="r0"');
 ctx.api=async()=>{throw new Error('fixture offline')};

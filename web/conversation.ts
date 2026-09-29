@@ -45,7 +45,7 @@ function receiveConversationDetail(next:Detail,mode:'initial'|'poll'|'older'|'re
  const page=next.conversation;
  if(page){
   if(mode==='initial'||mode==='older'||mode==='poll'&&!conversationHistory.expanded){conversationHistory.before=page.before;conversationHistory.hasOlder=page.has_older}
-  for(const [id,records] of Object.entries(page.records))conversationRecordPages.set(id,records);
+  for(const [id,records] of Object.entries(page.records)){const previous=conversationRecordPages.get(id);if(!previous||records.before<previous.before)conversationRecordPages.set(id,records)}
   if(mode==='initial'||mode==='poll')sequence=Math.max(sequence,page.sequence);
  }
  if(mode==='older')conversationHistory.expanded=true;
