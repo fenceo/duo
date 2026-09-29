@@ -352,19 +352,12 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .header .task-identity{display:flex;align-items:center;gap:12px;min-width:0;width:100%}
 .header #task-title{margin:0;flex:0 1 auto;max-width:45%;min-width:3em;font-size:15px;line-height:1.5}
 .header #task-workspace{margin:0;flex:1;min-width:0;font-size:12px;line-height:1.5}
-.session-menu{position:relative;z-index:25;font-size:12px}
-.session-menu>summary{display:flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 10px;list-style:none;cursor:pointer;white-space:nowrap;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
-.session-menu>summary::-webkit-details-marker{display:none}
-.session-menu[open]>summary,.session-menu>summary:hover{background:var(--raised);color:var(--accent)}
-.session-menu[data-state="closed"]>summary{color:var(--danger)}
-.session-menu[data-context="true"]>summary::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent)}
-.session-menu-content{position:absolute;right:0;top:calc(100% + 6px);width:320px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 90px);overflow:auto;padding:12px;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);background:var(--canvas);color:var(--ink);white-space:normal}
+#session-info-dialog{width:min(480px,calc(100vw - 24px))}
+#session-info-open[data-state="closed"]{color:var(--danger)}
+#session-info-open[data-context="true"]{color:var(--accent)}
 .session-info{padding:2px 4px 10px;line-height:1.6;overflow-wrap:anywhere}
 .session-info strong{font-size:13px;font-weight:600}
-.header .session-info p{font-size:12px;line-height:1.6;margin:6px 0 0;white-space:normal;overflow:visible;color:var(--muted)}
-.session-menu-actions{display:grid;gap:2px;border-top:1px solid var(--line);padding-top:6px}
-.header #task-actions .session-menu-actions button{width:100%;padding:8px 10px;min-height:34px;text-align:left;border:0;background:transparent;font-size:13px}
-.header #task-actions .session-menu-actions button:hover:not(:disabled){background:var(--raised)}
+.session-info p{font-size:13px;line-height:1.7;margin:8px 0 0;white-space:normal;color:var(--muted)}
 .session-banner{padding:6px 22px;gap:8px}
 .session-banner .session-text{line-height:1.5;font-size:12px}
 .session-banner #session-recover{min-height:32px;padding:5px 10px;white-space:nowrap}
@@ -427,13 +420,20 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 @container (max-width:190px){.sidebar .task-environment{flex:none;width:28px;text-align:right}.sidebar .task-environment-name{display:none}.sidebar .task-environment-short{display:inline}}
 .sidebar .task-path{display:none;max-width:24%;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 @container (min-width:300px){.sidebar .task-path{display:block}}
-.header-utilities{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
-.app-menu{position:relative;flex:none}.app-menu>summary{display:flex;align-items:center;justify-content:center;list-style:none;width:34px;height:34px;min-height:34px;padding:0;border:1px solid var(--line);border-radius:8px;cursor:pointer;color:var(--muted)}
-.app-menu>summary::-webkit-details-marker{display:none}.app-menu[open]>summary,.app-menu>summary:hover{color:var(--ink);background:var(--surface)}
-.app-menu>nav{position:absolute;right:0;top:calc(100% + 7px);z-index:90;width:172px;padding:5px;border:1px solid var(--line);border-radius:10px;background:var(--canvas);box-shadow:var(--shadow)}
-.app-menu>nav button{display:block;width:100%;font-size:13px;padding:10px 12px;min-height:36px;text-align:left;border:0;background:transparent;color:var(--ink);border-radius:6px}
-.app-menu>nav button:hover{background:var(--surface)}.app-menu>nav #logout{border-top:1px solid var(--line);border-radius:0 0 6px 6px;color:var(--muted);margin-top:4px}
+.header-utilities{display:flex;align-items:center;gap:10px;flex:none;min-width:0}
+.header #task-actions,.header-global-actions{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
+.header-global-actions{border-left:1px solid var(--line);padding-left:10px}
+.header #task-actions>button,.header-global-actions>button{padding:5px 8px;min-height:32px;font-size:12px;white-space:nowrap;border-radius:7px}
+.header-global-actions #settings-open{font-weight:600;color:var(--accent)}
+.header-global-actions #logout{color:var(--muted);background:transparent}
 .header-utilities #connection{font-size:11px;color:var(--muted);max-width:100px}
+@media (min-width:761px) and (max-width:1100px){
+ .header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}
+ .header-utilities{display:contents}.header .task-heading{grid-column:1;grid-row:1}
+ .header-global-actions{grid-column:2;grid-row:1;border:0;padding:0}
+ .header #task-actions{grid-column:1 / -1;grid-row:2;justify-content:flex-end}
+ .header-utilities #connection{grid-column:1 / -1;grid-row:3;max-width:none}
+}
 #sticky-board.quick-notes{--sticky-surface:var(--surface);--sticky-row:var(--canvas);height:var(--sticky-height,300px);min-height:180px;max-height:45dvh;flex:none;padding:0;border:1px solid var(--line);border-radius:9px;background:var(--sticky-surface);box-shadow:none;overflow:visible}
 #sticky-board.quick-notes[data-color="yellow"]{--sticky-surface:#fbf5dd;--sticky-row:#fffcf0}
 #sticky-board.quick-notes[data-color="blue"]{--sticky-surface:#eaf2fb;--sticky-row:#f7faff}
@@ -465,7 +465,6 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 #sticky-board.quick-notes[data-collapsed="true"]{height:auto;min-height:0;max-height:none}#sticky-board.quick-notes[data-collapsed="true"]>header{border-bottom:0}#sticky-board.quick-notes[data-collapsed="true"]>#sticky-resizer{display:none}
 #sticky-board.quick-notes #sticky-body.hidden{display:none}
 @media (max-width:760px){
- .header-utilities{gap:4px}.app-menu>summary{width:44px;height:44px;min-height:44px}.app-menu>nav button{min-height:44px}
  .sidebar{position:fixed;inset:0 auto 0 0;padding:10px;gap:7px;width:min(310px,88vw)}.sidebar #search{min-height:40px}.sidebar>.task-views button{min-height:44px}.sidebar>.task-views #new-task{flex-basis:44px;min-width:44px;min-height:44px}.sidebar .task{min-height:40px}
  #sticky-board.quick-notes{height:var(--sticky-height,280px);min-height:208px;max-height:43dvh}#sticky-board.quick-notes>header{min-height:40px;grid-template-columns:auto minmax(0,1fr) 40px}
  #sticky-board.quick-notes #sticky-expand{min-height:40px;min-width:40px}#sticky-board.quick-notes #sticky-palette button{width:32px;height:32px;min-height:32px}
@@ -475,7 +474,12 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 }
 
 @media(max-width:760px){
- .header{padding:6px 12px;min-height:56px;align-items:center;gap:8px}
+ .header{padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
+ .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
+ .header-global-actions{order:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
+ .header #task-actions{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;width:100%}
+ .header #menu,.header #task-actions>button,.header-global-actions>button{min-height:44px;min-width:0;font-size:12px;padding:5px 6px}
+ .header-utilities #connection{order:3;max-width:none}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
  .library-dialog[open]{width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:14px;gap:8px}
  .library-header{flex-direction:row;align-items:center;flex-wrap:wrap}.library-header p{display:none}.library-header-actions{gap:4px}.library-header-actions button{padding:7px;font-size:11px}
@@ -487,8 +491,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .library-card footer button{min-height:44px}.knowledge-actions button{min-height:40px}
  .header h1{font-size:15px}.header p{font-size:12px}
  .header .task-identity{gap:8px}.header #task-title{max-width:42%;font-size:14px}.header #task-workspace{font-size:11px}
- .header #task-actions{margin-left:0}.header .session-menu>summary{min-height:44px;padding:6px 8px}
- .header #task-actions .session-menu-actions button{min-height:44px}
+ .header #task-actions{margin-left:0}
  .session-banner{padding:6px 12px}.session-banner .session-text{flex:1;min-width:0}
  .session-banner #session-recover{min-height:44px}
  .app button,dialog button{min-height:40px}

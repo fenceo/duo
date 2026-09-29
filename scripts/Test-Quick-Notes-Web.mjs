@@ -9,9 +9,9 @@ assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true');
 assert.equal(node('sticky-board').parentElement,node('sidebar'));
 assert(!node('workspace-open'));assert(!node('sidebar-footer'));
 assert.equal(node('library-open').parentElement,node('app-menu-items'));
-for(const id of ['settings-open','theme-toggle','logout'])assert.equal(node(id).closest('details'),node('app-menu'));
+for(const id of ['settings-open','theme-toggle','logout']){assert.equal(node(id).parentElement,node('app-menu-items'));assert.equal(node(id).closest('details'),null)}
 assert.match(node('app-version').textContent,/^v/);
-assert.equal(node('scratch-tab').closest('details'),node('task-session-menu'),'existing task todos remain accessible');
+assert.equal(node('scratch-tab').parentElement,node('task-actions'),'existing task todos remain directly accessible');
 assert(!node('scratch-tab').classList.contains('hidden'));
 assert.equal(state('chosen'),'','shared notes work without a selected task');
 assert.equal(node('connection').textContent,'');assert(node('connection').classList.contains('hidden'));

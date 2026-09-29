@@ -15,17 +15,14 @@ function installLayout(){
  element('settings-open').insertAdjacentHTML('afterend','<button id="theme-toggle" class="subtle">外观</button>');
  const footer=element('settings-open').parentElement!;
  const utilities=document.createElement('div');utilities.className='header-utilities';utilities.append(element('task-actions'));
- const menu=document.createElement('details');menu.id='app-menu';menu.className='app-menu';
- menu.innerHTML='<summary id="app-menu-toggle" aria-label="工作台设置与工具" title="工作台设置与工具"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m9.5 3-.6 2-2 .9-2-.5-2 3.5 1.4 1.5v2.2L3 14.2l2 3.5 2-.5 2 .9.6 2h4.2l.6-2 2-.9 2 .5 2-3.5-1.4-1.5v-2.2L21 9l-2-3.5-2 .5-2-.9-.6-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary><nav id="app-menu-items" aria-label="工作台工具"></nav>';
- for(const id of ['settings-open','theme-toggle','logout'])menu.querySelector('nav')!.append(element(id));
- utilities.append(menu);document.querySelector('.header')!.append(utilities);
+ const globalActions=document.createElement('nav');globalActions.id='app-menu-items';globalActions.className='header-global-actions';globalActions.setAttribute('aria-label','工作台设置与工具');
+ for(const id of ['settings-open','theme-toggle','logout']){const control=element(id);control.classList.remove('subtle');globalActions.append(control)}
+ utilities.append(globalActions);document.querySelector('.header')!.append(utilities);
  const brand=document.querySelector('#sidebar .brand')!;brand.innerHTML='<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
  brand.append(element('sidebar-close'));button('sidebar-close').textContent='×';button('sidebar-close').setAttribute('aria-label','收起任务列表');
  button('app-version').textContent=appVersion?'v'+appVersion:'版本';button('app-version').onclick=async()=>{await openSettings();showSettingsSection('updates')};
  const connection=element('connection');connection.textContent='';connection.classList.add('hidden');connection.setAttribute('role','status');utilities.prepend(connection);footer.remove();
- menu.addEventListener('click',e=>{if((e.target as HTMLElement).closest('button')){menu.open=false;element('sidebar').classList.remove('open')}});
- listenWithShell(document,'click',e=>{if(!menu.contains(e.target as Node))menu.open=false});
- listenWithShell(document,'keydown',e=>{if((e as KeyboardEvent).key==='Escape'&&menu.open){menu.open=false;element('app-menu-toggle').focus()}});
+ globalActions.addEventListener('click',e=>{if((e.target as HTMLElement).closest('button'))element('sidebar').classList.remove('open')});
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
  const tabs=element('tabs');tabs.prepend(element('conversation-filter'));button('chat-tab').classList.add('hidden');
  for(const id of ['conversation-results','conversation-all'])button(id).addEventListener('click',()=>{if(matchMedia('(max-width:760px)').matches)switchTab('chat')});
@@ -34,15 +31,14 @@ function installLayout(){
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';
  const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);element('task-model-button').title='本任务使用的 AI 工具、模型和推理强度';
  element('bind-open').insertAdjacentHTML('beforebegin','<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');button('task-handoff').onclick=()=>void openHandoff();button('task-link-copy').onclick=()=>void copyTaskLink();
- const sessionMenu=document.createElement('details');sessionMenu.id='task-session-menu';sessionMenu.className='session-menu';
- sessionMenu.innerHTML='<summary id="task-session-toggle" aria-label="会话信息与操作"><span id="task-session-label">会话</span><span aria-hidden="true">⌄</span></summary><div class="session-menu-content"><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="session-menu-actions"><button type="button" id="session-reset" class="hidden">新建会话</button></div></div>';
- element('task-actions').append(sessionMenu);
- const sessionActions=sessionMenu.querySelector('.session-menu-actions')!;
+ const sessionActions=element('task-actions');sessionActions.classList.add('header-session-actions');sessionActions.setAttribute('role','group');sessionActions.setAttribute('aria-label','当前会话操作');
+ sessionActions.insertAdjacentHTML('afterbegin','<button type="button" id="session-reset" class="hidden">新建会话</button>');
  for(const id of ['task-handoff','task-link-copy','bind-open','scratch-tab'])sessionActions.append(element(id));
+ sessionActions.insertAdjacentHTML('beforeend','<button type="button" id="session-info-open" aria-haspopup="dialog">会话信息</button>');
+ element('root').insertAdjacentHTML('beforeend','<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
  button('scratch-tab').textContent='本任务待办';button('session-reset').onclick=()=>void resetSession();
- sessionMenu.addEventListener('click',e=>{const target=(e.target as HTMLElement).closest('button');if(target&&!target.disabled)sessionMenu.open=false});
- listenWithShell(document,'click',e=>{if(!sessionMenu.contains(e.target as Node))sessionMenu.open=false});
- listenWithShell(document,'keydown',e=>{if((e as KeyboardEvent).key==='Escape'&&sessionMenu.open){sessionMenu.open=false;element('task-session-toggle').focus()}});
+ button('session-info-open').onclick=()=>{if(detail){renderSessionBanner();element<HTMLDialogElement>('session-info-dialog').showModal()}};
+ button('session-info-close').onclick=()=>element<HTMLDialogElement>('session-info-dialog').close();
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
  element('composer-wrap').querySelector('.footnote')!.remove();
  element('task-list').addEventListener('click',e=>{

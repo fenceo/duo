@@ -232,20 +232,19 @@ function harnessSessionClosed(value:Detail|null=detail){return value?.task.engin
 // Describe the real native session, not just the persisted conversation log.
 function renderSessionBanner(){
  const banner=element('session-banner');
- if(!detail){banner.classList.add('hidden');element<HTMLDetailsElement>('task-session-menu').open=false;return}
+ if(!detail){banner.classList.add('hidden');element<HTMLDialogElement>('session-info-dialog').close();return}
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
  const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'新会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'新会话已就绪';
  const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
- const menu=element('task-session-menu');menu.dataset.state=closed?'closed':busy?'busy':'live';menu.dataset.context=String(taskContext.length>0);
- element('task-session-label').textContent=closed?'会话已结束':taskContext.length?'会话 · 指令':'会话';
- element('task-session-toggle').title=title;
+ const info=button('session-info-open');info.dataset.state=closed?'closed':busy?'busy':'live';info.dataset.context=String(taskContext.length>0);
+ info.textContent=closed?'会话已结束':taskContext.length?'外部指令':'会话信息';info.title=title;
  element('session-summary').textContent=detail.task.archived?'任务已归档':title;
  element('session-location').textContent=[detail.task.environment?.name,detail.task.workspace].filter(Boolean).join(' · ');
  element('session-description').textContent=explanation;
  const context=element('session-context');context.textContent=taskContext.length?'工作目录有外部 AI 指令：'+taskContext.map(f=>f.label+' · '+f.name).join('、'):'';context.classList.toggle('hidden',!taskContext.length);
  const reset=button('session-reset');reset.classList.toggle('hidden',!detail.task.session||detail.task.archived);reset.disabled=busy||sessionResetTask===detail.task.id;reset.textContent=sessionResetTask===detail.task.id?'正在新建…':'新建会话';
- // Ordinary session information lives in the header menu. A session that
+ // Explanatory session information lives in a dialog. A session that
  // cannot continue still needs a visible recovery action above the chat.
  banner.dataset.state=closed?'closed':busy?'busy':'live';
  banner.classList.toggle('hidden',!closed||!!detail.task.archived);

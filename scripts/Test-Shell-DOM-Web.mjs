@@ -34,7 +34,8 @@ assert.match(document.getElementById('settings-data').textContent,/不含工作�
 assert.match(document.getElementById('settings-data').textContent,/当前版本只支持追加/);
 const sidebarChildren=[...document.getElementById('sidebar').children];
 assert(sidebarChildren.indexOf(document.getElementById('sticky-board'))>sidebarChildren.indexOf(document.getElementById('task-list')));
-assert.equal(document.getElementById('settings-open').closest('details')?.id,'app-menu');
+assert.equal(document.getElementById('settings-open').parentElement.id,'app-menu-items');
+assert.equal(document.getElementById('settings-open').closest('details'),null);
 assert.equal(document.getElementById('sidebar-footer'),null);
 assert.equal(document.querySelectorAll('#model-catalog-actions').length,1);
 assert.equal(document.querySelectorAll('#stop-model-test').length,1);

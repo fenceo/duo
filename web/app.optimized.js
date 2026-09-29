@@ -8,7 +8,7 @@ function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
 function installLibrary() {
-    element('app-menu-items').insertAdjacentHTML('afterbegin', '<button type="button" id="library-open">全局知识库</button>');
+    element('theme-toggle').insertAdjacentHTML('afterend', '<button type="button" id="library-open" title="全局知识库 · 历史与结论" aria-label="全局知识库">知识库</button>');
     element('command-open').insertAdjacentHTML('afterend', '<button type="button" class="library-compose-button" id="library-task" title="引用历史 / 知识" aria-label="引用历史或知识">引用</button>');
     element('create-status').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-create" title="引用历史 / 知识">引用历史 / 知识</button>');
     element('root').insertAdjacentHTML('beforeend', `<dialog id="library-dialog" class="library-dialog"><div class="library-header"><div><h2>全局知识库</h2><p>查找之前的任务记录、结论和 Obsidian 笔记，选好后引用到任务要求中。</p></div><button type="button" id="library-close" aria-label="关闭知识库">关闭</button></div><form id="library-search-form" class="library-search"><input id="library-query" aria-label="搜索知识和历史" placeholder="关键词、报错码；多个词用空格分隔" maxlength="160"><select id="library-kind" aria-label="资料类型"><option value="">全部资料</option><option value="knowledge">结论与经验</option><option value="run">任务记录</option><option value="note">Obsidian 笔记</option></select><select id="library-scope" aria-label="任务范围"><option value="">所有任务与 Vault</option></select><label><input type="checkbox" id="library-stale">包含过时结论</label><button type="submit">查询</button></form><p id="library-state" role="status"></p><div id="library-results" class="library-results"></div><details id="vault-settings"><summary>Obsidian Vault 与 Git 同步</summary><p>选择这台 Duo 服务所在电脑的知识文件根目录。Duo 只读写其中的 <code>Duo/</code> 文件夹；其中的 Markdown 可用编辑器或 Obsidian 查看和编辑。启用后每分钟同步一次，也可手动刷新。</p><label>Vault 绝对路径<input id="vault-directory" placeholder="例如 E:\\Notes\\MyVault"></label><label><input type="checkbox" id="vault-enabled">启用 Markdown 同步与索引</label><label><input type="checkbox" id="vault-runs">同时保存全部任务的已结束对话记录（可能包含私人内容）</label><p>同步文件包含问题、回复和结论，不包含数据库、登录凭据、工具日志或附件。常见密钥会脱敏，提交 Git 前仍请检查文件。建议使用自己的私有仓库。</p><div class="actions"><button type="button" id="vault-save">保存设置</button><button type="button" id="vault-refresh">立即同步 / 重建索引</button></div><p id="vault-status" role="status"></p><pre id="vault-problems" class="hidden"></pre><p>跨电脑：用 Obsidian Git 或 Git 客户端提交并推送 Vault，在另一台电脑克隆 / 拉取，再选择该电脑上的 Vault 路径。Duo 不自动执行 Git 推送；发现冲突会保留两端内容。删除本地任务不会删除已导出的 Markdown 档案。</p></details></dialog>`);
@@ -2671,16 +2671,20 @@ function installLayout() {
     const utilities = document.createElement('div');
     utilities.className = 'header-utilities';
     utilities.append(element('task-actions'));
-    const menu = document.createElement('details');
-    menu.id = 'app-menu';
-    menu.className = 'app-menu';
-    menu.innerHTML = '<summary id="app-menu-toggle" aria-label="工作台设置与工具" title="工作台设置与工具"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m9.5 3-.6 2-2 .9-2-.5-2 3.5 1.4 1.5v2.2L3 14.2l2 3.5 2-.5 2 .9.6 2h4.2l.6-2 2-.9 2 .5 2-3.5-1.4-1.5v-2.2L21 9l-2-3.5-2 .5-2-.9-.6-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary><nav id="app-menu-items" aria-label="工作台工具"></nav>';
+    const globalActions = document.createElement('nav');
+    globalActions.id = 'app-menu-items';
+    globalActions.className = 'header-global-actions';
+    globalActions.setAttribute('aria-label', '工作台设置与工具');
     for (const id of [
         'settings-open',
         'theme-toggle',
         'logout'
-    ])menu.querySelector('nav').append(element(id));
-    utilities.append(menu);
+    ]){
+        const control = element(id);
+        control.classList.remove('subtle');
+        globalActions.append(control);
+    }
+    utilities.append(globalActions);
     document.querySelector('.header').append(utilities);
     const brand = document.querySelector('#sidebar .brand');
     brand.innerHTML = '<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
@@ -2698,20 +2702,8 @@ function installLayout() {
     connection.setAttribute('role', 'status');
     utilities.prepend(connection);
     footer.remove();
-    menu.addEventListener('click', (e)=>{
-        if (e.target.closest('button')) {
-            menu.open = false;
-            element('sidebar').classList.remove('open');
-        }
-    });
-    listenWithShell(document, 'click', (e)=>{
-        if (!menu.contains(e.target)) menu.open = false;
-    });
-    listenWithShell(document, 'keydown', (e)=>{
-        if (e.key === 'Escape' && menu.open) {
-            menu.open = false;
-            element('app-menu-toggle').focus();
-        }
+    globalActions.addEventListener('click', (e)=>{
+        if (e.target.closest('button')) element('sidebar').classList.remove('open');
     });
     button('theme-toggle').onclick = ()=>{
         const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
@@ -2738,33 +2730,28 @@ function installLayout() {
     element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');
     button('task-handoff').onclick = ()=>void openHandoff();
     button('task-link-copy').onclick = ()=>void copyTaskLink();
-    const sessionMenu = document.createElement('details');
-    sessionMenu.id = 'task-session-menu';
-    sessionMenu.className = 'session-menu';
-    sessionMenu.innerHTML = '<summary id="task-session-toggle" aria-label="会话信息与操作"><span id="task-session-label">会话</span><span aria-hidden="true">⌄</span></summary><div class="session-menu-content"><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="session-menu-actions"><button type="button" id="session-reset" class="hidden">新建会话</button></div></div>';
-    element('task-actions').append(sessionMenu);
-    const sessionActions = sessionMenu.querySelector('.session-menu-actions');
+    const sessionActions = element('task-actions');
+    sessionActions.classList.add('header-session-actions');
+    sessionActions.setAttribute('role', 'group');
+    sessionActions.setAttribute('aria-label', '当前会话操作');
+    sessionActions.insertAdjacentHTML('afterbegin', '<button type="button" id="session-reset" class="hidden">新建会话</button>');
     for (const id of [
         'task-handoff',
         'task-link-copy',
         'bind-open',
         'scratch-tab'
     ])sessionActions.append(element(id));
+    sessionActions.insertAdjacentHTML('beforeend', '<button type="button" id="session-info-open" aria-haspopup="dialog">会话信息</button>');
+    element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
     button('scratch-tab').textContent = '本任务待办';
     button('session-reset').onclick = ()=>void resetSession();
-    sessionMenu.addEventListener('click', (e)=>{
-        const target = e.target.closest('button');
-        if (target && !target.disabled) sessionMenu.open = false;
-    });
-    listenWithShell(document, 'click', (e)=>{
-        if (!sessionMenu.contains(e.target)) sessionMenu.open = false;
-    });
-    listenWithShell(document, 'keydown', (e)=>{
-        if (e.key === 'Escape' && sessionMenu.open) {
-            sessionMenu.open = false;
-            element('task-session-toggle').focus();
+    button('session-info-open').onclick = ()=>{
+        if (detail) {
+            renderSessionBanner();
+            element('session-info-dialog').showModal();
         }
-    });
+    };
+    button('session-info-close').onclick = ()=>element('session-info-dialog').close();
     element('composer').querySelector('.composer-bottom small').remove();
     input('message').title = 'Enter 发送，Shift + Enter 换行';
     element('composer-wrap').querySelector('.footnote').remove();
@@ -6612,7 +6599,7 @@ function renderSessionBanner() {
     const banner = element('session-banner');
     if (!detail) {
         banner.classList.add('hidden');
-        element('task-session-menu').open = false;
+        element('session-info-dialog').close();
         return;
     }
     const started = detail.session_started ? new Date(detail.session_started).toLocaleString('zh-CN', {
@@ -6625,11 +6612,11 @@ function renderSessionBanner() {
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
     const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
     const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
-    const menu = element('task-session-menu');
-    menu.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
-    menu.dataset.context = String(taskContext.length > 0);
-    element('task-session-label').textContent = closed ? '会话已结束' : taskContext.length ? '会话 · 指令' : '会话';
-    element('task-session-toggle').title = title;
+    const info = button('session-info-open');
+    info.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
+    info.dataset.context = String(taskContext.length > 0);
+    info.textContent = closed ? '会话已结束' : taskContext.length ? '外部指令' : '会话信息';
+    info.title = title;
     element('session-summary').textContent = detail.task.archived ? '任务已归档' : title;
     element('session-location').textContent = [
         detail.task.environment?.name,

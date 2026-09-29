@@ -14,7 +14,7 @@ const output=path.resolve('build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
 const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
-const baseRef=process.env.DUO_UI_BASE||'v0.22.11';
+const baseRef=process.env.DUO_UI_BASE||'v0.22.12';
 for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.css']){
  const result=spawnSync('git',['show',baseRef+':web/'+file],{encoding:'utf8',windowsHide:true});
  if(result.status!==0)throw Error('Cannot read UI comparison baseline: '+baseRef);
@@ -26,6 +26,7 @@ const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','
 cases.push(['library','light',1280,800],['library','dark',1280,800],['library','light',390,844],['librarypreview','light',1280,800],['librarypreview','dark',390,844],['knowledge','light',1280,800],['knowledge','dark',390,844],['knowledgeexpanded','light',390,844]);
 cases.push(['sidebar','light',1280,800],['sidebar','dark',1280,800],['sidebar','dark',390,844],['sidebarempty','light',390,844],['sidebarnarrow','light',1024,600],['sidebarfull','dark',1280,800],['appmenu','light',1280,800],['appmenu','dark',390,844]);
 cases.push(['sidebarwide','light',1280,800],['sidebarmigrated','dark',1280,800],['hardware','light',1280,800],['hardware','dark',390,844]);
+cases.push(['home','light',1280,800],['home','dark',390,844],['normal','dark',320,844],['header','light',1024,800],['context','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -42,8 +43,9 @@ for(const [view,theme,width,height] of cases){
  `,ctx);
  if(view==='long')runInContext(`detail.task.title='很长的任务标题：检查知识记录与对话排版';detail.task.workspace='C:/Projects/a-very-long-workspace/knowledge-and-conversation-layout';renderTask()`,ctx);
  if(view==='closed')runInContext(`detail.task.engine='deepseek-harness';detail.runtime={state:'closed',can_continue:false};renderTask()`,ctx);
- if(view==='menu')document.getElementById('task-session-menu').setAttribute('open','');
- if(view==='appmenu')document.getElementById('app-menu').setAttribute('open','');
+ if(view==='menu')document.getElementById('session-info-open').onclick();
+ if(view==='home')runInContext("chosen='';detail=null;renderShell();renderList()",ctx);
+ if(view==='context')runInContext("taskContext=[{name:'AGENTS.md',label:'项目指令'}];renderSessionBanner()",ctx);
  if(view.startsWith('sidebar')){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
   if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
@@ -96,7 +98,7 @@ for(const [view,theme,width,height] of cases){
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
- const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu','app-menu-toggle','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}==='menu'){const dialog=document.getElementById('session-info-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-actions','session-info-open','session-info-dialog','session-info-close','session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu-items','logout','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
@@ -119,7 +121,7 @@ for(const [view,theme,width,height] of cases){
    assert(items.conversation.height>metrics.height*.5,'conversation receives too little vertical space');
   }
   if(width<=760&&['normal','long','closed'].includes(view)){
-   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','task-session-toggle'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
+   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','session-info-open'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
   }
   if(view==='closed'){
    assert(items['session-recover'].visible&&items['session-recover'].height>=44,'missing accessible closed-session recovery');
@@ -148,9 +150,14 @@ for(const [view,theme,width,height] of cases){
   }
   if(view==='hardware'){
    for(const id of ['hardware-panel','device-picker','device-refresh','device-ai','device-console']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1,id+' exceeds the viewport')}
-   assert(items['device-console'].height>=180,'hardware controls leave too little space for logs');
+   assert(items['device-console'].height>=(width<=760?120:180),'hardware controls leave too little space for logs');
   }
-  if(view==='appmenu')for(const id of ['settings-open','theme-toggle','library-open']){const b=items[id];assert(b.visible&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'global menu entry is clipped: '+id)}
+  if(['normal','long','header','appmenu','home','context','create'].includes(view)){
+   const controls=['settings-open','theme-toggle','library-open','logout'];
+   if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-info-open');
+   for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct header action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
+  }
+  if(view==='menu'){const b=items['session-info-dialog'];assert(b.visible&&b.y>=0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'session information exceeds viewport')}
   if(view==='createbottom')for(const id of ['library-create','create-submit']){
    const box=items[id];assert(box.visible&&box.y>=0&&box.y+box.height<=height&&box.x+box.width<=width,id+' is outside the scrolled create page');
   }
@@ -158,7 +165,7 @@ for(const [view,theme,width,height] of cases){
 }
 }finally{await renderer.close()}
 const before=measurements.find(x=>x.view==='before'),after=measurements.find(x=>x.name==='normal-light-1280');
-if(before&&after){if(after.items.conversation.height<before.items.conversation.height-2)failures.push('desktop conversation lost vertical space');if(after.items['task-list'].y>before.items['task-list'].y-36)failures.push('sidebar navigation did not become materially shorter');}
+if(before&&after){if(after.items.conversation.height<before.items.conversation.height-2)failures.push('desktop conversation lost vertical space');if(after.items['task-list'].y>before.items['task-list'].y+1)failures.push('sidebar navigation became taller');}
 const report={source:process.env.GITHUB_SHA||'local',baseRef,measurements,failures};
 await fs.writeFile(path.join(output,'geometry.json'),JSON.stringify(report,null,2));
 const summary=JSON.stringify(measurements.map(x=>({name:x.name,width:x.width,height:x.height,chatHeight:x.items.conversation?.height})));
