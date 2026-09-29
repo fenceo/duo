@@ -475,7 +475,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 }
 
 @media(max-width:760px){
- .header{padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
+ .header{display:flex;padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
  .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
  .header-global-actions{order:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
  .header #task-actions{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;width:100%}
