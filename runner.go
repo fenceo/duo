@@ -108,7 +108,11 @@ func command(c Config, args ...string) *exec.Cmd {
 		}
 		return wslCommand(append(base, append([]string{"--"}, args...)...)...)
 	}
-	return exec.Command(args[0], args[1:]...)
+	executable := args[0]
+	if executable == c.Codex {
+		executable = resolveManagedCodexPath(executable)
+	}
+	return exec.Command(executable, args[1:]...)
 }
 
 // WSL should use the selected Linux user's own home, Git, SSH agent, proxy and

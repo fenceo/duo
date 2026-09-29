@@ -24,6 +24,8 @@ type handoffRequest struct {
 	ContextMode             string                   `json:"context_mode"`
 	Fingerprint             string                   `json:"fingerprint"`
 	Confirm                 bool                     `json:"confirm"`
+	PreserveLegacySession   bool                     `json:"preserve_legacy_session"`
+	ExpectedLegacySession   string                   `json:"expected_legacy_session,omitempty"`
 }
 
 type handoffResult struct {
@@ -107,15 +109,24 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 			return handoffResult{}, errHandoffChanged
 		}
 	}
-	mode, err := a.store.resolveMode(v.ModeID, nil)
-	if err != nil {
-		return handoffResult{}, err
+	var mode *WorkMode
+	if v.ModeID == "__current__" {
+		if task.Engine != v.Engine || task.Environment.ID != env.ID {
+			return handoffResult{}, errHandoffChanged
+		}
+		mode = task.Mode // Includes the original nil/default permission semantics.
+	} else {
+		selected, modeErr := a.store.resolveMode(v.ModeID, nil)
+		if modeErr != nil {
+			return handoffResult{}, modeErr
+		}
+		mode = &selected
 	}
-	if v.Engine != "codex" && mode.Approval == "auto" || v.Engine != "deepseek-harness" && mode.ID == "harness:read" {
+	if mode != nil && (v.Engine != "codex" && mode.Approval == "auto" || v.Engine != "deepseek-harness" && mode.ID == "harness:read") {
 		return handoffResult{}, errors.New("权限模式不适用于目标引擎")
 	}
 	if v.Engine == "deepseek-harness" {
-		if _, err = harnessPolicy(Task{Mode: &mode, Workspace: v.Workspace}); err != nil {
+		if _, err = harnessPolicy(Task{Mode: mode, Workspace: v.Workspace}); err != nil {
 			return handoffResult{}, err
 		}
 	}
@@ -127,8 +138,20 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 		return handoffResult{}, errHandoffChanged
 	}
 	newSession := task.Binding == nil || task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env) || !sameEngineProfile(task.Binding.Profile, profile)
-	if task.Engine == "deepseek-harness" && !reflect.DeepEqual(task.Mode, &mode) {
+	if task.Engine == "deepseek-harness" && !reflect.DeepEqual(task.Mode, mode) {
 		newSession = true
+	}
+	// Legacy rows cannot prove their original account. Only an explicit user
+	// attestation may attach a profile without replacing the native session.
+	// Never interpret merely opening the dialog or selecting a default as consent.
+	if v.PreserveLegacySession {
+		if task.Binding != nil || task.Session == "" || v.ExpectedLegacySession != task.Session {
+			return handoffResult{}, errHandoffChanged
+		}
+		if task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env) || !reflect.DeepEqual(task.Mode, mode) {
+			return handoffResult{}, errors.New("保留旧会话时不能同时改变引擎、执行环境、工作目录或权限；请先确认原配置")
+		}
+		newSession = false
 	}
 	previous, _ := json.Marshal(task)
 	if newSession && task.Engine == "deepseek-harness" {
@@ -156,7 +179,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 		}
 		task.Session = ""
 	}
-	task.Engine, task.Model, task.ReasoningEffort, task.Environment, task.Workspace, task.Mode, task.Binding, task.Updated = v.Engine, strings.TrimSpace(v.Model), v.ReasoningEffort, &env, v.Workspace, &mode, binding, now()
+	task.Engine, task.Model, task.ReasoningEffort, task.Environment, task.Workspace, task.Mode, task.Binding, task.Updated = v.Engine, strings.TrimSpace(v.Model), v.ReasoningEffort, &env, v.Workspace, mode, binding, now()
 	envJSON, _ := json.Marshal(env)
 	modeJSON, _ := json.Marshal(mode)
 	for _, statement := range []struct {

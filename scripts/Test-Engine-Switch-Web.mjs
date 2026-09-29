@@ -61,5 +61,37 @@ await ctx.submitHandoff();assert(node('handoff-dialog').open);assert.match(node(
 
 node('handoff-cancel').onclick();ctx.api=async(path,method,body)=>path.endsWith('?recent=1')?{...detail(source),runs:[{id:'active',status:'running'}]}:api(path,method,body);
 await ctx.openHandoff('source');assert(node('handoff-submit').disabled);assert.match(node('handoff-error').textContent,/停止/);
+// An old task requires an explicit original-account attestation; cancel is read-only.
+node('handoff-cancel').onclick();
+const legacy={...source,binding:undefined};
+ctx.api=async(path,method,body)=>path.endsWith('?recent=1')?detail(legacy):api(path,method,body);
+const beforeLegacy=calls.filter(x=>x.method==='POST').length;
+await ctx.openHandoff('source');await flush();
+assert.equal(node('handoff-legacy').hidden,false);
+assert.equal(!!node('handoff-preserve-legacy').checked,false);
+node('handoff-preserve-legacy').checked=true;node('handoff-preserve-legacy').onchange();
+assert.match(node('handoff-submit').textContent,/保留原会话/);
+node('handoff-cancel').onclick();
+assert.equal(calls.filter(x=>x.method==='POST').length,beforeLegacy,'cancelling legacy migration must not write');
+await ctx.openHandoff('source');await flush();
+assert.equal(!!node('handoff-preserve-legacy').checked,false,'reopening cannot retain account consent');
+node('handoff-preserve-legacy').checked=true;
+node('handoff-profile').onchange();
+assert.equal(node('handoff-preserve-legacy').checked,false,'profile changes require fresh consent');
+node('handoff-preserve-legacy').checked=true;
+node('handoff-workspace').value='/another';node('handoff-workspace').oninput();
+assert.equal(node('handoff-preserve-legacy').checked,false);assert(node('handoff-legacy').hidden);
+node('handoff-workspace').value=source.workspace;node('handoff-workspace').oninput();
+node('handoff-preserve-legacy').checked=true;node('handoff-preserve-legacy').onchange();
+ctx.api=async(path,method,body)=>{
+ if(method==='POST'){
+  assert.equal(body.preserve_legacy_session,true);assert.equal(body.expected_legacy_session,'original-native');
+  assert.equal(body.profile_id,'');
+  return {task:{...source,binding:{revision:'migrated'}},new_session:false};
+ }
+ return api(path,method,body);
+};
+await ctx.submitHandoff();assert.equal(node('handoff-dialog').open,false);
+assert.equal(node('message').value,'unsent draft');
 runInContext('authenticated=false;renewShellScope()',ctx);
 console.log('PASS: same-task engine/API/model switch, correct source and profile metadata, full-history default, escaped preview, draft preservation, duplicate lock, stale scope guards, explicit permissions and no model calls.');

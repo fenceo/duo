@@ -203,7 +203,7 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	}
 	if task.Binding == nil {
 		if task.Session != "" {
-			return Run{}, errors.New("旧会话未记录账号/API 配置，请先点击“切换 AI”确认配置并接续历史")
+			return Run{}, errors.New("旧会话未记录账号/API 配置，请点击“切换 AI”，确认原配置并勾选“保留原会话”后继续")
 		}
 		task.Binding, e = a.store.defaultEngineBinding(task)
 		if e != nil {

@@ -6,7 +6,7 @@ let handoffSourceID='';
 function handoffCurrent(generation:number,epoch:number){return generation===handoffGeneration&&shellCurrent(epoch)&&!!element<HTMLDialogElement>('handoff-dialog')?.open}
 function ensureHandoffDialog(){
  if(element('handoff-dialog'))return;
- element('root').insertAdjacentHTML('beforeend',`<dialog id="handoff-dialog" aria-labelledby="handoff-title"><form id="handoff-form"><h2 id="handoff-title">切换 AI，继续当前任务</h2><p class="muted">聊天记录、任务知识和草稿保留。切换后发送下一条消息，目标 AI 才开始工作。</p><p id="handoff-source" class="muted"></p><fieldset id="handoff-fields" disabled><div class="handoff-grid"><div><label for="handoff-engine">AI 引擎</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select></div><div><label for="handoff-profile">账号 / API 配置</label><select id="handoff-profile"></select></div><div><label for="handoff-model">模型</label><input id="handoff-model" list="handoff-models" placeholder="沿用该配置默认模型" maxlength="120"><datalist id="handoff-models"></datalist></div><div><label for="handoff-effort">推理强度</label><select id="handoff-effort"></select></div></div><p id="handoff-model-status" class="muted" role="status"></p><button type="button" id="handoff-model-refresh">重读模型列表</button><button type="button" id="handoff-settings">管理账号 / API</button><label for="handoff-mode">工作权限</label><select id="handoff-mode"></select><details class="handoff-advanced"><summary>执行位置与接续范围</summary><label for="handoff-environment">执行环境</label><select id="handoff-environment"></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-context-mode">交给新会话的资料</label><select id="handoff-context-mode"><option value="full">完整历史文本 + 接续摘要</option><option value="notes">仅任务笔记与共识</option></select></details><p id="handoff-route-hint" class="muted"></p><p id="handoff-preview-status" role="status"></p><details><summary>查看将交接的摘要</summary><pre id="handoff-preview" class="handoff-preview"></pre></details><a id="handoff-archive" target="_blank" rel="noopener noreferrer">查看完整脱敏文本 ↗</a><p class="muted">跨引擎或账号会建立新原生会话；图片等附件请按需重新提供。API 地址和密钥由所选配置目录管理，不会随历史复制。</p></fieldset><p id="handoff-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">刷新预览</button><button class="primary" id="handoff-submit" disabled>确认切换</button></div></form></dialog>`);
+ element('root').insertAdjacentHTML('beforeend',`<dialog id="handoff-dialog" aria-labelledby="handoff-title"><form id="handoff-form"><h2 id="handoff-title">切换 AI，继续当前任务</h2><p class="muted">聊天记录、任务知识和草稿保留。切换后发送下一条消息，目标 AI 才开始工作。</p><p id="handoff-source" class="muted"></p><fieldset id="handoff-fields" disabled><div class="handoff-grid"><div><label for="handoff-engine">AI 引擎</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select></div><div><label for="handoff-profile">账号 / API 配置</label><select id="handoff-profile"></select></div><div><label for="handoff-model">模型</label><input id="handoff-model" list="handoff-models" placeholder="沿用该配置默认模型" maxlength="120"><datalist id="handoff-models"></datalist></div><div><label for="handoff-effort">推理强度</label><select id="handoff-effort"></select></div></div><p id="handoff-model-status" class="muted" role="status"></p><button type="button" id="handoff-model-refresh">重读模型列表</button><button type="button" id="handoff-settings">管理账号 / API</button><label for="handoff-mode">工作权限</label><select id="handoff-mode"></select><details class="handoff-advanced"><summary>执行位置与接续范围</summary><label for="handoff-environment">执行环境</label><select id="handoff-environment"></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-context-mode">交给新会话的资料</label><select id="handoff-context-mode"><option value="full">完整历史文本 + 接续摘要</option><option value="notes">仅任务笔记与共识</option></select></details><div id="handoff-legacy" hidden><label class="check-row"><input type="checkbox" id="handoff-preserve-legacy">我确认所选配置就是此任务原来的账号 / API，保留原会话继续</label><p class="muted">旧版本没有保存账号归属，请核对上方所选配置。无法确认或已更换账号时，请保持不勾选，通过新会话接续历史。</p></div><p id="handoff-route-hint" class="muted"></p><p id="handoff-preview-status" role="status"></p><details><summary>查看将交接的摘要</summary><pre id="handoff-preview" class="handoff-preview"></pre></details><a id="handoff-archive" target="_blank" rel="noopener noreferrer">查看完整脱敏文本 ↗</a><p class="muted">跨引擎或账号会建立新原生会话；图片等附件请按需重新提供。API 地址和密钥由所选配置目录管理，不会随历史复制。</p></fieldset><p id="handoff-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">刷新预览</button><button class="primary" id="handoff-submit" disabled>确认切换</button></div></form></dialog>`);
  element('handoff-form').onsubmit=e=>{e.preventDefault();void submitHandoff()};
  const dialog=element<HTMLDialogElement>('handoff-dialog');
  dialog.addEventListener('cancel',e=>{if(handoffBusy)e.preventDefault()});
@@ -16,10 +16,13 @@ function ensureHandoffDialog(){
  button('handoff-refresh').textContent='重读任务与预览';button('handoff-refresh').onclick=()=>void openHandoff(handoffSourceID);
  button('handoff-model-refresh').onclick=()=>void loadHandoffModels();
  button('handoff-settings').onclick=async()=>{dialog.close();await openSettings();showSettingsSection('engines')};
+ input('handoff-preserve-legacy').onchange=()=>updateHandoffHint();
+ input('handoff-mode').onchange=()=>resetLegacyConfirmation();
  input('handoff-engine').onchange=()=>updateHandoffTarget(true);
  input('handoff-environment').onchange=()=>{const env=settings.config.environments.find(v=>v.id===input('handoff-environment').value);if(env)input('handoff-workspace').value=env.id===handoffTask?.environment.id?handoffTask.workspace:env.workspaces[0]||'';updateHandoffTarget(true)};
- input('handoff-profile').onchange=()=>{input('handoff-model').value='';updateHandoffHint();void loadHandoffModels()};
- input('handoff-workspace').onchange=()=>{updateHandoffHint();void loadHandoffModels()};
+ input('handoff-profile').onchange=()=>{input('handoff-model').value='';resetLegacyConfirmation();void loadHandoffModels()};
+ input('handoff-workspace').oninput=()=>resetLegacyConfirmation();
+ input('handoff-workspace').onchange=()=>{resetLegacyConfirmation();void loadHandoffModels()};
  input('handoff-model').oninput=()=>updateHandoffEffort();
  input('handoff-context-mode').onchange=()=>void loadHandoffPreview();
 }
@@ -30,16 +33,21 @@ function updateHandoffTarget(reset:boolean){
  input('handoff-profile').innerHTML=(same&&task.binding?`<option value="__current__">当前绑定 · ${escapeHTML(task.binding.profile?.name||'原生默认配置')}</option>`:'')+'<option value="">原生默认配置</option>'+profiles.map(p=>`<option value="${escapeHTML(p.id)}">${escapeHTML(p.name)}</option>`).join('');
  input('handoff-profile').value=same&&task.binding?'__current__':handoffCatalog.active_profile[env+':'+engine]||'';
  const modes=workCatalog.modes.filter(m=>modeSupportsEngine(m,engine));
- input('handoff-mode').innerHTML=modes.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
- input('handoff-mode').value=modes.some(m=>m.id===task.mode?.id)?task.mode!.id:modes.find(m=>m.id==='work')?.id||modes[0]?.id||'';
+ input('handoff-mode').innerHTML=(same&&!task.binding?'<option value="__current__">原任务权限（保持不变）</option>':'')+modes.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
+ input('handoff-mode').value=same&&!task.binding?'__current__':modes.some(m=>m.id===task.mode?.id)?task.mode!.id:modes.find(m=>m.id==='work')?.id||modes[0]?.id||'';
  if(reset)input('handoff-model').value=same?task.model:'';
  handoffModels=[];updateHandoffEffort();if(same)input('handoff-effort').value=task.reasoning_effort||'';
- updateHandoffHint();void loadHandoffModels();
+ resetLegacyConfirmation();void loadHandoffModels();
 }
+function resetLegacyConfirmation(){input('handoff-preserve-legacy').checked=false;updateHandoffHint()}
 function updateHandoffHint(){
  const task=handoffTask;if(!task)return;
+ const eligible=!task.binding&&!!task.session&&input('handoff-engine').value===task.engine&&input('handoff-environment').value===task.environment.id&&input('handoff-workspace').value===task.workspace&&input('handoff-mode').value==='__current__';
+ element('handoff-legacy').hidden=!eligible;if(!eligible)input('handoff-preserve-legacy').checked=false;
+ const preserve=eligible&&input('handoff-preserve-legacy').checked;
+ button('handoff-submit').textContent=preserve?'确认原配置，保留原会话':'确认切换';
  const reuse=!!task.binding&&input('handoff-engine').value===task.engine&&input('handoff-profile').value==='__current__'&&input('handoff-environment').value===task.environment.id&&input('handoff-workspace').value===task.workspace;
- element('handoff-route-hint').textContent=reuse?'只更换模型时沿用原会话；若执行环境或 Harness 权限改变，会改用新会话接续。':'将新建目标引擎会话，由摘要和所选历史接续当前任务。';
+ element('handoff-route-hint').textContent=preserve?'只补齐账号配置绑定，保留原生会话；下一条消息继续原上下文。':reuse?'只更换模型时沿用原会话；若执行环境或 Harness 权限改变，会改用新会话接续。':'将新建目标引擎会话，由摘要和所选历史接续当前任务。';
 }
 function updateHandoffEffort(){
  const select=input('handoff-effort'),previous=select.value,levels=effortLevels(input('handoff-engine').value,handoffModels.find(m=>m.id===input('handoff-model').value));
@@ -66,14 +74,14 @@ async function loadHandoffPreview(){
 async function openHandoff(id=chosen){
  if(!id||handoffBusy)return;
  ensureHandoffDialog();handoffController?.abort();handoffController=new AbortController();handoffTask=null;handoffPreview=null;
- handoffSourceID=id;
+ handoffSourceID=id;input('handoff-preserve-legacy').checked=false;element('handoff-legacy').hidden=true;button('handoff-submit').textContent='确认切换';
  const generation=++handoffGeneration,epoch=shellEpoch,dialog=element<HTMLDialogElement>('handoff-dialog');if(!dialog.open)dialog.showModal();
  element<HTMLFieldSetElement>('handoff-fields').disabled=true;button('handoff-submit').disabled=true;element('handoff-error').textContent='';element('handoff-source').textContent='正在读取任务和配置…';
  try{
   const [snapshot,catalog]=await Promise.all([api<Detail>('tasks/'+encodeURIComponent(id)+'?recent=1','GET',undefined,handoffController.signal),api<EngineCatalog>('engines','GET',undefined,handoffController.signal)]);
   if(!handoffCurrent(generation,epoch))return;
   handoffTask=snapshot.task;handoffCatalog=catalog;
-  element('handoff-source').textContent=snapshot.task.title+' · '+taskEngineName(snapshot.task.engine)+(snapshot.task.binding?'':' · 旧会话未记录账号配置，将通过新会话接续历史');
+  element('handoff-source').textContent=snapshot.task.title+' · '+taskEngineName(snapshot.task.engine)+(snapshot.task.binding?'':' · 旧会话尚未绑定账号配置：可确认原配置并保留原会话');
   if(snapshot.task.archived||snapshot.task.deleted||snapshot.runs.some(r=>r.status==='running'||r.status==='queued'))throw new Error('请先恢复任务，或等待执行结束 / 停止并取消排队后再切换。');
   input('handoff-environment').innerHTML=settings.config.environments.map(v=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');input('handoff-environment').value=snapshot.task.environment.id;
   input('handoff-engine').value=snapshot.task.engine;input('handoff-workspace').value=snapshot.task.workspace;input('handoff-context-mode').value='full';
@@ -84,7 +92,8 @@ async function submitHandoff(){
  if(!handoffTask||!handoffPreview||handoffBusy)return;
  const task=handoffTask,preview=handoffPreview,generation=handoffGeneration,epoch=shellEpoch,selectionAtStart=selection;
  const profileID=input('handoff-profile').value;
- const body={confirm:true,expected_binding_revision:task.binding?.revision||'legacy',environment_id:input('handoff-environment').value,engine:input('handoff-engine').value,workspace:input('handoff-workspace').value,model:input('handoff-model').value,reasoning_effort:input('handoff-effort').value,mode_id:input('handoff-mode').value,profile_id:profileID,expected_profile:profileID==='__current__'?undefined:handoffCatalog?.profiles.find(p=>p.id===profileID),context_mode:input('handoff-context-mode').value,fingerprint:preview.fingerprint};
+ const preserve=!task.binding&&!!task.session&&input('handoff-preserve-legacy').checked;
+ const body={preserve_legacy_session:preserve,expected_legacy_session:preserve?task.session:undefined,confirm:true,expected_binding_revision:task.binding?.revision||'legacy',environment_id:input('handoff-environment').value,engine:input('handoff-engine').value,workspace:input('handoff-workspace').value,model:input('handoff-model').value,reasoning_effort:input('handoff-effort').value,mode_id:input('handoff-mode').value,profile_id:profileID,expected_profile:profileID==='__current__'?undefined:handoffCatalog?.profiles.find(p=>p.id===profileID),context_mode:input('handoff-context-mode').value,fingerprint:preview.fingerprint};
  handoffBusy=true;element<HTMLFieldSetElement>('handoff-fields').disabled=true;for(const id of ['handoff-submit','handoff-refresh','handoff-cancel'])button(id).disabled=true;element('handoff-error').textContent='';
  try{
   const result=await api<{task:Task;new_session:boolean}>('tasks/'+encodeURIComponent(task.id)+'/handoff','POST',body);
