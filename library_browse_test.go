@@ -89,3 +89,42 @@ func TestLibraryPreviewRedactionAndRevisionGuard(t *testing.T) {
 	request("/api/library/reference?id=knowledge:"+k.ID+"&revision=invalid", "GET", nil, 400)
 	request("/api/library/search?offset=invalid", "GET", nil, 400)
 }
+
+func TestLibraryDirectReferenceMatchesSearchAndDeletion(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	task, _ := knowledgeFixture(t, a)
+	k := libraryKnowledge(t, a, task, "可重复引用的合成结论", "verified")
+	portable := LibraryDocument{ID: "external-note", Kind: "note", TaskID: task.ID, TaskTitle: task.Title, Title: "独立文档", Status: "observed", Revision: 1, Content: "外部历史资料"}
+	raw, err := json.Marshal(portable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.store.Exec("INSERT INTO library_files(path,document) VALUES(?,?)", "fixture.md", string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.store.searchLibrary(context.Background(), "", task.ID, "", false)
+	if err != nil || len(result.Documents) < 3 {
+		t.Fatal(result, err)
+	}
+	for _, hit := range result.Documents {
+		d, text, _, err := a.store.libraryReference(context.Background(), hit.ID, hit.Hash)
+		if err != nil || d.Hash != hit.Hash || text == "" {
+			t.Fatal("direct read differs from search", hit.ID, err)
+		}
+	}
+	// An unrelated broken cache row must not prevent reading a known local entry.
+	if _, err = a.store.Exec("INSERT INTO library_files(path,document) VALUES('broken.md','invalid json')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = a.store.libraryReference(context.Background(), "knowledge:"+k.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.store.Exec("INSERT INTO task_options(task_id,deleted) VALUES(?,1) ON CONFLICT(task_id) DO UPDATE SET deleted=1", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range result.Documents {
+		if _, _, _, err = a.store.libraryReference(context.Background(), hit.ID, hit.Hash); err == nil {
+			t.Fatal("deleted task was still readable", hit.ID)
+		}
+	}
+}

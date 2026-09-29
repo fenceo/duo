@@ -45,16 +45,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Temporary directory preparation failed.' }
       - name: Run knowledge regressions
         run: |
-          $duoTestOutput = & go test ./... -run 'TestLibrary|TestVault|TestAutomaticKnowledge' -count=1 -timeout=3m 2>&1
-          $duoTestExit = $LASTEXITCODE
-          $duoTestOutput | ForEach-Object { Write-Output $_ }
-          if ($duoTestExit -ne 0) {
-            $duoFailure = $duoTestOutput | Out-String
-            if ($duoFailure.Length -gt 1800) { $duoFailure = $duoFailure.Substring($duoFailure.Length - 1800) }
-            Write-Output ('::error title=Knowledge regression::' + $duoFailure.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A'))
-            throw 'Knowledge regression failed.'
-          }
+          node scripts/Check-Knowledge-CI.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Knowledge regression failed.' }
       - name: Capture synthetic desktop and phone layouts
+        if: ${{ !cancelled() }}
         run: |
           node scripts/Capture-Conversation-UI.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Conversation geometry checks failed.' }
