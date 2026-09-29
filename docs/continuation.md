@@ -1,6 +1,6 @@
 # 跨引擎任务接续
 
-Duo 将任务记录与原生引擎会话分开。v0.24.0 起，“切换 AI”保留同一个任务 ID、聊天记录、知识、待办和未发送草稿，修改下一轮执行的引擎、账号/API 引用和模型。Codex、Claude Code 和 DeepSeek Harness 的原生 session ID 不能互相复用。
+Duo 将任务记录与原生引擎会话分开。v0.24.1 起，“切换 AI”保留同一个任务 ID、聊天记录、知识、待办和未发送草稿，修改下一轮执行的引擎、账号/API 引用和模型。Codex、Claude Code 和 DeepSeek Harness 的原生 session ID 不能互相复用。
 
 ## 用户流程
 
@@ -35,6 +35,7 @@ Duo 将任务记录与原生引擎会话分开。v0.24.0 起，“切换 AI”�
 
 - `GET /api/tasks/{id}/continuation/preview?mode=full`：本地摘要、全文字节数和指纹，不调用模型。
 - `GET /api/tasks/{id}/continuation/archive?mode=full`：需要登录的纯文本全文预览。
+- 新版“仅任务笔记与共识”使用 `mode=notes`，保留尚未独立验证的笔记并明确标注。兼容范围 `summary` 仍只包含标为已验证的笔记，`recent` 仍使用已验证笔记和最近 8 轮成功对话。
 - `POST /api/tasks/{id}/handoff`：要求 `confirm`、预览指纹、任务绑定版本、明确的目标配置和权限；原子更新原任务，不提交模型轮次。旧版没有指纹的转接请求会被拒绝。
 - 模型目录支持明确 `profile_id`，或者用 `task_id` 读取任务绑定；任务内模型测试还核对绑定版本，仍需要用户单独确认付费测试。
 

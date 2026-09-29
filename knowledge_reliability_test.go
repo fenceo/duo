@@ -22,12 +22,41 @@ func TestKnowledgeReliabilitySummaryOnlyVerified(t *testing.T) {
 	for _, s := range []string{"verified", "observed", "stale"} {
 		reliabilityKnowledge(t, a, task, s, "audit-"+s, s)
 	}
+	if _, err := a.store.Exec("INSERT INTO task_memories(run_id,task_id,payload,updated) VALUES('memory',?, ?,1)", task.ID, `{"summary":"audit-unverified-memory"}`); err != nil {
+		t.Fatal(err)
+	}
 	p, err := a.continuationPreview(task.ID, "summary")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Knowledge != 1 || strings.Contains(p.Context, "audit-observed") || strings.Contains(p.Context, "audit-stale") {
+	if p.Knowledge != 1 || strings.Contains(p.Context, "audit-observed") || strings.Contains(p.Context, "audit-stale") || strings.Contains(p.Context, "audit-unverified-memory") {
 		t.Fatalf("summary should contain only verified: got %d entries, observed=%v stale=%v", p.Knowledge, strings.Contains(p.Context, "audit-observed"), strings.Contains(p.Context, "audit-stale"))
+	}
+}
+
+func TestKnowledgeReliabilityNotesScopeKeepsUnverifiedContextExplicit(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	task := taskFor(t, a)
+	for _, state := range []string{"verified", "observed", "stale"} {
+		reliabilityKnowledge(t, a, task, state, "notes-"+state, state)
+	}
+	if _, err := a.store.Exec("INSERT INTO task_memories(run_id,task_id,payload,updated) VALUES('notes-memory',?,?,1)", task.ID, `{"summary":"notes-memory-context"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES('notes-chat',?,'excluded-chat','chat','web','done',1)", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, archive, err := a.buildContinuation(task, "notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{p.Context, archive} {
+		if !strings.Contains(text, "notes-observed") || !strings.Contains(text, "notes-verified") || !strings.Contains(text, "notes-memory-context") || !strings.Contains(text, "未经独立验证") || strings.Contains(text, "notes-stale") || strings.Contains(text, "excluded-chat") {
+			t.Fatalf("wrong notes scope: %s", text)
+		}
+	}
+	if p.Knowledge != 2 || p.Runs != 0 {
+		t.Fatal("notes scope must not include chat", p.Knowledge, p.Runs)
 	}
 }
 func TestKnowledgeReliabilitySummaryBudget(t *testing.T) {

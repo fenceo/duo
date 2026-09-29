@@ -53,9 +53,9 @@ assert(!calls.some(x=>x.path.includes('activate')||x.path.includes('messages')))
 
 ctx.api=api;await ctx.openHandoff('source');
 let late;ctx.api=async(path,method,body)=>{if(path.endsWith('mode=full'))return new Promise(resolve=>late=resolve);return api(path,method,body)};
-const outdated=ctx.loadHandoffPreview();node('handoff-context-mode').value='summary';await ctx.loadHandoffPreview();late({...preview('outdated'),context:'stale result'});await outdated;
+const outdated=ctx.loadHandoffPreview();node('handoff-context-mode').value='notes';await ctx.loadHandoffPreview();late({...preview('outdated'),context:'stale result'});await outdated;
 assert.equal(node('handoff-preview').textContent,'Synthetic summary <unsafe>','late scope response cannot replace the reviewed preview');
-assert.match(node('handoff-archive').getAttribute('href'),/mode=summary$/);
+assert.match(node('handoff-archive').getAttribute('href'),/mode=notes$/);
 ctx.api=async(path,method,body)=>{if(method==='POST')throw Error('409 任务或配置已改变');return api(path,method,body)};
 await ctx.submitHandoff();assert(node('handoff-dialog').open);assert.match(node('handoff-error').textContent,/409/);assert.equal(node('handoff-submit').disabled,false);
 
