@@ -190,7 +190,7 @@ function parseDockLayout(raw:string|null):Record<DockPanel,DockSide>{
 function loadDockLayout():Record<DockPanel,DockSide>{try{return parseDockLayout(localStorage.getItem('jianzuo-dock-layout-v1'))}catch{return {...defaultDockLayout}}}
 function persistDockLayout(){try{localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify(dockLayout))}catch{}}
 function dockZoneID(side:DockSide){return side==='sidebar'?'sidebar':'dock-'+side}
-function effectiveDockSide(panel:DockPanel):DockSide{const side=dockLayout[panel];if(panel==='sticky'&&side!=='bottom'&&dockNarrow.matches)return 'bottom';return side}
+function effectiveDockSide(panel:DockPanel):DockSide{const side=dockLayout[panel];if(panel==='sticky'&&(side==='left'||side==='right')&&dockNarrow.matches)return 'bottom';return side}
 function syncDocks(){
  const visible=(zone:HTMLElement)=>Array.from(zone.children).some(node=>{const child=node as HTMLElement;return !child.classList.contains('panel-resizer')&&!child.classList.contains('hidden')&&!child.hidden});
  for(const side of ['left','right','bottom'] as DockSide[]){const zone=element(dockZoneID(side));if(zone)zone.classList.toggle('hidden',!visible(zone))}
@@ -199,7 +199,7 @@ function applyDockLayout(save=false){
  for(const panel of ['sticky','tools'] as DockPanel[]){
   const node=element(dockPanelIDs[panel]),zone=element(dockZoneID(effectiveDockSide(panel)));
   if(!node||!zone)continue;
-  if(zone.id==='sidebar'){const footer=element('sidebar-footer');footer?zone.insertBefore(node,footer):zone.append(node)}
+  if(zone.id==='sidebar')zone.append(node);
   else zone.append(node);
  }
  for(const side of ['sidebar','left','right','bottom'] as DockSide[]){

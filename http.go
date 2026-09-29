@@ -108,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 	s.workspaceTransferRoutes(m)
 	s.handoffRoutes(m)
 	s.scratchRoutes(m)
+	s.stickyRoutes(m)
 	s.knowledgeRoutes(m)
 	s.libraryRoutes(m)
 	s.hardwareRoutes(m)
@@ -124,7 +125,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	m.HandleFunc("GET /api/auth", func(w http.ResponseWriter, r *http.Request) {
 		_, csrf := s.identity(r)
-		jsonOut(w, 200, map[string]any{"authenticated": csrf != "", "csrf": csrf})
+		jsonOut(w, 200, map[string]any{"authenticated": csrf != "", "csrf": csrf, "version": strings.TrimSuffix(version, "-portable")})
 	})
 	m.HandleFunc("POST /api/login", s.login)
 	m.HandleFunc("POST /api/logout", s.secure(func(w http.ResponseWriter, r *http.Request) {

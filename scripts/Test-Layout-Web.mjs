@@ -14,13 +14,11 @@ const declarations=(selector,source=css)=>{
   const colon=part.indexOf(':');return [part.slice(0,colon).trim(),part.slice(colon+1).trim()];
  }));
 };
-assert.equal(declarations('.sticky-board>header').display,'grid');
-assert.equal(declarations('.sticky-board>header')['grid-template-columns'],'16px minmax(0,1fr) minmax(0,1fr) auto');
-assert.equal(declarations('#sticky-count')['white-space'],'nowrap');
-assert.equal(declarations('#sticky-count')['grid-row'],'1');
-assert.equal(declarations('#sticky-filter')['grid-row'],'2');
-assert.equal(declarations('#sticky-scope')['grid-row'],'2');
-assert.equal(declarations('.sticky-board>header select')['min-width'],'0');
+assert.equal(declarations('#sticky-board.quick-notes>header').display,'grid');
+assert.equal(declarations('#sticky-board.quick-notes>header')['grid-template-columns'],'16px auto minmax(0,1fr) 40px');
+assert.equal(declarations('#sticky-board.quick-notes #sticky-count')['white-space'],'nowrap');
+assert.equal(declarations('#sticky-board.quick-notes #sticky-list')['overflow'],'auto');
+assert.equal(declarations('#sticky-board.quick-notes[data-collapsed="true"]').height,'auto');
 assert.equal(declarations('.task-list')['overflow-x'],'hidden');
 assert.equal(declarations('.workspace-tasks')['grid-template-columns'],'minmax(0,1fr)');
 assert.equal(declarations('.task-row>.task').width,'auto');

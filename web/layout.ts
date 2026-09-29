@@ -20,11 +20,20 @@ function workspaceTaskList(items:Task[]):string{
 }
 function installLayout(){
  let theme='light';try{theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{}document.documentElement.dataset.theme=theme;
- element('settings-open').insertAdjacentHTML('afterend','<button id="theme-toggle" class="subtle" title="切换浅色 / 深色外观">外观</button>');
- const footer=element('settings-open').parentElement!;footer.id='sidebar-footer';
- const utilities=document.createElement('nav');utilities.className='sidebar-utilities';utilities.setAttribute('aria-label','工作台设置');
- for(const id of ['settings-open','theme-toggle','sidebar-close','logout'])utilities.append(element(id));
- footer.prepend(utilities);element('connection').setAttribute('role','status');
+ element('settings-open').insertAdjacentHTML('afterend','<button id="theme-toggle" class="subtle">外观</button>');
+ const footer=element('settings-open').parentElement!;
+ const utilities=document.createElement('div');utilities.className='header-utilities';utilities.append(element('task-actions'));
+ const menu=document.createElement('details');menu.id='app-menu';menu.className='app-menu';
+ menu.innerHTML='<summary id="app-menu-toggle" aria-label="工作台设置与工具" title="工作台设置与工具"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m9.5 3-.6 2-2 .9-2-.5-2 3.5 1.4 1.5v2.2L3 14.2l2 3.5 2-.5 2 .9.6 2h4.2l.6-2 2-.9 2 .5 2-3.5-1.4-1.5v-2.2L21 9l-2-3.5-2 .5-2-.9-.6-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary><nav id="app-menu-items" aria-label="工作台工具"></nav>';
+ for(const id of ['settings-open','theme-toggle','logout'])menu.querySelector('nav')!.append(element(id));
+ utilities.append(menu);document.querySelector('.header')!.append(utilities);
+ const brand=document.querySelector('#sidebar .brand')!;brand.innerHTML='<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
+ brand.append(element('sidebar-close'));button('sidebar-close').textContent='×';button('sidebar-close').setAttribute('aria-label','收起任务列表');
+ button('app-version').textContent=appVersion?'v'+appVersion:'版本';button('app-version').onclick=async()=>{await openSettings();showSettingsSection('updates')};
+ const connection=element('connection');connection.textContent='';connection.classList.add('hidden');connection.setAttribute('role','status');utilities.prepend(connection);footer.remove();
+ menu.addEventListener('click',e=>{if((e.target as HTMLElement).closest('button')){menu.open=false;element('sidebar').classList.remove('open')}});
+ listenWithShell(document,'click',e=>{if(!menu.contains(e.target as Node))menu.open=false});
+ listenWithShell(document,'keydown',e=>{if((e as KeyboardEvent).key==='Escape'&&menu.open){menu.open=false;element('app-menu-toggle').focus()}});
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
  const tabs=element('tabs');tabs.prepend(element('conversation-filter'));button('chat-tab').classList.add('hidden');
  for(const id of ['conversation-results','conversation-all'])button(id).addEventListener('click',()=>{if(matchMedia('(max-width:760px)').matches)switchTab('chat')});

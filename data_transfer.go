@@ -49,6 +49,7 @@ type workspaceArchive struct {
 	// this catalog is deliberately kept free of environment and credential
 	// records.
 	Workbench workspaceArchiveWorkbench `json:"workbench,omitempty"`
+	Sticky    *StickyBoard              `json:"sticky,omitempty"`
 }
 
 type workspaceArchiveWorkbench struct {
@@ -304,6 +305,14 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 	}
 	a := workspaceArchive{Protocol: workspaceArchiveProtocol, Kind: workspaceArchiveKind, ExportedAt: time.Now().UnixMilli()}
 	a.Workbench = s.workspaceWorkbenchSnapshot()
+	board, _, err := readStickyBoard(s)
+	if err != nil {
+		return workspaceArchive{}, nil, err
+	}
+	for i := range board.Items {
+		board.Items[i].Content = redactWorkspaceText(board.Items[i].Content)
+	}
+	a.Sticky = &board
 	if len(a.Workbench.Modes) > workspaceMaxModes || len(a.Workbench.Commands) > workspaceMaxCommands {
 		return workspaceArchive{}, nil, errors.New("工作台自定义模式或快捷指令超过导出上限")
 	}
@@ -434,6 +443,11 @@ func marshalWorkspaceArchive(a workspaceArchive) ([]byte, error) {
 // are already redacted, but accepting a hand-crafted ZIP must not provide a
 // way to place obvious credentials or machine paths into the local workspace.
 func sanitizeWorkspaceArchive(a *workspaceArchive) {
+	if a.Sticky != nil {
+		for i := range a.Sticky.Items {
+			a.Sticky.Items[i].Content = redactWorkspaceText(a.Sticky.Items[i].Content)
+		}
+	}
 	for i := range a.Tasks {
 		a.Tasks[i].Title = redactWorkspaceText(a.Tasks[i].Title)
 		a.Tasks[i].Model = redactWorkspaceText(a.Tasks[i].Model)
@@ -585,6 +599,11 @@ func validArchiveText(value string, max int) bool {
 }
 
 func validateWorkspaceArchive(a workspaceArchive) error {
+	if a.Sticky != nil {
+		if err := validateStickyBoard(*a.Sticky); err != nil {
+			return err
+		}
+	}
 	if len(a.Tasks) > workspaceMaxTasks || len(a.Runs) > workspaceMaxRuns || len(a.Events) > workspaceMaxEvents || len(a.Knowledge) > workspaceMaxKnowledge || len(a.Scratch) > workspaceMaxScratch {
 		return errors.New("工作区内容超过导入上限")
 	}
@@ -747,6 +766,10 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rollback := func(message string) { _ = tx.Rollback(); fail(w, http.StatusBadRequest, message) }
+	if err = importStickyBoard(tx, data.Archive.Sticky); err != nil {
+		rollback("导入便签失败：" + err.Error())
+		return
+	}
 	if len(data.Archive.Workbench.Modes) != 0 || len(data.Archive.Workbench.Commands) != 0 {
 		persisted := persistedWorkbenchCatalog(mergedCatalog)
 		catalogRaw, marshalErr := json.Marshal(persisted)

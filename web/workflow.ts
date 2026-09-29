@@ -21,8 +21,6 @@ function modeLabel(mode:WorkMode){
  return `${mode.name} · ${access}${review}`;
 }
 function installWorkflow(){
- element('new-task').insertAdjacentHTML('afterend','<button id="workspace-open" class="workspace-open">▣ 选择工作区 <span>⌄</span></button>');
- button('workspace-open').onclick=()=>openWorkspacePicker(settings.config.default_environment,'',(path,env)=>void showCreateAt(path,env));
  const form=element('create-form'),heading=element('create-heading'),lead=heading.nextElementSibling!;
  const head=document.createElement('div');head.className='create-page-head';
  const cancel=document.createElement('button');cancel.type='button';cancel.id='create-cancel';cancel.className='subtle';cancel.textContent='返回';head.append(heading,lead,cancel);

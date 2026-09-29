@@ -8,7 +8,7 @@ function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
 function installLibrary() {
-    element('new-task').insertAdjacentHTML('afterend', '<button type="button" id="library-open">知识库 · 历史与结论</button>');
+    element('app-menu-items').insertAdjacentHTML('afterbegin', '<button type="button" id="library-open">全局知识库</button>');
     element('command-open').insertAdjacentHTML('afterend', '<button type="button" class="library-compose-button" id="library-task" title="引用历史 / 知识" aria-label="引用历史或知识">引用</button>');
     element('create-status').insertAdjacentHTML('beforebegin', '<button type="button" class="library-compose-button" id="library-create" title="引用历史 / 知识">引用历史 / 知识</button>');
     element('root').insertAdjacentHTML('beforeend', `<dialog id="library-dialog" class="library-dialog"><div class="library-header"><div><h2>全局知识库</h2><p>查找之前的任务记录、结论和 Obsidian 笔记，选好后引用到任务要求中。</p></div><button type="button" id="library-close" aria-label="关闭知识库">关闭</button></div><form id="library-search-form" class="library-search"><input id="library-query" aria-label="搜索知识和历史" placeholder="关键词、报错码；多个词用空格分隔" maxlength="160"><select id="library-kind" aria-label="资料类型"><option value="">全部资料</option><option value="knowledge">结论与经验</option><option value="run">任务记录</option><option value="note">Obsidian 笔记</option></select><select id="library-scope" aria-label="任务范围"><option value="">所有任务与 Vault</option></select><label><input type="checkbox" id="library-stale">包含过时结论</label><button type="submit">查询</button></form><p id="library-state" role="status"></p><div id="library-results" class="library-results"></div><details id="vault-settings"><summary>Obsidian Vault 与 Git 同步</summary><p>选择这台 Duo 服务所在电脑的知识文件根目录。Duo 只读写其中的 <code>Duo/</code> 文件夹；其中的 Markdown 可用编辑器或 Obsidian 查看和编辑。启用后每分钟同步一次，也可手动刷新。</p><label>Vault 绝对路径<input id="vault-directory" placeholder="例如 E:\\Notes\\MyVault"></label><label><input type="checkbox" id="vault-enabled">启用 Markdown 同步与索引</label><label><input type="checkbox" id="vault-runs">同时保存全部任务的已结束对话记录（可能包含私人内容）</label><p>同步文件包含问题、回复和结论，不包含数据库、登录凭据、工具日志或附件。常见密钥会脱敏，提交 Git 前仍请检查文件。建议使用自己的私有仓库。</p><div class="actions"><button type="button" id="vault-save">保存设置</button><button type="button" id="vault-refresh">立即同步 / 重建索引</button></div><p id="vault-status" role="status"></p><pre id="vault-problems" class="hidden"></pre><p>跨电脑：用 Obsidian Git 或 Git 客户端提交并推送 Vault，在另一台电脑克隆 / 拉取，再选择该电脑上的 Vault 路径。Duo 不自动执行 Git 推送；发现冲突会保留两端内容。删除本地任务不会删除已导出的 Markdown 档案。</p></details></dialog>`);
@@ -805,8 +805,6 @@ function modeLabel(mode) {
     return `${mode.name} · ${access}${review}`;
 }
 function installWorkflow() {
-    element('new-task').insertAdjacentHTML('afterend', '<button id="workspace-open" class="workspace-open">▣ 选择工作区 <span>⌄</span></button>');
-    button('workspace-open').onclick = ()=>openWorkspacePicker(settings.config.default_environment, '', (path, env)=>void showCreateAt(path, env));
     const form = element('create-form'), heading = element('create-heading'), lead = heading.nextElementSibling;
     const head = document.createElement('div');
     head.className = 'create-page-head';
@@ -1577,7 +1575,35 @@ async function saveTaskRename(e) {
         button('rename-save').disabled = false;
     }
 }
-let stickyItems = [], stickyLoading = false, stickyScope = 'all', stickyFilter = 'open', stickyLast = '', stickyRequest = 0;
+let quickNotes = {
+    revision: 0,
+    color: 'neutral',
+    items: []
+};
+let stickyLoading = false, stickyReady = false, stickyDirty = false, stickySaving = false, stickyConflict = false, stickyError = '', stickySaved = '', stickyRequest = 0, stickyGeneration = 0, stickySequence = 0;
+let stickyTimer;
+const stickyColors = [
+    [
+        'neutral',
+        '默认'
+    ],
+    [
+        'yellow',
+        '奶黄'
+    ],
+    [
+        'blue',
+        '浅蓝'
+    ],
+    [
+        'green',
+        '浅绿'
+    ],
+    [
+        'purple',
+        '淡紫'
+    ]
+];
 const defaultAppearance = {
     theme: 'light',
     accent: 'blue',
@@ -1621,87 +1647,250 @@ function parseAppearance(raw) {
     }
 }
 function installStickyBoard() {
-    try {
-        stickyScope = localStorage.getItem('jianzuo-sticky-scope') || 'all';
-        stickyFilter = localStorage.getItem('jianzuo-sticky-filter') || 'open';
-    } catch  {}
-    element('task-list').insertAdjacentHTML('afterend', '<section id="sticky-board" class="sticky-board"><header><strong>待办</strong><span id="sticky-count" class="muted"></span><button id="sticky-expand" type="button" aria-expanded="false" aria-controls="sticky-list sticky-filter sticky-scope" aria-label="展开待办和筛选">展开</button><select id="sticky-filter" aria-label="待办筛选"><option value="open">未完成</option><option value="all">全部</option><option value="done">已完成</option></select><select id="sticky-scope" aria-label="待办范围"><option value="all">全部任务</option><option value="task">本任务</option></select><button id="sticky-new" title="新建待办">＋</button></header><div id="sticky-list" class="sticky-list"></div></section>');
+    element('task-list').insertAdjacentHTML('afterend', `<section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong>便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
     button('sticky-expand').onclick = ()=>{
-        const board = element('sticky-board');
-        board.dataset.mobileExpanded = board.dataset.mobileExpanded === 'true' ? 'false' : 'true';
-        syncStickyCompact(board.dataset.empty === 'true');
+        const board = element('sticky-board'), collapsed = board.dataset.collapsed !== 'true';
+        board.dataset.collapsed = String(collapsed);
+        element('sticky-body').classList.toggle('hidden', collapsed);
+        button('sticky-expand').setAttribute('aria-expanded', String(!collapsed));
+        button('sticky-expand').setAttribute('aria-label', collapsed ? '展开便签' : '收起便签');
+        button('sticky-expand').title = collapsed ? '展开便签' : '收起便签';
+        button('sticky-expand').textContent = collapsed ? '›' : '⌄';
     };
-    input('sticky-scope').value = stickyScope;
-    input('sticky-scope').onchange = ()=>{
-        stickyScope = input('sticky-scope').value;
-        try {
-            localStorage.setItem('jianzuo-sticky-scope', stickyScope);
-        } catch  {}
+    element('sticky-palette').querySelectorAll('button').forEach((b)=>b.onclick = ()=>{
+            if (!stickyReady) return;
+            quickNotes.color = b.dataset.stickyColor;
+            touchSticky();
+            syncStickyState();
+        });
+    button('sticky-new').onclick = addQuickNote;
+    button('sticky-retry').onclick = ()=>{
+        if (stickyReady) {
+            stickyError = '';
+            void saveQuickNotes();
+        } else void loadStickyBoard();
+    };
+    button('sticky-reload').onclick = ()=>{
+        if (!stickyDirty || confirm('重新加载会放弃便签中尚未保存的修改。请先复制需要保留的内容，是否继续？')) void loadStickyBoard(true);
+    };
+    button('sticky-undo').onclick = ()=>{
+        if (!stickyDeleted) return;
+        quickNotes.items.splice(Math.min(stickyDeleted.index, quickNotes.items.length), 0, stickyDeleted.note);
+        stickyDeleted = null;
+        touchSticky();
         renderStickyBoard();
     };
-    input('sticky-filter').value = stickyFilter;
-    input('sticky-filter').onchange = ()=>{
-        stickyFilter = input('sticky-filter').value;
-        try {
-            localStorage.setItem('jianzuo-sticky-filter', stickyFilter);
-        } catch  {}
-        renderStickyBoard();
-    };
-    button('sticky-new').onclick = ()=>{
-        if (!chosen) {
-            notify('先选择一个任务，便签会保存在该任务中。');
-            return;
-        }
-        editScratch(null);
-    };
-    button('scratch-tab').classList.add('hidden');
-    stickyLast = '';
-    void loadStickyBoard();
-}
-async function loadStickyBoard() {
-    if (!authenticated || !element('sticky-list') || stickyLoading) return;
-    stickyLoading = true;
-    const request = ++stickyRequest;
-    try {
-        const items = await api('scratch');
-        if (request !== stickyRequest) return;
-        stickyItems = items;
-        renderStickyBoard();
-    } catch (e) {
-        if (element('sticky-list') && !stickyItems.length) {
-            syncStickyCompact(false);
-            element('sticky-list').textContent = e.message;
-        }
-    } finally{
+    disposeWithShell(()=>{
+        clearTimeout(stickyTimer);
+        stickyRequest++;
         stickyLoading = false;
+    });
+    if (stickyDirty) {
+        stickyError = '便签草稿尚未保存，请重试';
+        renderStickyBoard();
+    } else {
+        stickyReady = false;
+        void loadStickyBoard();
     }
 }
-function syncStickyCompact(empty) {
-    const board = element('sticky-board'), toggle = element('sticky-expand');
-    if (!board || !toggle) return;
-    board.dataset.empty = String(empty);
-    const expanded = !empty || board.dataset.mobileExpanded === 'true';
-    toggle.setAttribute('aria-expanded', String(expanded));
-    toggle.setAttribute('aria-label', expanded ? '收起空待办和筛选' : '展开待办和筛选');
-    toggle.textContent = expanded ? '收起' : '展开';
+function stickyPayload() {
+    return {
+        color: quickNotes.color,
+        items: quickNotes.items.filter((n)=>n.content.trim()).map((n)=>({
+                ...n
+            }))
+    };
+}
+function stickyFingerprint() {
+    return JSON.stringify(stickyPayload());
+}
+function blankQuickNote() {
+    return {
+        id: 'n_' + Date.now().toString(36) + '_' + ++stickySequence + '_' + Math.random().toString(36).slice(2, 9),
+        content: '',
+        done: false
+    };
+}
+function touchSticky() {
+    stickyGeneration++;
+    stickyDirty = stickyFingerprint() !== stickySaved;
+    clearTimeout(stickyTimer);
+    if (!stickyError && !stickyConflict) stickyTimer = setTimeout(()=>void saveQuickNotes(), 600);
+    syncStickyState();
+}
+async function loadStickyBoard(force = false) {
+    if (!authenticated || !element('sticky-list') || stickyLoading || stickySaving || !force && (stickyDirty || !!element('sticky-list').contains(document.activeElement))) return;
+    stickyLoading = true;
+    const request = ++stickyRequest, epoch = shellEpoch, generation = stickyGeneration;
+    try {
+        const board = await api('sticky');
+        if (request !== stickyRequest || !shellCurrent(epoch) || generation !== stickyGeneration || !force && element('sticky-list').contains(document.activeElement)) return;
+        const changed = !stickyReady || JSON.stringify({
+            color: board.color,
+            items: board.items
+        }) !== stickySaved;
+        if (changed || force) quickNotes = board;
+        else quickNotes.revision = board.revision;
+        stickyReady = true;
+        stickyDirty = false;
+        stickyError = '';
+        stickyConflict = false;
+        stickySaved = stickyFingerprint();
+        if (changed || force) renderStickyBoard();
+        else syncStickyState();
+    } catch (e) {
+        if (request === stickyRequest && shellCurrent(epoch)) {
+            stickyError = '读取失败：' + e.message;
+            syncStickyState();
+        }
+    } finally{
+        if (request === stickyRequest) stickyLoading = false;
+    }
+}
+async function saveQuickNotes() {
+    clearTimeout(stickyTimer);
+    if (!stickyReady || !stickyDirty || stickySaving || stickyConflict || !authenticated) return;
+    const epoch = shellEpoch, snapshot = stickyPayload(), fingerprint = JSON.stringify(snapshot);
+    stickySaving = true;
+    stickyError = '';
+    syncStickyState();
+    let saved = false;
+    try {
+        const board = await api('sticky', 'PUT', {
+            ...snapshot,
+            revision: quickNotes.revision
+        });
+        quickNotes.revision = board.revision;
+        stickySaved = fingerprint;
+        stickyDirty = stickyFingerprint() !== stickySaved;
+        saved = true;
+    } catch (e) {
+        if (e.status === 409) {
+            try {
+                const board = await api('sticky');
+                if (JSON.stringify({
+                    color: board.color,
+                    items: board.items
+                }) === fingerprint) {
+                    quickNotes.revision = board.revision;
+                    stickySaved = fingerprint;
+                    stickyDirty = stickyFingerprint() !== stickySaved;
+                    saved = true;
+                } else stickyConflict = true;
+            } catch  {
+                stickyConflict = true;
+            }
+        }
+        if (!saved) stickyError = stickyConflict ? '其他窗口已修改，草稿保留；请复制需要的内容后重新加载。' : '未保存：' + e.message;
+    } finally{
+        stickySaving = false;
+        if (shellCurrent(epoch)) {
+            syncStickyState();
+            if (saved && stickyDirty) stickyTimer = setTimeout(()=>void saveQuickNotes(), 600);
+        }
+    }
+}
+function syncStickyState() {
+    const board = element('sticky-board');
+    if (!board) return;
+    board.dataset.color = quickNotes.color;
+    const count = quickNotes.items.filter((n)=>n.content.trim() && !n.done).length;
+    element('sticky-count').textContent = count ? count + ' 项' : '';
+    element('sticky-palette').querySelectorAll('button').forEach((b)=>{
+        b.disabled = !stickyReady;
+        b.setAttribute('aria-pressed', String(b.dataset.stickyColor === quickNotes.color));
+    });
+    button('sticky-new').disabled = !stickyReady || quickNotes.items.length >= 500;
+    const status = element('sticky-save-status');
+    status.textContent = stickyError || (stickySaving ? '保存中…' : stickyDirty ? '待保存…' : stickyReady ? '已保存 · 共用便签' : '正在读取…');
+    status.classList.toggle('error', !!stickyError);
+    button('sticky-retry').classList.toggle('hidden', !stickyError || stickyConflict);
+    button('sticky-retry').disabled = stickySaving;
+    button('sticky-reload').classList.toggle('hidden', !stickyConflict);
+    button('sticky-reload').disabled = stickySaving;
+    button('sticky-undo').classList.toggle('hidden', !stickyDeleted);
+}
+let stickyDeleted = null;
+function addQuickNote() {
+    if (!stickyReady) return;
+    let note = quickNotes.items.find((n)=>!n.content.trim());
+    if (!note) {
+        if (quickNotes.items.length >= 500) {
+            notify('便签最多 500 条，请先整理已有内容。');
+            return;
+        }
+        note = blankQuickNote();
+        quickNotes.items.push(note);
+    }
+    renderStickyBoard();
+    const field = element('sticky-input-' + note.id);
+    field.focus();
+    field.scrollIntoView?.({
+        block: 'nearest'
+    });
+}
+function fitQuickNote(field) {
+    field.style.height = 'auto';
+    field.style.height = Math.max(32, Math.min(96, field.scrollHeight)) + 'px';
 }
 function renderStickyBoard() {
-    if (!element('sticky-list')) return;
-    const scoped = stickyItems.filter((n)=>stickyScope !== 'task' || n.task_id === chosen);
-    const items = scoped.filter((n)=>{
-        const s = scratchStatus(n);
-        return stickyFilter === 'all' || (stickyFilter === 'open' ? s !== 'done' : s === 'done');
+    const list = element('sticky-list');
+    if (!list) return;
+    if (stickyReady && !quickNotes.items.length) quickNotes.items.push(blankQuickNote());
+    list.innerHTML = quickNotes.items.map((n)=>`<div class="quick-note" data-note="${escapeHTML(n.id)}" data-done="${n.done}"><input type="checkbox" data-note-done="${escapeHTML(n.id)}" aria-label="标记便签完成" ${n.done ? 'checked' : ''}><textarea id="sticky-input-${escapeHTML(n.id)}" data-note-input="${escapeHTML(n.id)}" rows="1" maxlength="8000" aria-label="便签内容" placeholder="写下备忘…">${escapeHTML(n.content)}</textarea><button type="button" data-note-delete="${escapeHTML(n.id)}" aria-label="删除这条便签" title="删除">×</button></div>`).join('');
+    list.querySelectorAll('[data-note-input]').forEach((field)=>{
+        field.value = quickNotes.items.find((n)=>n.id === field.dataset.noteInput)?.content || '';
+        let composing = false;
+        const update = ()=>{
+            const note = quickNotes.items.find((n)=>n.id === field.dataset.noteInput);
+            if (!note) return;
+            note.content = field.value;
+            fitQuickNote(field);
+            touchSticky();
+            if (composing) clearTimeout(stickyTimer);
+        };
+        field.addEventListener('compositionstart', ()=>{
+            composing = true;
+            clearTimeout(stickyTimer);
+        });
+        field.addEventListener('compositionend', ()=>{
+            composing = false;
+            update();
+        });
+        field.oninput = update;
+        field.onblur = ()=>{
+            if (!composing && !stickyError) void saveQuickNotes();
+        };
+        field.onkeydown = (e)=>{
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing) {
+                e.preventDefault();
+                if (!stickyError) void saveQuickNotes();
+                addQuickNote();
+            }
+        };
+        fitQuickNote(field);
     });
-    syncStickyCompact(items.length === 0);
-    const html = items.map((n)=>scratchCardHTML(n, 'all')).join('') || `<p class="muted">${stickyFilter === 'done' ? '还没有完成的待办。' : '点 ＋ 记下一步要做的事，勾选即可完成。'}</p>`;
-    if (element('sticky-count')) element('sticky-count').textContent = scoped.filter((n)=>scratchStatus(n) !== 'done').length + ' 项未完成';
-    if (html === stickyLast) return;
-    stickyLast = html;
-    element('sticky-list').innerHTML = html;
-    element('sticky-list').querySelectorAll('[data-toggle]').forEach((box)=>box.onclick = ()=>void toggleScratch(stickyItems.find((n)=>n.id === box.dataset.toggle), box.checked));
-    element('sticky-list').querySelectorAll('[data-edit]').forEach((b)=>b.onclick = ()=>editScratch(stickyItems.find((n)=>n.id === b.dataset.edit) || null));
-    element('sticky-list').querySelectorAll('[data-use]').forEach((b)=>b.onclick = ()=>useScratchItem(stickyItems.find((n)=>n.id === b.dataset.use)));
-    element('sticky-list').querySelectorAll('[data-delete]').forEach((b)=>b.onclick = ()=>void deleteScratch(stickyItems.find((n)=>n.id === b.dataset.delete)));
+    list.querySelectorAll('[data-note-done]').forEach((box)=>box.onchange = ()=>{
+            const note = quickNotes.items.find((n)=>n.id === box.dataset.noteDone);
+            if (!note) return;
+            note.done = box.checked;
+            box.closest('.quick-note').dataset.done = String(note.done);
+            touchSticky();
+        });
+    list.querySelectorAll('[data-note-delete]').forEach((b)=>b.onclick = ()=>{
+            const index = quickNotes.items.findIndex((n)=>n.id === b.dataset.noteDelete);
+            if (index < 0) return;
+            const [note] = quickNotes.items.splice(index, 1);
+            stickyDeleted = note.content.trim() ? {
+                note,
+                index
+            } : null;
+            touchSticky();
+            renderStickyBoard();
+            const target = list.querySelector('[data-note-input]');
+            target?.focus();
+        });
+    syncStickyState();
 }
 setInterval(()=>{
     if (authenticated && !document.hidden && element('sticky-board')) void loadStickyBoard();
@@ -2486,20 +2675,53 @@ function installLayout() {
         theme = localStorage.getItem('jianzuo-theme') === 'dark' ? 'dark' : 'light';
     } catch  {}
     document.documentElement.dataset.theme = theme;
-    element('settings-open').insertAdjacentHTML('afterend', '<button id="theme-toggle" class="subtle" title="切换浅色 / 深色外观">外观</button>');
+    element('settings-open').insertAdjacentHTML('afterend', '<button id="theme-toggle" class="subtle">外观</button>');
     const footer = element('settings-open').parentElement;
-    footer.id = 'sidebar-footer';
-    const utilities = document.createElement('nav');
-    utilities.className = 'sidebar-utilities';
-    utilities.setAttribute('aria-label', '工作台设置');
+    const utilities = document.createElement('div');
+    utilities.className = 'header-utilities';
+    utilities.append(element('task-actions'));
+    const menu = document.createElement('details');
+    menu.id = 'app-menu';
+    menu.className = 'app-menu';
+    menu.innerHTML = '<summary id="app-menu-toggle" aria-label="工作台设置与工具" title="工作台设置与工具"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m9.5 3-.6 2-2 .9-2-.5-2 3.5 1.4 1.5v2.2L3 14.2l2 3.5 2-.5 2 .9.6 2h4.2l.6-2 2-.9 2 .5 2-3.5-1.4-1.5v-2.2L21 9l-2-3.5-2 .5-2-.9-.6-2Z"/><circle cx="12" cy="12" r="3"/></svg></summary><nav id="app-menu-items" aria-label="工作台工具"></nav>';
     for (const id of [
         'settings-open',
         'theme-toggle',
-        'sidebar-close',
         'logout'
-    ])utilities.append(element(id));
-    footer.prepend(utilities);
-    element('connection').setAttribute('role', 'status');
+    ])menu.querySelector('nav').append(element(id));
+    utilities.append(menu);
+    document.querySelector('.header').append(utilities);
+    const brand = document.querySelector('#sidebar .brand');
+    brand.innerHTML = '<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
+    brand.append(element('sidebar-close'));
+    button('sidebar-close').textContent = '×';
+    button('sidebar-close').setAttribute('aria-label', '收起任务列表');
+    button('app-version').textContent = appVersion ? 'v' + appVersion : '版本';
+    button('app-version').onclick = async ()=>{
+        await openSettings();
+        showSettingsSection('updates');
+    };
+    const connection = element('connection');
+    connection.textContent = '';
+    connection.classList.add('hidden');
+    connection.setAttribute('role', 'status');
+    utilities.prepend(connection);
+    footer.remove();
+    menu.addEventListener('click', (e)=>{
+        if (e.target.closest('button')) {
+            menu.open = false;
+            element('sidebar').classList.remove('open');
+        }
+    });
+    listenWithShell(document, 'click', (e)=>{
+        if (!menu.contains(e.target)) menu.open = false;
+    });
+    listenWithShell(document, 'keydown', (e)=>{
+        if (e.key === 'Escape' && menu.open) {
+            menu.open = false;
+            element('app-menu-toggle').focus();
+        }
+    });
     button('theme-toggle').onclick = ()=>{
         const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
         document.documentElement.dataset.theme = next;
@@ -5731,7 +5953,7 @@ function environmentOptionLabel(environment) {
 function environmentWorkspaceHint(environment) {
     return environment.type === 'windows' ? 'Windows 绝对路径，例如 C:\\Users\\你\\work' : environment.type === 'wsl' ? 'WSL 绝对路径，例如 /home/你/work' : 'SSH 远端绝对路径，例如 /home/你/work';
 }
-let csrf = '', tasks = [], settings, chosen = '', detail = null, knowledgeItems = [], knowledgeEditing = null;
+let csrf = '', appVersion = '', tasks = [], settings, chosen = '', detail = null, knowledgeItems = [], knowledgeEditing = null;
 let sequence = 0, selection = 0, dirty = false, sending = false, polling = false, authenticated = false, refreshList = 0, lastList = '', lastKnowledge = '', noticeTimer;
 let taskContext = [];
 let knowledgeDraftRun = '';
@@ -6009,6 +6231,7 @@ async function boot() {
         return;
     }
     csrf = status.csrf;
+    appVersion = status.version || '';
     const loaded = await Promise.all([
         api('tasks', 'GET', undefined, signal),
         api('settings', 'GET', undefined, signal),
@@ -6041,7 +6264,7 @@ function showShellFailure(error) {
 function renderShell() {
     renewShellScope();
     lastList = '';
-    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection">本机服务已连接</span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions task-heading"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div class="task-identity"><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">本任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
+    element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><div class="logo">D</div><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection" class="hidden"></span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions task-heading"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div class="task-identity"><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">本任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
  <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
  <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行Duo的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
  <dialog id="bind-dialog"><h2>在飞书继续这个任务</h2><p id="bind-status"></p><p>连接后，从网页或飞书发来的要求进入同一个任务；该任务的完成结果会发送到此私聊。</p><div class="dialog-footer"><button data-close="bind-dialog">关闭</button><button id="bind-setup">扫码创建并绑定当前任务</button><button id="unbind">断开当前任务</button><button class="primary" id="bind">连接此任务</button></div></dialog>
@@ -6070,6 +6293,10 @@ function renderShell() {
     element('root').querySelectorAll('[data-close]').forEach((b)=>b.onclick = ()=>element(b.dataset.close).close());
     button('logout').onclick = async ()=>{
         if (!mayLeave()) return;
+        if (stickyDirty || stickySaving) {
+            notify('便签尚未保存，请等待保存完成或重试后再退出。');
+            return;
+        }
         const epoch = shellEpoch;
         try {
             await api('logout', 'POST', {});
@@ -6590,9 +6817,15 @@ async function poll() {
             appendEvents(d.events);
             renderTask();
         }
-        if (element('connection')) element('connection').textContent = '本机服务已连接';
+        if (element('connection')) {
+            element('connection').textContent = '';
+            element('connection').classList.add('hidden');
+        }
     } catch (e) {
-        if (shellCurrent(epoch) && element('connection')) element('connection').textContent = '连接中断，正在重试';
+        if (shellCurrent(epoch) && element('connection')) {
+            element('connection').textContent = '连接中断，正在重试';
+            element('connection').classList.remove('hidden');
+        }
     } finally{
         if (shellCurrent(epoch)) polling = false;
     }
@@ -7384,7 +7617,7 @@ async function setBinding(bind) {
     }
 }
 window.addEventListener('beforeunload', (e)=>{
-    if (dirty) {
+    if (dirty || stickyDirty || stickySaving) {
         e.preventDefault();
         e.returnValue = '';
     }
@@ -7866,7 +8099,7 @@ function dockZoneID(side) {
 }
 function effectiveDockSide(panel) {
     const side = dockLayout[panel];
-    if (panel === 'sticky' && side !== 'bottom' && dockNarrow.matches) return 'bottom';
+    if (panel === 'sticky' && (side === 'left' || side === 'right') && dockNarrow.matches) return 'bottom';
     return side;
 }
 function syncDocks() {
@@ -7890,10 +8123,8 @@ function applyDockLayout(save = false) {
     ]){
         const node = element(dockPanelIDs[panel]), zone = element(dockZoneID(effectiveDockSide(panel)));
         if (!node || !zone) continue;
-        if (zone.id === 'sidebar') {
-            const footer = element('sidebar-footer');
-            footer ? zone.insertBefore(node, footer) : zone.append(node);
-        } else zone.append(node);
+        if (zone.id === 'sidebar') zone.append(node);
+        else zone.append(node);
     }
     for (const side of [
         'sidebar',

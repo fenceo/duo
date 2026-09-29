@@ -14,7 +14,7 @@ const output=path.resolve('build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
 const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
-const baseRef=process.env.DUO_UI_BASE||'v0.22.7';
+const baseRef=process.env.DUO_UI_BASE||'v0.22.10';
 for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.css']){
  const result=spawnSync('git',['show',baseRef+':web/'+file],{encoding:'utf8',windowsHide:true});
  if(result.status!==0)throw Error('Cannot read UI comparison baseline: '+baseRef);
@@ -24,6 +24,7 @@ const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Progr
 if(!browser)throw Error('A standard installed Chromium browser is required for UI captures.');
 const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','dark',1280,800],['normal','light',390,844],['normal','dark',390,844],['menu','light',1280,800],['menu','dark',390,844],['long','light',390,844],['closed','light',390,844],['create','light',1280,800],['create','light',390,844],['createbottom','light',390,844],['settings','light',1280,800],['settings','dark',390,844]];
 cases.push(['library','light',1280,800],['library','dark',1280,800],['library','light',390,844],['librarypreview','light',1280,800],['librarypreview','dark',390,844],['knowledge','light',1280,800],['knowledge','dark',390,844],['knowledgeexpanded','light',390,844]);
+cases.push(['sidebar','light',1280,800],['sidebar','dark',1280,800],['sidebar','dark',390,844],['sidebarempty','light',390,844],['sidebarnarrow','light',1024,600],['sidebarfull','dark',1280,800],['appmenu','light',1280,800],['appmenu','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -34,13 +35,19 @@ for(const [view,theme,width,height] of cases){
  runInContext(`
   chosen='layout-preview';
   detail={task:{id:chosen,title:'Duo 优化',workspace:'C:/Projects/duo',environment:{name:'本机 Windows'},engine:'codex',model:'gpt-6-astra',reasoning_effort:'high',session:'synthetic-session',status:'done',archived:false,updated:1},runs:[{id:'r1',kind:'chat',status:'done',input:'优化对话页面，让常用操作更直接，留出更多阅读空间。',result:'已完成对话页面优化。\\n\\n- 标题与工作目录放在同一行。\\n- 本任务知识可以直接打开。\\n- 引用历史和知识并入输入框底部。\\n\\n会话信息与低频操作集中在右上角。',created:1,finished:2}],events:[],session_started:1790310000000};
-  tasks=[detail.task];renderTask();
+  tasks=[detail.task,...Array.from({length:7},(_,i)=>({...detail.task,id:'task-'+i,title:['检查串口连接','整理发布说明','修复页面交互','准备下一次验证'][i%4],workspace:i<3?'C:/Projects/duo':'C:/Projects/demo'}))];renderTask();renderList();
   for(const id of ['tabs','task-actions','composer-wrap','conversation-filter'])element(id).classList.remove('hidden');
   element('conversation').innerHTML='';appendEvents([{seq:1,task_id:chosen,run_id:'r1',kind:'user',text:detail.runs[0].input},{seq:2,task_id:chosen,run_id:'r1',kind:'assistant',text:detail.runs[0].result}]);
  `,ctx);
  if(view==='long')runInContext(`detail.task.title='很长的任务标题：检查知识记录与对话排版';detail.task.workspace='C:/Projects/a-very-long-workspace/knowledge-and-conversation-layout';renderTask()`,ctx);
  if(view==='closed')runInContext(`detail.task.engine='deepseek-harness';detail.runtime={state:'closed',can_continue:false};renderTask()`,ctx);
  if(view==='menu')document.getElementById('task-session-menu').setAttribute('open','');
+ if(view==='appmenu')document.getElementById('app-menu').setAttribute('open','');
+ if(view.startsWith('sidebar')){
+  if(width<=760)document.getElementById('sidebar').classList.add('open');
+  if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
+  if(view==='sidebarnarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
+ }
  if(view==='create'||view==='createbottom')runInContext(`for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
  if(view==='settings'){
   document.getElementById('settings-dialog').setAttribute('open','');
@@ -70,7 +77,7 @@ for(const [view,theme,width,height] of cases){
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
- const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook'];const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','new-task','search','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu','app-menu-toggle','settings-open','theme-toggle','library-open'];const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
@@ -108,6 +115,13 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('knowledge')){
    const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'task knowledge search is unusable');
   }
+  if(view.startsWith('sidebar')){
+   const board=items['sticky-board'],list=items['task-list'];
+   for(const id of ['app-version','sticky-board','sticky-list','sticky-new','sticky-save-status']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
+   assert(list.height>=90,'task list has too little height');assert(list.y<220,'sidebar header takes too much space');assert(list.y+list.height<=board.y+1,'task list overlaps notes');
+   assert(items['sticky-list'].height>=32,'notes have no writing room');
+  }
+  if(view==='appmenu')for(const id of ['settings-open','theme-toggle','library-open']){const b=items[id];assert(b.visible&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'global menu entry is clipped: '+id)}
   if(view==='createbottom')for(const id of ['library-create','create-submit']){
    const box=items[id];assert(box.visible&&box.y>=0&&box.y+box.height<=height&&box.x+box.width<=width,id+' is outside the scrolled create page');
   }
@@ -115,7 +129,7 @@ for(const [view,theme,width,height] of cases){
 }
 }finally{await renderer.close()}
 const before=measurements.find(x=>x.view==='before'),after=measurements.find(x=>x.name==='normal-light-1280');
-if(before&&after&&after.items.conversation.height<=before.items.conversation.height)failures.push('desktop conversation height did not increase');
+if(before&&after){if(after.items.conversation.height<before.items.conversation.height-2)failures.push('desktop conversation lost vertical space');if(after.items['task-list'].y>=before.items['task-list'].y-50)failures.push('sidebar navigation did not become materially shorter');}
 const report={source:process.env.GITHUB_SHA||'local',baseRef,measurements,failures};
 await fs.writeFile(path.join(output,'geometry.json'),JSON.stringify(report,null,2));
 const summary=JSON.stringify(measurements.map(x=>({name:x.name,width:x.width,height:x.height,chatHeight:x.items.conversation?.height})));
