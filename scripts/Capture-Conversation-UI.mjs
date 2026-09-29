@@ -59,7 +59,7 @@ for(const [view,theme,width,height] of cases){
   }else{
    const baseAPI=ctx.api;
    ctx.api=async(route,...args)=>{
-    if(route.startsWith('library/search'))return {documents:entries.map(k=>({...k,id:'knowledge:'+k.id,kind:'knowledge',origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:5,truncated:false,next_offset:5};
+    if(route.startsWith('library/search'))return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:'knowledge',origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4};
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
     return baseAPI(route,...args);
    };
@@ -71,6 +71,8 @@ for(const [view,theme,width,height] of cases){
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
  const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook'];const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ // Serialize current checkbox state as well as markup into the static fixture.
+ for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
  runInContext('authenticated=false;renewShellScope()',ctx);
  try{
