@@ -125,7 +125,7 @@ for(const [view,theme,width,height] of cases){
   if(view==='live'||view.startsWith('questions')){
    for(const id of ['live-steer','live-interrupt','send','stop']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width&&b.y+b.height<=height,id+' is clipped');if(width<=760)assert(b.height>=44,id+' is too short for touch')}
    assert(items.conversation.height>=60,'interactive controls eliminate all conversation space');
-   if(view.startsWith('questions')){const panel=items['codex-approvals'];assert(panel.visible&&panel.height>=150&&panel.height<height*.5,'question panel has no bounded reading space');assert(panel.scrollWidth<=panel.clientWidth+1,'question choices overflow horizontally');if(width<=760)assert(items['preview-answer-option'].height>=44,'question option has a small touch target')}
+   if(view.startsWith('questions')){const panel=items['codex-approvals'],submit=items['preview-answer-submit'];assert(panel.visible&&panel.height>=150&&panel.height<height*.5,'question panel has no bounded reading space');assert(panel.scrollWidth<=panel.clientWidth+1,'question choices overflow horizontally');assert(submit.y>=panel.y&&submit.y+submit.height<=panel.y+panel.height,'question submit is outside the visible card');if(width<=760)assert(items['preview-answer-option'].height>=44,'question option has a small touch target')}
   }
   if(['normal','long'].includes(view)){
    for(const id of ['note-tab','task-title','task-workspace','library-task','message-mode','task-model','send']){
