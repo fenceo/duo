@@ -428,7 +428,15 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 			continue
 		}
 		if c.TaskFolders && d.Kind == "knowledge" && d.Automatic {
-			continue
+			// New conversations already have a full transcript; do not export a second
+			// automatic excerpt. Preserve and relocate automatic files tracked by v1.
+			var tracked int
+			if err = a.store.QueryRow("SELECT count(*) FROM library_links WHERE id=?", d.ID).Scan(&tracked); err != nil {
+				return report, err
+			}
+			if tracked == 0 {
+				continue
+			}
 		}
 		localHash := documentHash(d)
 		if c.TaskFolders {

@@ -242,6 +242,12 @@ func TestNotebookVaultMigratesLegacyPathsAndKeepsTags(t *testing.T) {
 	k := libraryKnowledge(t, a, task, "查看 https://example.com/docs 后确认", "observed")
 	dir := t.TempDir()
 	setTestVault(t, a, dir, true)
+	legacy := a.store.vaultConfig()
+	legacy.IncludeAutomatic = true
+	legacyJSON, _ := json.Marshal(legacy)
+	a.store.set("knowledge_vault", string(legacyJSON))
+	oldRun := finishAutomaticFixture(t, a, task, "旧版自动记录", "旧版回复", "chat", nil)
+	automatic, _ := a.store.knowledgeForRun(task.ID, oldRun.ID)
 	syncTestVault(t, a)
 	old := filepath.Join(dir, "Duo", "knowledge", k.ID+".md")
 	raw := readTestFile(t, old)
@@ -260,6 +266,16 @@ func TestNotebookVaultMigratesLegacyPathsAndKeepsTags(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("unchanged tracked file was not moved", err)
+	}
+	automaticPath := filepath.Join(dir, "Duo", "tasks", task.ID, "notes", automatic.ID+".md")
+	if !strings.Contains(readTestFile(t, automaticPath), "旧版回复") {
+		t.Fatal("tracked automatic file was lost during layout migration")
+	}
+	nextRun := finishAutomaticFixture(t, a, task, "新版自动记录", "新版回复", "chat", nil)
+	nextAutomatic, _ := a.store.knowledgeForRun(task.ID, nextRun.ID)
+	syncTestVault(t, a)
+	if _, err := os.Stat(filepath.Join(dir, "Duo", "tasks", task.ID, "notes", nextAutomatic.ID+".md")); !os.IsNotExist(err) {
+		t.Fatal("new transcript duplicated as an automatic note", err)
 	}
 	f, err := parseVaultFile("notes/test.md", "---\ntags: git, 性能\n---\n\n笔记")
 	if err != nil || len(f.Document.Tags) != 2 {
