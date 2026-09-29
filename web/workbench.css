@@ -224,7 +224,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .composer-bottom #task-model-button{display:flex;width:100%;max-width:100%;justify-content:space-between}
 .composer-bottom #task-model-label{flex:1}
 .composer-tools{row-gap:7px}
-.composer-tools .mode-engine-hint{flex:1 0 100%;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.composer-tools .mode-engine-hint{flex:1 0 100%;max-width:none;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 #model-picker-button,#task-model-button{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:8px 10px;font-size:13px;font-weight:400;text-align:left;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px}
 #model-picker-button:hover:not(:disabled),#task-model-button:hover:not(:disabled),#model-picker-button[aria-expanded="true"],#task-model-button[aria-expanded="true"]{background:var(--raised);border-color:var(--accent)}
 #model-picker-label,#task-model-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -404,9 +404,10 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
  .header h1{font-size:15px}.header p{font-size:12px}
  .header .task-identity{gap:8px}.header #task-title{max-width:42%;font-size:14px}.header #task-workspace{font-size:11px}
- .header #task-actions{margin-left:0}.session-menu>summary{min-height:44px;padding:6px 8px}
+ .header #task-actions{margin-left:0}.header .session-menu>summary{min-height:44px;padding:6px 8px}
  .header #task-actions .session-menu-actions button{min-height:44px}
  .session-banner{padding:6px 12px}.session-banner .session-text{flex:1;min-width:0}
+ .session-banner #session-recover{min-height:44px}
  .app button,dialog button{min-height:40px}
  .app summary,dialog summary{min-height:40px;align-content:center}
  .task-item-menu>summary{min-width:40px;text-align:center}
@@ -439,6 +440,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .composer-bottom{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
  .composer-bottom #task-model{max-width:100%;width:100%;min-width:0;font-size:13px}
  .composer-bottom button{min-height:44px;min-width:44px}
+ .composer-bottom .actions button{min-height:44px;min-width:44px}
  #task-model-button{max-width:100%;width:100%;justify-content:space-between}
  .composer-bottom #task-model-button{font-size:13px;min-height:44px}
  .composer-bottom .actions{margin-left:auto}

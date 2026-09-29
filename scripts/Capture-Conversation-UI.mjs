@@ -22,7 +22,7 @@ for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.c
 }
 const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync);
 if(!browser)throw Error('A standard installed Chromium browser is required for UI captures.');
-const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','dark',1280,800],['normal','light',390,844],['normal','dark',390,844],['menu','light',1280,800],['menu','dark',390,844],['long','light',390,844],['closed','light',390,844],['create','light',1280,800],['create','light',390,844],['settings','light',1280,800],['settings','dark',390,844]];
+const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','dark',1280,800],['normal','light',390,844],['normal','dark',390,844],['menu','light',1280,800],['menu','dark',390,844],['long','light',390,844],['closed','light',390,844],['create','light',1280,800],['create','light',390,844],['createbottom','light',390,844],['settings','light',1280,800],['settings','dark',390,844]];
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -40,7 +40,7 @@ for(const [view,theme,width,height] of cases){
  if(view==='long')runInContext(`detail.task.title='很长的任务标题：检查知识记录与对话排版';detail.task.workspace='C:/Projects/a-very-long-workspace/knowledge-and-conversation-layout';renderTask()`,ctx);
  if(view==='closed')runInContext(`detail.task.engine='deepseek-harness';detail.runtime={state:'closed',can_continue:false};renderTask()`,ctx);
  if(view==='menu')document.getElementById('task-session-menu').setAttribute('open','');
- if(view==='create')runInContext(`for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
+ if(view==='create'||view==='createbottom')runInContext(`for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
  if(view==='settings'){
   document.getElementById('settings-dialog').setAttribute('open','');
   ctx.showSettingsSection('knowledge');
@@ -49,7 +49,7 @@ for(const [view,theme,width,height] of cases){
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
- const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{if(${JSON.stringify(view)}==='settings'){const dialog=document.getElementById('settings-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','send','task-session-menu','session-recover','create-input','library-create'];const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'){const dialog=document.getElementById('settings-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-session-menu','task-session-toggle','session-recover','mode-engine-hint','create-input','library-create','create-submit'];const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
  runInContext('authenticated=false;renewShellScope()',ctx);
  try{
@@ -69,7 +69,16 @@ for(const [view,theme,width,height] of cases){
    assert(items.composer.y+items.composer.height<=metrics.height+1,'composer extends below viewport');
    assert(items.conversation.height>metrics.height*.5,'conversation receives too little vertical space');
   }
-  if(view==='closed')assert(items['session-recover'].visible,'missing closed-session recovery');
+  if(width<=760&&['normal','long','closed'].includes(view)){
+   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','task-session-toggle'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
+  }
+  if(view==='closed'){
+   assert(items['session-recover'].visible&&items['session-recover'].height>=44,'missing accessible closed-session recovery');
+   assert(items['mode-engine-hint'].width>items.message.width*.7,'engine hint is squeezed into a narrow column');
+  }
+  if(view==='createbottom')for(const id of ['library-create','create-submit']){
+   const box=items[id];assert(box.visible&&box.y>=0&&box.y+box.height<=height&&box.x+box.width<=width,id+' is outside the scrolled create page');
+  }
  }catch(error){failures.push(name+': '+error.message)}
 }
 }finally{await renderer.close()}
