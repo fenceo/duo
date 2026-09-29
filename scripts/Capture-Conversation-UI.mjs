@@ -1,9 +1,10 @@
 // Render only synthetic DOM fixtures. Never connect to a running Duo instance,
 // an existing browser profile, a model provider, or a user's data directory.
 import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {startFixtureBrowser} from './Headless-UI-Fixture.mjs';
 import {runInContext} from 'node:vm';
 import fs from 'node:fs/promises';
-import {existsSync,mkdtempSync} from 'node:fs';
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
@@ -23,6 +24,8 @@ const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Progr
 if(!browser)throw Error('A standard installed Chromium browser is required for UI captures.');
 const cases=[['before','light',1280,800],['normal','light',1280,800],['normal','dark',1280,800],['normal','light',390,844],['normal','dark',390,844],['menu','light',1280,800],['menu','dark',390,844],['long','light',390,844],['closed','light',390,844],['create','light',1280,800],['create','light',390,844],['settings','light',1280,800],['settings','dark',390,844]];
 const measurements=[],failures=[];
+const renderer=await startFixtureBrowser(browser,output);
+try{
 for(const [view,theme,width,height] of cases){
  const name=`${view}-${theme}-${width}`;
  const webRoot=view==='before'?pathToFileURL(baseline+path.sep):new URL('../web/',import.meta.url);
@@ -50,13 +53,11 @@ for(const [view,theme,width,height] of cases){
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
  runInContext('authenticated=false;renewShellScope()',ctx);
  try{
-  const profile=mkdtempSync(path.join(output,'profile-'));
-  const result=spawnSync(browser,['--headless','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-background-networking','--user-data-dir='+profile,`--window-size=${width},${height}`,'--screenshot='+path.join(output,name+'.png'),'--dump-dom','--virtual-time-budget=1000',pathToFileURL(html).href],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:8*1024*1024});
-  if(result.status!==0)throw Error('Browser failed: '+(result.error?.message||result.status)+' '+result.stderr.slice(-500));
-  const match=result.stdout.match(/<pre id="layout-metrics" hidden="">(.*?)<\/pre>/s);
-  assert(match,'missing browser measurements');
-  const metrics=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&'));
+  const {metrics,png}=await renderer.capture(pathToFileURL(html).href,width,height);
+  await fs.writeFile(path.join(output,name+'.png'),png);
   measurements.push({name,view,theme,...metrics});
+  assert.equal(metrics.width,width,'browser must use the requested CSS viewport width');
+  assert.equal(metrics.height,height,'browser must use the requested CSS viewport height');
   const items=metrics.items;
   assert(metrics.bodyWidth<=metrics.width+1,'page overflows horizontally');
   if(['normal','long'].includes(view)){
@@ -71,6 +72,7 @@ for(const [view,theme,width,height] of cases){
   if(view==='closed')assert(items['session-recover'].visible,'missing closed-session recovery');
  }catch(error){failures.push(name+': '+error.message)}
 }
+}finally{await renderer.close()}
 const before=measurements.find(x=>x.view==='before'),after=measurements.find(x=>x.name==='normal-light-1280');
 if(before&&after&&after.items.conversation.height<=before.items.conversation.height)failures.push('desktop conversation height did not increase');
 const report={source:process.env.GITHUB_SHA||'local',baseRef,measurements,failures};
