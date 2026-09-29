@@ -93,7 +93,7 @@ function installWorkflow(){
   if(files.length){e.preventDefault();addCreateFiles(files)}
  });
  const bar=document.createElement('div');bar.className='composer-tools';bar.innerHTML='<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><button type="button" id="mode-manage" title="管理工作模式">⚙</button><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
- element('composer').querySelector('.composer-bottom')!.before(bar);element('message').after(Object.assign(document.createElement('div'),{id:'attachment-drafts',className:'attachment-drafts'}));
+ element('composer').querySelector('.composer-bottom')!.prepend(bar);element('message').after(Object.assign(document.createElement('div'),{id:'attachment-drafts',className:'attachment-drafts'}));
  modeOptions(element<HTMLSelectElement>('message-mode'));modeOptions(element<HTMLSelectElement>('create-mode'));setCreatePermission(createPermission);
  button('attach-open').onclick=()=>input('attachment-input').click();input('attachment-input').onchange=()=>{const files=Array.from(input('attachment-input').files||[]);input('attachment-input').value='';void addAttachments(files)};
  const composer=element('composer');composer.ondragover=e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();composer.classList.add('dragover')}};composer.ondragleave=()=>composer.classList.remove('dragover');composer.ondrop=e=>{composer.classList.remove('dragover');if(e.dataTransfer?.files.length){e.preventDefault();void addAttachments(Array.from(e.dataTransfer.files))}};

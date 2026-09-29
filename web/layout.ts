@@ -28,13 +28,20 @@ function installLayout(){
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
  const tabs=element('tabs');tabs.prepend(element('conversation-filter'));button('chat-tab').classList.add('hidden');
  for(const id of ['conversation-results','conversation-all'])button(id).addEventListener('click',()=>{if(matchMedia('(max-width:760px)').matches)switchTab('chat')});
- // Keep frequent tools one click away; notes and knowledge live in the same dock.
- element('task-model').insertAdjacentHTML('beforebegin','<details class="tools-menu"><summary>更多</summary><div id="more-tools"></div></details>');
- for(const id of ['note-tab','scratch-tab'])element('more-tools').append(element(id));
- element('more-tools').addEventListener('click',()=>element('more-tools').parentElement!.removeAttribute('open'));
+ // Task knowledge is a primary tool, alongside files and the terminal.
+ tabs.append(element('note-tab'));
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';
  const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);element('task-model-button').title='本任务使用的 AI 工具、模型和推理强度';
  element('bind-open').insertAdjacentHTML('beforebegin','<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');button('task-handoff').onclick=()=>void openHandoff();button('task-link-copy').onclick=()=>void copyTaskLink();
+ const sessionMenu=document.createElement('details');sessionMenu.id='task-session-menu';sessionMenu.className='session-menu';
+ sessionMenu.innerHTML='<summary id="task-session-toggle" aria-label="会话信息与操作"><span id="task-session-label">会话</span><span aria-hidden="true">⌄</span></summary><div class="session-menu-content"><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="session-menu-actions"><button type="button" id="session-reset" class="hidden">新建会话</button></div></div>';
+ element('task-actions').append(sessionMenu);
+ const sessionActions=sessionMenu.querySelector('.session-menu-actions')!;
+ for(const id of ['task-handoff','task-link-copy','bind-open','scratch-tab'])sessionActions.append(element(id));
+ button('scratch-tab').textContent='本任务待办';button('session-reset').onclick=()=>void resetSession();
+ sessionMenu.addEventListener('click',e=>{const target=(e.target as HTMLElement).closest('button');if(target&&!target.disabled)sessionMenu.open=false});
+ listenWithShell(document,'click',e=>{if(!sessionMenu.contains(e.target as Node))sessionMenu.open=false});
+ listenWithShell(document,'keydown',e=>{if((e as KeyboardEvent).key==='Escape'&&sessionMenu.open){sessionMenu.open=false;element('task-session-toggle').focus()}});
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
  element('composer-wrap').querySelector('.footnote')!.remove();
  element('task-list').addEventListener('click',e=>{

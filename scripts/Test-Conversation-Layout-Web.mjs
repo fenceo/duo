@@ -1,0 +1,53 @@
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {runInContext} from 'node:vm';
+import assert from 'node:assert/strict';
+
+const {document,ctx,requests}=await createWebShellFixture();
+const node=id=>document.getElementById(id);
+assert.equal(node('note-tab').parentElement,node('tabs'),'knowledge stays directly accessible');
+assert.equal(document.querySelector('.tools-menu'),null,'no extra More menu to reach knowledge');
+assert.equal(node('library-task').closest('.composer-bottom'),document.querySelector('#composer .composer-bottom'));
+assert.equal(node('library-task').parentElement,node('command-open').parentElement);
+assert.equal(node('library-create').parentElement,node('create-submit').parentElement);
+assert.equal(node('message').previousElementSibling,null,'the draft has no reference-button row above it');
+assert(node('task-title').parentElement.classList.contains('task-identity'));
+assert.equal(node('task-title').parentElement,node('task-workspace').parentElement);
+for(const id of ['session-reset','task-handoff','task-link-copy','bind-open','scratch-tab']){
+  assert.equal(node(id).closest('details'),node('task-session-menu'));
+  assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
+}
+runInContext(`
+ chosen='compact-fixture';
+ detail={task:{id:chosen,title:'布局验收任务',workspace:'C:/fixture/a-long-workspace',environment:{name:'本机 Windows'},engine:'codex',session:'synthetic-session',status:'done',archived:false},runs:[{id:'run',status:'done',result:'synthetic',kind:'chat'}],events:[]};
+ tasks=[detail.task];renderTask();
+`,ctx);
+assert(node('session-banner').classList.contains('hidden'),'ordinary sessions do not reserve a banner');
+assert(node('run-status').classList.contains('hidden'),'idle status does not reserve a second composer heading');
+assert(!node('session-reset').classList.contains('hidden'));
+assert.equal(node('session-reset').disabled,false);
+const reset=node('session-reset');node('task-session-menu').open=true;
+ctx.renderSessionBanner();
+assert.equal(node('task-session-menu').open,true,'polling must not close an open session menu');
+assert.equal(node('session-reset'),reset,'polling must retain focused action nodes');
+runInContext(`taskContext=[{name:'<img src=x onerror=alert(1)>',label:'外部指令'}];renderSessionBanner()`,ctx);
+assert.equal(node('session-context').querySelector('img'),null,'context names remain escaped text');
+assert.match(node('task-session-label').textContent,/指令/,'external instructions stay discoverable');
+runInContext(`detail.runs.push({id:'busy',status:'running'});renderTask()`,ctx);
+assert.equal(node('session-reset').disabled,true,'cannot reset a running session');
+assert(!node('run-status').classList.contains('hidden'),'execution status remains visible');
+runInContext(`detail.runs.pop();detail.task.engine='deepseek-harness';detail.runtime={state:'closed',can_continue:false};renderTask()`,ctx);
+assert(!node('session-banner').classList.contains('hidden'),'closed sessions retain a visible recovery action');
+assert.equal(typeof node('session-recover').onclick,'function');
+assert.equal(node('send').disabled,true,'closed sessions cannot accidentally send');
+runInContext(`detail.task.archived=true;renderTask()`,ctx);
+assert(node('session-banner').classList.contains('hidden'));
+assert(node('session-reset').classList.contains('hidden'));
+assert(!node('run-status').classList.contains('hidden'),'archived state remains visible');
+runInContext(`detail.task.archived=false;detail.task.engine='codex';delete detail.runtime;taskContext=[];renderTask()`,ctx);
+node('note-tab').onclick();
+assert(!node('notebook').classList.contains('hidden'),'one click opens task knowledge');
+assert.equal(node('note-tab').getAttribute('aria-pressed'),'true');
+assert(node('tool-title').textContent.includes('本任务知识'));
+assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
+runInContext('authenticated=false;renewShellScope()',ctx);
+console.log('PASS: direct knowledge, compact composer references, preserved session actions/focus, escaped context, visible busy/closed/archived states and reset/send guards. No model calls.');

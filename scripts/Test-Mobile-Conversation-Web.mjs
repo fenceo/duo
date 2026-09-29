@@ -45,7 +45,7 @@ assert.match(mobile,/#sticky-board\[data-empty="true"\]\{height:auto;min-height:
 for(const id of ['sticky-list','sticky-filter','sticky-scope'])assert(mobile.includes('#sticky-board[data-empty="true"]:not([data-mobile-expanded="true"]) #'+id));
 assert(!mobile.includes(':not([data-mobile-expanded="true"]) #sticky-new'),'new note remains directly accessible');
 assert.match(mobile,/#sticky-board>header button,#sticky-board>header select\{min-height:44px;min-width:44px\}/);
-assert.match(mobile,/\.composer-tools\{display:grid;grid-template-columns:auto auto minmax\(0,1fr\) 44px;/);
+assert.match(mobile,/\.composer-tools\{display:grid;grid-template-columns:auto auto auto minmax\(0,1fr\) 44px;/);
 assert.match(mobile,/\.composer-tools button,\.composer-tools select\{[^}]*min-height:44px/);
 assert.match(mobile,/\.composer-tools \.mode-engine-hint\{grid-column:1 \/ -1\}/,'engine restrictions remain visible on their own row');
 assert.match(mobile,/\.composer-bottom\{display:grid;grid-template-columns:minmax\(0,1fr\) auto;/,'model and send share a row');
