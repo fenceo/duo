@@ -20,6 +20,7 @@ class Node {
  querySelectorAll(selector){const matches=(node,parts)=>{if(!node.matches(parts.at(-1)))return false;if(parts.length===1)return true;for(let parent=node.parentElement;parent;parent=parent.parentElement)if(matches(parent,parts.slice(0,-1)))return true;return false};const selectors=selector.split(',').map(s=>s.trim().split(/\s+/));const found=[];const visit=node=>{for(const child of node.children){if(selectors.some(parts=>matches(child,parts)))found.push(child);visit(child)}};visit(this);return found}
  querySelector(selector){return this.querySelectorAll(selector)[0]||null}
  focus(){document.activeElement=this}
+ addEventListener(type,handler){this['on'+type]=handler}
 }
 const root=new Node('main'),workspace=new Node();workspace.id='workspace';root.append(workspace);
 globalThis.document={createElement:tag=>new Node(tag),getElementById:id=>root.querySelector('#'+id),activeElement:null};

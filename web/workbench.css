@@ -588,6 +588,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .composer.live-turn .actions button{grid-row:1;min-width:0;min-height:44px;padding:6px;font-size:12px}
  .composer.live-turn #live-steer{grid-column:1}.composer.live-turn #live-interrupt{grid-column:2}.composer.live-turn .actions #send{grid-column:3;margin:0}.composer.live-turn #stop{grid-column:4}
  .codex-approvals{max-height:min(38dvh,max(150px,calc(100dvh - 560px)))}
+ .codex-approvals-heading>span{display:none}
  .codex-question-card .codex-answer-option{min-height:44px;padding:8px}
 }
 
@@ -602,3 +603,6 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .codex-question-card .codex-answer-option:has(input:checked){border-color:var(--accent);background:var(--tint)}
 .codex-question-card .codex-answer-option:focus-within{outline:2px solid var(--accent);outline-offset:1px}
 .codex-question-card .codex-approval-actions{position:sticky;bottom:0;padding:8px 0;background:var(--canvas);box-shadow:0 -6px 12px var(--canvas)}
+.codex-approvals-heading #codex-approvals-expand{margin-left:auto;min-height:44px;padding:5px 10px;font-size:12px}
+.codex-requests-dialog{padding:0;width:min(820px,calc(100vw - 24px));max-height:calc(100dvh - 24px)}
+.codex-requests-dialog .codex-approvals{min-height:0;max-height:calc(100dvh - 48px);border:0}

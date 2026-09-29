@@ -47,12 +47,17 @@ function codexApprovalFields(request:CodexPendingRequest,task:Task):{label:strin
 }
 function codexApprovalFieldsHTML(request:CodexPendingRequest,task:Task){return codexApprovalFields(request,task).map(field=>`<div class="codex-approval-field"><dt>${escapeHTML(field.label)}</dt><dd><pre>${escapeHTML(field.value)}</pre></dd></div>`).join('')}
 function installCodexApprovals(){
+ const workspace=element('workspace');
  const panel=document.createElement('section');panel.id='codex-approvals';panel.className='codex-approvals hidden';panel.setAttribute('aria-label','Codex 待处理请求');
- panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span></div><div id="codex-approval-list"></div>';
+ panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span><button type="button" id="codex-approvals-expand" aria-haspopup="dialog">放大</button></div><div id="codex-approval-list"></div>';
  // Outside the conversation/tool dock: visible even with a collapsed trace or a mobile tool panel.
- element('workspace').before(panel);
+ workspace.before(panel);
+ const dialog=document.createElement('dialog');dialog.id='codex-requests-dialog';dialog.className='codex-requests-dialog';dialog.setAttribute('aria-labelledby','codex-approvals-title');workspace.before(dialog);
+ const expand=panel.querySelector<HTMLButtonElement>('#codex-approvals-expand')!;
+ dialog.addEventListener('close',()=>{if(dialog.open)return;workspace.before(panel);expand.textContent='放大'});
+ expand.onclick=()=>{if(dialog.open){dialog.close();return}dialog.append(panel);expand.textContent='收起';dialog.showModal()};
 }
-function resetCodexApprovals(){codexApprovalRevision++;codexApprovalCards.clear();element('codex-approval-list')?.replaceChildren();element('codex-approvals')?.classList.add('hidden')}
+function resetCodexApprovals(){codexApprovalRevision++;codexApprovalCards.clear();const dialog=element<HTMLDialogElement>('codex-requests-dialog');if(dialog?.open)dialog.close();element('codex-approval-list')?.replaceChildren();element('codex-approvals')?.classList.add('hidden')}
 function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApprovalCard{
  const node=document.createElement('article');node.className='codex-approval-card';node.dataset.request=request.id;
  const questionRequest=request.method==='item/tool/requestUserInput',background=questionRequest&&codexRecord(request.params).isBlocking===false;
@@ -91,6 +96,7 @@ function updateCodexApprovalCard(card:CodexApprovalCard){
 function renderCodexApprovals(current:Detail|null){
  const panel=element('codex-approvals'),list=element('codex-approval-list');if(!panel||!list)return;
  const pending=current&&!creatingTask&&current.task.id===chosen?(current.approvals||[]).filter(request=>request.task_id===current.task.id):[],keys=new Set(pending.map(codexApprovalKey));
+ const dialog=element<HTMLDialogElement>('codex-requests-dialog');if(!pending.length&&dialog?.open)dialog.close();
  for(const [key,card] of codexApprovalCards)if(!keys.has(key)){card.node.remove();codexApprovalCards.delete(key)}
  for(const request of pending){const key=codexApprovalKey(request);let card=codexApprovalCards.get(key);if(!card){card=createCodexApprovalCard(request,current!.task);codexApprovalCards.set(key,card);list.append(card.node)}updateCodexApprovalCard(card)}
  panel.classList.toggle('hidden',!pending.length);const questions=pending.filter(request=>request.method==='item/tool/requestUserInput'),onlyQuestions=questions.length===pending.length;
