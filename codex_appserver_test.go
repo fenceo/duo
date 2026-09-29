@@ -120,6 +120,14 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "async-question", "async-question-only":
+		params := map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "async-question-1", "type": "agentMessage", "phase": "final_answer", "delivery": "async", "text": "选择云端或补充需求", "questions": []any{map[string]any{"title": "安装范围？", "options": []string{"云端", "本地"}}, map[string]any{"title": "补充说明", "options": nil}}}}
+		notify("item/completed", params)
+		notify("item/completed", params)
+		if scenario == "async-question-only" {
+			complete("completed")
+			return
+		}
 	case "steer", "steer-reject", "steer-wrong-turn", "steer-no-ack":
 		steer := read("turn/steer")
 		var params struct {

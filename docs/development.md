@@ -13,6 +13,8 @@
 
 ## 检查
 
+开发与稳定发布统一使用 `main`。修改 `package.json` 版本并推送到 `main` 会运行发布工作流；也可在 `main` 手动触发。发布执行同一提交的界面验收、测试与构建，不创建 release、review 或 ui-snapshots 分支。
+
 ```powershell
 npm ci
 npm run check

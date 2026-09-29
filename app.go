@@ -159,10 +159,12 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 }
 
 type SubmitOptions struct {
-	ModeID        string   `json:"mode_id"`
-	AttachmentIDs []string `json:"attachment_ids"`
-	Delivery      string   `json:"delivery,omitempty"`
-	ExpectedRunID string   `json:"expected_run_id,omitempty"`
+	QuestionID      string   `json:"-"`
+	QuestionAnswers []string `json:"-"`
+	ModeID          string   `json:"mode_id"`
+	AttachmentIDs   []string `json:"attachment_ids"`
+	Delivery        string   `json:"delivery,omitempty"`
+	ExpectedRunID   string   `json:"expected_run_id,omitempty"`
 }
 
 func (a *App) submit(id, input, kind, source string) (Run, error) {
@@ -188,6 +190,17 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		w := a.workers[id]
 		if kind != "chat" || w == nil || w.runKind != "chat" || w.interrupting || w.runCancel == nil || options.ExpectedRunID == "" || w.runID != options.ExpectedRunID {
 			return Run{}, errLiveTurnChanged
+		}
+	}
+	if options.QuestionID != "" {
+		var previous string
+		var err error
+		input, previous, err = a.store.questionAnswer(id, options.QuestionID, options.QuestionAnswers)
+		if err != nil {
+			return Run{}, err
+		}
+		if previous != "" {
+			return Run{ID: previous, TaskID: id}, nil
 		}
 	}
 	input = strings.TrimSpace(input)
@@ -262,6 +275,16 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	_, e = tx.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES(?,?,?,?,?,?,?)", r.ID, id, input, kind, source, r.Status, r.Created)
 	if e != nil {
 		return r, e
+	}
+	if options.QuestionID != "" {
+		changed, err := tx.Exec("UPDATE async_questions SET status='answered',answer=?,answer_run=? WHERE id=? AND task_id=? AND status='pending'", input, r.ID, options.QuestionID, id)
+		if err != nil {
+			return r, err
+		}
+		count, _ := changed.RowsAffected()
+		if count != 1 {
+			return r, errAsyncQuestionExpired
+		}
 	}
 	if e = saveEngineBinding(tx, id, task.Binding); e != nil {
 		return r, e
@@ -421,6 +444,13 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				})
 				lastVisibleAssistant := ""
 				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
+					if kind == "async_question" {
+						if saveErr := a.store.saveAsyncQuestion(id, r.ID, text); saveErr != nil {
+							_ = a.store.event(id, r.ID, "error", "问题卡片保存失败："+saveErr.Error())
+						}
+						a.changed()
+						return
+					}
 					if kind == "usage" {
 						_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
 						a.changed()

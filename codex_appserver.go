@@ -189,6 +189,7 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 }
 
 func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session string, result string, runErr error) {
+	asyncFallback := ""
 	session = t.Session
 	control, _ := ctx.Value(codexSteerKey{}).(*codexTurnControl)
 	defer control.close()
@@ -609,14 +610,16 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					} `json:"error"`
 				} `json:"turn"`
 				Item struct {
-					ID      string `json:"id"`
-					Type    string `json:"type"`
-					Text    string `json:"text"`
-					Phase   string `json:"phase"`
-					Command string `json:"command"`
-					Status  string `json:"status"`
-					Output  string `json:"aggregatedOutput"`
-					Changes []struct {
+					ID        string          `json:"id"`
+					Type      string          `json:"type"`
+					Text      string          `json:"text"`
+					Phase     string          `json:"phase"`
+					Delivery  string          `json:"delivery"`
+					Questions []AsyncQuestion `json:"questions"`
+					Command   string          `json:"command"`
+					Status    string          `json:"status"`
+					Output    string          `json:"aggregatedOutput"`
+					Changes   []struct {
 						Path string `json:"path"`
 						Diff string `json:"diff"`
 					} `json:"changes"`
@@ -712,7 +715,12 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				case "agentMessage":
 					if m.Method == "item/completed" && !seenItems[item.ID] {
 						seenItems[item.ID] = true
-						if item.Phase == "commentary" {
+						if item.Delivery == "async" && len(item.Questions) > 0 {
+							payload, _ := json.Marshal(AsyncQuestionMessage{ItemID: item.ID, Session: session, Questions: item.Questions})
+							emit("async_question", string(payload))
+							asyncFallback = item.Text
+							emit("question", item.Text)
+						} else if item.Phase == "commentary" || item.Delivery == "async" {
 							emit("progress", item.Text)
 						} else {
 							result = item.Text
@@ -772,6 +780,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 						message += "：" + redact(p.Turn.Error.Message)
 					}
 					return session, result, errors.New(message)
+				}
+				if result == "" {
+					result = asyncFallback
 				}
 				if result == "" {
 					return session, result, errors.New("Codex 原生轮次结束但没有最终回复")

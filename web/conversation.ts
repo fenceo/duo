@@ -27,7 +27,7 @@ function finalConversationEvents(events:EventRecord[],runs:Run[]):Set<number>{
 }
 function conversationCategory(event:EventRecord,final:Set<number>):ConversationCategory{
  if(event.kind==='error'||event.kind==='status'&&/^(failed|interrupted)(\s|$)/.test(event.text.trim()))return 'error';
- if(event.kind==='user'||event.kind==='assistant'&&(!event.run_id||final.has(event.seq)))return 'message';
+ if(event.kind==='question'||event.kind==='user'||event.kind==='assistant'&&(!event.run_id||final.has(event.seq)))return 'message';
  if(event.kind==='tool'||event.kind==='log')return 'tools';
  return 'process';
 }

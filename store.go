@@ -105,6 +105,8 @@ func openStore(dir string) (*Store, error) {
  CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id,created);
  CREATE INDEX IF NOT EXISTS runs_task_cursor ON runs(task_id,created,id);
  CREATE INDEX IF NOT EXISTS events_task_run ON events(task_id,run_id,seq);
+ CREATE TABLE IF NOT EXISTS async_questions(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL,item_id TEXT NOT NULL,session TEXT NOT NULL,questions TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',answer TEXT NOT NULL DEFAULT '',answer_run TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,UNIQUE(task_id,run_id,item_id));
+ CREATE INDEX IF NOT EXISTS async_questions_pending ON async_questions(task_id,status,created);
 CREATE TABLE IF NOT EXISTS notes(task_id TEXT PRIMARY KEY REFERENCES tasks(id),content TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),content TEXT NOT NULL,revision INTEGER NOT NULL,updated INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS knowledge_entries(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),title TEXT NOT NULL DEFAULT '',content TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'observed',source TEXT NOT NULL DEFAULT 'manual',run_id TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);

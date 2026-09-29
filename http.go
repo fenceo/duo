@@ -540,6 +540,12 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	// and which foreign instruction files sit in the working directory, so a
 	// reply that follows old context is explainable instead of surprising.
 	response := map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id), "interaction": s.app.liveInteraction(id)}
+	questions, err := s.app.store.pendingAsyncQuestions(t)
+	if err != nil {
+		fail(w, 500, "读取待回答问题失败")
+		return
+	}
+	response["approvals"] = append(s.app.codexRequests.list(id), questions...)
 	if r.URL.Query().Get("recent") == "1" {
 		response["conversation"] = window
 	}

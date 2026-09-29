@@ -1,0 +1,18 @@
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {runInContext} from 'node:vm';
+import assert from 'node:assert/strict';
+const {ctx,document}=await createWebShellFixture(),run=code=>runInContext(code,ctx),el=id=>document.getElementById(id);
+run(`chosen='async-task';detail={task:{id:chosen,title:'Async',engine:'codex',status:'done',workspace:'/fixture',environment:{type:'wsl'}},runs:[],events:[],approvals:[{id:'async',task_id:chosen,run_id:'older-run',method:'duo/asyncQuestion',params:{questions:[{id:'0',header:'范围',question:'如何安装？',isOther:true,options:[{label:'云端',description:''}]},{id:'1',header:'说明',question:'补充说明',isOther:true,options:[]}]}}]};conversationFilter={tools:false,process:false};renderWorkflow()`);
+assert(!el('codex-approvals').classList.contains('hidden'));
+assert.match(el('codex-approval-list').textContent,/下一条消息排队/);
+assert(!el('codex-approval-list').textContent.includes('停止本轮'));
+const fields=el('codex-approval-list').querySelectorAll('fieldset');
+fields[0].querySelector('[data-answer="option"]').checked=true;fields[0].querySelector('[data-answer="option"]').setAttribute('checked','');
+const free=fields[1].querySelector('[data-answer="free"]');free.value='不下载模型';
+run('renderWorkflow()');assert.equal(fields[1].querySelector('[data-answer="free"]'),free);
+let requests=0,finish;ctx.api=async(path,method,body)=>{if(method==='POST'){requests++;assert.equal(path,'tasks/async-task/questions/async');assert.equal(body.answers['0'].answers[0],'云端');assert.equal(body.answers['1'].answers[0],'不下载模型');return new Promise(resolve=>finish=resolve)}return run('({...detail,approvals:[]})')};
+const submit=el('codex-approval-list').querySelector('.codex-approval-actions button');submit.onclick();submit.onclick();assert.equal(requests,1);assert(submit.disabled);
+finish({accepted:true,delivery:'queue'});for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+assert(el('codex-approvals').classList.contains('hidden'));
+assert.equal(run(`conversationCategory({kind:'question',run_id:'old',seq:1,text:'question'},new Set())`),'message');
+console.log('PASS: asynchronous questions survive completed turns and hidden process records; stable fields, choice/free answers, queued delivery endpoint and duplicate-click lock.');

@@ -2191,7 +2191,7 @@ function finalConversationEvents(events, runs) {
 }
 function conversationCategory(event, final) {
     if (event.kind === 'error' || event.kind === 'status' && /^(failed|interrupted)(\s|$)/.test(event.text.trim())) return 'error';
-    if (event.kind === 'user' || event.kind === 'assistant' && (!event.run_id || final.has(event.seq))) return 'message';
+    if (event.kind === 'question' || event.kind === 'user' || event.kind === 'assistant' && (!event.run_id || final.has(event.seq))) return 'message';
     if (event.kind === 'tool' || event.kind === 'log') return 'tools';
     return 'process';
 }
@@ -2669,12 +2669,16 @@ function codexApprovalKey(request) {
         request.id
     ]);
 }
+function codexIsQuestion(request) {
+    return request.method === 'item/tool/requestUserInput' || request.method === 'duo/asyncQuestion';
+}
 function codexApprovalKind(request) {
     return ({
         'item/commandExecution/requestApproval': '命令执行',
         'item/fileChange/requestApproval': '文件修改',
         'item/permissions/requestApproval': '临时权限',
-        'item/tool/requestUserInput': '请你选择或补充'
+        'item/tool/requestUserInput': '请你选择或补充',
+        'duo/asyncQuestion': '请你选择或补充'
     })[request.method] || '暂不支持的请求';
 }
 function codexApprovalDecisions(request) {
@@ -2724,7 +2728,7 @@ function codexQuestions(request) {
     });
 }
 function codexAnswersBody(request, read) {
-    if (request.method !== 'item/tool/requestUserInput') throw new Error('此请求不是问题表单');
+    if (!codexIsQuestion(request)) throw new Error('此请求不是问题表单');
     const questions = codexQuestions(request);
     if (!questions.length) throw new Error('请求未提供可回答的问题，请停止本轮后重试');
     const answers = Object.create(null);
@@ -2828,9 +2832,9 @@ function createCodexApprovalCard(request, task) {
     const node = document.createElement('article');
     node.className = 'codex-approval-card';
     node.dataset.request = request.id;
-    const questionRequest = request.method === 'item/tool/requestUserInput', background = questionRequest && codexRecord(request.params).isBlocking === false;
+    const questionRequest = codexIsQuestion(request), asyncQuestion = request.method === 'duo/asyncQuestion', background = questionRequest && codexRecord(request.params).isBlocking === false;
     node.classList.toggle('codex-question-card', questionRequest);
-    const scope = questionRequest ? background ? 'AI 可以继续工作；提交后会收到你的补充。' : 'AI 正在等你回答。选择选项或填写答案后，点击提交。' : request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。';
+    const scope = asyncQuestion ? 'AI 可以继续工作；答案将作为下一条消息排队发送。' : questionRequest ? background ? 'AI 可以继续工作；提交后会收到你的补充。' : 'AI 正在等你回答。选择选项或填写答案后，点击提交。' : request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。';
     node.innerHTML = `<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest ? '' : `<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request, task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
     const card = {
         request,
@@ -2839,7 +2843,7 @@ function createCodexApprovalCard(request, task) {
         settled: false,
         error: ''
     }, actions = node.querySelector('.codex-approval-actions');
-    if (request.method === 'item/tool/requestUserInput') {
+    if (questionRequest) {
         try {
             const questions = codexQuestions(request), target = node.querySelector('.codex-approval-questions');
             questions.forEach((question, index)=>{
@@ -2898,7 +2902,10 @@ function createCodexApprovalCard(request, task) {
         } catch (error) {
             card.error = error.message;
         }
-        appendCodexAction(actions, '停止本轮', '', ()=>void stopCodexApprovalRun(card));
+        if (asyncQuestion) appendCodexAction(actions, '暂不回答', '', ()=>void submitCodexApproval(card, {
+                dismiss: true
+            }));
+        else appendCodexAction(actions, '停止本轮', '', ()=>void stopCodexApprovalRun(card));
     } else {
         for (const decision of codexApprovalDecisions(request))appendCodexAction(actions, {
             accept: '批准本次',
@@ -2958,7 +2965,7 @@ function renderCodexApprovals(current) {
         updateCodexApprovalCard(card);
     }
     panel.classList.toggle('hidden', !pending.length);
-    const questions = pending.filter((request)=>request.method === 'item/tool/requestUserInput'), onlyQuestions = questions.length === pending.length;
+    const questions = pending.filter(codexIsQuestion), onlyQuestions = questions.length === pending.length;
     const heading = element('codex-approvals-title'), title = (onlyQuestions ? 'Codex 有问题需要你回答' : 'Codex 等待处理') + ' · ' + pending.length;
     if (heading.textContent !== title) heading.textContent = title;
     const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 Codex 会话' : '批准只针对当前请求，不创建永久授权规则';
@@ -2980,7 +2987,7 @@ async function submitCodexApproval(card, body) {
     codexApprovalRevision++;
     updateCodexApprovalCard(card);
     try {
-        await api('tasks/' + encodeURIComponent(card.request.task_id) + '/approvals/' + encodeURIComponent(card.request.id), 'POST', body);
+        await api('tasks/' + encodeURIComponent(card.request.task_id) + (card.request.method === 'duo/asyncQuestion' ? '/questions/' : '/approvals/') + encodeURIComponent(card.request.id), 'POST', body);
         card.settled = true;
     } catch (error) {
         if (error.status === 409) {
