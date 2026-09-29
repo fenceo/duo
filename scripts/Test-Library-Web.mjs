@@ -7,8 +7,8 @@ const source=stripTypeScriptTypes(await readFile(new URL('../web/library.ts',imp
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}};
 function fixture(){
  const nodes=new Map(),notices=[],calls=[];
- const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',innerHTML:'',classList:{toggle(){}},focus(){},dispatchEvent(){},close(){},showModal(){}});return nodes.get(id)};
- const ctx=createContext({URLSearchParams,Event,console,element:node,input:node,button:node,shellEpoch:1,selection:4,chosen:'one',creatingTask:false,tasks:[],drafts:new Map(),names:{done:'完成'},shellController:new AbortController(),shellCurrent:e=>e===ctx.shellEpoch,escapeHTML:s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),notify:s=>notices.push(s),loadKnowledge:async()=>{},api:async(path,method,body)=>{calls.push({path,method,body});return path.startsWith('library/search')?{documents:[],truncated:false}:{reference:'\n[来源：history]\nprevious conclusion',truncated:false}}});
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',innerHTML:'',classList:{toggle(){},add(){},remove(){}},querySelectorAll(){return []},focus(){},dispatchEvent(){},close(){},showModal(){}});return nodes.get(id)};
+ const ctx=createContext({URLSearchParams,Event,console,element:node,input:node,button:node,shellEpoch:1,selection:4,chosen:'one',creatingTask:false,tasks:[],drafts:new Map(),names:{done:'完成'},shellController:new AbortController(),shellCurrent:e=>e===ctx.shellEpoch,escapeHTML:s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),notify:s=>notices.push(s),loadKnowledge:async()=>{},api:async(path,method,body)=>{calls.push({path,method,body});return path==='library/automatic'?{capture:true,recall:true}:path==='library/vault'?{config:{enabled:false},report:{}}:path.startsWith('library/search')?{documents:[],truncated:false}:{reference:'\n[来源：history]\nprevious conclusion',truncated:false}}});
  runInContext(source,ctx);runInContext("libraryTarget={task:'one',create:false,selection:4,epoch:1};libraryHits=[{id:'knowledge:abc',hash:'version-one'}]",ctx);
  return {ctx,node,notices,calls,run:code=>runInContext(code,ctx)};
 }
@@ -76,7 +76,7 @@ console.log('PASS: citation provenance and isolation, escaped previews, automati
  gate.resolve({enabled:true,document_directory:'old/Duo'});await saving;assert.equal(calls,1,'stale save cannot trigger a sync after login changes');assert.equal(node('vault-status').textContent,'new login');
 }
 {
- const {ctx,node,calls}=fixture();ctx.detail={task:{id:'one'}};await ctx.openLibrary();assert.equal(calls.length,1);assert.match(calls[0].path,/library\/search/,'search must not reload settings or discard unsaved directory edits');assert.equal(node('library-manage-task').disabled,false);
+ const {ctx,node,calls}=fixture();ctx.detail={task:{id:'one'}};await ctx.openLibrary();assert.equal(calls.length,3);assert(calls.some(c=>c.path.startsWith('library/search')));assert(calls.every(c=>!c.method||c.method==='GET'),'overview only reads status; it never saves settings');assert.equal(node('library-manage-task').disabled,false);
  ctx.creatingTask=true;await ctx.openLibrary();assert.equal(node('library-manage-task').disabled,true);
 }
 console.log('PASS: directory settings reject stale reads/writes, duplicate saves and failed loads; search remains separate from settings.');

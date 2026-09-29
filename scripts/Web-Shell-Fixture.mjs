@@ -13,12 +13,15 @@ const {document,window}=parseHTML('<!doctype html><html><body><div id="root"></d
 // linkedom implements real node attachment and selectors, but intentionally
 // omits some browser-only form/layout/media interfaces used at mount time.
 Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:true,get(){return this.querySelector('option[selected]')?.value??this.querySelector('option')?.value??''},set(value){for(const option of this.querySelectorAll('option')){if(option.value===value)option.setAttribute('selected','');else option.removeAttribute('selected')}}});
+Object.defineProperty(window.HTMLElement.prototype,'open',{configurable:true,get(){return this.hasAttribute('open')},set(value){this.toggleAttribute('open',!!value)}});
+window.HTMLElement.prototype.showModal=function(){this.open=true};
+window.HTMLElement.prototype.close=function(){const wasOpen=this.open;this.open=false;if(wasOpen)this.dispatchEvent(new window.Event('close'))};
 const storage=()=>{const map=new Map();return {getItem:key=>map.get(key)??null,setItem:(key,value)=>map.set(key,String(value)),removeItem:key=>map.delete(key)}};
 const requests=[];
 const environment={id:'fixture',name:'Fixture WSL',type:'wsl',user:'fixture',distro:'Fixture',host:'',codex:'fixture',model:'',model_cache:'',workspaces:['/fixture']};
 const configuration={environments:[environment],default_environment:'fixture',feishu:{enabled:false,app_id:'',owner:''},access:{lan:'',tailscale:''}};
 const ctx=createContext({
- document,window,console,AbortController,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Error,
+ document,window,console,AbortController,URL,URLSearchParams,TextEncoder,TextDecoder,Date,Error,Event:window.Event,
  localStorage:storage(),sessionStorage:storage(),location:{search:'',reload(){}},history:{replaceState(){}},navigator:{},
  matchMedia:()=>({matches:false,addEventListener(){},removeEventListener(){}}),
  MutationObserver:class {observe(){}disconnect(){}},setInterval:()=>0,clearInterval(){},setTimeout:()=>0,clearTimeout(){},requestAnimationFrame:()=>0,

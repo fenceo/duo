@@ -383,6 +383,34 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .composer-tools .library-compose-button{margin:0;align-self:auto}
 .create-submit-wrap .library-compose-button{margin:0 auto 0 0;align-self:center;white-space:nowrap;min-height:36px}
 
+/* Browse knowledge without expanding every long answer or losing the draft. */
+.library-dialog[open]{display:flex;flex-direction:column;width:min(1120px,calc(100vw - 36px));height:min(820px,92dvh);max-height:92dvh;overflow:hidden;padding:22px;gap:10px}
+.library-header h2{margin:0;font-size:22px}.library-header p{margin:5px 0 0;font-size:12px}
+.library-header-actions button{font-size:12px;white-space:nowrap}
+.library-overview{display:flex;flex-wrap:wrap;gap:6px 18px;padding:9px 12px;border-radius:8px;background:var(--surface);font-size:12px;color:var(--muted)}
+.library-help{font-size:12px;color:var(--muted)}.library-help summary{cursor:pointer;min-height:28px;align-content:center}.library-help p{margin:6px 0;line-height:1.65}
+.library-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;flex:none}
+.library-search input:not([type=checkbox]){width:100%;min-width:0}.library-search>button{min-height:40px}
+.library-filters{grid-column:1 / -1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;align-items:center;gap:8px}
+.library-filters select{min-width:0;font-size:12px;padding:8px}.library-filters label{margin:0;font-size:12px;white-space:nowrap}
+#library-state{margin:0;font-size:12px;line-height:1.5;color:var(--muted)}
+.library-workspace{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:16px;flex:1;min-height:0;overflow:hidden}
+.library-list-pane{display:flex;flex-direction:column;min-width:0;min-height:0;gap:8px}
+.library-results{display:flex;flex-direction:column;gap:8px;max-height:none;min-height:0;overflow:auto;flex:1;margin:0;padding-right:4px;scrollbar-gutter:stable}
+.library-card{flex:none;padding:12px;border-color:var(--line);background:var(--canvas)}.library-card[data-selected="true"]{border-color:var(--accent);background:var(--tint)}
+.library-card h3{margin:0}.library-card h3 button{display:block;width:100%;padding:0;min-height:30px;text-align:left;border:0;background:transparent;font-size:14px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;color:var(--ink)}
+.library-card .library-card-meta{margin:5px 0;color:var(--muted);font-size:11px;line-height:1.5}
+.library-card .library-snippet{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;font-size:12px;line-height:1.65;margin:6px 0}
+.library-card footer{display:flex;align-items:center;gap:10px;justify-content:space-between;font-size:11px;color:var(--muted)}.library-card footer span{min-width:0;overflow-wrap:anywhere}.library-card footer button{flex:none;min-height:34px;font-size:12px;padding:6px 12px}
+.library-empty{padding:18px 8px;color:var(--muted);font-size:13px}.library-empty p{line-height:1.7}
+.library-preview{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+#library-preview-back{display:none}.library-preview h3{font-size:17px;line-height:1.5;margin:0;overflow-wrap:anywhere}.library-preview .muted{margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+#library-preview-content{flex:1;min-height:0;overflow:auto;font-size:14px;line-height:1.75;overflow-wrap:anywhere;padding-right:4px}#library-preview-content:empty{min-height:40px}
+#library-preview-status{font-size:12px;line-height:1.6;margin:0;color:var(--muted)}.library-preview-actions{display:flex;flex-wrap:wrap;gap:8px}.library-preview-actions button{min-height:38px;font-size:12px}
+.knowledge-search{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.7fr);gap:8px}.knowledge-search input,.knowledge-search select{min-width:0;font-size:12px;padding:9px}
+.knowledge-excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0;font-size:12px;line-height:1.7;color:var(--muted)}
+.knowledge-title[aria-expanded="true"]{color:var(--accent)}.knowledge-actions{flex-wrap:wrap}.knowledge-actions button{min-height:32px}.knowledge-card[data-state="verified"] .knowledge-state{color:var(--ink);border-color:var(--line)}
+
 /* Notes sit above a stable utility footer, never below account controls. */
 #sidebar-footer{display:flex;flex-direction:column;align-items:stretch;gap:5px;border-top:1px solid var(--line);padding:9px 0 0}
 .sidebar-utilities{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:3px}
@@ -402,6 +430,14 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 @media(max-width:760px){
  .header{padding:6px 12px;min-height:56px;align-items:center;gap:8px}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
+ .library-dialog[open]{width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:14px;gap:8px}
+ .library-header{flex-direction:row;align-items:center;flex-wrap:wrap}.library-header p{display:none}.library-header-actions{gap:4px}.library-header-actions button{padding:7px;font-size:11px}
+ .library-overview{gap:4px 12px;padding:8px;font-size:11px}.library-help summary{min-height:32px}
+ .library-filters{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.library-filters select{min-height:40px}
+ .library-workspace{display:flex;gap:0}.library-list-pane{flex:1}.library-preview{display:none}
+ .library-workspace.preview-open .library-list-pane{display:none}.library-workspace.preview-open .library-preview{display:flex;flex:1;padding:12px}
+ #library-preview-back{display:block;align-self:flex-start;min-height:40px;padding:6px 0}.library-preview-actions button{min-height:44px}
+ .library-card footer button{min-height:44px}.knowledge-actions button{min-height:40px}
  .header h1{font-size:15px}.header p{font-size:12px}
  .header .task-identity{gap:8px}.header #task-title{max-width:42%;font-size:14px}.header #task-workspace{font-size:11px}
  .header #task-actions{margin-left:0}.header .session-menu>summary{min-height:44px;padding:6px 8px}

@@ -1,5 +1,7 @@
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
+let libraryLoading = false, libraryNextOffset = 0, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
+let libraryPreviewID = '';
 let automaticSettingsRequest = 0, automaticSettingsReady = false, automaticSettingsSaving = false;
 let vaultSettingsRequest = 0, vaultSettingsReady = false, vaultSettingsSaving = false, vaultRefreshing = false;
 function libraryTargetCurrent() {
@@ -43,14 +45,19 @@ function installLibrary() {
     };
     button('vault-save').onclick = ()=>void saveVault();
     button('vault-refresh').onclick = ()=>void refreshVault();
-    element('library-results').onclick = (e)=>{
-        const b = e.target.closest('[data-library-reference]');
-        if (b) void citeLibrary(b.dataset.libraryReference || '');
-    };
+    installLibraryBrowser();
     disposeWithShell(()=>{
         libraryRequest++;
+        libraryOverviewRequest++;
+        libraryPreviewRequest++;
+        libraryCitationRequest++;
+        libraryCitationBusy = false;
+        libraryLoading = false;
         libraryTarget = null;
         libraryHits = [];
+        knowledgeEditTarget = null;
+        knowledgeSaving = false;
+        knowledgeExpanded.clear();
         automaticSettingsRequest++;
         automaticSettingsReady = false;
         automaticSettingsSaving = false;
@@ -59,6 +66,104 @@ function installLibrary() {
         vaultSettingsSaving = false;
         vaultRefreshing = false;
     });
+}
+function installLibraryBrowser() {
+    const dialog = element('library-dialog');
+    dialog.setAttribute('aria-label', '知识库');
+    dialog.querySelector('h2').textContent = '知识库';
+    dialog.querySelector('.library-header p').textContent = '先查找和预览，再把有用的内容引用到对话。';
+    element('library-search-form').insertAdjacentHTML('beforebegin', '<div id="library-overview" class="library-overview" role="status"></div><details class="library-help"><summary>AI 什么时候会用到这些内容？</summary><p>连续对话沿用原生会话。开启自动补回后，新建会话会带入本任务最多 3 条知识，优先已验证、再选近期记录，每条最多 1200 字。其他任务和文件笔记需手动引用；检索、预览不会调用模型。</p></details>');
+    element('library-kind').innerHTML = '<option value="knowledge">知识条目</option><option value="run">原始对话</option><option value="note">独立文件笔记</option><option value="">全部资料</option>';
+    element('library-kind').insertAdjacentHTML('afterend', '<select id="library-source" aria-label="知识来源"><option value="">全部来源</option><option value="auto">对话自动记录</option><option value="manual">手工保存与整理</option><option value="vault">知识文件目录</option></select>');
+    const filters = document.createElement('div');
+    filters.className = 'library-filters';
+    const form = element('library-search-form');
+    form.append(filters);
+    for (const id of [
+        'library-kind',
+        'library-source',
+        'library-scope'
+    ])filters.append(element(id));
+    filters.append(input('library-stale').closest('label'));
+    for (const id of [
+        'library-kind',
+        'library-source',
+        'library-scope',
+        'library-stale'
+    ])input(id).onchange = ()=>{
+        if (id === 'library-kind') input('library-source').value = '';
+        if (id === 'library-source' && [
+            'manual',
+            'auto'
+        ].includes(input(id).value)) input('library-kind').value = 'knowledge';
+        void searchLibrary();
+    };
+    const workspace = document.createElement('div');
+    workspace.id = 'library-workspace';
+    workspace.className = 'library-workspace';
+    element('library-results').before(workspace);
+    const list = document.createElement('section');
+    list.className = 'library-list-pane';
+    workspace.append(list);
+    list.append(element('library-results'));
+    list.insertAdjacentHTML('beforeend', '<button type="button" id="library-more" class="hidden">加载更多</button>');
+    workspace.insertAdjacentHTML('beforeend', '<section id="library-preview" class="library-preview" aria-label="资料预览"><button type="button" id="library-preview-back" class="subtle">← 返回结果</button><h3 id="library-preview-title">选择一条资料</h3><p id="library-preview-meta" class="muted">预览内容和来源后，再决定是否引用。</p><div id="library-preview-content" class="content"></div><p id="library-preview-status" role="status"></p><div class="library-preview-actions"><button type="button" id="library-preview-cite" class="primary hidden">引用到输入框</button><button type="button" id="library-preview-source" class="hidden">打开来源任务</button></div></section>');
+    button('library-more').onclick = ()=>void searchLibrary(true);
+    button('library-preview-back').onclick = ()=>clearLibraryPreview();
+    button('library-preview-cite').onclick = ()=>void citeLibrary(libraryPreviewID);
+    button('library-preview-source').onclick = ()=>{
+        const hit = libraryHits.find((d)=>d.id === libraryPreviewID);
+        if (!hit || !tasks.some((t)=>t.id === hit.task_id && !t.deleted)) return;
+        dialog.close();
+        void choose(hit.task_id, hit.kind === 'knowledge' ? 'note' : 'chat');
+    };
+    element('library-results').onclick = (e)=>{
+        const b = e.target.closest('[data-library-reference],[data-library-preview]');
+        if (!b) return;
+        if (b.dataset.libraryReference) void citeLibrary(b.dataset.libraryReference);
+        else void previewLibrary(b.dataset.libraryPreview || '');
+    };
+    dialog.addEventListener('close', ()=>{
+        libraryRequest++;
+        libraryOverviewRequest++;
+        libraryPreviewRequest++;
+        libraryLoading = false;
+        libraryTarget = null;
+    });
+    element('knowledge-filter').insertAdjacentHTML('beforebegin', '<div class="knowledge-search"><input id="knowledge-query" aria-label="搜索本任务知识" placeholder="搜索本任务知识"><select id="knowledge-source" aria-label="筛选知识来源"><option value="">全部来源</option><option value="auto">对话自动记录</option><option value="manual">手工保存与整理</option></select></div>');
+    input('knowledge-query').oninput = ()=>renderKnowledgeList();
+    input('knowledge-source').onchange = ()=>renderKnowledgeList();
+}
+function clearLibraryPreview() {
+    libraryPreviewRequest++;
+    libraryPreviewID = '';
+    element('library-workspace')?.classList.remove('preview-open');
+    element('library-preview-title').textContent = '选择一条资料';
+    element('library-preview-meta').textContent = '预览内容和来源后，再决定是否引用。';
+    element('library-preview-content').textContent = '';
+    element('library-preview-status').textContent = '';
+    button('library-preview-cite').classList.add('hidden');
+    button('library-preview-source').classList.add('hidden');
+}
+async function loadLibraryOverview() {
+    const token = ++libraryOverviewRequest, epoch = shellEpoch;
+    element('library-overview').textContent = '正在读取积累与同步状态…';
+    const results = await Promise.allSettled([
+        api('library/automatic', 'GET', undefined, shellController.signal),
+        api('library/vault', 'GET', undefined, shellController.signal)
+    ]);
+    if (token !== libraryOverviewRequest || !shellCurrent(epoch)) return;
+    const automatic = results[0], vault = results[1];
+    const parts = [];
+    if (automatic.status === 'fulfilled') {
+        parts.push(automatic.value.capture ? '自动记录：开启' : '自动记录：关闭');
+        parts.push(automatic.value.recall ? '新会话：补回本任务知识' : '新会话：不自动补回');
+    } else parts.push('自动积累状态读取失败');
+    if (vault.status === 'fulfilled') {
+        const v = vault.value;
+        parts.push(!v.config.enabled ? '文件同步：未启用' : v.report.error ? '文件同步：失败' : v.report.conflicts?.length ? '文件同步：有冲突' : v.report.updated ? '文件同步：已启用' : '文件同步：等待首次同步');
+    } else parts.push('文件同步状态读取失败');
+    element('library-overview').innerHTML = parts.map((s)=>'<span>' + escapeHTML(s) + '</span>').join('');
 }
 function installLibrarySettings() {
     const nav = element('settings-form').querySelector('.settings-nav');
@@ -107,11 +212,14 @@ async function openLibrary() {
         selection,
         epoch: shellEpoch
     };
-    const scope = element('library-scope');
-    scope.innerHTML = '<option value="">所有任务与 Vault</option>' + tasks.filter((t)=>!t.deleted).map((t)=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');
+    const scope = element('library-scope'), previousScope = scope.value;
+    scope.innerHTML = '<option value="">所有任务与文件</option>' + tasks.filter((t)=>!t.deleted).map((t)=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');
+    scope.value = tasks.some((t)=>t.id === previousScope && !t.deleted) ? previousScope : '';
     element('library-dialog').showModal();
     button('library-manage-task').disabled = !chosen || creatingTask || !detail;
+    void loadLibraryOverview();
     await searchLibrary();
+    input('library-query').focus();
 }
 function setAutomaticSettingsDisabled(disabled) {
     for (const id of [
@@ -159,23 +267,84 @@ async function saveAutomaticKnowledge() {
         }
     }
 }
-async function searchLibrary() {
+async function searchLibrary(append = false) {
+    if (append && libraryLoading) return;
     const token = ++libraryRequest, epoch = shellEpoch;
+    libraryLoading = true;
+    if (!append) {
+        libraryHits = [];
+        libraryNextOffset = 0;
+        clearLibraryPreview();
+        element('library-results').textContent = '';
+        button('library-more').classList.add('hidden');
+    }
     const q = new URLSearchParams({
         q: input('library-query').value,
         kind: input('library-kind').value,
+        source: input('library-source').value,
         task: input('library-scope').value,
-        stale: input('library-stale').checked ? '1' : '0'
+        stale: input('library-stale').checked ? '1' : '0',
+        offset: String(append ? libraryNextOffset : 0)
     });
-    element('library-state').textContent = '正在检索…';
+    element('library-state').textContent = append ? '正在加载更多…' : '正在检索…';
+    button('library-more').disabled = true;
     try {
         const result = await api('library/search?' + q, 'GET', undefined, shellController.signal);
         if (token !== libraryRequest || !shellCurrent(epoch)) return;
-        libraryHits = result.documents;
-        element('library-state').textContent = `找到 ${libraryHits.length} 条资料${result.truncated ? '（还有更多，请缩小关键词或范围）' : ''}。${libraryTarget?.task || libraryTarget?.create ? '引用后可在发送前编辑。' : '请先新建或选择任务，再引用。'}`;
-        element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"><h3>${escapeHTML(d.title)}</h3><p class="muted">${escapeHTML(d.task_title || '独立笔记')} · ${d.origin === 'vault' ? 'Obsidian' : '本机'} · ${escapeHTML(d.kind === 'knowledge' ? knowledgeStateText(d.status) : d.kind === 'run' ? '任务记录 · ' + (names[d.status] || d.status) : '笔记 · 待验证')}</p><p class="library-snippet">${escapeHTML(d.snippet)}</p>${d.path ? `<small>${escapeHTML('Duo/' + d.path)}</small>` : ''}<button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryTargetCurrent() && (libraryTarget?.task || libraryTarget?.create) ? '' : ' disabled'}>引用到${libraryTarget?.create ? '新任务' : '当前任务'}</button></article>`).join('') : '<p class="muted">没有匹配资料。试试简短关键词，或先从 Git 拉取 Vault 并刷新索引。</p>';
+        libraryHits = append ? [
+            ...new Map([
+                ...libraryHits,
+                ...result.documents
+            ].map((d)=>[
+                    d.id,
+                    d
+                ])).values()
+        ] : result.documents;
+        libraryNextOffset = result.next_offset ?? libraryHits.length;
+        element('library-state').textContent = `显示 ${libraryHits.length} / ${result.total ?? libraryHits.length} 条资料。${libraryTarget?.task || libraryTarget?.create ? '引用会加入输入框，发送前仍可修改。' : '可先预览；选择或新建任务后才能引用。'}`;
+        renderLibraryHits();
+        button('library-more').classList.toggle('hidden', !result.truncated);
     } catch (e) {
-        if (token === libraryRequest && shellCurrent(epoch)) element('library-state').textContent = e.message;
+        if (token === libraryRequest && shellCurrent(epoch)) element('library-state').textContent = '检索失败，请重试：' + e.message;
+    } finally{
+        if (token === libraryRequest && shellCurrent(epoch)) {
+            libraryLoading = false;
+            button('library-more').disabled = false;
+        }
+    }
+}
+function libraryDescription(d) {
+    return (d.origin === 'vault' ? '文件笔记' : d.kind === 'run' ? '原始对话' : d.source === 'auto' ? '对话自动记录' : '手工保存与整理') + ' · ' + (d.kind === 'run' ? names[d.status] || d.status : knowledgeStateText(d.status));
+}
+function renderLibraryHits() {
+    element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))}</p><p class="library-snippet">${escapeHTML(d.snippet)}</p><footer><span>${escapeHTML(d.task_title || '独立笔记')}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>没有匹配的资料</strong><p>试试简短关键词，或调整资料类型、来源和任务范围。旧对话可切换到“原始对话”查找。</p></div>';
+}
+async function previewLibrary(id) {
+    const hit = libraryHits.find((d)=>d.id === id);
+    if (!hit) return;
+    const token = ++libraryPreviewRequest, epoch = shellEpoch;
+    libraryPreviewID = id;
+    element('library-workspace').classList.add('preview-open');
+    element('library-preview-title').textContent = hit.title;
+    element('library-preview-meta').textContent = libraryDescription(hit) + ' · ' + (hit.task_title || '独立笔记') + (hit.path ? ' · Duo/' + hit.path : '');
+    element('library-preview-content').textContent = '';
+    element('library-preview-status').textContent = '正在读取预览…';
+    button('library-preview-cite').classList.add('hidden');
+    button('library-preview-source').classList.add('hidden');
+    renderLibraryHits();
+    try {
+        const result = await api('library/reference?' + new URLSearchParams({
+            id,
+            hash: hit.hash
+        }), 'GET', undefined, shellController.signal);
+        if (token !== libraryPreviewRequest || !shellCurrent(epoch)) return;
+        element('library-preview-content').innerHTML = markdown(result.preview || '');
+        element('library-preview-status').textContent = result.truncated ? '预览与引用均截取前 6000 字符；完整内容请查看来源。' : '引用将保留来源和验证状态，不会直接发送。';
+        button('library-preview-cite').classList.remove('hidden');
+        button('library-preview-cite').disabled = libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create;
+        button('library-preview-source').classList.toggle('hidden', !tasks.some((t)=>t.id === hit.task_id && !t.deleted));
+    } catch (e) {
+        if (token === libraryPreviewRequest && shellCurrent(epoch)) element('library-preview-status').textContent = '预览失败，请重新检索后打开：' + e.message;
     }
 }
 function knowledgeStateText(status) {
@@ -183,29 +352,64 @@ function knowledgeStateText(status) {
 }
 async function citeLibrary(id) {
     const hit = libraryHits.find((d)=>d.id === id);
-    if (!hit || !libraryTargetCurrent()) return;
-    const target = libraryTarget;
+    if (!hit || libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create) return;
+    const target = libraryTarget, query = libraryRequest, token = ++libraryCitationRequest;
+    libraryCitationBusy = true;
+    setLibraryCitationDisabled(true);
     try {
         const result = await api('library/reference?' + new URLSearchParams({
             id,
             hash: hit.hash
         }));
-        if (libraryTarget !== target || !libraryTargetCurrent()) {
-            notify('任务已切换，请重新打开知识库选择引用。');
+        if (libraryTarget !== target || !libraryTargetCurrent() || query !== libraryRequest) {
+            notify('目标或检索已变化，请重新选择引用。');
             return;
         }
-        const box = input(target.create ? 'create-input' : 'message');
-        if (box.value.length + result.reference.length > 60000) throw new Error('引用内容过多，请先精简当前输入。');
-        box.value = box.value.trimEnd() + result.reference;
-        if (!target.create) drafts.set(target.task, box.value);
-        box.dispatchEvent(new Event('input', {
-            bubbles: true
-        }));
+        const box = appendKnowledgeReference(result.reference, target.task, target.create);
         element('library-dialog').close();
         box.focus();
         notify(result.truncated ? '已加入带来源的引用；长资料已截断，可在发送前检查。' : '已加入带来源的引用，可在发送前检查。');
     } catch (e) {
         if (shellCurrent(target.epoch)) notify(e.message);
+    } finally{
+        if (token === libraryCitationRequest && shellCurrent(target.epoch)) {
+            libraryCitationBusy = false;
+            setLibraryCitationDisabled(false);
+        }
+    }
+}
+function setLibraryCitationDisabled(disabled) {
+    element('library-results').querySelectorAll('[data-library-reference]').forEach((b)=>b.disabled = disabled || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create);
+    button('library-preview-cite').disabled = disabled || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create;
+}
+function appendKnowledgeReference(reference, task, create = false) {
+    const box = input(create ? 'create-input' : 'message');
+    if (box.value.length + reference.length > 60000) throw new Error('引用内容过多，请先精简当前输入。');
+    box.value = box.value.trimEnd() + reference;
+    if (!create) drafts.set(task, box.value);
+    box.dispatchEvent(new Event('input', {
+        bubbles: true
+    }));
+    return box;
+}
+async function citeTaskKnowledge(k) {
+    if (libraryCitationBusy || k.task_id !== chosen) return;
+    const epoch = shellEpoch, selected = selection, token = ++libraryCitationRequest;
+    libraryCitationBusy = true;
+    try {
+        const result = await api('library/reference?' + new URLSearchParams({
+            id: 'knowledge:' + k.id,
+            revision: String(k.revision)
+        }));
+        if (!shellCurrent(epoch) || selection !== selected || chosen !== k.task_id) return;
+        const box = appendKnowledgeReference(result.reference, k.task_id);
+        switchTab('chat');
+        box.focus();
+        notify(result.truncated ? '已引用知识，长内容已截断，请在发送前检查。' : '已加入带来源和验证状态的引用。');
+    } catch (e) {
+        if (shellCurrent(epoch) && selection === selected) notify(e.message);
+    } finally{
+        if (token === libraryCitationRequest && shellCurrent(epoch)) libraryCitationBusy = false;
     }
 }
 function showVaultReport(r) {
@@ -5380,6 +5584,8 @@ let csrf = '', tasks = [], settings, chosen = '', detail = null, knowledgeItems 
 let sequence = 0, selection = 0, dirty = false, sending = false, polling = false, authenticated = false, refreshList = 0, lastList = '', lastKnowledge = '', noticeTimer;
 let taskContext = [];
 let knowledgeDraftRun = '';
+let knowledgeEditTarget = null, knowledgeSaving = false;
+const knowledgeExpanded = new Set();
 const drafts = new Map();
 let editingEnvironments = [], editingID = "", modelRequest = 0;
 let createFiles = [], creatingTask = false, createReturnTask = '', createPermission = 'auto';
@@ -5858,6 +6064,10 @@ async function choose(id, view = 'chat') {
     input('message').value = drafts.get(id) || '';
     knowledgeItems = [];
     knowledgeEditing = null;
+    knowledgeEditTarget = null;
+    knowledgeExpanded.clear();
+    element('knowledge-dialog').close();
+    if (input('knowledge-query')) input('knowledge-query').value = '';
     lastKnowledge = '';
     renderKnowledgeList();
     for (const key of [
@@ -5986,17 +6196,35 @@ function renderKnowledgeList() {
         b.setAttribute('aria-pressed', String(on));
     });
     const verified = knowledgeItems.filter((k)=>k.status === 'verified').length;
-    element('note-status').textContent = knowledgeItems.length ? `共 ${knowledgeItems.length} 条知识 · 已验证 ${verified} 条` : '一份任务，一份可复用的记录。';
-    const items = knowledgeFilter === 'all' ? knowledgeItems : knowledgeItems.filter((k)=>k.status === knowledgeFilter);
-    element('knowledge-list').innerHTML = items.map((k)=>`<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button class="knowledge-title" data-knowledge-edit="${escapeHTML(k.id)}" title="编辑这条知识">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><div class="knowledge-body">${markdown(k.content)}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN', {
+    const query = input('knowledge-query')?.value.trim().toLowerCase() || '', source = input('knowledge-source')?.value || '';
+    const items = knowledgeItems.filter((k)=>(knowledgeFilter === 'all' || k.status === knowledgeFilter) && (!source || (source === 'auto' ? k.source === 'auto' : k.source !== 'auto')) && query.split(/\s+/).every((term)=>(k.title + '\n' + k.content).toLowerCase().includes(term)));
+    element('note-status').textContent = knowledgeItems.length ? `显示 ${items.length} / ${knowledgeItems.length} 条 · 已验证 ${verified} 条` + (knowledgeItems.length >= 500 ? ' · 仅加载最近 500 条，更早内容请查全局知识库' : '') : '完成对话后会自动记录，也可手工添加知识。';
+    element('knowledge-list').innerHTML = items.map((k)=>{
+        const open = knowledgeExpanded.has(k.id), excerpt = Array.from(k.content.replace(/^#{1,6}\s+/gm, '').replace(/\s+/g, ' ').trim()).slice(0, 160).join('');
+        return `<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button type="button" class="knowledge-title" data-knowledge-toggle="${escapeHTML(k.id)}" aria-expanded="${open}" title="展开或收起内容">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><p class="knowledge-excerpt${open ? ' hidden' : ''}">${escapeHTML(excerpt)}</p><div class="knowledge-body${open ? '' : ' hidden'}">${open ? markdown(k.content) : ''}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN', {
             month: '2-digit',
             day: '2-digit',
             hour: '2-digit',
             minute: '2-digit',
             hour12: false
-        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status === 'verified' ? '标为待验证' : '标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('') || '<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“设置 → 知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
+        })}</span><span class="knowledge-actions"><button type="button" data-knowledge-edit="${escapeHTML(k.id)}">编辑</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}">引用</button><button type="button" data-knowledge-state="${escapeHTML(k.id)}">${k.status === 'verified' ? '设为待验证' : '标为已验证'}</button><button type="button" data-knowledge-stale="${escapeHTML(k.id)}"${k.status === 'stale' ? ' disabled' : ''}>设为过时</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}">删除</button></span></footer></article>`;
+    }).join('') || '<p class="muted">' + (knowledgeItems.length ? '当前筛选没有匹配条目。请调整关键词、来源或验证状态。' : '完成一轮成功对话后会按设置自动记录；已有旧对话可在全局知识库的“原始对话”中查找。') + '</p>';
+    element('knowledge-list').querySelectorAll('[data-knowledge-toggle]').forEach((b)=>b.onclick = ()=>{
+            const id = b.dataset.knowledgeToggle, item = knowledgeItems.find((k)=>k.id === id);
+            if (!item) return;
+            const open = !knowledgeExpanded.has(id);
+            if (open) knowledgeExpanded.add(id);
+            else knowledgeExpanded.delete(id);
+            b.setAttribute('aria-expanded', String(open));
+            const card = b.closest('.knowledge-card');
+            card.querySelector('.knowledge-excerpt').classList.toggle('hidden', open);
+            const body = card.querySelector('.knowledge-body');
+            body.classList.toggle('hidden', !open);
+            body.innerHTML = open ? markdown(item.content) : '';
+        });
     element('knowledge-list').querySelectorAll('[data-knowledge-edit]').forEach((b)=>b.onclick = ()=>editKnowledge(b.dataset.knowledgeEdit));
     element('knowledge-list').querySelectorAll('[data-knowledge-state]').forEach((b)=>b.onclick = ()=>void toggleKnowledgeState(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeState)));
+    element('knowledge-list').querySelectorAll('[data-knowledge-stale]').forEach((b)=>b.onclick = ()=>void toggleKnowledgeState(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeStale), 'stale'));
     element('knowledge-list').querySelectorAll('[data-knowledge-use]').forEach((b)=>b.onclick = ()=>useKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeUse)));
     element('knowledge-list').querySelectorAll('[data-knowledge-delete]').forEach((b)=>b.onclick = ()=>void deleteKnowledge(knowledgeItems.find((k)=>k.id === b.dataset.knowledgeDelete)));
 }
@@ -6442,19 +6670,34 @@ async function send(text, clear) {
     }
 }
 async function loadKnowledge() {
-    const id = chosen;
+    const id = chosen, epoch = shellEpoch, selected = selection;
     try {
         const items = await api('tasks/' + id + '/knowledge');
-        if (id !== chosen) return;
+        if (id !== chosen || selected !== selection || !shellCurrent(epoch)) return;
         storeKnowledge(items || []);
     } catch (e) {
-        notify(e.message);
+        if (shellCurrent(epoch) && selected === selection) notify(e.message);
     }
 }
 function editKnowledge(id) {
+    if (knowledgeSaving) return;
     knowledgeDraftRun = '';
     const item = id ? knowledgeItems.find((k)=>k.id === id) || null : null;
     knowledgeEditing = item?.id || null;
+    if (id && !item) {
+        notify('知识列表已变化，请重新选择条目。');
+        return;
+    }
+    knowledgeEditTarget = {
+        task: chosen,
+        selection,
+        epoch: shellEpoch,
+        item: item ? {
+            ...item
+        } : null,
+        run: ''
+    };
+    button('knowledge-save').disabled = false;
     input('knowledge-title').value = item?.title || '';
     input('knowledge-body').value = item?.content || '';
     input('knowledge-state').value = item?.status || 'observed';
@@ -6463,6 +6706,7 @@ function editKnowledge(id) {
     input('knowledge-title').focus();
 }
 function editKnowledgeFromRun() {
+    if (knowledgeSaving) return;
     const r = latestKnowledgeRun();
     if (!r) return;
     const saved = knowledgeForRun(r.id), stamp = new Date(r.created).toLocaleString('zh-CN', {
@@ -6474,6 +6718,16 @@ function editKnowledgeFromRun() {
     });
     knowledgeEditing = saved?.id || null;
     knowledgeDraftRun = r.id;
+    knowledgeEditTarget = {
+        task: chosen,
+        selection,
+        epoch: shellEpoch,
+        item: saved ? {
+            ...saved
+        } : null,
+        run: r.id
+    };
+    button('knowledge-save').disabled = false;
     input('knowledge-title').value = saved?.title || '执行总结 · ' + stamp;
     input('knowledge-body').value = r.result;
     input('knowledge-state').value = saved?.status || 'observed';
@@ -6483,28 +6737,38 @@ function editKnowledgeFromRun() {
 }
 async function saveKnowledge(e) {
     e.preventDefault();
-    const item = knowledgeEditing ? knowledgeItems.find((k)=>k.id === knowledgeEditing) || null : null, id = chosen;
+    const target = knowledgeEditTarget;
+    if (knowledgeSaving || !target) return;
+    if (target.task !== chosen || target.selection !== selection || !shellCurrent(target.epoch)) {
+        element('knowledge-error').textContent = '任务已切换，请回到原任务重新打开编辑。';
+        return;
+    }
+    const item = target.item, id = target.task;
+    knowledgeSaving = true;
     button('knowledge-save').disabled = true;
     try {
         const payload = {
             title: input('knowledge-title').value.trim(),
             content: input('knowledge-body').value,
             status: input('knowledge-state').value,
-            source: item?.source || (knowledgeDraftRun ? 'run' : 'manual'),
-            run_id: item?.run_id || knowledgeDraftRun,
+            source: item?.source || (target.run ? 'run' : 'manual'),
+            run_id: item?.run_id || target.run,
             revision: item?.revision || 0
         };
         if (item) await api('tasks/' + id + '/knowledge/' + item.id, 'PUT', payload);
         else await api('tasks/' + id + '/knowledge', 'POST', payload);
-        if (id !== chosen) return;
+        if (id !== chosen || target !== knowledgeEditTarget || !shellCurrent(target.epoch)) return;
         element('knowledge-dialog').close();
         knowledgeEditing = null;
         await loadKnowledge();
         notify(item ? '知识已更新' : '知识已保存');
     } catch (error) {
-        element('knowledge-error').textContent = error.message;
+        if (target === knowledgeEditTarget && shellCurrent(target.epoch)) element('knowledge-error').textContent = error.status === 409 ? '这条知识已在其他窗口更新。你的草稿仍保留，请复制草稿后重新打开最新条目核对。' : error.message;
     } finally{
-        if (element('knowledge-save')) button('knowledge-save').disabled = false;
+        if (shellCurrent(target.epoch)) {
+            knowledgeSaving = false;
+            if (target === knowledgeEditTarget) button('knowledge-save').disabled = false;
+        }
     }
 }
 async function saveRunKnowledge(runId) {
@@ -6520,9 +6784,9 @@ async function saveRunKnowledge(runId) {
         notify(e.message);
     }
 }
-async function toggleKnowledgeState(k) {
+async function toggleKnowledgeState(k, nextState) {
     if (!k) return;
-    const next = k.status === 'verified' ? 'observed' : 'verified';
+    const next = nextState || (k.status === 'verified' ? 'observed' : 'verified');
     try {
         await api('tasks/' + k.task_id + '/knowledge/' + k.id, 'PUT', {
             title: k.title,
@@ -6550,9 +6814,7 @@ async function deleteKnowledge(k) {
 }
 function useKnowledge(k) {
     if (!k) return;
-    bringToChat(k.title + '\n\n' + k.content);
-    renderWorkflow();
-    element('sidebar').classList.remove('open');
+    void citeTaskKnowledge(k);
 }
 async function openSettings() {
     const epoch = shellEpoch;

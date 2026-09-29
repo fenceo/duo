@@ -34,6 +34,8 @@ let csrf='',tasks:Task[]=[],settings:Settings,chosen='',detail:Detail|null=null,
 let sequence=0,selection=0,dirty=false,sending=false,polling=false,authenticated=false,refreshList=0,lastList='',lastKnowledge='',noticeTimer:ReturnType<typeof setTimeout>;
 let taskContext:ContextFile[]=[];
 let knowledgeDraftRun='';
+let knowledgeEditTarget:{task:string;selection:number;epoch:number;item:Knowledge|null;run:string}|null=null,knowledgeSaving=false;
+const knowledgeExpanded=new Set<string>();
 const drafts=new Map<string,string>();
 let editingEnvironments:Environment[]=[],editingID="",modelRequest=0;
 let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'|'full'|'read'='auto';
@@ -176,7 +178,7 @@ function renderList(){
 }
 async function choose(id:string,view='chat'){
  if(!mayLeave())return;invalidateModelTest();creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
- element('conversation').innerHTML='<p id="loading" class="muted">正在读取任务记录…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeEditing=null;lastKnowledge='';renderKnowledgeList();
+ element('conversation').innerHTML='<p id="loading" class="muted">正在读取任务记录…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
  for(const key of ['tabs','task-actions','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
  try{const [d,k]=await Promise.all([api<Detail>('tasks/'+id),api<Knowledge[]>('tasks/'+id+'/knowledge')]);if(token!==selection)return;detail=d;storeKnowledge(k||[]);element('conversation').innerHTML='';appendEvents(d.events);renderTask();switchTab(view);}
@@ -205,11 +207,14 @@ function renderKnowledgeList(){
  if(!element('knowledge-list'))return;
  element('knowledge-filter').querySelectorAll<HTMLButtonElement>('button').forEach(b=>{const on=b.dataset.knowledgeFilter===knowledgeFilter;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))});
  const verified=knowledgeItems.filter(k=>k.status==='verified').length;
- element('note-status').textContent=knowledgeItems.length?`共 ${knowledgeItems.length} 条知识 · 已验证 ${verified} 条`:'一份任务，一份可复用的记录。';
- const items=knowledgeFilter==='all'?knowledgeItems:knowledgeItems.filter(k=>k.status===knowledgeFilter);
- element('knowledge-list').innerHTML=items.map(k=>`<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button class="knowledge-title" data-knowledge-edit="${escapeHTML(k.id)}" title="编辑这条知识">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><div class="knowledge-body">${markdown(k.content)}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</span><span class="knowledge-actions"><button type="button" data-knowledge-state="${escapeHTML(k.id)}" title="切换验证状态">${k.status==='verified'?'标为待验证':'标为已验证'}</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}" title="把内容和标题带入输入框">↗</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}" title="删除这条知识">×</button></span></footer></article>`).join('')||'<p class="muted">开启自动记录后，完成一轮对话即可积累知识。可在“设置 → 知识库 → 对话自动积累”调整，也可手工保存或整理。</p>';
+ const query=input('knowledge-query')?.value.trim().toLowerCase()||'',source=input('knowledge-source')?.value||'';
+ const items=knowledgeItems.filter(k=>(knowledgeFilter==='all'||k.status===knowledgeFilter)&&(!source||(source==='auto'?k.source==='auto':k.source!=='auto'))&&query.split(/\s+/).every(term=>(k.title+'\n'+k.content).toLowerCase().includes(term)));
+ element('note-status').textContent=knowledgeItems.length?`显示 ${items.length} / ${knowledgeItems.length} 条 · 已验证 ${verified} 条`+(knowledgeItems.length>=500?' · 仅加载最近 500 条，更早内容请查全局知识库':''):'完成对话后会自动记录，也可手工添加知识。';
+ element('knowledge-list').innerHTML=items.map(k=>{const open=knowledgeExpanded.has(k.id),excerpt=Array.from(k.content.replace(/^#{1,6}\s+/gm,'').replace(/\s+/g,' ').trim()).slice(0,160).join('');return `<article class="knowledge-card" data-knowledge="${escapeHTML(k.id)}" data-state="${escapeHTML(k.status)}"><header><button type="button" class="knowledge-title" data-knowledge-toggle="${escapeHTML(k.id)}" aria-expanded="${open}" title="展开或收起内容">${escapeHTML(k.title)}</button><span class="knowledge-state">${knowledgeStateLabel(k.status)}</span></header><p class="knowledge-excerpt${open?' hidden':''}">${escapeHTML(excerpt)}</p><div class="knowledge-body${open?'':' hidden'}">${open?markdown(k.content):''}</div><footer><span>${knowledgeSourceLabel(k.source)} · ${new Date(k.updated).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</span><span class="knowledge-actions"><button type="button" data-knowledge-edit="${escapeHTML(k.id)}">编辑</button><button type="button" data-knowledge-use="${escapeHTML(k.id)}">引用</button><button type="button" data-knowledge-state="${escapeHTML(k.id)}">${k.status==='verified'?'设为待验证':'标为已验证'}</button><button type="button" data-knowledge-stale="${escapeHTML(k.id)}"${k.status==='stale'?' disabled':''}>设为过时</button><button type="button" data-knowledge-delete="${escapeHTML(k.id)}">删除</button></span></footer></article>`}).join('')||'<p class="muted">'+(knowledgeItems.length?'当前筛选没有匹配条目。请调整关键词、来源或验证状态。':'完成一轮成功对话后会按设置自动记录；已有旧对话可在全局知识库的“原始对话”中查找。')+'</p>';
+ element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-toggle]').forEach(b=>b.onclick=()=>{const id=b.dataset.knowledgeToggle!,item=knowledgeItems.find(k=>k.id===id);if(!item)return;const open=!knowledgeExpanded.has(id);if(open)knowledgeExpanded.add(id);else knowledgeExpanded.delete(id);b.setAttribute('aria-expanded',String(open));const card=b.closest('.knowledge-card')!;card.querySelector('.knowledge-excerpt')!.classList.toggle('hidden',open);const body=card.querySelector('.knowledge-body')!;body.classList.toggle('hidden',!open);body.innerHTML=open?markdown(item.content):''});
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-edit]').forEach(b=>b.onclick=()=>editKnowledge(b.dataset.knowledgeEdit!));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-state]').forEach(b=>b.onclick=()=>void toggleKnowledgeState(knowledgeItems.find(k=>k.id===b.dataset.knowledgeState)));
+ element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-stale]').forEach(b=>b.onclick=()=>void toggleKnowledgeState(knowledgeItems.find(k=>k.id===b.dataset.knowledgeStale),'stale'));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-use]').forEach(b=>b.onclick=()=>useKnowledge(knowledgeItems.find(k=>k.id===b.dataset.knowledgeUse)));
  element('knowledge-list').querySelectorAll<HTMLElement>('[data-knowledge-delete]').forEach(b=>b.onclick=()=>void deleteKnowledge(knowledgeItems.find(k=>k.id===b.dataset.knowledgeDelete)));
 }
@@ -349,40 +354,47 @@ async function send(text:string,clear:boolean){
  const files=[...(attachmentDrafts.get(chosen)||[])];if(!chosen||!detail||sending||uploadingTasks.has(chosen)||(!text.trim()&&!files.length))return;try{validateEngineAttachments(detail.task.engine,files.length)}catch(e){notify((e as Error).message);return}const epoch=shellEpoch,id=chosen,original=input('message').value,mode=selectedMessageMode();sending=true;renderTask();
  try{await api('tasks/'+id+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode,attachment_ids:files.map(f=>f.id)});attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(shellCurrent(epoch)&&chosen===id&&input('message').value===original)input('message').value=''}if(shellCurrent(epoch))await poll()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{if(shellCurrent(epoch)){sending=false;if(chosen===id)renderTask()}}
 }
-async function loadKnowledge(){const id=chosen;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge');if(id!==chosen)return;storeKnowledge(items||[])}catch(e){notify((e as Error).message)}}
+async function loadKnowledge(){const id=chosen,epoch=shellEpoch,selected=selection;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge');if(id!==chosen||selected!==selection||!shellCurrent(epoch))return;storeKnowledge(items||[])}catch(e){if(shellCurrent(epoch)&&selected===selection)notify((e as Error).message)}}
 function editKnowledge(id:string|null){
+ if(knowledgeSaving)return;
  knowledgeDraftRun='';const item=id?knowledgeItems.find(k=>k.id===id)||null:null;knowledgeEditing=item?.id||null;
+ if(id&&!item){notify('知识列表已变化，请重新选择条目。');return}
+ knowledgeEditTarget={task:chosen,selection,epoch:shellEpoch,item:item?{...item}:null,run:''};button('knowledge-save').disabled=false;
  input('knowledge-title').value=item?.title||'';input('knowledge-body').value=item?.content||'';input('knowledge-state').value=item?.status||'observed';
  element('knowledge-error').textContent='';element<HTMLDialogElement>('knowledge-dialog').showModal();input('knowledge-title').focus();
 }
 function editKnowledgeFromRun(){
+ if(knowledgeSaving)return;
  const r=latestKnowledgeRun();if(!r)return;const saved=knowledgeForRun(r.id),stamp=new Date(r.created).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
  knowledgeEditing=saved?.id||null;knowledgeDraftRun=r.id;
+ knowledgeEditTarget={task:chosen,selection,epoch:shellEpoch,item:saved?{...saved}:null,run:r.id};button('knowledge-save').disabled=false;
  input('knowledge-title').value=saved?.title||('执行总结 · '+stamp);input('knowledge-body').value=r.result;input('knowledge-state').value=saved?.status||'observed';
  element('knowledge-error').textContent='';element<HTMLDialogElement>('knowledge-dialog').showModal();input('knowledge-title').focus();
 }
 async function saveKnowledge(e:Event){
- e.preventDefault();const item=knowledgeEditing?knowledgeItems.find(k=>k.id===knowledgeEditing)||null:null,id=chosen;button('knowledge-save').disabled=true;
+ e.preventDefault();const target=knowledgeEditTarget;if(knowledgeSaving||!target)return;
+ if(target.task!==chosen||target.selection!==selection||!shellCurrent(target.epoch)){element('knowledge-error').textContent='任务已切换，请回到原任务重新打开编辑。';return}
+ const item=target.item,id=target.task;knowledgeSaving=true;button('knowledge-save').disabled=true;
  try{
-  const payload={title:input('knowledge-title').value.trim(),content:input('knowledge-body').value,status:input('knowledge-state').value,source:item?.source||(knowledgeDraftRun?'run':'manual'),run_id:item?.run_id||knowledgeDraftRun,revision:item?.revision||0};
+  const payload={title:input('knowledge-title').value.trim(),content:input('knowledge-body').value,status:input('knowledge-state').value,source:item?.source||(target.run?'run':'manual'),run_id:item?.run_id||target.run,revision:item?.revision||0};
   if(item)await api('tasks/'+id+'/knowledge/'+item.id,'PUT',payload);else await api<Knowledge>('tasks/'+id+'/knowledge','POST',payload);
-  if(id!==chosen)return;element<HTMLDialogElement>('knowledge-dialog').close();knowledgeEditing=null;await loadKnowledge();notify(item?'知识已更新':'知识已保存');
- }catch(error){element('knowledge-error').textContent=(error as Error).message}finally{if(element('knowledge-save'))button('knowledge-save').disabled=false}
+  if(id!==chosen||target!==knowledgeEditTarget||!shellCurrent(target.epoch))return;element<HTMLDialogElement>('knowledge-dialog').close();knowledgeEditing=null;await loadKnowledge();notify(item?'知识已更新':'知识已保存');
+ }catch(error){if(target===knowledgeEditTarget&&shellCurrent(target.epoch))element('knowledge-error').textContent=(error as {status?:number}).status===409?'这条知识已在其他窗口更新。你的草稿仍保留，请复制草稿后重新打开最新条目核对。':(error as Error).message}finally{if(shellCurrent(target.epoch)){knowledgeSaving=false;if(target===knowledgeEditTarget)button('knowledge-save').disabled=false}}
 }
 async function saveRunKnowledge(runId?:string){
  const r=runId?detail?.runs.find(x=>x.id===runId):latestKnowledgeRun();if(!r)return;
  try{const k=await api<Knowledge>('tasks/'+chosen+'/knowledge/from-run','POST',{run_id:r.id});await loadKnowledge();notify('已沉淀到任务知识：'+k.title)}
  catch(e){notify((e as Error).message)}
 }
-async function toggleKnowledgeState(k:Knowledge|undefined){
- if(!k)return;const next=k.status==='verified'?'observed':'verified';
+async function toggleKnowledgeState(k:Knowledge|undefined,nextState?:string){
+ if(!k)return;const next=nextState||(k.status==='verified'?'observed':'verified');
  try{await api('tasks/'+k.task_id+'/knowledge/'+k.id,'PUT',{title:k.title,content:k.content,status:next,source:k.source,revision:k.revision});await loadKnowledge()}catch(e){notify((e as Error).message)}
 }
 async function deleteKnowledge(k:Knowledge|undefined){
  if(!k||!confirm('删除这条知识？'))return;
  try{await api('tasks/'+k.task_id+'/knowledge/'+k.id,'DELETE',{revision:k.revision});await loadKnowledge();notify('知识已删除')}catch(e){notify((e as Error).message)}
 }
-function useKnowledge(k:Knowledge|undefined){if(!k)return;bringToChat(k.title+'\n\n'+k.content);renderWorkflow();element('sidebar').classList.remove('open')}
+function useKnowledge(k:Knowledge|undefined){if(!k)return;void citeTaskKnowledge(k)}
 async function openSettings(){
  const epoch=shellEpoch;
  element('settings-saved').textContent='';

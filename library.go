@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS library_links(id TEXT PRIMARY KEY,path TEXT NOT NULL,
 // Portable documents are evidence, never executable tasks or native sessions.
 type LibraryDocument struct {
 	Automatic bool   `json:"-" yaml:"-"`
+	Source    string `json:"source,omitempty" yaml:"-"`
 	ID        string `json:"id" yaml:"duo_id"`
 	Kind      string `json:"kind" yaml:"duo_kind"`
 	TaskID    string `json:"task_id" yaml:"duo_task"`
@@ -38,6 +40,9 @@ type LibraryDocument struct {
 }
 
 func documentHash(d LibraryDocument) string {
+	// Source is display/filter metadata. Keep existing citation and Vault hashes
+	// stable when introducing it; portable files do not establish local origin.
+	d.Source = ""
 	d.Content = strings.TrimSpace(strings.ReplaceAll(d.Content, "\r\n", "\n"))
 	d.Path, d.Origin, d.Hash, d.Snippet, d.Score = "", "", "", "", 0
 	b, _ := json.Marshal(d)
@@ -47,12 +52,12 @@ func documentHash(d LibraryDocument) string {
 // Use full queries, not the task-panel page size. No credentials, tool logs,
 // attachments or machine-specific execution configuration are exported.
 func (s *Store) localLibrary(ctx context.Context) ([]LibraryDocument, error) {
-	rows, err := s.QueryContext(ctx, `SELECT 'knowledge:'||k.id,'knowledge',k.task_id,t.title,k.run_id,k.title,k.status,k.revision,k.updated,k.content,k.source='auto'
+	rows, err := s.QueryContext(ctx, `SELECT 'knowledge:'||k.id,'knowledge',k.task_id,t.title,k.run_id,k.title,k.status,k.revision,k.updated,k.content,k.source='auto',k.source
 FROM knowledge_entries k JOIN tasks t ON t.id=k.task_id
 WHERE NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1)
 UNION ALL
 SELECT 'run:'||r.id,'run',r.task_id,t.title,r.id,t.title||' · '||r.status,r.status,1,r.finished,
-'## 用户要求'||char(10)||r.input||char(10)||char(10)||'## 回复 / 执行结果'||char(10)||r.result||char(10)||char(10)||'## 执行错误'||char(10)||r.error,0
+'## 用户要求'||char(10)||r.input||char(10)||char(10)||'## 回复 / 执行结果'||char(10)||r.result||char(10)||char(10)||'## 执行错误'||char(10)||r.error,0,''
 FROM runs r JOIN tasks t ON t.id=r.task_id
 WHERE r.status IN ('done','failed','interrupted') AND NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1)`)
 	if err != nil {
@@ -62,7 +67,7 @@ WHERE r.status IN ('done','failed','interrupted') AND NOT EXISTS(SELECT 1 FROM t
 	docs := []LibraryDocument{}
 	for rows.Next() {
 		var d LibraryDocument
-		if err = rows.Scan(&d.ID, &d.Kind, &d.TaskID, &d.TaskTitle, &d.RunID, &d.Title, &d.Status, &d.Revision, &d.Updated, &d.Content, &d.Automatic); err != nil {
+		if err = rows.Scan(&d.ID, &d.Kind, &d.TaskID, &d.TaskTitle, &d.RunID, &d.Title, &d.Status, &d.Revision, &d.Updated, &d.Content, &d.Automatic, &d.Source); err != nil {
 			return nil, err
 		}
 		d.Origin = "local"
@@ -130,12 +135,29 @@ func (s *Store) libraryDocuments(ctx context.Context) ([]LibraryDocument, error)
 }
 
 type LibrarySearch struct {
-	Documents []LibraryDocument `json:"documents"`
-	Truncated bool              `json:"truncated"`
+	Documents  []LibraryDocument `json:"documents"`
+	Truncated  bool              `json:"truncated"`
+	Total      int               `json:"total"`
+	NextOffset int               `json:"next_offset"`
 }
 
-func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, stale bool) (LibrarySearch, error) {
+type LibrarySearchOptions struct {
+	Source string
+	Offset int
+}
+
+func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, stale bool, options ...LibrarySearchOptions) (LibrarySearch, error) {
 	out := LibrarySearch{Documents: []LibraryDocument{}}
+	filter := LibrarySearchOptions{}
+	if len(options) > 0 {
+		filter = options[0]
+	}
+	if filter.Offset < 0 || filter.Offset > 1000000 {
+		return out, errors.New("分页位置无效")
+	}
+	if filter.Source != "" && filter.Source != "auto" && filter.Source != "manual" && filter.Source != "vault" {
+		return out, errors.New("资料来源无效")
+	}
 	query = strings.TrimSpace(query)
 	if !utf8.ValidString(query) || utf8.RuneCountInString(query) > 160 {
 		return out, errors.New("关键词最多 160 字")
@@ -154,6 +176,11 @@ func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, sta
 			return out, err
 		}
 		if task != "" && d.TaskID != task || kind != "" && kind != d.Kind || !stale && d.Status == "stale" {
+			continue
+		}
+		if filter.Source == "auto" && (d.Origin != "local" || d.Source != "auto") ||
+			filter.Source == "manual" && (d.Origin != "local" || d.Kind != "knowledge" || d.Source == "auto") ||
+			filter.Source == "vault" && d.Origin != "vault" {
 			continue
 		}
 		d.Score = 0
@@ -196,10 +223,14 @@ func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, sta
 		}
 		return a.ID < b.ID
 	})
+	out.Total = len(out.Documents)
+	start := min(filter.Offset, out.Total)
+	out.Documents = out.Documents[start:]
 	if len(out.Documents) > 60 {
 		out.Documents = out.Documents[:60]
 		out.Truncated = true
 	}
+	out.NextOffset = start + len(out.Documents)
 	return out, nil
 }
 
@@ -228,7 +259,16 @@ func (s *Store) libraryReference(ctx context.Context, id, expected string) (Libr
 func (s *Server) libraryRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/library/search", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		out, err := s.app.store.searchLibrary(r.Context(), q.Get("q"), q.Get("task"), q.Get("kind"), q.Get("stale") == "1")
+		offset := 0
+		if q.Get("offset") != "" {
+			var err error
+			offset, err = strconv.Atoi(q.Get("offset"))
+			if err != nil {
+				fail(w, 400, "分页位置无效")
+				return
+			}
+		}
+		out, err := s.app.store.searchLibrary(r.Context(), q.Get("q"), q.Get("task"), q.Get("kind"), q.Get("stale") == "1", LibrarySearchOptions{Source: q.Get("source"), Offset: offset})
 		if err != nil {
 			fail(w, 400, err.Error())
 			return
@@ -241,8 +281,20 @@ func (s *Server) libraryRoutes(m *http.ServeMux) {
 			fail(w, 409, err.Error())
 			return
 		}
+		if value := r.URL.Query().Get("revision"); value != "" {
+			revision, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || revision < 1 {
+				fail(w, 400, "知识版本无效")
+				return
+			}
+			if d.Revision != revision {
+				fail(w, 409, "这条知识已更新，请刷新后重新引用")
+				return
+			}
+		}
+		preview, _ := clipContinuation(redactContinuation(d.Content), 6000)
 		d.Content = ""
-		jsonOut(w, 200, map[string]any{"document": d, "reference": text, "truncated": cut})
+		jsonOut(w, 200, map[string]any{"document": d, "reference": text, "preview": preview, "truncated": cut})
 	}))
 	s.vaultRoutes(m)
 	s.automaticKnowledgeRoutes(m)
