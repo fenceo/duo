@@ -2,11 +2,11 @@
 type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
 type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
 type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
-type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
-type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number};
+type Run={input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
+type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number;truncated?:boolean};
 type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
 type LiveInteraction={run_id:string;can_steer:boolean;can_interrupt:boolean;steering:boolean;interrupting:boolean};
-type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];interaction?:LiveInteraction|null;chat:string;session_started?:number;runtime?:EngineRuntime};
+type Detail={task:Task;runs:Run[];events:EventRecord[];conversation?:ConversationWindow;approvals?:CodexPendingRequest[];interaction?:LiveInteraction|null;chat:string;session_started?:number;runtime?:EngineRuntime};
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
@@ -36,6 +36,7 @@ let sequence=0,selection=0,dirty=false,sending=false,polling=false,authenticated
 let refreshTask=0,refreshKnowledge=0,polledTask='',pollRequested=false;
 let taskContext:ContextFile[]=[];
 let knowledgeDraftRun='';
+let knowledgeSummaryOnly=true;
 let knowledgeEditTarget:{task:string;selection:number;epoch:number;item:Knowledge|null;run:string}|null=null,knowledgeSaving=false;
 const knowledgeExpanded=new Set<string>();
 const drafts=new Map<string,string>();
@@ -190,11 +191,12 @@ function renderList(){
 }
 async function choose(id:string,view='chat'){
  if(!mayLeave())return;invalidateModelTest();creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
- element('conversation').innerHTML='<p id="loading" class="muted">正在读取任务记录…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
+ element('conversation').innerHTML='<p id="loading" class="muted">正在读取最近对话…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeSummaryOnly=true;knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
  for(const key of ['tabs','task-actions','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
- try{const [d,k]=await Promise.all([api<Detail>('tasks/'+id),api<Knowledge[]>('tasks/'+id+'/knowledge')]);if(token!==selection)return;detail=d;polledTask=id;refreshTask=refreshKnowledge=Date.now();storeKnowledge(k||[]);element('conversation').innerHTML='';appendEvents(d.events);renderTask();switchTab(view);}
- catch(e){if(token===selection)notify((e as Error).message)}
+ const epoch=shellEpoch;
+ try{const d=await api<Detail>('tasks/'+id+'?recent=1','GET',undefined,shellController.signal);if(token!==selection||!shellCurrent(epoch))return;polledTask=id;refreshTask=refreshKnowledge=Date.now();element('conversation').innerHTML='';receiveConversationDetail(d);renderTask();switchTab(view);if(view!=='note')void loadKnowledge(true);}
+ catch(e){if(token===selection&&shellCurrent(epoch)){const container=element('conversation');container.textContent='读取失败：'+(e as Error).message;const retry=document.createElement('button');retry.textContent='重新读取';retry.onclick=()=>void choose(id,view);container.append(retry);notify((e as Error).message)}}
 }
 function switchTab(tab:string){
  if(creatingTask){invalidateModelTest('create');creatingTask=false;createReturnTask=''}
@@ -205,14 +207,14 @@ function switchTab(tab:string){
  element('tool-dock').classList.toggle('hidden',!open);element('conversation').classList.remove('hidden');element('composer-wrap').classList.toggle('hidden',!chosen);
  for(const [key,panel] of [['note','notebook'],['scratch','scratch-panel'],['hardware','hardware-panel'],['files','files-panel'],['terminal','terminal-panel']]){element(panel).classList.toggle('hidden',tab!==key);button(key+'-tab').classList.toggle('selected',tab===key);button(key+'-tab').setAttribute('aria-pressed',String(tab===key))}
  button('chat-tab').classList.toggle('selected',!open);element('tool-title').textContent=({note:'本任务知识',scratch:'待办',hardware:'硬件调试',files:'文件与改动',terminal:'终端'} as Record<string,string>)[tab]||'任务工具';
- renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();
+ renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();if(tab==='note'&&detail)void loadKnowledge();
 }
 
 let knowledgeFilter='all';
 function knowledgeStateLabel(v:string){return v==='verified'?'已验证':v==='stale'?'已过时':'待验证'}
 function knowledgeSourceLabel(v:string){return ({auto:'对话自动记录',run:'来自执行记录',feishu:'来自飞书',organize:'整理生成',migrated:'历史任务知识'} as Record<string,string>)[v]||'手工记录'}
 function knowledgeStampOf(list:Knowledge[]){return list.map(k=>k.id+':'+k.revision).join(',')}
-function storeKnowledge(list:Knowledge[]){const stamp=knowledgeStampOf(list);if(stamp===lastKnowledge)return;lastKnowledge=stamp;knowledgeItems=list;renderKnowledgeList();applyConversationFilter()}
+function storeKnowledge(list:Knowledge[],summaryOnly=false){const stamp=knowledgeStampOf(list);if(stamp===lastKnowledge&&(!knowledgeSummaryOnly||summaryOnly))return;lastKnowledge=stamp;knowledgeSummaryOnly=summaryOnly;knowledgeItems=list;if(!summaryOnly)renderKnowledgeList();applyConversationFilter()}
 function knowledgeForRun(runId:string){return knowledgeItems.find(k=>k.run_id===runId)||null}
 function latestKnowledgeRun(){return detail?.runs.filter(r=>r.kind==='knowledge'&&r.status==='done'&&r.result).at(-1)}
 function renderKnowledgeList(){
@@ -278,7 +280,7 @@ function renderTask(){
  const active=detail.runs.some(r=>['running','queued'].includes(r.status));const queued=detail.runs.filter(r=>r.status==='queued').length;const latest=detail.runs.at(-1);
  element('run-status').textContent=detail.approvals?.length?'等待你处理 '+detail.approvals.length+' 个 Codex 请求':active?'正在执行'+(queued?' · '+queued+' 条要求排队中':''):latest?.error||names[t.status]||t.status;
  element('run-status').classList.toggle('error',!active&&!!latest?.error);button('stop').classList.toggle('hidden',!active);button('send').disabled=sending;input('message').placeholder=active?'追加要求将排队，也可以停止当前执行…':'下一步，要做什么？';
- const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='本任务知识'+(knowledgeItems.length?' · '+knowledgeItems.length:'');button('summarize').disabled=active;
+ const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||!knowledgeSummaryOnly&&saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='本任务知识'+(knowledgeItems.length?' · '+knowledgeItems.length:'');button('summarize').disabled=active;
  if(knowledge&&pending){const preview=element('draft-content');if(preview.dataset.run!==knowledge.id){preview.innerHTML=markdown(knowledge.result);preview.dataset.run=knowledge.id}element('draft-label').textContent=saved?'这轮执行的总结已保存，草稿可编辑合并':'执行总结 · 未保存';button('save-draft').disabled=!!saved}
  input('message').disabled=t.archived;button('send').disabled=sending||t.archived;button('summarize').disabled=active||t.archived;if(t.archived)element('run-status').textContent='任务已归档，记录保留；恢复后可以继续执行。';
  if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建会话后再发送…'}
@@ -300,17 +302,17 @@ async function poll(background=false){
  try{
   if(!background||Date.now()-refreshList>=30000){refreshList=Date.now();requested=true;const loaded=await api<Task[]>('tasks','GET',undefined,signal);if(!shellCurrent(epoch))return;tasks=loaded;renderList()}
   if(!current())return;
-  const busy=detail?.task.status==='running'||detail?.task.status==='queued';
+  const busy=detail?.task.status==='running'||detail?.task.status==='queued'||!!detail?.runs?.some(run=>run.status==='running'||run.status==='queued');
   const changedTask=id!==polledTask;
   let completed=false;
-  if(id&&(!background||changedTask||Date.now()-refreshTask>=(busy?1000:15000))){
+  if(id&&detail&&(!background||changedTask||Date.now()-refreshTask>=(busy?1000:15000))){
    refreshTask=Date.now();polledTask=id;requested=true;
-   const d=await api<Detail>('tasks/'+id+'?after='+sequence,'GET',undefined,signal);if(!current())return;
-   completed=busy&&d.task.status!=='running'&&d.task.status!=='queued';detail=d;appendEvents(d.events);renderTask();
+   const d=await api<Detail>('tasks/'+id+'?recent=1&after='+sequence,'GET',undefined,signal);if(!current())return;
+   completed=busy&&d.task.status!=='running'&&d.task.status!=='queued';receiveConversationDetail(d,'poll');if(d.conversation?.has_more)refreshTask=0;renderTask();
   }
-  if(id&&(!background||changedTask||completed||Date.now()-refreshKnowledge>=30000)){
+  if(id&&detail&&(!background||changedTask||completed||Date.now()-refreshKnowledge>=30000)){
    refreshKnowledge=Date.now();requested=true;
-   const k=await api<Knowledge[]>('tasks/'+id+'/knowledge','GET',undefined,signal);if(!current())return;if(k)storeKnowledge(k);
+   const summary=toolsTab!=='note',k=await api<Knowledge[]>('tasks/'+id+'/knowledge'+(summary?'?summary=1':''),'GET',undefined,signal);if(!current())return;if(k)storeKnowledge(k,summary);
   }
   if(requested&&element('connection')){element('connection').textContent='';element('connection').classList.add('hidden')}
  }catch(e){if(shellCurrent(epoch)&&element('connection')){element('connection').textContent='连接中断，正在重试';element('connection').classList.remove('hidden')}}finally{if(shellCurrent(epoch)){polling=false;if(pollRequested){pollRequested=false;void poll()}}}
@@ -389,7 +391,7 @@ async function send(text:string,clear:boolean,delivery:'queue'|'steer'|'interrup
   attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(shellCurrent(epoch)&&chosen===id&&input('message').value===original)input('message').value=''}if(shellCurrent(epoch))await poll()
  }catch(e){if(shellCurrent(epoch)){notify((e as Error).message);if((e as Error&{status?:number}).status===409)await poll()}}finally{if(shellCurrent(epoch)){sending=false;if(chosen===id)renderTask()}}
 }
-async function loadKnowledge(){const id=chosen,epoch=shellEpoch,selected=selection;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge');if(id!==chosen||selected!==selection||!shellCurrent(epoch))return;storeKnowledge(items||[])}catch(e){if(shellCurrent(epoch)&&selected===selection)notify((e as Error).message)}}
+async function loadKnowledge(summary=false){const id=chosen,epoch=shellEpoch,selected=selection;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge'+(summary?'?summary=1':''));if(id!==chosen||selected!==selection||!shellCurrent(epoch)||summary&&toolsTab==='note')return;storeKnowledge(items||[],summary)}catch(e){if(shellCurrent(epoch)&&selected===selection)notify((e as Error).message)}}
 function editKnowledge(id:string|null){
  if(knowledgeSaving)return;
  knowledgeDraftRun='';const item=id?knowledgeItems.find(k=>k.id===id)||null:null;knowledgeEditing=item?.id||null;

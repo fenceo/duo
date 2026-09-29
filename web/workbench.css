@@ -615,3 +615,20 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .codex-approvals-heading #codex-approvals-expand{margin-left:auto;min-height:44px;padding:5px 10px;font-size:12px}
 .codex-requests-dialog{padding:0;width:min(820px,calc(100vw - 24px));max-height:calc(100dvh - 24px)}
 .codex-requests-dialog .codex-approvals{min-height:0;max-height:calc(100dvh - 48px);border:0}
+/* Conversation preferences are direct display controls, independent of tools. */
+.tabs .conversation-filter{gap:14px}
+.tabs .conversation-filter #chat-tab{align-self:stretch;flex-shrink:0;border:0;border-radius:0;border-bottom:2px solid transparent;background:none;padding:10px 0;font-size:13px}
+.tabs .conversation-filter #chat-tab.selected{border-bottom-color:var(--accent);color:var(--accent)}
+.conversation-filter label{white-space:nowrap;min-height:32px;gap:5px}
+.conversation-filter .filter-short{display:none}
+.conversation-history{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;margin:0 0 20px;color:var(--muted)}
+.conversation-history button{font-size:12px;padding:7px 12px}
+.conversation-history small{font-size:11px;overflow-wrap:anywhere}
+@media (max-width:760px){
+ .tabs .conversation-filter{gap:8px}
+ .conversation-filter .filter-full{display:none}
+ .conversation-filter .filter-short{display:inline}
+ .conversation-filter label{min-width:44px;min-height:44px;font-size:12px}
+ .tabs .conversation-filter #chat-tab{font-size:12px;min-height:44px;padding:8px 0}
+ .conversation-history button{min-height:44px}
+}

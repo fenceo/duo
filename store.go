@@ -57,11 +57,12 @@ type Run struct {
 	Finished    int64        `json:"finished"`
 }
 type Event struct {
-	Seq     int64  `json:"seq"`
-	RunID   string `json:"run_id"`
-	Kind    string `json:"kind"`
-	Text    string `json:"text"`
-	Created int64  `json:"created"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Seq       int64  `json:"seq"`
+	RunID     string `json:"run_id"`
+	Kind      string `json:"kind"`
+	Text      string `json:"text"`
+	Created   int64  `json:"created"`
 }
 type Note struct {
 	Content  string `json:"content"`
@@ -99,6 +100,8 @@ func openStore(dir string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL,created INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS events_task ON events(task_id,seq);
  CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id,created);
+ CREATE INDEX IF NOT EXISTS runs_task_cursor ON runs(task_id,created,id);
+ CREATE INDEX IF NOT EXISTS events_task_run ON events(task_id,run_id,seq);
 CREATE TABLE IF NOT EXISTS notes(task_id TEXT PRIMARY KEY REFERENCES tasks(id),content TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),content TEXT NOT NULL,revision INTEGER NOT NULL,updated INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS knowledge_entries(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),title TEXT NOT NULL DEFAULT '',content TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'observed',source TEXT NOT NULL DEFAULT 'manual',run_id TEXT NOT NULL DEFAULT '',revision INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0);
@@ -246,12 +249,16 @@ ORDER BY runs.created,runs.id`, id)
 	if e != nil {
 		return nil, e
 	}
+	return readRuns(rows)
+}
+
+func readRuns(rows *sql.Rows) ([]Run, error) {
 	defer rows.Close()
 	out := []Run{}
 	for rows.Next() {
 		var r Run
 		var usageJSON, modeJSON, filesJSON string
-		if e = rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON); e != nil {
+		if e := rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON); e != nil {
 			return nil, e
 		}
 		if usageJSON != "" {

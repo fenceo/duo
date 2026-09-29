@@ -26,10 +26,10 @@ async function searchEverywhere(){
 async function openSearchHit(hit:SearchHit){
  try{
  await choose(hit.task_id);if(chosen!==hit.task_id||!detail)return;
- if(hit.kind==='knowledge'){switchTab('note');element('knowledge-list').querySelector<HTMLElement>('[data-knowledge="'+hit.reference+'"]')?.scrollIntoView({block:'center'});element('knowledge-list').querySelector<HTMLElement>('[data-knowledge-edit="'+hit.reference+'"]')?.focus()}
+ if(hit.kind==='knowledge'){switchTab('note');await loadKnowledge();if(chosen!==hit.task_id)return;element('knowledge-list').querySelector<HTMLElement>('[data-knowledge="'+hit.reference+'"]')?.scrollIntoView({block:'center'});element('knowledge-list').querySelector<HTMLElement>('[data-knowledge-edit="'+hit.reference+'"]')?.focus()}
  else if(hit.kind==='scratch'){switchTab('scratch');await loadScratch();const target=element('scratch-list').querySelector<HTMLElement>(`[data-edit="${hit.reference}"]`);target?.scrollIntoView({block:'center'});target?.focus()}
  else if(hit.kind==='message'){
-  const seq=Number(hit.reference);if(seq>0){const d=await api<Detail>('tasks/'+hit.task_id+'?after='+Math.max(0,seq-5));if(chosen!==hit.task_id)return;sequence=0;resetConversation();detail=d;element('conversation').innerHTML='<div class="search-context">正在显示搜索位置附近的对话。<button id="search-full-chat">从开头查看</button></div>';appendEvents(d.events);button('search-full-chat').onclick=()=>void choose(hit.task_id);const target=revealConversationEvent(seq);if(target)notify('已临时显示搜索命中的消息，筛选偏好保持不变。');target?.scrollIntoView({block:'center'})}
+  const seq=Number(hit.reference),selected=selection,epoch=shellEpoch;if(seq>0){const event=await api<EventRecord>('tasks/'+hit.task_id+'?event='+seq);if(chosen!==hit.task_id||selection!==selected||!shellCurrent(epoch))return;const d=await api<Detail>('tasks/'+hit.task_id+'?recent=1&run='+encodeURIComponent(event.run_id)+'&before_event='+(seq+51));if(chosen!==hit.task_id||selection!==selected||!shellCurrent(epoch))return;conversationHistory.expanded=true;receiveConversationDetail(d,'records');addConversationEvent(event);element('conversation').insertAdjacentHTML('afterbegin','<div class="search-context">已展开搜索命中附近的记录。<button id="search-full-chat">返回最近对话</button></div>');button('search-full-chat').onclick=()=>void choose(hit.task_id);const target=revealConversationEvent(seq);if(target)notify('已临时显示搜索命中的消息，显示偏好保持不变。');target?.scrollIntoView({block:'center'})}
  }
  }catch(e){notify((e as Error).message)}
 }

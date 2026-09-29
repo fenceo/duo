@@ -56,6 +56,11 @@ try{
  assert.equal((await createHarness('plan')).status,400,'Harness must not promise network isolation');
  const created=await createHarness('harness:read');assert.equal(created.status,201);
  const {task}=await created.json();assert.equal(task.engine,'deepseek-harness');
+ const recent=await fetch(base+'/api/tasks/'+task.id+'?recent=1',{headers}).then(r=>r.json());
+ assert.deepEqual(recent.runs,[]);assert.deepEqual(recent.events,[]);
+ assert.deepEqual(recent.conversation,{before:'',has_older:false,sequence:0,has_more:false,records:{}},'empty recent conversation has a valid snapshot cursor');
+ assert.equal((await fetch(base+'/api/tasks/'+task.id+'?recent=1&after=invalid',{headers})).status,400,'invalid history cursors are rejected');
+ assert.deepEqual(await fetch(base+'/api/tasks/'+task.id+'/knowledge?summary=1',{headers}).then(r=>r.json()),[],'knowledge metadata can load independently');
  assert.equal((await fetch(base+'/api/tasks/'+task.id,{method:'PATCH',headers,body:JSON.stringify({model:'other-model'})})).status,200,'idle Harness task can change model');
  const noCSRF=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(noCSRF.status,403);
@@ -69,6 +74,7 @@ try{
  assert.ok(source.includes('automatic-capture')&&source.includes('vault-automatic'),'built assets include automatic accumulation and separate Vault export settings');
  assert.ok(source.includes('settings-knowledge')&&source.includes('vault-document-directory')&&source.includes('library-manage-task'),'built assets include central knowledge settings and task management navigation');
  assert.ok(source.includes('automatic-organize')&&source.includes('library-layer')&&source.includes('composer-resizer'),'built assets include document layers, automatic organization and composer resizing');
+ assert.ok(source.includes('conversation-older')&&!source.includes('id="conversation-all"'),'built conversation includes lazy history without the trajectory preset');
  console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
 }finally{
  child.stdin.end();

@@ -2145,14 +2145,22 @@ function readAppearance() {
         path: input('appearance-path').checked
     }));
 }
-const conversationFilterKey = 'jianzuo-conversation-filter-v1';
+const conversationFilterKey = 'jianzuo-conversation-filter-v2';
 let conversationFilter = {
     tools: false,
-    process: false
+    process: true
 };
 const conversationItems = new Map();
 const conversationPageSize = 100;
 const conversationTurns = new Map();
+let conversationHistory = {
+    before: '',
+    hasOlder: false,
+    expanded: false,
+    loading: false,
+    error: ''
+};
+const conversationRecordPages = new Map();
 function readConversationFilter(raw) {
     try {
         const value = JSON.parse(raw || 'null');
@@ -2163,7 +2171,7 @@ function readConversationFilter(raw) {
     } catch  {}
     return {
         tools: false,
-        process: false
+        process: true
     };
 }
 function finalConversationEvents(events, runs) {
@@ -2193,6 +2201,125 @@ function conversationEventVisible(category, filter) {
 function resetConversation() {
     conversationItems.clear();
     conversationTurns.clear();
+    conversationRecordPages.clear();
+    conversationHistory = {
+        before: '',
+        hasOlder: false,
+        expanded: false,
+        loading: false,
+        error: ''
+    };
+}
+function mergeConversationRuns(incoming, preserveExisting = false) {
+    const runs = new Map((detail?.runs || []).map((run)=>[
+            run.id,
+            run
+        ]));
+    for (const run of incoming)if (!preserveExisting || !runs.has(run.id)) runs.set(run.id, run);
+    return [
+        ...runs.values()
+    ].sort((a, b)=>a.created - b.created || a.id.localeCompare(b.id));
+}
+function receiveConversationDetail(next, mode = 'initial') {
+    const runs = mode === 'initial' ? next.runs : mergeConversationRuns(next.runs, mode === 'older' || mode === 'records');
+    if (mode === 'initial' || mode === 'poll') detail = {
+        ...next,
+        runs
+    };
+    else if (detail) detail.runs = runs;
+    const page = next.conversation;
+    if (page) {
+        if (mode === 'initial' || mode === 'older' || mode === 'poll' && !conversationHistory.expanded) {
+            conversationHistory.before = page.before;
+            conversationHistory.hasOlder = page.has_older;
+        }
+        for (const [id, records] of Object.entries(page.records))conversationRecordPages.set(id, records);
+        if (mode === 'initial' || mode === 'poll') sequence = Math.max(sequence, page.sequence);
+    }
+    if (mode === 'older') conversationHistory.expanded = true;
+    for (const run of next.runs)conversationTurn(run.id);
+    for (const event of next.events)addConversationEvent(event);
+    if (mode === 'initial' || mode === 'poll') for (const event of next.events)sequence = Math.max(sequence, event.seq);
+    applyConversationFilter(mode === 'initial' || mode === 'poll');
+}
+function conversationHistoryBar() {
+    const container = element('conversation');
+    let bar = element('conversation-history');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'conversation-history';
+        bar.className = 'conversation-history';
+        bar.innerHTML = '<button type="button" id="conversation-older"></button><button type="button" id="conversation-recent">收起早期对话</button><small role="status"></small>';
+        container.prepend(bar);
+        button('conversation-older').onclick = ()=>void loadOlderConversation();
+        button('conversation-recent').onclick = ()=>{
+            conversationHistory.expanded = false;
+            for (const turn of conversationTurns.values())turn.dirty = true;
+            applyConversationFilter(false);
+            container.scrollTop = container.scrollHeight;
+        };
+    }
+    const extra = conversationTurns.size > 5, more = conversationHistory.hasOlder || extra && !conversationHistory.expanded;
+    const older = button('conversation-older'), recent = button('conversation-recent');
+    older.classList.toggle('hidden', !more);
+    older.disabled = conversationHistory.loading;
+    older.textContent = conversationHistory.loading ? '正在读取…' : '展开更早对话';
+    older.title = '按需读取，每次 5 轮；原始记录完整保留';
+    recent.classList.toggle('hidden', !conversationHistory.expanded);
+    bar.querySelector('small').textContent = conversationHistory.error || (!conversationHistory.expanded && more ? '默认显示最近 5 轮' : '');
+    bar.classList.toggle('hidden', !more && !conversationHistory.expanded && !conversationHistory.error);
+    return bar;
+}
+async function loadOlderConversation() {
+    if (!detail || conversationHistory.loading) return;
+    const state = conversationHistory, task = chosen, selected = selection, epoch = shellEpoch, container = element('conversation');
+    const anchor = container.querySelector('.conversation-turn'), top = anchor?.getBoundingClientRect().top;
+    state.loading = true;
+    state.error = '';
+    conversationHistoryBar();
+    try {
+        if (!state.expanded && conversationTurns.size > 5) {
+            state.expanded = true;
+            for (const turn of conversationTurns.values())turn.dirty = true;
+            applyConversationFilter(false);
+        } else if (state.hasOlder && state.before) {
+            const next = await api('tasks/' + encodeURIComponent(task) + '?recent=1&before=' + encodeURIComponent(state.before), 'GET', undefined, shellController.signal);
+            if (task !== chosen || selected !== selection || !shellCurrent(epoch) || conversationHistory !== state) return;
+            receiveConversationDetail(next, 'older');
+        }
+        if (anchor && top !== undefined && anchor.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - top;
+    } catch (e) {
+        if (conversationHistory === state) state.error = '读取失败，可重试：' + e.message;
+    } finally{
+        if (conversationHistory === state) {
+            state.loading = false;
+            conversationHistoryBar();
+        }
+    }
+}
+async function loadOlderConversationRecords(id, turn) {
+    const page = conversationRecordPages.get(id);
+    if (!page?.has_older || page.loading) return;
+    const task = chosen, selected = selection, epoch = shellEpoch, container = element('conversation'), anchor = turn.body.querySelector('[data-event]'), top = anchor?.getBoundingClientRect().top;
+    page.loading = true;
+    page.error = '';
+    turn.dirty = true;
+    applyConversationFilter(false);
+    try {
+        const next = await api('tasks/' + encodeURIComponent(task) + '?recent=1&run=' + encodeURIComponent(id) + '&before_event=' + page.before, 'GET', undefined, shellController.signal);
+        if (task !== chosen || selected !== selection || !shellCurrent(epoch) || conversationTurns.get(id) !== turn) return;
+        turn.limit += conversationPageSize;
+        receiveConversationDetail(next, 'records');
+        if (anchor && top !== undefined && anchor.isConnected) container.scrollTop += anchor.getBoundingClientRect().top - top;
+    } catch (e) {
+        if (conversationTurns.get(id) === turn) page.error = '读取失败，点击重试：' + e.message;
+    } finally{
+        if (conversationTurns.get(id) === turn) {
+            page.loading = false;
+            turn.dirty = true;
+            applyConversationFilter(false);
+        }
+    }
 }
 function conversationTurn(id) {
     const existing = conversationTurns.get(id);
@@ -2227,6 +2354,10 @@ function conversationTurn(id) {
     });
     more.onclick = ()=>{
         if (conversationTurns.get(id) !== turn) return;
+        if (more.dataset.remote === 'true') {
+            void loadOlderConversationRecords(id, turn);
+            return;
+        }
         const anchor = turn.body.querySelector('[data-event]'), container = element('conversation'), top = anchor?.getBoundingClientRect().top;
         turn.limit += conversationPageSize;
         turn.dirty = true;
@@ -2244,6 +2375,7 @@ function addConversationEvent(event) {
     conversationItems.set(event.seq, item);
     const turn = conversationTurn(event.run_id || '');
     turn.items.push(item);
+    turn.items.sort((a, b)=>a.event.seq - b.event.seq);
     turn.dirty = true;
 }
 function conversationEventNode(item) {
@@ -2260,13 +2392,45 @@ function conversationEventNode(item) {
         summary.textContent = ev.text.slice(0, newline < 0 ? 200 : Math.min(newline, 200));
         disclosure.append(summary);
         node.append(disclosure);
-        disclosure.addEventListener('toggle', ()=>{
-            if (disclosure.open && !disclosure.querySelector('pre')) {
-                const pre = document.createElement('pre');
-                pre.textContent = ev.text;
-                disclosure.append(pre);
-            } else if (!disclosure.open) disclosure.querySelector('pre')?.remove();
-        });
+        const show = async ()=>{
+            if (!disclosure.open) {
+                disclosure.querySelector('pre')?.remove();
+                return;
+            }
+            if (disclosure.querySelector('pre') || item.loading) return;
+            disclosure.querySelector('button')?.remove();
+            const pre = document.createElement('pre');
+            pre.textContent = ev.truncated ? '正在读取完整记录…' : ev.text;
+            disclosure.append(pre);
+            if (!ev.truncated) return;
+            const task = chosen, selected = selection, epoch = shellEpoch;
+            item.loading = true;
+            try {
+                const full = await api('tasks/' + encodeURIComponent(task) + '?event=' + ev.seq, 'GET', undefined, shellController.signal);
+                if (task !== chosen || selected !== selection || !shellCurrent(epoch) || conversationItems.get(ev.seq) !== item) return;
+                ev.text = full.text;
+                ev.truncated = false;
+                if (disclosure.open) {
+                    pre.textContent = ev.text;
+                    if (!pre.isConnected) disclosure.append(pre);
+                }
+            } catch (e) {
+                if (conversationItems.get(ev.seq) === item && disclosure.open) {
+                    pre.textContent = '读取失败：' + e.message;
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.textContent = '重试读取';
+                    retry.onclick = ()=>{
+                        pre.remove();
+                        void show();
+                    };
+                    disclosure.append(retry);
+                }
+            } finally{
+                item.loading = false;
+            }
+        };
+        disclosure.addEventListener('toggle', ()=>void show());
     } else {
         node.className = 'progress' + (ev.kind === 'error' ? ' error' : '');
         node.textContent = ev.kind === 'status' ? '本轮执行 · ' + (names[ev.text.trim()] || ev.text) : ev.text;
@@ -2286,6 +2450,7 @@ function reconcileConversationNodes(parent, nodes) {
 function revealConversationEvent(seq) {
     const item = conversationItems.get(seq);
     if (!item) return null;
+    conversationHistory.expanded = true;
     item.searchMatch = true;
     const turn = conversationTurn(item.event.run_id || '');
     turn.process.open = true;
@@ -2297,17 +2462,9 @@ function revealConversationEvent(seq) {
 }
 function installConversationFilter() {
     try {
-        conversationFilter = readConversationFilter(localStorage.getItem(conversationFilterKey));
+        conversationFilter = readConversationFilter(localStorage.getItem(conversationFilterKey) || localStorage.getItem('jianzuo-conversation-filter-v1'));
     } catch  {}
-    element('conversation').insertAdjacentHTML('beforebegin', `<div id="conversation-filter" class="conversation-filter hidden" role="group" aria-label="对话显示"><div class="filter-presets"><button id="conversation-results" title="折叠每轮执行过程，保留回复和错误">对话</button><button id="conversation-all" title="展开各轮执行记录，较早记录可继续加载">轨迹</button></div><details class="display-menu"><summary>筛选</summary><div><label><input type="checkbox" id="conversation-tools">命令与工具</label><label><input type="checkbox" id="conversation-process">中间过程</label><small>仅改变显示，记录完整保留</small></div></details><small id="conversation-hidden"></small></div>`);
-    button('conversation-results').onclick = ()=>setConversationFilter({
-            tools: false,
-            process: false
-        });
-    button('conversation-all').onclick = ()=>setConversationFilter({
-            tools: true,
-            process: true
-        });
+    element('conversation').insertAdjacentHTML('beforebegin', `<div id="conversation-filter" class="conversation-filter hidden" role="group" aria-label="对话显示选项，仅改变显示"><label title="显示中间过程；只影响页面显示，记录完整保留"><input type="checkbox" id="conversation-process"><span class="filter-full">中间过程</span><span class="filter-short">过程</span></label><label title="显示命令与工具记录；不改变 AI 执行或上下文"><input type="checkbox" id="conversation-tools"><span class="filter-full">命令与工具</span><span class="filter-short">工具</span></label><small id="conversation-hidden"></small></div>`);
     input('conversation-tools').onchange = ()=>setConversationFilter({
             ...conversationFilter,
             tools: input('conversation-tools').checked
@@ -2330,19 +2487,6 @@ function setConversationFilter(filter) {
 function updateConversationFilterControls() {
     input('conversation-tools').checked = conversationFilter.tools;
     input('conversation-process').checked = conversationFilter.process;
-    for (const [id, selected] of [
-        [
-            'conversation-results',
-            !conversationFilter.tools && !conversationFilter.process
-        ],
-        [
-            'conversation-all',
-            conversationFilter.tools && conversationFilter.process
-        ]
-    ]){
-        button(id).classList.toggle('selected', selected);
-        button(id).setAttribute('aria-pressed', String(selected));
-    }
 }
 function applyConversationFilter(followBottom = true) {
     const container = element('conversation');
@@ -2351,6 +2495,17 @@ function applyConversationFilter(followBottom = true) {
             run.id,
             run
         ])), pending = new Set((detail?.approvals || []).map((request)=>request.run_id));
+    const ordered = [
+        ...conversationTurns.entries()
+    ].sort(([a, x], [b, y])=>{
+        const ra = runs.get(a), rb = runs.get(b);
+        return (ra?.created || x.items[0]?.event.created || 0) - (rb?.created || y.items[0]?.event.created || 0) || a.localeCompare(b);
+    });
+    const recent = new Set(ordered.slice(-5).map(([id])=>id));
+    const visible = ordered.filter(([id, turn])=>conversationHistory.expanded || recent.has(id) || [
+            'running',
+            'queued'
+        ].includes(runs.get(id)?.status || '') || turn.items.some((item)=>item.searchMatch));
     const changes = [];
     for (const [id, turn] of conversationTurns){
         const run = runs.get(id), knowledge = typeof knowledgeForRun === 'function' ? knowledgeForRun(id) : null, waiting = pending.has(id);
@@ -2367,7 +2522,8 @@ function applyConversationFilter(followBottom = true) {
             waiting,
             conversationFilter.tools,
             conversationFilter.process,
-            turn.process.open
+            turn.process.open,
+            visible.some(([, item])=>item === turn)
         ]);
         if (turn.dirty || turn.state !== state || turn.result !== (run?.result || '')) changes.push({
             turn,
@@ -2378,8 +2534,14 @@ function applyConversationFilter(followBottom = true) {
     }
     if (!changes.length) return;
     const nearBottom = followBottom && container.scrollHeight - container.scrollTop - container.clientHeight < 100, top = container.scrollTop;
-    const compact = !conversationFilter.tools && !conversationFilter.process;
     for (const { turn, run, state, waiting } of changes){
+        if (!visible.some(([, item])=>item === turn)) {
+            turn.root.remove();
+            turn.dirty = false;
+            turn.state = state;
+            turn.result = run?.result || '';
+            continue;
+        }
         const final = finalConversationEvents(turn.items.map((item)=>item.event), run ? [
             run
         ] : []), inputs = [], outputs = [], records = [];
@@ -2388,8 +2550,8 @@ function applyConversationFilter(followBottom = true) {
         for (const item of turn.items){
             const category = conversationCategory(item.event, final), record = category === 'tools' || category === 'process';
             if (record) count++;
-            const visible = item.searchMatch || conversationEventVisible(category, conversationFilter) || record && compact;
-            if (!visible) {
+            const shown = item.searchMatch || conversationEventVisible(category, conversationFilter);
+            if (!shown) {
                 turn.hidden++;
                 continue;
             }
@@ -2403,11 +2565,14 @@ function applyConversationFilter(followBottom = true) {
             }
         }
         const body = [];
+        const page = conversationRecordPages.get(run?.id || ''), remote = !!page?.has_older;
         if (turn.process.open) {
             const start = Math.max(0, records.length - turn.limit);
-            if (start) {
-                const text = '加载更早的 ' + Math.min(start, conversationPageSize) + ' 条记录（还有 ' + start + ' 条）';
+            if (start || remote) {
+                const text = start ? '加载更早的 ' + Math.min(start, conversationPageSize) + ' 条记录（还有 ' + start + ' 条）' : page?.loading ? '正在读取…' : page?.error || '加载本轮更早记录';
                 if (turn.more.textContent !== text) turn.more.textContent = text;
+                turn.more.dataset.remote = String(!start && remote);
+                turn.more.disabled = !!page?.loading;
                 body.push(turn.more);
             }
             records.forEach((item, index)=>{
@@ -2421,10 +2586,22 @@ function applyConversationFilter(followBottom = true) {
         reconcileConversationNodes(turn.input, inputs);
         reconcileConversationNodes(turn.output, outputs);
         reconcileConversationNodes(turn.body, body);
+        if (!inputs.length && run?.input) {
+            const node = document.createElement('div');
+            node.className = 'message user';
+            node.innerHTML = '<div class="content">' + escapeHTML(run.input) + '</div>';
+            turn.input.append(node);
+        }
+        if (run?.status === 'done' && run.result && !final.size) {
+            const node = document.createElement('div');
+            node.className = 'message assistant';
+            node.innerHTML = '<div class="label">' + taskEngineName(detail?.task.engine) + '</div><div class="content">' + markdown(run.result) + '</div>';
+            turn.output.append(node);
+        }
         if (turn.root.parentElement !== container) container.append(turn.root);
-        turn.process.classList.toggle('hidden', count === 0);
+        turn.process.classList.toggle('hidden', !records.length && !(remote && (conversationFilter.tools || conversationFilter.process)));
         const label = waiting ? '等待你处理' : run?.status === 'running' ? '正在执行' : run?.status === 'queued' ? '排队中' : '执行记录';
-        const text = label + ' · ' + count + ' 条';
+        const text = label + ' · ' + records.length + ' 条' + (remote ? ' · 较早记录按需加载' : '');
         if (turn.summary.textContent !== text) turn.summary.textContent = text;
         const footer = run ? runFooter(run) : '';
         if (turn.footer.innerHTML !== footer) turn.footer.innerHTML = footer;
@@ -2434,6 +2611,12 @@ function applyConversationFilter(followBottom = true) {
         turn.state = state;
         turn.result = run?.result || '';
     }
+    const history1 = conversationHistoryBar(), extra = Array.from(container.children).filter((node)=>node !== history1 && !node.classList.contains('conversation-turn'));
+    reconcileConversationNodes(container, [
+        ...extra,
+        history1,
+        ...visible.map(([, turn])=>turn.root)
+    ]);
     const hidden = Array.from(conversationTurns.values()).reduce((sum, turn)=>sum + turn.hidden, 0), counter = element('conversation-hidden'), text = hidden ? '已筛除 ' + hidden + ' 条' : '';
     if (counter && counter.textContent !== text) counter.textContent = text;
     if (nearBottom) container.scrollTop = container.scrollHeight;
@@ -2906,13 +3089,8 @@ function installLayout() {
     };
     const tabs = element('tabs');
     tabs.prepend(element('conversation-filter'));
-    button('chat-tab').classList.add('hidden');
-    for (const id of [
-        'conversation-results',
-        'conversation-all'
-    ])button(id).addEventListener('click', ()=>{
-        if (matchMedia('(max-width:760px)').matches) switchTab('chat');
-    });
+    element('conversation-filter').prepend(button('chat-tab'));
+    button('chat-tab').textContent = '对话';
     tabs.append(element('note-tab'));
     button('files-tab').textContent = '文件';
     button('hardware-tab').textContent = '硬件';
@@ -5491,6 +5669,8 @@ async function openSearchHit(hit) {
         if (chosen !== hit.task_id || !detail) return;
         if (hit.kind === 'knowledge') {
             switchTab('note');
+            await loadKnowledge();
+            if (chosen !== hit.task_id) return;
             element('knowledge-list').querySelector('[data-knowledge="' + hit.reference + '"]')?.scrollIntoView({
                 block: 'center'
             });
@@ -5504,18 +5684,19 @@ async function openSearchHit(hit) {
             });
             target?.focus();
         } else if (hit.kind === 'message') {
-            const seq = Number(hit.reference);
+            const seq = Number(hit.reference), selected = selection, epoch = shellEpoch;
             if (seq > 0) {
-                const d = await api('tasks/' + hit.task_id + '?after=' + Math.max(0, seq - 5));
-                if (chosen !== hit.task_id) return;
-                sequence = 0;
-                resetConversation();
-                detail = d;
-                element('conversation').innerHTML = '<div class="search-context">正在显示搜索位置附近的对话。<button id="search-full-chat">从开头查看</button></div>';
-                appendEvents(d.events);
+                const event = await api('tasks/' + hit.task_id + '?event=' + seq);
+                if (chosen !== hit.task_id || selection !== selected || !shellCurrent(epoch)) return;
+                const d = await api('tasks/' + hit.task_id + '?recent=1&run=' + encodeURIComponent(event.run_id) + '&before_event=' + (seq + 51));
+                if (chosen !== hit.task_id || selection !== selected || !shellCurrent(epoch)) return;
+                conversationHistory.expanded = true;
+                receiveConversationDetail(d, 'records');
+                addConversationEvent(event);
+                element('conversation').insertAdjacentHTML('afterbegin', '<div class="search-context">已展开搜索命中附近的记录。<button id="search-full-chat">返回最近对话</button></div>');
                 button('search-full-chat').onclick = ()=>void choose(hit.task_id);
                 const target = revealConversationEvent(seq);
-                if (target) notify('已临时显示搜索命中的消息，筛选偏好保持不变。');
+                if (target) notify('已临时显示搜索命中的消息，显示偏好保持不变。');
                 target?.scrollIntoView({
                     block: 'center'
                 });
@@ -6083,6 +6264,7 @@ let sequence = 0, selection = 0, dirty = false, sending = false, polling = false
 let refreshTask = 0, refreshKnowledge = 0, polledTask = '', pollRequested = false;
 let taskContext = [];
 let knowledgeDraftRun = '';
+let knowledgeSummaryOnly = true;
 let knowledgeEditTarget = null, knowledgeSaving = false;
 const knowledgeExpanded = new Set();
 const drafts = new Map();
@@ -6615,9 +6797,10 @@ async function choose(id, view = 'chat') {
     void loadStickyBoard();
     taskContext = [];
     void loadTaskContext(id);
-    element('conversation').innerHTML = '<p id="loading" class="muted">正在读取任务记录…</p>';
+    element('conversation').innerHTML = '<p id="loading" class="muted">正在读取最近对话…</p>';
     input('message').value = drafts.get(id) || '';
     knowledgeItems = [];
+    knowledgeSummaryOnly = true;
     knowledgeEditing = null;
     knowledgeEditTarget = null;
     knowledgeExpanded.clear();
@@ -6635,22 +6818,27 @@ async function choose(id, view = 'chat') {
     switchTab('chat');
     renderList();
     history.replaceState(null, '', '/?task=' + id);
+    const epoch = shellEpoch;
     try {
-        const [d, k] = await Promise.all([
-            api('tasks/' + id),
-            api('tasks/' + id + '/knowledge')
-        ]);
-        if (token !== selection) return;
-        detail = d;
+        const d = await api('tasks/' + id + '?recent=1', 'GET', undefined, shellController.signal);
+        if (token !== selection || !shellCurrent(epoch)) return;
         polledTask = id;
         refreshTask = refreshKnowledge = Date.now();
-        storeKnowledge(k || []);
         element('conversation').innerHTML = '';
-        appendEvents(d.events);
+        receiveConversationDetail(d);
         renderTask();
         switchTab(view);
+        if (view !== 'note') void loadKnowledge(true);
     } catch (e) {
-        if (token === selection) notify(e.message);
+        if (token === selection && shellCurrent(epoch)) {
+            const container = element('conversation');
+            container.textContent = '读取失败：' + e.message;
+            const retry = document.createElement('button');
+            retry.textContent = '重新读取';
+            retry.onclick = ()=>void choose(id, view);
+            container.append(retry);
+            notify(e.message);
+        }
     }
 }
 function switchTab(tab) {
@@ -6714,6 +6902,7 @@ function switchTab(tab) {
     if (tab === 'files') void loadFiles();
     if (tab === 'scratch') void loadScratch();
     if (tab === 'hardware') void loadDevices();
+    if (tab === 'note' && detail) void loadKnowledge();
 }
 let knowledgeFilter = 'all';
 function knowledgeStateLabel(v) {
@@ -6731,12 +6920,13 @@ function knowledgeSourceLabel(v) {
 function knowledgeStampOf(list) {
     return list.map((k)=>k.id + ':' + k.revision).join(',');
 }
-function storeKnowledge(list) {
+function storeKnowledge(list, summaryOnly = false) {
     const stamp = knowledgeStampOf(list);
-    if (stamp === lastKnowledge) return;
+    if (stamp === lastKnowledge && (!knowledgeSummaryOnly || summaryOnly)) return;
     lastKnowledge = stamp;
+    knowledgeSummaryOnly = summaryOnly;
     knowledgeItems = list;
-    renderKnowledgeList();
+    if (!summaryOnly) renderKnowledgeList();
     applyConversationFilter();
 }
 function knowledgeForRun(runId) {
@@ -6894,7 +7084,7 @@ function renderTask() {
     button('stop').classList.toggle('hidden', !active);
     button('send').disabled = sending;
     input('message').placeholder = active ? '追加要求将排队，也可以停止当前执行…' : '下一步，要做什么？';
-    const knowledge = latestKnowledgeRun(), saved = knowledge ? knowledgeForRun(knowledge.id) : null, pending = !!knowledge && (!saved || saved.content !== knowledge.result);
+    const knowledge = latestKnowledgeRun(), saved = knowledge ? knowledgeForRun(knowledge.id) : null, pending = !!knowledge && (!saved || !knowledgeSummaryOnly && saved.content !== knowledge.result);
     element('draft-banner').classList.toggle('hidden', !pending);
     element('draft-preview').classList.toggle('hidden', !pending);
     button('note-tab').textContent = '本任务知识' + (knowledgeItems.length ? ' · ' + knowledgeItems.length : '');
@@ -6964,26 +7154,26 @@ async function poll(background = false) {
             renderList();
         }
         if (!current()) return;
-        const busy = detail?.task.status === 'running' || detail?.task.status === 'queued';
+        const busy = detail?.task.status === 'running' || detail?.task.status === 'queued' || !!detail?.runs?.some((run)=>run.status === 'running' || run.status === 'queued');
         const changedTask = id !== polledTask;
         let completed = false;
-        if (id && (!background || changedTask || Date.now() - refreshTask >= (busy ? 1000 : 15000))) {
+        if (id && detail && (!background || changedTask || Date.now() - refreshTask >= (busy ? 1000 : 15000))) {
             refreshTask = Date.now();
             polledTask = id;
             requested = true;
-            const d = await api('tasks/' + id + '?after=' + sequence, 'GET', undefined, signal);
+            const d = await api('tasks/' + id + '?recent=1&after=' + sequence, 'GET', undefined, signal);
             if (!current()) return;
             completed = busy && d.task.status !== 'running' && d.task.status !== 'queued';
-            detail = d;
-            appendEvents(d.events);
+            receiveConversationDetail(d, 'poll');
+            if (d.conversation?.has_more) refreshTask = 0;
             renderTask();
         }
-        if (id && (!background || changedTask || completed || Date.now() - refreshKnowledge >= 30000)) {
+        if (id && detail && (!background || changedTask || completed || Date.now() - refreshKnowledge >= 30000)) {
             refreshKnowledge = Date.now();
             requested = true;
-            const k = await api('tasks/' + id + '/knowledge', 'GET', undefined, signal);
+            const summary = toolsTab !== 'note', k = await api('tasks/' + id + '/knowledge' + (summary ? '?summary=1' : ''), 'GET', undefined, signal);
             if (!current()) return;
-            if (k) storeKnowledge(k);
+            if (k) storeKnowledge(k, summary);
         }
         if (requested && element('connection')) {
             element('connection').textContent = '';
@@ -7274,12 +7464,12 @@ async function send(text, clear, delivery = 'queue') {
         }
     }
 }
-async function loadKnowledge() {
+async function loadKnowledge(summary = false) {
     const id = chosen, epoch = shellEpoch, selected = selection;
     try {
-        const items = await api('tasks/' + id + '/knowledge');
-        if (id !== chosen || selected !== selection || !shellCurrent(epoch)) return;
-        storeKnowledge(items || []);
+        const items = await api('tasks/' + id + '/knowledge' + (summary ? '?summary=1' : ''));
+        if (id !== chosen || selected !== selection || !shellCurrent(epoch) || summary && toolsTab === 'note') return;
+        storeKnowledge(items || [], summary);
     } catch (e) {
         if (shellCurrent(epoch) && selected === selection) notify(e.message);
     }

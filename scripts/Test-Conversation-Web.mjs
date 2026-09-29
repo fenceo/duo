@@ -18,7 +18,7 @@ const running=[{id:'a',status:'running',result:''}];
 assert.equal(mod.conversationCategory(events[4],mod.finalConversationEvents(events,running)),'process');
 assert.equal(mod.conversationCategory(events[4],mod.finalConversationEvents(events,runs)),'message','Run completion reveals an already received final reply without needing a new event');
 assert.deepEqual([...mod.finalConversationEvents([event(1,'assistant','相同','a'),event(2,'assistant','相同','b')],[{id:'a',status:'done',result:'相同'},{id:'b',status:'done',result:'相同'}])].sort(),[1,2]);
-for(const bad of [null,'invalid','null','{}','{"tools":"false","process":false}'])assert.deepEqual(mod.readConversationFilter(bad),{tools:false,process:false});
+for(const bad of [null,'invalid','null','{}','{"tools":"false","process":false}'])assert.deepEqual(mod.readConversationFilter(bad),{tools:false,process:true});
 assert.deepEqual(mod.readConversationFilter('{"tools":true,"process":false}'),{tools:true,process:false});
 const footerContext=createContext({escapeHTML:s=>s,knowledgeForRun:()=>({source:'auto'})});
 runInContext(stripTypeScriptTypes(source,{mode:'transform'}),footerContext);

@@ -24,8 +24,7 @@ function installLayout(){
  const connection=element('connection');connection.textContent='';connection.classList.add('hidden');connection.setAttribute('role','status');utilities.prepend(connection);footer.remove();
  globalActions.addEventListener('click',e=>{if((e.target as HTMLElement).closest('button'))element('sidebar').classList.remove('open')});
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
- const tabs=element('tabs');tabs.prepend(element('conversation-filter'));button('chat-tab').classList.add('hidden');
- for(const id of ['conversation-results','conversation-all'])button(id).addEventListener('click',()=>{if(matchMedia('(max-width:760px)').matches)switchTab('chat')});
+ const tabs=element('tabs');tabs.prepend(element('conversation-filter'));element('conversation-filter').prepend(button('chat-tab'));button('chat-tab').textContent='对话';
  // Task knowledge is a primary tool, alongside files and the terminal.
  tabs.append(element('note-tab'));
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';

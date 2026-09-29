@@ -35,18 +35,18 @@ assert(document.querySelector('[data-task-action="archive"][data-task-id="b"]').
 // Synthetic time verifies request cadence, including immediate explicit actions.
 let now=100000;ctx.Date=class extends Date{static now(){return now}};
 const calls=[];
-ctx.api=async path=>{calls.push(path);if(path==='tasks')return items;if(path.endsWith('/knowledge'))return [];if(path.startsWith('tasks/b?after='))return {task:{...items[1]},events:[],runs:[]};throw Error('Unexpected route: '+path)};
+ctx.api=async path=>{calls.push(path);if(path==='tasks')return items;if(path.includes('/knowledge'))return [];if(path.startsWith('tasks/b?recent=1&after='))return {task:{...items[1]},events:[],runs:[]};throw Error('Unexpected route: '+path)};
 ctx.renderTask=()=>{};ctx.appendEvents=()=>{};ctx.storeKnowledge=()=>{};
 state("detail={task:tasks[1],runs:[],events:[]};detail.task.status='done';polledTask=chosen;refreshTask=refreshKnowledge=refreshList=Date.now()");
 for(let i=0;i<14;i++){now+=1000;await ctx.poll(true)}
 assert.equal(calls.length,0,'idle one-second ticks make no requests');
-now+=1000;await ctx.poll(true);assert.deepEqual(calls,['tasks/b?after=0']);
-now+=15000;await ctx.poll(true);assert.deepEqual(calls.slice(1),['tasks','tasks/b?after=0','tasks/b/knowledge']);
+now+=1000;await ctx.poll(true);assert.deepEqual(calls,['tasks/b?recent=1&after=0']);
+now+=15000;await ctx.poll(true);assert.deepEqual(calls.slice(1),['tasks','tasks/b?recent=1&after=0','tasks/b/knowledge?summary=1']);
 calls.length=0;state("detail.task.status='running'");items[1].status='running';
-now+=1000;await ctx.poll(true);assert.deepEqual(calls,['tasks/b?after=0'],'active output stays current without refetching the list and knowledge');
+now+=1000;await ctx.poll(true);assert.deepEqual(calls,['tasks/b?recent=1&after=0'],'active output stays current without refetching the list and knowledge');
 items[1].status='done';now+=1000;await ctx.poll(true);
-assert.deepEqual(calls.slice(1),['tasks/b?after=0','tasks/b/knowledge'],'completion refreshes automatic knowledge immediately');
-calls.length=0;await ctx.poll();assert.deepEqual(calls,['tasks','tasks/b?after=0','tasks/b/knowledge'],'explicit user actions bypass idle delays');
+assert.deepEqual(calls.slice(1),['tasks/b?recent=1&after=0','tasks/b/knowledge?summary=1'],'completion refreshes automatic knowledge immediately');
+calls.length=0;await ctx.poll();assert.deepEqual(calls,['tasks','tasks/b?recent=1&after=0','tasks/b/knowledge?summary=1'],'explicit user actions bypass idle delays');
 calls.length=0;let release;const normalAPI=ctx.api;
 ctx.api=path=>path==='tasks'&&!release?new Promise(resolve=>{calls.push(path);release=()=>resolve(items)}):normalAPI(path);
 const pending=ctx.poll();await ctx.poll();release();await pending;await new Promise(resolve=>setImmediate(resolve));

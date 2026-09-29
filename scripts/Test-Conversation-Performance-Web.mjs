@@ -21,6 +21,10 @@ for(let i=0;i<20;i++){composer.value='模拟中文输入 '+i;composer.dispatchEv
 const inputMs=(performance.now()-inputStart)/20;
 console.log(JSON.stringify({events:ctx.fixtureDetail.events.length,mountedNodes,mountMs,idlePollMs,inputMs,workflowCalls}));
 assert(mountedNodes<800,'closed execution records must not mount thousands of hidden nodes');
+assert.equal(conversation.querySelectorAll('.conversation-turn').length,5,'only the latest five turns mount by default');
+assert.equal(document.getElementById('conversation-all'),null,'the redundant trajectory preset is removed');
+assert.equal(document.getElementById('conversation-process').checked,true);
+assert.equal(document.getElementById('conversation-tools').checked,false);
 assert.equal(workflowCalls,0,'typing must not refresh workflow, attachments or approval forms');
 assert.equal(run('drafts.get(chosen)'),composer.value,'typing keeps the complete draft');
 assert.equal(document.getElementById('send').disabled,false);
@@ -56,6 +60,9 @@ document.getElementById('composer').requestSubmit=()=>submissions++;
 const enter=(isComposing,shiftKey)=>{const event=new window.Event('keydown');event.key='Enter';event.isComposing=isComposing;event.shiftKey=shiftKey;composer.dispatchEvent(event)};
 enter(true,false);enter(false,true);assert.equal(submissions,0,'IME Enter and Shift+Enter must not submit');enter(false,false);assert.equal(submissions,1);
 
+await ctx.loadOlderConversation();
+assert.equal(conversation.querySelectorAll('.conversation-turn').length,24,'previously loaded rounds can be explicitly expanded');
+ctx.setConversationFilter({tools:true,process:false});
 const first=conversation.querySelector('.conversation-turn'),trace=first.querySelector('.turn-process'),records=first.querySelector('.turn-records');
 trace.open=true;trace.dispatchEvent(new window.Event('toggle'));
 assert.equal(records.querySelectorAll('[data-event]').length,100,'opening a large trace mounts one page');
@@ -67,6 +74,7 @@ disclosure.open=false;disclosure.dispatchEvent(new window.Event('toggle'));asser
 for(const item of records.children)item.getBoundingClientRect=()=>({top:0});
 records.querySelector('.conversation-more').click();assert.equal(records.querySelectorAll('[data-event]').length,198,'older records can all be retrieved');
 trace.open=false;trace.dispatchEvent(new window.Event('toggle'));assert.equal(records.childElementCount,0,'closing a trace releases its live DOM');
+ctx.setConversationFilter({tools:false,process:false});
 
 // A search hit outside the last page is materialized without changing filters
 // or rendering every intervening event; full text and DOM identity survive polls.
@@ -77,9 +85,9 @@ ctx.appendEvents([]);assert.strictEqual(ctx.revealConversationEvent(2),hit);
 const earlier=conversation.querySelector('[data-event="200"]');
 ctx.appendEvents([{seq:4801,run_id:'run-23',kind:'tool',text:'new synthetic tool output'}]);
 assert.strictEqual(conversation.querySelector('[data-event="200"]'),earlier);
-assert.match(conversation.lastElementChild.querySelector('.turn-process summary').textContent,/199 条/);
+assert.equal(run("conversationTurns.get('run-23').items.length"),201);
 ctx.appendEvents([{seq:4801,run_id:'run-23',kind:'tool',text:'duplicate must be ignored'}]);
-assert.match(conversation.lastElementChild.querySelector('.turn-process summary').textContent,/199 条/);
+assert.equal(run("conversationTurns.get('run-23').items.length"),201);
 
 // Completion can promote a previously received assistant event with no new
 // event, and a changed run result must reclassify the earlier match correctly.

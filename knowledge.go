@@ -93,8 +93,12 @@ func (s *Store) knowledgeList(task string) ([]Knowledge, error) {
 	return s.knowledgeListPage(task, false)
 }
 
-func (s *Store) knowledgeListPage(task string, all bool) ([]Knowledge, error) {
-	query := "SELECT id,task_id,title,content,status,source,run_id,revision,created,updated FROM knowledge_entries WHERE task_id=? ORDER BY updated DESC,created DESC"
+func (s *Store) knowledgeListPage(task string, all bool, summary ...bool) ([]Knowledge, error) {
+	content := "content"
+	if !all && len(summary) > 0 && summary[0] {
+		content = "''"
+	}
+	query := "SELECT id,task_id,title," + content + ",status,source,run_id,revision,created,updated FROM knowledge_entries WHERE task_id=? ORDER BY updated DESC,created DESC"
 	if !all {
 		query += " LIMIT 500"
 	}
@@ -352,7 +356,7 @@ func (s *Server) knowledgeRoutes(m *http.ServeMux) {
 			fail(w, 404, "任务不存在")
 			return
 		}
-		items, err := s.app.store.knowledgeListPage(id, r.URL.Query().Get("download") == "1")
+		items, err := s.app.store.knowledgeListPage(id, r.URL.Query().Get("download") == "1", r.URL.Query().Get("summary") == "1")
 		if err != nil {
 			fail(w, 500, err.Error())
 			return

@@ -498,13 +498,41 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "任务不存在")
 		return
 	}
-	runs, e := s.app.store.runs(id)
-	if e != nil {
-		fail(w, 500, e.Error())
+	if r.URL.Query().Has("event") {
+		seq, err := conversationCursor(r.URL.Query(), "event")
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		var event Event
+		err = s.app.store.QueryRow("SELECT seq,run_id,kind,text,created FROM events WHERE task_id=? AND seq=?", id, seq).Scan(&event.Seq, &event.RunID, &event.Kind, &event.Text, &event.Created)
+		if err != nil {
+			fail(w, 404, "记录不存在")
+			return
+		}
+		jsonOut(w, 200, event)
 		return
 	}
-	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	events, e := s.app.store.events(id, after)
+	var runs []Run
+	var events []Event
+	var window conversationWindow
+	if r.URL.Query().Get("recent") == "1" {
+		runs, events, window, e = s.app.store.conversationPage(r.Context(), id, r.URL.Query())
+		if errors.Is(e, errConversationCursor) {
+			fail(w, 400, e.Error())
+			return
+		}
+		if errors.Is(e, sql.ErrNoRows) {
+			fail(w, 404, "历史位置不存在")
+			return
+		}
+	} else {
+		runs, e = s.app.store.runs(id)
+		if e == nil {
+			after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+			events, e = s.app.store.events(id, after)
+		}
+	}
 	if e != nil {
 		fail(w, 500, e.Error())
 		return
@@ -515,6 +543,9 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	// and which foreign instruction files sit in the working directory, so a
 	// reply that follows old context is explainable instead of surprising.
 	response := map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id), "interaction": s.app.liveInteraction(id)}
+	if r.URL.Query().Get("recent") == "1" {
+		response["conversation"] = window
+	}
 	if continuation, err := s.app.store.taskContinuation(id); err == nil {
 		response["continuation"] = continuation
 	}
