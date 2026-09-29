@@ -422,7 +422,9 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .sidebar>.task-views{gap:3px}.sidebar>.task-views button{padding:5px 2px;min-height:30px;font-size:11px;white-space:nowrap}
 .sidebar .task-list{gap:2px;min-height:90px;container-type:inline-size}
 .sidebar .task-row{flex:none;min-height:36px}.sidebar .task{padding:7px 8px;min-height:36px;gap:6px}
-.sidebar .task-environment{margin:0;flex:0 1 auto;max-width:44%;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.sidebar .task-environment{margin:0;flex:0 1 auto;max-width:44%;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.sidebar .task-environment-short{display:none}
+@container (max-width:190px){.sidebar .task-environment{flex:none;width:28px;text-align:right}.sidebar .task-environment-name{display:none}.sidebar .task-environment-short{display:inline}}
 .sidebar .task-path{display:none;max-width:24%;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 @container (min-width:300px){.sidebar .task-path{display:block}}
 .header-utilities{display:flex;align-items:center;gap:6px;flex:none;min-width:0}

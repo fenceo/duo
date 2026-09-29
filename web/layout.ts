@@ -5,8 +5,9 @@ function taskItemMenu(t:Task):string{
 function workspaceTaskList(items:Task[]):string{
  return [...items].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated-a.updated).map(t=>{
   const env=t.environment,environment=env?.name||'本机',location=[environment,env?.type,env?.distro,env?.host,env?.user,t.workspace].filter(Boolean).join(' · ');
+  const compact=env?.type==='windows'?'Win':env?.type==='wsl'?'WSL':env?.type==='ssh'?'SSH':environment;
   const folder=t.workspace.replace(/[\\/]+$/,'').split(/[\\/]/).at(-1)||t.workspace;
-  return `<div class="task-row"><button class="task ${t.id===chosen?'selected':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title+'\n'+location)}" aria-label="${escapeHTML(t.title+'，'+location)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment">${escapeHTML(environment)}</small></button>${taskItemMenu(t)}</div>`;
+  return `<div class="task-row"><button class="task ${t.id===chosen?'selected':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title+'\n'+location)}" aria-label="${escapeHTML(t.title+'，'+location)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
  }).join('');
 }
 function installLayout(){

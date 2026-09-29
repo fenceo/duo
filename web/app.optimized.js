@@ -2655,8 +2655,9 @@ function workspaceTaskList(items) {
             env?.user,
             t.workspace
         ].filter(Boolean).join(' · ');
+        const compact = env?.type === 'windows' ? 'Win' : env?.type === 'wsl' ? 'WSL' : env?.type === 'ssh' ? 'SSH' : environment;
         const folder = t.workspace.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || t.workspace;
-        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1)}" aria-label="${escapeHTML(t.title + '，' + location1)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment">${escapeHTML(environment)}</small></button>${taskItemMenu(t)}</div>`;
+        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1)}" aria-label="${escapeHTML(t.title + '，' + location1)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
     }).join('');
 }
 function installLayout() {

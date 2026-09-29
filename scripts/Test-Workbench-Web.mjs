@@ -92,7 +92,7 @@ assert.match(list,/class="task selected"[^>]*data-task="a"/);
 assert.doesNotMatch(list,/data-task="b"[^>]*selected/);
 assert.match(list,/↑ 任务 a/);
 assert.doesNotMatch(list,/task-state/);
-assert.match(list,/<small class="task-environment">WSL<\/small>/);
+assert.match(list,/<span class="task-environment-name">WSL<\/span>/);
 const grouped=layout.workspaceTaskList([task('a'),task('c',{workspace:'/work/a'}),{...task('d'),environment:{id:'e2',name:'Windows',type:'local',host:'',distro:'',user:''},workspace:'/other'}]);
 assert.doesNotMatch(grouped,/workspace-group|workspace-heading/);
 assert.equal(grouped.match(/class="task-row"/g).length,3);
