@@ -617,7 +617,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .codex-requests-dialog .codex-approvals{min-height:0;max-height:calc(100dvh - 48px);border:0}
 /* Conversation preferences are direct display controls, independent of tools. */
 .tabs .conversation-filter{gap:14px}
-.tabs .conversation-filter #chat-tab{align-self:stretch;flex-shrink:0;border:0;border-radius:0;border-bottom:2px solid transparent;background:none;padding:10px 0;font-size:13px}
+.tabs .conversation-filter #chat-tab{align-self:stretch;flex-shrink:0;margin-right:0;border:0;border-radius:0;border-bottom:2px solid transparent;background:none;padding:10px 0;font-size:13px}
 .tabs .conversation-filter #chat-tab.selected{border-bottom-color:var(--accent);color:var(--accent)}
 .conversation-filter label{white-space:nowrap;min-height:32px;gap:5px}
 .conversation-filter .filter-short{display:none}
@@ -626,6 +626,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .conversation-history small{font-size:11px;overflow-wrap:anywhere}
 @media (max-width:760px){
  .tabs .conversation-filter{gap:8px}
+ #chat-column .composer{padding:6px 10px}
  .conversation-filter .filter-full{display:none}
  .conversation-filter .filter-short{display:inline}
  .conversation-filter label{min-width:44px;min-height:44px;font-size:12px}
