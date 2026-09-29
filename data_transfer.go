@@ -7,6 +7,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -326,12 +327,17 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 		for _, run := range runs {
 			r := workspaceArchiveRun{ID: run.ID, TaskID: task.ID, Input: redactWorkspaceText(run.Input), Kind: run.Kind, Source: run.Source, Status: run.Status, Result: redactWorkspaceText(run.Result), Error: redactWorkspaceText(run.Error), Created: run.Created, Finished: run.Finished, Started: run.Started, Usage: run.Usage, ModeID: ""}
 			var raw string
-			if e := s.QueryRow("SELECT payload FROM task_memories WHERE run_id=? AND task_id=?", run.ID, task.ID).Scan(&raw); e == nil {
+			memoryErr := s.QueryRow("SELECT payload FROM task_memories WHERE run_id=? AND task_id=?", run.ID, task.ID).Scan(&raw)
+			if memoryErr == nil {
 				var memory taskMemory
-				if json.Unmarshal([]byte(raw), &memory) == nil {
+				if err = json.Unmarshal([]byte(raw), &memory); err == nil {
 					clean := portableTaskMemory(memory, task.Workspace)
 					r.Memory = &clean
+				} else {
+					return workspaceArchive{}, nil, errors.New("任务摘要损坏，未导出不完整的工作区")
 				}
+			} else if !errors.Is(memoryErr, sql.ErrNoRows) {
+				return workspaceArchive{}, nil, memoryErr
 			}
 			if run.Mode != nil {
 				r.ModeID = archiveModeID(mustJSON(run.Mode))

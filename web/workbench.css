@@ -409,7 +409,9 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .library-document-path{display:block;font-size:11px;color:var(--muted);overflow-wrap:anywhere}.library-tags{font-size:11px;margin:6px 0;color:var(--accent)}
 .library-filters{grid-template-columns:1fr 1fr}.library-filters #library-tag{min-width:0}
 #composer{position:relative}#composer-resizer{display:block;position:absolute;top:-5px;left:12px;right:12px;height:12px;cursor:ns-resize;touch-action:none;z-index:2}#composer-resizer::after{content:'';position:absolute;left:calc(50% - 22px);width:44px;top:5px;height:3px;background:var(--line);border-radius:3px}#composer-resizer:hover::after,#composer-resizer:focus-visible::after{background:var(--accent)}
-#composer #message{resize:none;min-height:60px;max-height:min(600px,55dvh);overflow:auto}
+#composer #message{resize:none;min-height:56px;max-height:min(600px,55dvh);overflow:auto}
+.library-header-actions{max-width:none}.library-header>div:first-child{min-width:0}
+.library-card{position:relative;padding:9px 12px}.library-card h3{padding-right:56px}.library-card footer{position:absolute;right:10px;top:9px}.library-card footer>span{display:none}.library-card .library-card-meta{margin:3px 0}.library-card .library-tags{margin:4px 0 0}.library-card .library-document-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .resizing-x *,.resizing-y *{transition:none}.resizing-x .conversation,.resizing-y .conversation{overflow-anchor:none}
 .sidebar{padding:12px 10px 10px;gap:8px}
 .sidebar .brand{display:flex;align-items:center;padding:0 3px 3px;gap:8px;min-height:34px;flex:none}
@@ -490,6 +492,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
  .library-dialog[open]{width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:14px;gap:8px}
  .library-header{flex-direction:row;align-items:center;flex-wrap:wrap}.library-header p{display:none}.library-header-actions{gap:4px}.library-header-actions button{padding:7px;font-size:11px}
+ .library-dialog:has(.preview-open) .library-layers,.library-dialog:has(.preview-open) .library-help,.library-dialog:has(.preview-open) .library-overview,.library-dialog:has(.preview-open) .library-search,.library-dialog:has(.preview-open) #library-state{display:none}
  .library-overview{gap:4px 12px;padding:8px;font-size:11px}.library-help summary{min-height:32px}
  .library-filters{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.library-filters select{min-height:40px}
  .library-workspace{display:flex;gap:0}.library-list-pane{flex:1}.library-preview{display:none}
