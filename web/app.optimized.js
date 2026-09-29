@@ -3451,6 +3451,150 @@ function renderDetectedEnvironments() {
             notify(existing ? '已打开已有配置，检测结果没有覆盖它。' : '已填入环境。选好工作目录后，点击保存设置。');
         });
 }
+let desktopState = {
+    active: false,
+    control: false
+}, desktopDialogTask = '', desktopBusy = false, desktopRevision = 0;
+function installDesktopSharing() {
+    desktopState = {
+        active: false,
+        control: false
+    };
+    desktopDialogTask = '';
+    desktopBusy = false;
+    desktopRevision++;
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.id = 'desktop-open';
+    entry.className = 'subtle';
+    entry.textContent = '桌面共享';
+    element('settings-open').before(entry);
+    entry.onclick = ()=>void openDesktopSharing();
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="desktop-dialog" class="desktop-dialog"><h2>共享服务电脑的桌面</h2><p>共享的是运行 Duo 的 Windows 桌面。选定窗口需保持前台；整个桌面可能包含其它应用内容。画面由当前任务的 AI 查看。</p><p id="desktop-owner" role="status"></p><div class="desktop-controls"><label for="desktop-target">共享范围</label><select id="desktop-target"></select><label class="check-row"><input type="checkbox" id="desktop-allow-control">允许 AI 操作真实键盘和鼠标</label><p class="muted">默认只查看。授权保持 30 分钟，重启服务后失效；可随时停止共享。开始共享后，从下一条任务消息生效。</p><div class="actions"><button type="button" id="desktop-start" class="primary">开始共享给当前任务</button><button type="button" id="desktop-preview">刷新画面</button><button type="button" id="desktop-stop" class="danger">停止共享 / 接管</button></div></div><p id="desktop-status" role="status"></p><img id="desktop-preview-image" class="hidden" alt="用户授权共享的桌面画面"><div class="dialog-footer"><button type="button" id="desktop-close">关闭面板</button></div></dialog>`);
+    button('desktop-close').onclick = ()=>element('desktop-dialog').close();
+    button('desktop-start').onclick = ()=>void startDesktopSharing();
+    button('desktop-stop').onclick = ()=>void stopDesktopSharing();
+    button('desktop-preview').onclick = ()=>void previewDesktop();
+}
+function renderDesktopSharing(state) {
+    if (state) {
+        desktopState = state;
+        if (!state.active) {
+            const img = element('desktop-preview-image');
+            img?.removeAttribute('src');
+            img?.classList.add('hidden');
+        }
+    }
+    const active = desktopState.active;
+    button('desktop-open').textContent = active ? '桌面共享中 · 接管' : '桌面共享';
+    button('desktop-open').classList.toggle('desktop-sharing', active);
+    const task = tasks.find((t)=>t.id === desktopState.task_id), label = task?.title || desktopState.task_id || '';
+    element('desktop-owner').textContent = active ? '正在共享给 ' + label + ' · ' + (desktopState.control ? '允许键鼠控制' : '仅查看') : '当前未共享桌面';
+    button('desktop-stop').disabled = !active;
+    button('desktop-preview').disabled = desktopBusy || !active || desktopState.task_id !== desktopDialogTask;
+    button('desktop-start').disabled = desktopBusy || !desktopDialogTask || desktopDialogTask !== chosen || ![
+        'codex',
+        'claude'
+    ].includes(detail?.task.engine || '') || !!detail?.task.archived || active && desktopState.task_id !== desktopDialogTask;
+}
+async function openDesktopSharing() {
+    const epoch = shellEpoch, revision = ++desktopRevision;
+    desktopDialogTask = chosen;
+    desktopBusy = true;
+    input('desktop-allow-control').checked = false;
+    element('desktop-status').textContent = '正在读取桌面和窗口列表…';
+    const img = element('desktop-preview-image');
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    element('desktop-dialog').showModal();
+    renderDesktopSharing();
+    try {
+        const [stateResult, targetsResult] = await Promise.allSettled([
+            api('desktop'),
+            api('desktop/targets')
+        ]);
+        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        if (stateResult.status === 'fulfilled') {
+            desktopState = stateResult.value;
+            renderDesktopSharing();
+        }
+        if (stateResult.status === 'rejected') throw stateResult.reason;
+        if (targetsResult.status === 'rejected') throw targetsResult.reason;
+        const state = stateResult.value, targets = targetsResult.value;
+        element('desktop-target').innerHTML = targets.map((t)=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');
+        desktopState = state;
+        element('desktop-status').textContent = chosen ? '请确认共享范围和是否允许键鼠操作。' : '先选择一个 Codex 或 Claude 任务，才能开始共享。';
+    } catch (e) {
+        if (shellCurrent(epoch) && revision === desktopRevision) element('desktop-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && revision === desktopRevision) {
+            desktopBusy = false;
+            renderDesktopSharing();
+        }
+    }
+}
+async function startDesktopSharing() {
+    if (desktopBusy || !desktopDialogTask || desktopDialogTask !== chosen) return;
+    const task = desktopDialogTask, epoch = shellEpoch, revision = ++desktopRevision;
+    desktopBusy = true;
+    renderDesktopSharing();
+    try {
+        const state = await api('tasks/' + encodeURIComponent(task) + '/desktop', 'PUT', {
+            target: element('desktop-target').value,
+            control: input('desktop-allow-control').checked
+        });
+        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        renderDesktopSharing(state);
+        element('desktop-status').textContent = '已开始共享。发送下一条任务消息，AI 即可使用桌面工具。用户操作后，AI 必须重新观察画面。';
+    } catch (e) {
+        if (shellCurrent(epoch) && revision === desktopRevision) element('desktop-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && revision === desktopRevision) {
+            desktopBusy = false;
+            renderDesktopSharing();
+        }
+    }
+}
+async function stopDesktopSharing() {
+    const epoch = shellEpoch, revision = ++desktopRevision;
+    button('desktop-stop').disabled = true;
+    try {
+        await api('desktop', 'DELETE');
+        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        desktopBusy = false;
+        renderDesktopSharing({
+            active: false,
+            control: false
+        });
+        element('desktop-status').textContent = '共享已停止，AI 已失去桌面访问权限。';
+    } catch (e) {
+        if (shellCurrent(epoch) && revision === desktopRevision) {
+            element('desktop-status').textContent = '停止失败，请重试：' + e.message;
+            button('desktop-stop').disabled = false;
+        }
+    }
+}
+async function previewDesktop() {
+    if (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask) return;
+    const task = desktopDialogTask, epoch = shellEpoch, revision = ++desktopRevision;
+    desktopBusy = true;
+    renderDesktopSharing();
+    try {
+        const frame = await api('tasks/' + encodeURIComponent(task) + '/desktop/frame', 'POST', {});
+        if (!shellCurrent(epoch) || revision !== desktopRevision || desktopState.task_id !== task) return;
+        const img = element('desktop-preview-image');
+        img.src = 'data:image/png;base64,' + frame.image;
+        img.classList.remove('hidden');
+        element('desktop-status').textContent = '画面已刷新；此预览不会连续录屏。';
+    } catch (e) {
+        if (shellCurrent(epoch) && revision === desktopRevision) element('desktop-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && revision === desktopRevision) {
+            desktopBusy = false;
+            renderDesktopSharing();
+        }
+    }
+}
 let hardwareView = null, hardwarePortsRequest = 0, hardwareEditingTask = '', hardwareLoadRequest = 0;
 let hardwarePollTimer, hardwareSaving = false;
 const hardwareDrafts = new Map();
@@ -6126,6 +6270,7 @@ function installEngineSettings() {
     element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>AI 引擎与账号</h3><p>引擎负责实际干活，执行环境负责在哪里干活；账号/API 只保存目标环境里的 profile 引用，不把密钥写进Duo数据库。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
     button('engine-profile-save').onclick = ()=>void saveEngineProfile();
     input('engine-profile-reference').nextElementSibling.textContent = '这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
+    installEngineOnboarding();
 }
 function engineTargetName(id) {
     return settings.config.environments.find((e)=>e.id === id)?.name || id;
@@ -6169,6 +6314,8 @@ async function loadEngineSettings() {
         engineCatalog = catalog;
         renderEngineCatalog();
         populateEngineProfileForm();
+        populateEngineOnboarding();
+        void resumeEngineSetup();
     } catch (e) {
         if (shellCurrent(epoch) && request === engineSettingsRequest) element('engine-catalog').textContent = e.message;
     }
@@ -6243,6 +6390,152 @@ async function activateEngineProfile(id) {
         await loadEngineSettings();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
+    }
+}
+let engineSetupBusy = false, engineSetupJob = null, engineSetupPolling = false;
+let engineSetupAttempt = null;
+function installEngineOnboarding() {
+    engineSetupBusy = false;
+    engineSetupJob = null;
+    engineSetupPolling = false;
+    engineSetupAttempt = null;
+    element('engine-catalog').insertAdjacentHTML('beforebegin', `<section class="engine-onboarding"><h4>安装工具与添加账号</h4><p>自动安装支持本机 Windows x64。只下载 AI 工具及运行所需组件，模型在云端使用。</p><fieldset id="engine-setup-fields"><label for="engine-setup-environment">执行环境</label><select id="engine-setup-environment"></select><div class="engine-actions"><select id="engine-setup-engine" aria-label="安装工具"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><button type="button" id="engine-setup-install">一键安装工具</button></div><details><summary>添加 Codex 账号 / API</summary><label for="engine-account-name">账号名称</label><input id="engine-account-name" maxlength="60" placeholder="例如 工作账号"><label for="engine-account-login">连接方式</label><select id="engine-account-login"><option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key</option></select><div id="engine-account-api" class="hidden"><label for="engine-account-key">API key</label><input id="engine-account-key" type="password" autocomplete="off"><label for="engine-account-url">API 地址（可选）</label><input id="engine-account-url" placeholder="留空使用 OpenAI 官方 API"><p class="muted">自定义服务需兼容 Responses API；密钥交给该账号的原生工具配置保存。</p></div><label for="engine-account-model">默认云端模型（可选）</label><input id="engine-account-model" maxlength="120" placeholder="留空使用工具默认模型"><button type="button" id="engine-account-add" class="primary">添加账号</button><p class="muted">每个账号单独保存。添加后可设为新任务默认，或通过任务中的“切换 AI”选择。</p></details></fieldset><div id="engine-setup-status" role="status"></div><button type="button" id="engine-setup-cancel" class="hidden">取消当前操作</button></section>`);
+    button('engine-setup-install').onclick = ()=>void startEngineOnboarding('install');
+    button('engine-account-add').onclick = ()=>void startEngineOnboarding('account');
+    element('engine-account-login').onchange = ()=>element('engine-account-api').classList.toggle('hidden', element('engine-account-login').value !== 'apiKey');
+    button('engine-setup-cancel').onclick = async ()=>{
+        const job = engineSetupJob;
+        if (!job) return;
+        try {
+            await api('engine-setup/' + encodeURIComponent(job.id), 'DELETE');
+            if (engineSetupJob === job) element('engine-setup-status').textContent = '正在取消…';
+        } catch (e) {
+            notify(e.message);
+        }
+    };
+}
+function populateEngineOnboarding() {
+    const select = element('engine-setup-environment');
+    if (!select) return;
+    const previous = select.value, envs = settings.config.environments.filter((e)=>e.type === 'windows');
+    select.innerHTML = envs.map((e)=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
+    if (envs.some((e)=>e.id === previous)) select.value = previous;
+    else if (envs.some((e)=>e.id === settings.config.default_environment)) select.value = settings.config.default_environment;
+    element('engine-setup-fields').disabled = engineSetupBusy || !envs.length;
+    if (!envs.length) element('engine-setup-status').textContent = '请先在执行环境中添加本机 Windows。WSL / SSH 可继续使用下方配置目录引用。';
+}
+function renderEngineSetup(job) {
+    engineSetupJob = job;
+    engineSetupBusy = job.state === 'running' || job.state === 'waiting';
+    element('engine-setup-fields').disabled = engineSetupBusy;
+    button('engine-setup-cancel').classList.toggle('hidden', !engineSetupBusy);
+    const status = element('engine-setup-status');
+    status.replaceChildren();
+    const message = document.createElement('p');
+    message.textContent = job.message;
+    status.append(message);
+    if (job.url) {
+        const link = document.createElement('a');
+        link.href = job.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = '打开登录页面 ↗';
+        status.append(link);
+    }
+    if (job.code) {
+        const code = document.createElement('pre');
+        code.textContent = job.code;
+        status.append(code);
+    }
+}
+async function startEngineOnboarding(action) {
+    if (engineSetupBusy) return;
+    const login = element('engine-account-login').value;
+    const body = {
+        action,
+        engine: action === 'account' ? 'codex' : element('engine-setup-engine').value,
+        environment_id: element('engine-setup-environment').value,
+        ...action === 'account' ? {
+            name: input('engine-account-name').value.trim(),
+            login,
+            api_key: login === 'apiKey' ? input('engine-account-key').value : '',
+            base_url: login === 'apiKey' ? input('engine-account-url').value.trim() : '',
+            model: input('engine-account-model').value.trim()
+        } : {}
+    };
+    const signature = JSON.stringify(body);
+    if (!engineSetupAttempt || engineSetupAttempt.signature !== signature) engineSetupAttempt = {
+        signature,
+        id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (b)=>b.toString(16).padStart(2, '0')).join('')
+    };
+    const epoch = shellEpoch;
+    engineSetupBusy = true;
+    element('engine-setup-fields').disabled = true;
+    element('engine-setup-status').textContent = '正在开始…';
+    try {
+        const job = await api('engine-setup', 'POST', {
+            ...body,
+            id: engineSetupAttempt.id
+        });
+        if (!shellCurrent(epoch)) return;
+        input('engine-account-key').value = '';
+        engineSetupAttempt = null;
+        renderEngineSetup(job);
+        void pollEngineSetup(job.id, epoch);
+    } catch (e) {
+        if (shellCurrent(epoch)) {
+            engineSetupBusy = false;
+            element('engine-setup-fields').disabled = false;
+            element('engine-setup-status').textContent = e.message;
+        }
+    }
+}
+async function resumeEngineSetup() {
+    if (engineSetupBusy || engineSetupPolling) return;
+    const epoch = shellEpoch;
+    try {
+        const jobs = await api('engine-setup');
+        if (!shellCurrent(epoch) || engineSetupBusy || !jobs.length) return;
+        renderEngineSetup(jobs[0]);
+        void pollEngineSetup(jobs[0].id, epoch);
+    } catch  {}
+}
+async function pollEngineSetup(id, epoch) {
+    if (engineSetupPolling) return;
+    engineSetupPolling = true;
+    try {
+        while(shellCurrent(epoch) && engineSetupJob?.id === id){
+            const job = await api('engine-setup/' + encodeURIComponent(id), 'GET', undefined, shellController.signal);
+            if (!shellCurrent(epoch) || engineSetupJob?.id !== id) return;
+            renderEngineSetup(job);
+            if (job.state !== 'running' && job.state !== 'waiting') {
+                if (job.state === 'done') {
+                    invalidateModelCatalogs();
+                    if (job.action === 'install') {
+                        const fresh = await api('settings', 'GET', undefined, shellController.signal);
+                        if (!shellCurrent(epoch)) return;
+                        const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : 'harness';
+                        const before = settings.config.environments.find((e)=>e.id === job.environment_id), updated = fresh.config.environments.find((e)=>e.id === job.environment_id), editing = editingEnvironments.find((e)=>e.id === job.environment_id);
+                        if (updated && before) {
+                            if (editing && editing[key] === before[key]) editing[key] = updated[key] || '';
+                            before[key] = updated[key] || '';
+                            if (editingID === job.environment_id) loadEnvironmentEditor();
+                        }
+                    }
+                    await loadEngineSettings();
+                }
+                return;
+            }
+            await new Promise((resolve)=>setTimeout(resolve, 1500));
+        }
+    } catch (e) {
+        if (shellCurrent(epoch) && engineSetupJob?.id === id) {
+            engineSetupBusy = false;
+            element('engine-setup-fields').disabled = false;
+            element('engine-setup-status').textContent = '读取状态失败；重新打开 AI 引擎设置可继续查看。' + e.message;
+        }
+    } finally{
+        if (shellCurrent(epoch)) engineSetupPolling = false;
     }
 }
 let handoffTask = null, handoffCatalog = null, handoffPreview = null;
@@ -6767,6 +7060,7 @@ function renderShell() {
     installPanelLayout();
     installUpdates();
     installLibrary();
+    installDesktopSharing();
     button('new-task').onclick = showCreate;
     button('empty-new').onclick = showCreate;
     button('menu').onclick = ()=>element('sidebar').classList.toggle('open');
@@ -7221,6 +7515,7 @@ async function loadTaskContext(id) {
     if (token === selection && detail) renderSessionBanner();
 }
 function renderTask() {
+    renderDesktopSharing(detail?.desktop);
     if (!detail) return;
     renderSessionBanner();
     const t = detail.task;

@@ -9,6 +9,7 @@ function installEngineSettings(){
  element('settings-error').insertAdjacentHTML('beforebegin',`<section id="settings-engines" class="settings-section hidden"><h3>AI 引擎与账号</h3><p>引擎负责实际干活，执行环境负责在哪里干活；账号/API 只保存目标环境里的 profile 引用，不把密钥写进Duo数据库。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
  button('engine-profile-save').onclick=()=>void saveEngineProfile();
  input('engine-profile-reference').nextElementSibling!.textContent='这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
+ installEngineOnboarding();
 }
 function engineTargetName(id:string){return settings.config.environments.find(e=>e.id===id)?.name||id}
 function engineCredentialLabel(kind:string){return ({native:'继承目标环境默认配置',dsh_home:'Harness 配置目录（DSH_HOME）',codex_home:'Codex 配置目录（CODEX_HOME）',claude_home:'Claude 配置目录（CLAUDE_CONFIG_DIR）',env_file:'环境文件引用（仅记录，尚未应用）'} as Record<string,string>)[kind]||kind}
@@ -34,7 +35,7 @@ function renderEngineCatalog(){
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-plan]').forEach(b=>b.onclick=()=>void showEnginePlan(b.dataset.enginePlan!));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-activate]').forEach(b=>b.onclick=()=>void activateEngineProfile(b.dataset.engineActivate!));
 }
-async function loadEngineSettings(){const epoch=shellEpoch,request=++engineSettingsRequest;try{const catalog=await api<EngineCatalog>('engines','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==engineSettingsRequest)return;engineCatalog=catalog;renderEngineCatalog();populateEngineProfileForm()}catch(e){if(shellCurrent(epoch)&&request===engineSettingsRequest)element('engine-catalog').textContent=(e as Error).message}}
+async function loadEngineSettings(){const epoch=shellEpoch,request=++engineSettingsRequest;try{const catalog=await api<EngineCatalog>('engines','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==engineSettingsRequest)return;engineCatalog=catalog;renderEngineCatalog();populateEngineProfileForm();populateEngineOnboarding();void resumeEngineSetup()}catch(e){if(shellCurrent(epoch)&&request===engineSettingsRequest)element('engine-catalog').textContent=(e as Error).message}}
 function populateEngineProfileForm(){
  if(!engineCatalog)return;
  const engines=element<HTMLSelectElement>('engine-profile-engine'),envs=element<HTMLSelectElement>('engine-profile-environment');
@@ -54,3 +55,66 @@ async function saveEngineProfile(){
  try{await api('engine-profiles','PUT',profile);if(!shellCurrent(epoch))return;invalidateModelCatalogs();element('engine-profile-result').textContent=profile.kind==='env_file'?'已保存引用；环境文件目前仅记录，不会应用到运行进程。':profile.engine==='deepseek-harness'?'已保存；设为新任务默认后，新建 Harness 任务使用该配置。':'已保存；可设为新任务默认；现有任务请通过“切换 AI”选择此配置。';await loadEngineSettings()}catch(e){if(shellCurrent(epoch))element('engine-profile-result').textContent=(e as Error).message}
 }
 async function activateEngineProfile(id:string){const epoch=shellEpoch;try{await api(`engine-profiles/${encodeURIComponent(id)}/activate`,'POST',{});if(!shellCurrent(epoch))return;invalidateModelCatalogs();notify(engineProfileActivationMessage(engineCatalog?.profiles.find(p=>p.id===id)));await loadEngineSettings()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}}
+
+type EngineSetupJob={id:string;action:string;engine:string;environment_id:string;state:string;message:string;url?:string;code?:string;profile_id?:string};
+let engineSetupBusy=false,engineSetupJob:EngineSetupJob|null=null,engineSetupPolling=false;
+let engineSetupAttempt:{signature:string;id:string}|null=null;
+function installEngineOnboarding(){
+ engineSetupBusy=false;engineSetupJob=null;engineSetupPolling=false;engineSetupAttempt=null;
+ element('engine-catalog').insertAdjacentHTML('beforebegin',`<section class="engine-onboarding"><h4>安装工具与添加账号</h4><p>自动安装支持本机 Windows x64。只下载 AI 工具及运行所需组件，模型在云端使用。</p><fieldset id="engine-setup-fields"><label for="engine-setup-environment">执行环境</label><select id="engine-setup-environment"></select><div class="engine-actions"><select id="engine-setup-engine" aria-label="安装工具"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><button type="button" id="engine-setup-install">一键安装工具</button></div><details><summary>添加 Codex 账号 / API</summary><label for="engine-account-name">账号名称</label><input id="engine-account-name" maxlength="60" placeholder="例如 工作账号"><label for="engine-account-login">连接方式</label><select id="engine-account-login"><option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key</option></select><div id="engine-account-api" class="hidden"><label for="engine-account-key">API key</label><input id="engine-account-key" type="password" autocomplete="off"><label for="engine-account-url">API 地址（可选）</label><input id="engine-account-url" placeholder="留空使用 OpenAI 官方 API"><p class="muted">自定义服务需兼容 Responses API；密钥交给该账号的原生工具配置保存。</p></div><label for="engine-account-model">默认云端模型（可选）</label><input id="engine-account-model" maxlength="120" placeholder="留空使用工具默认模型"><button type="button" id="engine-account-add" class="primary">添加账号</button><p class="muted">每个账号单独保存。添加后可设为新任务默认，或通过任务中的“切换 AI”选择。</p></details></fieldset><div id="engine-setup-status" role="status"></div><button type="button" id="engine-setup-cancel" class="hidden">取消当前操作</button></section>`);
+ button('engine-setup-install').onclick=()=>void startEngineOnboarding('install');
+ button('engine-account-add').onclick=()=>void startEngineOnboarding('account');
+ element<HTMLSelectElement>('engine-account-login').onchange=()=>element('engine-account-api').classList.toggle('hidden',element<HTMLSelectElement>('engine-account-login').value!=='apiKey');
+ button('engine-setup-cancel').onclick=async()=>{const job=engineSetupJob;if(!job)return;try{await api('engine-setup/'+encodeURIComponent(job.id),'DELETE');if(engineSetupJob===job)element('engine-setup-status').textContent='正在取消…'}catch(e){notify((e as Error).message)}};
+}
+function populateEngineOnboarding(){
+ const select=element<HTMLSelectElement>('engine-setup-environment');if(!select)return;
+ const previous=select.value,envs=settings.config.environments.filter(e=>e.type==='windows');
+ select.innerHTML=envs.map(e=>`<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
+ if(envs.some(e=>e.id===previous))select.value=previous;else if(envs.some(e=>e.id===settings.config.default_environment))select.value=settings.config.default_environment;
+ element<HTMLFieldSetElement>('engine-setup-fields').disabled=engineSetupBusy||!envs.length;
+ if(!envs.length)element('engine-setup-status').textContent='请先在执行环境中添加本机 Windows。WSL / SSH 可继续使用下方配置目录引用。';
+}
+function renderEngineSetup(job:EngineSetupJob){
+ engineSetupJob=job;engineSetupBusy=job.state==='running'||job.state==='waiting';
+ element<HTMLFieldSetElement>('engine-setup-fields').disabled=engineSetupBusy;
+ button('engine-setup-cancel').classList.toggle('hidden',!engineSetupBusy);
+ const status=element('engine-setup-status');status.replaceChildren();const message=document.createElement('p');message.textContent=job.message;status.append(message);
+ if(job.url){const link=document.createElement('a');link.href=job.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='打开登录页面 ↗';status.append(link)}
+ if(job.code){const code=document.createElement('pre');code.textContent=job.code;status.append(code)}
+}
+async function startEngineOnboarding(action:'install'|'account'){
+ if(engineSetupBusy)return;
+ const login=element<HTMLSelectElement>('engine-account-login').value;
+ const body={action,engine:action==='account'?'codex':element<HTMLSelectElement>('engine-setup-engine').value,environment_id:element<HTMLSelectElement>('engine-setup-environment').value,...(action==='account'?{name:input('engine-account-name').value.trim(),login,api_key:login==='apiKey'?input('engine-account-key').value:'',base_url:login==='apiKey'?input('engine-account-url').value.trim():'',model:input('engine-account-model').value.trim()}:{})};
+ const signature=JSON.stringify(body);if(!engineSetupAttempt||engineSetupAttempt.signature!==signature)engineSetupAttempt={signature,id:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};
+ const epoch=shellEpoch;engineSetupBusy=true;element<HTMLFieldSetElement>('engine-setup-fields').disabled=true;element('engine-setup-status').textContent='正在开始…';
+ try{const job=await api<EngineSetupJob>('engine-setup','POST',{...body,id:engineSetupAttempt.id});if(!shellCurrent(epoch))return;input('engine-account-key').value='';engineSetupAttempt=null;renderEngineSetup(job);void pollEngineSetup(job.id,epoch)}catch(e){if(shellCurrent(epoch)){engineSetupBusy=false;element<HTMLFieldSetElement>('engine-setup-fields').disabled=false;element('engine-setup-status').textContent=(e as Error).message}}
+}
+async function resumeEngineSetup(){
+ if(engineSetupBusy||engineSetupPolling)return;const epoch=shellEpoch;
+ try{const jobs=await api<EngineSetupJob[]>('engine-setup');if(!shellCurrent(epoch)||engineSetupBusy||!jobs.length)return;renderEngineSetup(jobs[0]);void pollEngineSetup(jobs[0].id,epoch)}catch{}
+}
+async function pollEngineSetup(id:string,epoch:number){
+ if(engineSetupPolling)return;engineSetupPolling=true;
+ try{
+  while(shellCurrent(epoch)&&engineSetupJob?.id===id){
+   const job=await api<EngineSetupJob>('engine-setup/'+encodeURIComponent(id),'GET',undefined,shellController.signal);if(!shellCurrent(epoch)||engineSetupJob?.id!==id)return;renderEngineSetup(job);
+   if(job.state!=='running'&&job.state!=='waiting'){
+    if(job.state==='done'){
+     invalidateModelCatalogs();
+     if(job.action==='install'){
+      const fresh=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;
+      const key=job.engine==='codex'?'codex':job.engine==='claude'?'claude':'harness';
+      const before=settings.config.environments.find(e=>e.id===job.environment_id),updated=fresh.config.environments.find(e=>e.id===job.environment_id),editing=editingEnvironments.find(e=>e.id===job.environment_id);
+      if(updated&&before){if(editing&&editing[key]===before[key])editing[key]=updated[key]||'';before[key]=updated[key]||'';if(editingID===job.environment_id)loadEnvironmentEditor()}
+     }
+     await loadEngineSettings();
+    }
+    return;
+   }
+   await new Promise(resolve=>setTimeout(resolve,1500));
+  }
+ }catch(e){if(shellCurrent(epoch)&&engineSetupJob?.id===id){engineSetupBusy=false;element<HTMLFieldSetElement>('engine-setup-fields').disabled=false;element('engine-setup-status').textContent='读取状态失败；重新打开 AI 引擎设置可继续查看。'+(e as Error).message}}
+ finally{if(shellCurrent(epoch))engineSetupPolling=false}
+}

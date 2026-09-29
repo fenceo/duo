@@ -309,6 +309,20 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .engine-actions button,.engine-actions a,.engine-profile button{font-size:13px}
 .engine-profile span{min-width:0;overflow-wrap:anywhere}
 .engine-profile-editor>summary{padding:10px 0;cursor:pointer;font-size:14px}
+.engine-onboarding{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);min-width:0}
+.engine-onboarding h4{margin:0 0 8px}
+.engine-onboarding fieldset{padding:0;border:0;min-width:0}
+.engine-onboarding select,.engine-onboarding input{max-width:100%;box-sizing:border-box}
+.engine-onboarding details{margin-top:14px}
+.engine-onboarding summary{padding:10px 0;cursor:pointer}
+.engine-onboarding pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:18px}
+.engine-onboarding p{overflow-wrap:anywhere}
+.desktop-dialog{width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
+.desktop-dialog p{line-height:1.65;overflow-wrap:anywhere}
+.desktop-dialog img{display:block;max-width:100%;height:auto;margin-top:12px;border:1px solid var(--line)}
+.desktop-dialog select{max-width:100%;min-width:0}
+.desktop-dialog .actions{flex-wrap:wrap}
+.sidebar-footer .desktop-sharing{color:var(--danger);font-weight:600}
 .engine-plan{max-width:100%;overflow:auto;overflow-wrap:anywhere;font-size:12px;line-height:1.65}
 .settings-result,.model-test-result{font-size:12px;overflow-wrap:anywhere}
 .data-directory-switch,.data-transfer{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}

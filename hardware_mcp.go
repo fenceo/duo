@@ -91,7 +91,11 @@ func (s *Server) hardwareMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		result = map[string]any{}
 	case "tools/list":
-		result = map[string]any{"tools": hardwareToolDefinitions(l)}
+		definitions := hardwareToolDefinitions(l)
+		if l.desktop != "" {
+			definitions = append(definitions, desktopToolDefinitions()...)
+		}
+		result = map[string]any{"tools": definitions}
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -108,6 +112,18 @@ func (s *Server) hardwareMCP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer l.finishCall(string(req.ID))
+		if p.Name == "desktop_observe" || p.Name == "desktop_action" {
+			content, err := s.app.callDesktopTool(ctx, l, p.Name, p.Arguments)
+			message := "已完成"
+			if err != nil {
+				message = err.Error()
+				content = []any{map[string]string{"type": "text", "text": message}}
+			}
+			result = map[string]any{"content": content, "isError": err != nil}
+			_ = s.app.store.event(l.task, l.run, "tool", "桌面工具 "+p.Name+" · "+message)
+			s.app.changed()
+			break
+		}
 		value, err := s.app.callHardwareTool(ctx, l, p.Name, p.Arguments)
 		content := ""
 		if err != nil {

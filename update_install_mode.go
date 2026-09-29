@@ -27,6 +27,16 @@ func (a *App) beginUpdate() (func(), error) {
 		return nil, fmt.Errorf("无法确认任务空闲，已取消更新：%w", err)
 	}
 	var busy []string
+	if a.engineSetup != nil {
+		a.engineSetup.mu.Lock()
+		if a.engineSetup.active {
+			busy = append(busy, "AI 工具安装或账号登录仍在进行")
+		}
+		a.engineSetup.mu.Unlock()
+	}
+	if a.desktop != nil && a.desktop.status().Active {
+		busy = append(busy, "桌面仍在共享")
+	}
 	if len(a.workers) > 0 || pending > 0 {
 		busy = append(busy, "AI 任务仍在执行或排队")
 	}

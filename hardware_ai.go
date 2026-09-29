@@ -21,6 +21,7 @@ type HardwareRuntime struct {
 	FallbackURLs []string
 }
 type hardwareLease struct {
+	desktop   string
 	task, run string
 	grants    map[string]HardwareGrant
 	ctx       context.Context
@@ -135,7 +136,8 @@ func (a *App) prepareHardwareAI(ctx context.Context, t Task, run string, c Confi
 	for _, g := range grants {
 		enabled = enabled || g.Read
 	}
-	if !enabled {
+	desktop := a.desktop.lease(t.ID)
+	if !enabled && desktop == "" {
 		return nil, done, nil
 	}
 	address, err := hardwareEndpoint(c, a.hardwareAddress)
@@ -143,6 +145,9 @@ func (a *App) prepareHardwareAI(ctx context.Context, t Task, run string, c Confi
 		return nil, done, err
 	}
 	token, release := a.hardwareAI.issue(ctx, t.ID, run, grants)
+	a.hardwareAI.mu.Lock()
+	a.hardwareAI.leases[hash(token)].desktop = desktop
+	a.hardwareAI.mu.Unlock()
 	runtime := &HardwareRuntime{URL: address, Token: token}
 	if c.Distro != "" && c.SSHHost == "" {
 		for _, base := range []string{c.Access.LAN, c.Access.Tailscale} {
@@ -185,6 +190,7 @@ func (a *App) aiHardware(l *hardwareLease, id string) (HardwareConfig, HardwareG
 	return c, g, nil
 }
 func (s *Server) hardwareAIRoutes(m *http.ServeMux) {
+	s.desktopRoutes(m)
 	m.HandleFunc("GET /api/tasks/{id}/hardware-ai", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		g, err := s.app.store.hardwareGrants(r.PathValue("id"))
 		if err != nil {

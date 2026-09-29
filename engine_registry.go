@@ -329,6 +329,7 @@ func engineInstallPlan(env Environment, engineID string) (EngineInstallPlan, err
 }
 
 func (s *Server) engineRoutes(m *http.ServeMux) {
+	s.engineSetupRoutes(m)
 	m.HandleFunc("GET /api/engines", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		catalog := EngineCatalog{Engines: builtinEngineDefinitions(), Profiles: s.app.store.engineProfiles(), ActiveProfile: map[string]string{}}
 		for _, env := range s.app.config.get().Environments {

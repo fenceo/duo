@@ -23,6 +23,8 @@ type worker struct {
 	interrupting bool
 }
 type App struct {
+	desktop         *DesktopControl
+	engineSetup     *EngineSetup
 	vaultMu         sync.Mutex
 	vaultReport     VaultReport
 	vaultCacheRoot  string
@@ -50,6 +52,8 @@ type App struct {
 func newApp(s *Store, c *ConfigFile, r Runner) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{codexRequests: newCodexRequests(), hardwareAI: newHardwareAI(), hardwareAddress: c.get().Listen, discovery: newSSHDiscovery(), terminals: newTerminals(), hardware: newHardware(s), store: s, config: c, runner: r, workers: map[string]*worker{}, slots: make(chan struct{}, 2), ctx: ctx, cancel: cancel, notify: make(chan struct{}, 1)}
+	a.engineSetup = newEngineSetup()
+	a.desktop = newDesktopControl()
 	a.wg.Add(1)
 	go a.vaultLoop()
 	return a

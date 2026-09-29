@@ -95,6 +95,19 @@ jobs:
           node scripts/Capture-Conversation-UI.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Conversation geometry checks failed.' }
 
+      - name: Verify desktop input on an isolated synthetic window
+        env:
+          DUO_TEST_DESKTOP_NATIVE: '1'
+        run: |
+          $output = go test ./... -run '^TestDesktopNativeIsolatedWindow$' -count=1 -v -timeout=2m 2>&1
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output $_ }
+          if ($code -ne 0) {
+            $detail = (($output | Select-Object -Last 30) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Isolated desktop integration::$detail"
+            throw 'Isolated desktop integration failed.'
+          }
+
       - name: Test, build and publish the stable release
         env:
           GH_TOKEN: ${{ github.token }}

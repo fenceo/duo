@@ -131,7 +131,10 @@ func harnessExecutable(binary string) ([]string, error) {
 	if _, err := os.Stat(entry); err != nil {
 		return nil, errors.New("无法解析此 Harness npm 启动器，请使用标准 @deepseek-ai/dsh 安装或原生可执行文件")
 	}
-	node, err := exec.LookPath("node.exe")
+	node := filepath.Join(filepath.Dir(p), "node.exe")
+	if info, localErr := os.Stat(node); localErr != nil || info.IsDir() {
+		node, err = exec.LookPath("node.exe")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("Harness 需要 Node.js：%w", err)
 	}

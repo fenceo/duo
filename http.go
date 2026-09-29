@@ -546,6 +546,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response["approvals"] = append(s.app.codexRequests.list(id), questions...)
+	response["desktop"] = s.app.desktop.status()
 	if r.URL.Query().Get("recent") == "1" {
 		response["conversation"] = window
 	}
