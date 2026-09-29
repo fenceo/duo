@@ -8,7 +8,7 @@ function codexRecord(value:unknown):Record<string,unknown>{return value!==null&&
 function codexText(value:unknown):string{return typeof value==='string'?value:''}
 function codexPretty(value:unknown):string{return value===undefined||value===null?'':typeof value==='string'?value:JSON.stringify(value,null,2)}
 function codexApprovalKey(request:CodexPendingRequest){return JSON.stringify([request.task_id,request.run_id,request.id])}
-function codexApprovalKind(request:CodexPendingRequest){return ({'item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'补充信息'} as Record<string,string>)[request.method]||'暂不支持的请求'}
+function codexApprovalKind(request:CodexPendingRequest){return ({'item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'请你选择或补充'} as Record<string,string>)[request.method]||'暂不支持的请求'}
 function codexApprovalDecisions(request:CodexPendingRequest):CodexApprovalDecision[]{
  if(request.method==='item/permissions/requestApproval')return ['accept','decline'];
  if(!['item/commandExecution/requestApproval','item/fileChange/requestApproval'].includes(request.method))return [];
@@ -48,14 +48,17 @@ function codexApprovalFields(request:CodexPendingRequest,task:Task):{label:strin
 function codexApprovalFieldsHTML(request:CodexPendingRequest,task:Task){return codexApprovalFields(request,task).map(field=>`<div class="codex-approval-field"><dt>${escapeHTML(field.label)}</dt><dd><pre>${escapeHTML(field.value)}</pre></dd></div>`).join('')}
 function installCodexApprovals(){
  const panel=document.createElement('section');panel.id='codex-approvals';panel.className='codex-approvals hidden';panel.setAttribute('aria-label','Codex 待处理请求');
- panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span>仅处理此原生请求，不创建永久授权规则</span></div><div id="codex-approval-list"></div>';
+ panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span></div><div id="codex-approval-list"></div>';
  // Outside the conversation/tool dock: visible even with a collapsed trace or a mobile tool panel.
  element('workspace').before(panel);
 }
 function resetCodexApprovals(){codexApprovalRevision++;codexApprovalCards.clear();element('codex-approval-list')?.replaceChildren();element('codex-approvals')?.classList.add('hidden')}
 function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApprovalCard{
  const node=document.createElement('article');node.className='codex-approval-card';node.dataset.request=request.id;
- node.innerHTML=`<h3>${escapeHTML(codexApprovalKind(request))}</h3><dl class="codex-approval-fields">${codexApprovalFieldsHTML(request,task)}</dl><div class="codex-approval-questions"></div><p class="codex-approval-scope">${request.method==='item/permissions/requestApproval'?'仅授予本次请求列出的权限，有效范围为当前轮次。':'批准仅针对当前请求；不会改写会话的审批模式。'}</p><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
+ const questionRequest=request.method==='item/tool/requestUserInput',background=questionRequest&&codexRecord(request.params).isBlocking===false;
+ node.classList.toggle('codex-question-card',questionRequest);
+ const scope=questionRequest?(background?'AI 可以继续工作；提交后会收到你的补充。':'AI 正在等你回答。选择选项或填写答案后，点击提交。'):request.method==='item/permissions/requestApproval'?'仅授予本次请求列出的权限，有效范围为当前轮次。':'批准仅针对当前请求；不会改写会话的审批模式。';
+ node.innerHTML=`<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest?'':`<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request,task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
  const card:CodexApprovalCard={request,node,busy:false,settled:false,error:''},actions=node.querySelector<HTMLElement>('.codex-approval-actions')!;
  if(request.method==='item/tool/requestUserInput'){
   try{
@@ -90,7 +93,9 @@ function renderCodexApprovals(current:Detail|null){
  const pending=current&&!creatingTask&&current.task.id===chosen?(current.approvals||[]).filter(request=>request.task_id===current.task.id):[],keys=new Set(pending.map(codexApprovalKey));
  for(const [key,card] of codexApprovalCards)if(!keys.has(key)){card.node.remove();codexApprovalCards.delete(key)}
  for(const request of pending){const key=codexApprovalKey(request);let card=codexApprovalCards.get(key);if(!card){card=createCodexApprovalCard(request,current!.task);codexApprovalCards.set(key,card);list.append(card.node)}updateCodexApprovalCard(card)}
- panel.classList.toggle('hidden',!pending.length);const heading=element('codex-approvals-title'),title='Codex 等待处理 · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
+ panel.classList.toggle('hidden',!pending.length);const questions=pending.filter(request=>request.method==='item/tool/requestUserInput'),onlyQuestions=questions.length===pending.length;
+ const heading=element('codex-approvals-title'),title=(onlyQuestions?'Codex 有问题需要你回答':'Codex 等待处理')+' · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
+ const hint=element('codex-approvals-hint'),hintText=onlyQuestions?'答案会直接交回当前 Codex 会话':'批准只针对当前请求，不创建永久授权规则';if(hint.textContent!==hintText)hint.textContent=hintText;
 }
 async function refreshCodexApprovals(taskID:string){
  if(taskID!==chosen||!authenticated)return;const token=selection,revision=++codexApprovalRevision;

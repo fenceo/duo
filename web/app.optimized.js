@@ -1011,6 +1011,19 @@ function installWorkflow() {
     });
     button('mode-manage').onclick = ()=>openPresetEditor('modes');
     button('command-open').onclick = openCommands;
+    button('stop').before(Object.assign(document.createElement('button'), {
+        id: 'live-steer',
+        type: 'button',
+        className: 'hidden',
+        textContent: '立即引导'
+    }), Object.assign(document.createElement('button'), {
+        id: 'live-interrupt',
+        type: 'button',
+        className: 'hidden',
+        textContent: '中断后发送'
+    }));
+    button('live-steer').onclick = ()=>void send(input('message').value, true, 'steer');
+    button('live-interrupt').onclick = ()=>void send(input('message').value, true, 'interrupt');
     button('stop').onclick = async ()=>{
         const id = chosen;
         stoppingTask = id;
@@ -1216,8 +1229,11 @@ async function selectWorkspace() {
     }
 }
 function updateComposerSendState() {
-    const disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || harnessSessionClosed() || sessionResetTask === chosen || (pendingUploadFiles.get(chosen)?.length || 0) > 0 || !input('message').value.trim() && !attachmentDrafts.get(chosen)?.length;
+    const disabled = sending || stoppingTask === chosen || uploadingTasks.has(chosen) || !!detail?.task.archived || harnessSessionClosed() || sessionResetTask === chosen || (pendingUploadFiles.get(chosen)?.length || 0) > 0 || !input('message').value.trim() && !attachmentDrafts.get(chosen)?.length;
     if (button('send').disabled !== disabled) button('send').disabled = disabled;
+    const live = detail?.interaction, files = attachmentDrafts.get(chosen) || [];
+    if (button('live-steer')) button('live-steer').disabled = disabled || !live?.can_steer || files.length > 0;
+    if (button('live-interrupt')) button('live-interrupt').disabled = disabled || !live?.can_interrupt;
 }
 function renderWorkflow() {
     if (!element('message-mode')) return;
@@ -1245,11 +1261,17 @@ function renderWorkflow() {
     if (!active && stoppingTask === chosen) stoppingTask = '';
     button('stop').disabled = stoppingTask === chosen;
     button('stop').textContent = stoppingTask === chosen ? '…' : '■';
-    button('stop').title = stoppingTask === chosen ? '正在停止' : '停止当前执行';
+    button('stop').title = stoppingTask === chosen ? '正在停止' : '停止当前执行并取消所有排队消息';
     button('stop').setAttribute('aria-label', button('stop').title);
+    const live = detail?.interaction;
+    button('live-steer').classList.toggle('hidden', !active || detail?.task.engine !== 'codex');
+    button('live-interrupt').classList.toggle('hidden', !active);
+    button('live-steer').title = live?.steering ? '正在等待 Codex 确认引导' : attachmentDrafts.get(chosen)?.length ? '立即引导支持文字；附件请用排队或中断后发送' : '追加文字到当前执行，不切换当前模型或权限；连接就绪后可用';
+    button('live-interrupt').title = live?.interrupting ? '正在等待当前执行停止' : '先保存新要求，再停止当前执行并优先发送；其他排队消息保留';
+    element('composer').classList.toggle('live-turn', !!active);
     const files = attachmentDrafts.get(chosen) || [], pending = pendingUploadFiles.get(chosen) || [];
-    button('send').textContent = sending ? '▶' : '↑';
-    button('send').title = sending ? '正在开始' : active ? '追加要求并排队' : '开始执行';
+    button('send').textContent = sending ? '…' : active ? '排队发送' : '↑';
+    button('send').title = sending ? '正在发送' : active ? '当前执行结束后发送（Enter）' : '开始执行';
     button('send').setAttribute('aria-label', button('send').title);
     updateComposerSendState();
     const attachmentsBlocked = detail?.task.engine === 'deepseek-harness';
@@ -2327,7 +2349,7 @@ function codexApprovalKind(request) {
         'item/commandExecution/requestApproval': '命令执行',
         'item/fileChange/requestApproval': '文件修改',
         'item/permissions/requestApproval': '临时权限',
-        'item/tool/requestUserInput': '补充信息'
+        'item/tool/requestUserInput': '请你选择或补充'
     })[request.method] || '暂不支持的请求';
 }
 function codexApprovalDecisions(request) {
@@ -2445,7 +2467,7 @@ function installCodexApprovals() {
     panel.id = 'codex-approvals';
     panel.className = 'codex-approvals hidden';
     panel.setAttribute('aria-label', 'Codex 待处理请求');
-    panel.innerHTML = '<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span>仅处理此原生请求，不创建永久授权规则</span></div><div id="codex-approval-list"></div>';
+    panel.innerHTML = '<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span></div><div id="codex-approval-list"></div>';
     element('workspace').before(panel);
 }
 function resetCodexApprovals() {
@@ -2458,7 +2480,10 @@ function createCodexApprovalCard(request, task) {
     const node = document.createElement('article');
     node.className = 'codex-approval-card';
     node.dataset.request = request.id;
-    node.innerHTML = `<h3>${escapeHTML(codexApprovalKind(request))}</h3><dl class="codex-approval-fields">${codexApprovalFieldsHTML(request, task)}</dl><div class="codex-approval-questions"></div><p class="codex-approval-scope">${request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。'}</p><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
+    const questionRequest = request.method === 'item/tool/requestUserInput', background = questionRequest && codexRecord(request.params).isBlocking === false;
+    node.classList.toggle('codex-question-card', questionRequest);
+    const scope = questionRequest ? background ? 'AI 可以继续工作；提交后会收到你的补充。' : 'AI 正在等你回答。选择选项或填写答案后，点击提交。' : request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。';
+    node.innerHTML = `<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest ? '' : `<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request, task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
     const card = {
         request,
         node,
@@ -2583,8 +2608,11 @@ function renderCodexApprovals(current) {
         updateCodexApprovalCard(card);
     }
     panel.classList.toggle('hidden', !pending.length);
-    const heading = element('codex-approvals-title'), title = 'Codex 等待处理 · ' + pending.length;
+    const questions = pending.filter((request)=>request.method === 'item/tool/requestUserInput'), onlyQuestions = questions.length === pending.length;
+    const heading = element('codex-approvals-title'), title = (onlyQuestions ? 'Codex 有问题需要你回答' : 'Codex 等待处理') + ' · ' + pending.length;
     if (heading.textContent !== title) heading.textContent = title;
+    const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 Codex 会话' : '批准只针对当前请求，不创建永久授权规则';
+    if (hint.textContent !== hintText) hint.textContent = hintText;
 }
 async function refreshCodexApprovals(taskID) {
     if (taskID !== chosen || !authenticated) return;
@@ -5894,6 +5922,7 @@ let knowledgeDraftRun = '';
 let knowledgeEditTarget = null, knowledgeSaving = false;
 const knowledgeExpanded = new Set();
 const drafts = new Map();
+const steerDraftAttempts = new Map();
 let editingEnvironments = [], editingID = "", modelRequest = 0;
 let createFiles = [], creatingTask = false, createReturnTask = '', createPermission = 'auto';
 let createSubmitting = false, sessionResetTask = '', settingsPolling = false;
@@ -7001,7 +7030,7 @@ async function createTask(e) {
         }
     }
 }
-async function send(text, clear) {
+async function send(text, clear, delivery = 'queue') {
     if (harnessSessionClosed() || sessionResetTask === chosen && !!chosen) {
         notify('请先新建会话，再发送要求；输入内容会保留。');
         return;
@@ -7020,15 +7049,49 @@ async function send(text, clear) {
         notify(e.message);
         return;
     }
-    const epoch = shellEpoch, id = chosen, original = input('message').value, mode = selectedMessageMode();
+    const live = detail.interaction;
+    if (delivery !== 'queue' && (!live || (delivery === 'steer' ? !live.can_steer : !live.can_interrupt))) {
+        notify('当前执行状态已变化，请刷新后重试；输入内容会保留。');
+        return;
+    }
+    if (delivery === 'steer' && files.length) {
+        notify('立即引导支持文字；附件请使用排队发送或中断后发送。');
+        return;
+    }
+    const epoch = shellEpoch, id = chosen, original = input('message').value, mode = selectedMessageMode(), content = text.trim() || '请查看这些附件。';
     sending = true;
     renderTask();
     try {
-        await api('tasks/' + id + '/messages', 'POST', {
-            content: text.trim() || '请查看这些附件。',
-            mode_id: mode,
-            attachment_ids: files.map((f)=>f.id)
-        });
+        if (delivery === 'steer') {
+            let attempt = steerDraftAttempts.get(id);
+            if (!attempt || attempt.run !== live.run_id || attempt.text !== content) {
+                attempt = {
+                    run: live.run_id,
+                    text: content,
+                    id: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte)=>byte.toString(16).padStart(2, '0')).join('')
+                };
+                steerDraftAttempts.set(id, attempt);
+            }
+            const response = await api('tasks/' + id + '/steer', 'POST', {
+                content,
+                expected_run_id: attempt.run,
+                request_id: attempt.id
+            });
+            if (!response.accepted) throw new Error('服务未确认接收引导，输入内容已保留。');
+            steerDraftAttempts.delete(id);
+            if (shellCurrent(epoch)) notify(response.warning || '已引导当前执行，AI 会在可接收输入时调整方向。');
+        } else {
+            await api('tasks/' + id + '/messages', 'POST', {
+                content,
+                mode_id: mode,
+                attachment_ids: files.map((f)=>f.id),
+                ...delivery === 'interrupt' ? {
+                    delivery,
+                    expected_run_id: live.run_id
+                } : {}
+            });
+            if (delivery === 'interrupt' && shellCurrent(epoch)) notify('已保存新要求，当前执行停止后优先开始；其他排队消息保留。');
+        }
         attachmentDrafts.set(id, (attachmentDrafts.get(id) || []).filter((f)=>!files.some((sent)=>sent.id === f.id)));
         if (clear) {
             if (drafts.get(id) === original) drafts.delete(id);
@@ -7036,7 +7099,10 @@ async function send(text, clear) {
         }
         if (shellCurrent(epoch)) await poll();
     } catch (e) {
-        if (shellCurrent(epoch)) notify(e.message);
+        if (shellCurrent(epoch)) {
+            notify(e.message);
+            if (e.status === 409) await poll();
+        }
     } finally{
         if (shellCurrent(epoch)) {
             sending = false;

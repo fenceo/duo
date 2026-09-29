@@ -247,6 +247,7 @@ func (a *App) answerCodexInteraction(taskID, id string, answer CodexAnswer) erro
 }
 
 func (s *Server) codexApprovalRoutes(m *http.ServeMux) {
+	s.codexSteerRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/approvals/{request}", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var answer CodexAnswer
 		if !body(w, r, &answer) {

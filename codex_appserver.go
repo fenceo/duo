@@ -20,6 +20,7 @@ import (
 func codexAppServerArgs(c Config, t Task) []string {
 	sandbox, approval, reviewer, network := codexPermissionSettings(t)
 	args := []string{"-C", t.Workspace,
+		"-c", "features.default_mode_request_user_input=true",
 		"-c", "sandbox_mode=" + strconv.Quote(sandbox),
 		"-c", "approval_policy=" + strconv.Quote(approval),
 		"-c", "approvals_reviewer=" + strconv.Quote(reviewer),
@@ -182,12 +183,20 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 		if direct := cmd.Process.Kill(); direct != nil && !errors.Is(direct, os.ErrProcessDone) {
 			return fmt.Errorf("无法确认 Codex 进程已停止：%w", direct)
 		}
+		return fmt.Errorf("Codex 主进程已清理，但无法确认全部子进程已停止：%w", err)
 	}
 	return nil
 }
 
 func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session string, result string, runErr error) {
 	session = t.Session
+	control, _ := ctx.Value(codexSteerKey{}).(*codexTurnControl)
+	defer control.close()
+	var steerRequests <-chan *codexSteerRequest
+	if control != nil {
+		steerRequests = control.requests
+	}
+	var steering *codexSteerRequest
 	if ctx.Err() != nil {
 		return session, "", ctx.Err()
 	}
@@ -307,7 +316,11 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 		}
 		if stopErr := stopAppServerTree(c, cmd, pid); stopErr != nil {
 			emit("error", stopErr.Error())
-			runErr = stopErr
+			if runErr != nil {
+				runErr = fmt.Errorf("%w；本轮状态：%v", stopErr, runErr)
+			} else {
+				runErr = stopErr
+			}
 		}
 		_ = stdout.Close()
 		_ = stderr.Close()
@@ -399,6 +412,19 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 	var usage RunUsage
 	for {
 		select {
+		case next := <-steerRequests:
+			if stopping || ctx.Err() != nil || session == "" || turnID == "" {
+				control.resolve(next, errLiveTurnChanged, "")
+				continue
+			}
+			steering = next
+			err = request("duo-steer-"+next.ID, "turn/steer", map[string]any{
+				"threadId": session, "expectedTurnId": turnID,
+				"input": []any{map[string]any{"type": "text", "text": next.Text, "text_elements": []any{}}},
+			})
+			if err != nil {
+				return session, result, err
+			}
 		case <-ctxDone:
 			stopping = true
 			ctxDone = nil
@@ -457,6 +483,28 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			if m.Method == "" {
 				var id string
 				_ = json.Unmarshal(m.ID, &id)
+				if steering != nil && id == "duo-steer-"+steering.ID {
+					if m.Error != nil {
+						control.resolve(steering, fmt.Errorf("Codex 未接收引导：%s；内容已保留，可选择排队发送", redact(m.Error.Message)), "")
+					} else {
+						var accepted struct {
+							TurnID string `json:"turnId"`
+						}
+						if json.Unmarshal(m.Result, &accepted) != nil || accepted.TurnID != turnID {
+							control.resolve(steering, errors.New("Codex 引导确认的轮次不一致，未自动重发，请检查记录"), "")
+						} else {
+							warning := ""
+							if control.record != nil {
+								if saveErr := control.record(steering.Text); saveErr != nil {
+									warning = "Codex 已接收引导，但本地记录保存失败，请勿重复发送"
+								}
+							}
+							control.resolve(steering, nil, warning)
+						}
+					}
+					steering = nil
+					continue
+				}
 				if m.Error != nil {
 					return session, result, fmt.Errorf("Codex 原生请求 %s 失败：%s", id, redact(m.Error.Message))
 				}
@@ -517,6 +565,10 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 						return session, result, errors.New("Codex 轮次 ID 不一致")
 					}
 					turnID = v.Turn.ID
+					control.setReady()
+					if control != nil {
+						emit("progress", "Codex 已连接，可在执行中引导方向")
+					}
 					stageTimer.Stop()
 					stageTimeout = nil
 					err = sendInterrupt()
@@ -647,6 +699,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			case "turn/started":
 				if turnID == "" {
 					turnID = p.Turn.ID
+				}
+				if turnID != "" {
+					control.setReady()
 				}
 				if err = sendInterrupt(); err != nil {
 					return session, result, err

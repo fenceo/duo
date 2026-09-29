@@ -13,8 +13,14 @@ import (
 )
 
 type worker struct {
-	cancel   context.CancelFunc
-	stopping bool
+	cancel       context.CancelFunc
+	stopping     bool
+	runID        string
+	runKind      string
+	runCancel    context.CancelFunc
+	steer        *codexTurnControl
+	nextRunID    string
+	interrupting bool
 }
 type App struct {
 	vaultMu         sync.Mutex
@@ -146,6 +152,8 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 type SubmitOptions struct {
 	ModeID        string   `json:"mode_id"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	Delivery      string   `json:"delivery,omitempty"`
+	ExpectedRunID string   `json:"expected_run_id,omitempty"`
 }
 
 func (a *App) submit(id, input, kind, source string) (Run, error) {
@@ -162,6 +170,16 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	}
 	if w := a.workers[id]; w != nil && w.stopping {
 		return Run{}, errors.New("正在停止，请稍后再继续")
+	}
+	if options.Delivery != "" && options.Delivery != "queue" && options.Delivery != "interrupt" {
+		return Run{}, errors.New("发送方式无效")
+	}
+	interrupt := options.Delivery == "interrupt"
+	if interrupt {
+		w := a.workers[id]
+		if kind != "chat" || w == nil || w.runKind != "chat" || w.interrupting || w.runCancel == nil || options.ExpectedRunID == "" || w.runID != options.ExpectedRunID {
+			return Run{}, errLiveTurnChanged
+		}
 	}
 	input = strings.TrimSpace(input)
 	if input == "" || len(input) > 200000 {
@@ -260,6 +278,14 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if e = tx.Commit(); e != nil {
 		return r, e
 	}
+	if interrupt {
+		// Save the replacement before cancelling. The same worker waits for
+		// native shutdown and persists its session before starting this run.
+		w := a.workers[id]
+		w.nextRunID = r.ID
+		w.interrupting = true
+		w.runCancel()
+	}
 	if a.workers[id] == nil {
 		ctx, cancel := context.WithCancel(a.ctx)
 		w := &worker{cancel: cancel}
@@ -276,7 +302,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 	for {
 		a.mu.Lock()
 		var r Run
-		e := a.store.QueryRow("SELECT id,input,kind FROM runs WHERE task_id=? AND status='queued' ORDER BY created,id LIMIT 1", id).Scan(&r.ID, &r.Input, &r.Kind)
+		e := a.store.QueryRow("SELECT id,input,kind FROM runs WHERE task_id=? AND status='queued' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created,id LIMIT 1", id, w.nextRunID).Scan(&r.ID, &r.Input, &r.Kind)
 		if e != nil || ctx.Err() != nil {
 			delete(a.workers, id)
 			a.mu.Unlock()
@@ -284,12 +310,17 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		}
 		_, _ = a.store.Exec("UPDATE runs SET status='running' WHERE id=?", r.ID)
 		_, _ = a.store.Exec("UPDATE tasks SET status='running',updated=? WHERE id=?", now(), id)
+		runCtx, cancelRun := context.WithCancel(ctx)
+		w.runID, w.runKind, w.runCancel = r.ID, r.Kind, cancelRun
+		w.nextRunID, w.interrupting = "", false
 		a.mu.Unlock()
 		a.changed()
 		select {
 		case a.slots <- struct{}{}:
-		case <-ctx.Done():
-			a.finish(id, r, "", "", ctx.Err())
+		case <-runCtx.Done():
+			a.clearRunControl(id, w)
+			a.finish(id, r, "", "", runCtx.Err())
+			cancelRun()
 			continue
 		}
 		_, _ = a.store.Exec("INSERT INTO run_metrics(run_id,started) VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET started=excluded.started", r.ID, now())
@@ -311,18 +342,18 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			cfg := runtimeConfig(a.config.get(), *task.Environment)
 			cfg.EngineEnv = a.activeEngineEnvironment(task)
 			var stagedCleanup func()
-			task.Files, stagedCleanup, err = a.stageAttachments(ctx, task, r.Attachments)
+			task.Files, stagedCleanup, err = a.stageAttachments(runCtx, task, r.Attachments)
 			if err == nil {
 				cleanupAttachments = stagedCleanup
 			}
 			var release = func() {}
 			if err == nil && (task.Mode == nil || task.Mode.Permission != "read") {
-				cfg.HardwareAI, release, err = a.prepareHardwareAI(ctx, task, r.ID, cfg)
+				cfg.HardwareAI, release, err = a.prepareHardwareAI(runCtx, task, r.ID, cfg)
 			}
 			if err == nil {
 				input := r.Input
 				if r.Kind == "chat" {
-					contextText, ids, recallErr := a.store.automaticKnowledgeContext(ctx, task)
+					contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
 					if recallErr != nil {
 						_ = a.store.event(id, r.ID, "progress", "自动恢复任务知识失败，本轮继续使用原始要求。")
 					} else if contextText != "" {
@@ -330,7 +361,17 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
 					}
 				}
-				runCtx, cancelRun := context.WithCancel(ctx)
+				if task.Engine == "codex" && r.Kind == "chat" {
+					control := newCodexTurnControl(func(text string) error {
+						err := a.store.event(id, r.ID, "user", text)
+						a.changed()
+						return err
+					})
+					a.mu.Lock()
+					w.steer = control
+					a.mu.Unlock()
+					runCtx = context.WithValue(runCtx, codexSteerKey{}, control)
+				}
 				runCtx = withCodexInteraction(runCtx, func(requestCtx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 					return a.requestCodexInteraction(requestCtx, id, r.ID, method, params)
 				})
@@ -347,14 +388,32 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					_ = a.store.event(id, r.ID, kind, text)
 					a.changed()
 				})
-				cancelRun()
 			}
 			release()
 		}
 		cleanupAttachments()
+		cancelRun()
+		// A failed cleanup must never start another process against the same
+		// workspace while the old one may still be alive.
+		a.mu.Lock()
+		if w.interrupting && err != nil && !errors.Is(err, context.Canceled) {
+			_, _ = a.store.Exec("UPDATE runs SET status='interrupted',error='未能确认前一轮停止，请检查后重新发送',finished=? WHERE task_id=? AND status='queued'", now(), id)
+			w.stopping = true
+			w.cancel()
+		}
+		a.mu.Unlock()
+		a.clearRunControl(id, w)
 		<-a.slots
 		a.finish(id, r, session, result, err)
 	}
+}
+
+func (a *App) clearRunControl(id string, w *worker) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	w.steer.close()
+	w.steer, w.runCancel = nil, nil
+	w.runID, w.runKind = "", ""
 }
 func (a *App) finish(id string, r Run, session, result string, err error) {
 	status := "done"

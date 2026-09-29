@@ -257,7 +257,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		run, e := s.app.submitWithOptions(r.PathValue("id"), v.Content, "chat", "web", v.SubmitOptions)
 		if e != nil {
-			fail(w, http.StatusBadRequest, e.Error())
+			status := http.StatusBadRequest
+			if errors.Is(e, errLiveTurnChanged) {
+				status = http.StatusConflict
+			}
+			fail(w, status, e.Error())
 			return
 		}
 		jsonOut(w, 202, run)
@@ -510,7 +514,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 	// The task view shows how long the engine has been carrying this session
 	// and which foreign instruction files sit in the working directory, so a
 	// reply that follows old context is explainable instead of surprising.
-	response := map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id)}
+	response := map[string]any{"task": t, "runs": runs, "events": events, "chat": chat, "session_started": sessionStarted(t.Session), "approvals": s.app.codexRequests.list(id), "interaction": s.app.liveInteraction(id)}
 	if continuation, err := s.app.store.taskContinuation(id); err == nil {
 		response["continuation"] = continuation
 	}

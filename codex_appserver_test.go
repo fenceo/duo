@@ -120,6 +120,31 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "steer", "steer-reject", "steer-wrong-turn", "steer-no-ack":
+		steer := read("turn/steer")
+		var params struct {
+			ThreadID       string `json:"threadId"`
+			ExpectedTurnID string `json:"expectedTurnId"`
+			Input          []struct {
+				Text string `json:"text"`
+			} `json:"input"`
+		}
+		if json.Unmarshal(steer.Params, &params) != nil || params.ThreadID != threadID || params.ExpectedTurnID != turnID || len(params.Input) != 1 || params.Input[0].Text != "先检查失败测试，不要重构" {
+			fail("steer payload or native identity mismatch")
+		}
+		var raw map[string]json.RawMessage
+		_ = json.Unmarshal(steer.Params, &raw)
+		if len(raw) != 3 {
+			fail("steering must not override model, permissions or workspace")
+		}
+		switch scenario {
+		case "steer":
+			reply(steer, map[string]string{"turnId": turnID})
+		case "steer-reject":
+			write(map[string]any{"id": steer.ID, "error": map[string]any{"code": -32600, "message": "turn not active"}})
+		case "steer-wrong-turn":
+			reply(steer, map[string]string{"turnId": "other-turn"})
+		}
 	case "mcp-startup-error":
 		notify("mcpServer/statusUpdated", map[string]any{"threadId": threadID, "name": "optional-fixture", "status": "failed", "error": "fixture MCP unavailable"})
 		notify("mcpServer/statusUpdated", map[string]any{"threadId": nil, "name": "ready-fixture", "status": "ready", "error": nil})
@@ -307,6 +332,9 @@ func TestCodexAppServerNativeRoundTrip(t *testing.T) {
 				t.Error("resume-only options must not be sent to thread/start")
 			}
 			args := strings.Join(body.Args, "|")
+			if !strings.Contains(args, "features.default_mode_request_user_input=true") {
+				t.Fatal("ordinary Codex turns must offer native user-input questions")
+			}
 			if !strings.Contains(args, "sandbox_workspace_write.network_access="+fmt.Sprint(tc.network)) || strings.Contains(args, "literal $()") || strings.Contains(args, "exec|") {
 				t.Fatal(args)
 			}

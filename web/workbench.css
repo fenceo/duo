@@ -584,6 +584,16 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .directory-address input{font-size:13px}
  .tool-full #tool-body .scratch-grid,.scratch-grid{grid-template-columns:minmax(0,1fr)}
  .empty{padding:36px 16px 24px}.empty h2{font-size:25px}
+ .composer.live-turn .actions{grid-column:1/-1;display:flex;width:100%;gap:4px}.composer.live-turn .actions button{min-height:44px;padding:6px 8px}.composer.live-turn .actions #send{margin-left:auto}.codex-question-card .codex-answer-option{min-height:44px;padding:8px}
 }
 
 #settings-knowledge #automatic-knowledge-settings{border-top:1px solid var(--border,#8885);padding:14px 0}#settings-knowledge #automatic-knowledge-settings label{display:block;margin:12px 0}#settings-knowledge #automatic-knowledge-settings input[type=checkbox]{width:auto}#settings-knowledge #automatic-knowledge-settings p{line-height:1.65}
+
+.composer.live-turn .actions{flex:1 0 100%;justify-content:flex-end;flex-wrap:wrap}
+.composer.live-turn .actions button{white-space:nowrap}
+.composer.live-turn #live-steer{color:var(--accent);border-color:var(--accent)}
+.codex-question-card{background:var(--canvas)}
+.codex-question-card .codex-approval-scope{margin:0 0 8px}
+.codex-question-card .codex-answer-option{border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer}
+.codex-question-card .codex-answer-option:has(input:checked){border-color:var(--accent);background:var(--tint)}
+.codex-question-card .codex-answer-option:focus-within{outline:2px solid var(--accent);outline-offset:1px}

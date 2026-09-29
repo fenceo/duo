@@ -5,7 +5,8 @@ type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string
 type Run={started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number};
 type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
-type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];chat:string;session_started?:number;runtime?:EngineRuntime};
+type LiveInteraction={run_id:string;can_steer:boolean;can_interrupt:boolean;steering:boolean;interrupting:boolean};
+type Detail={task:Task;runs:Run[];events:EventRecord[];approvals?:CodexPendingRequest[];interaction?:LiveInteraction|null;chat:string;session_started?:number;runtime?:EngineRuntime};
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
@@ -38,6 +39,7 @@ let knowledgeDraftRun='';
 let knowledgeEditTarget:{task:string;selection:number;epoch:number;item:Knowledge|null;run:string}|null=null,knowledgeSaving=false;
 const knowledgeExpanded=new Set<string>();
 const drafts=new Map<string,string>();
+const steerDraftAttempts=new Map<string,{run:string;text:string;id:string}>();
 let editingEnvironments:Environment[]=[],editingID="",modelRequest=0;
 let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'|'full'|'read'='auto';
 let createSubmitting=false,sessionResetTask='',settingsPolling=false;
@@ -367,11 +369,25 @@ async function createTask(e:Event){
   if(!shellCurrent(epoch))return;dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);createSubmitting=false;setCreateSubmitState('idle');await choose(created);
  }catch(error){if(created&&uploadedCount<files.length)pendingUploadFiles.set(created,files.slice(uploadedCount));if(!shellCurrent(epoch))return;if(created){dirty=false;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);createSubmitting=false;setCreateSubmitState('idle');await choose(created);notify('任务已创建，提交未完成；要求和未上传附件已保留，请检查记录后再发送：'+(error as Error).message)}else{element('create-error').textContent=(error as Error).message}}finally{if(shellCurrent(epoch)){createSubmitting=false;setCreateSubmitState('idle')}}
 }
-async function send(text:string,clear:boolean){
+async function send(text:string,clear:boolean,delivery:'queue'|'steer'|'interrupt'='queue'){
  if(harnessSessionClosed()||sessionResetTask===chosen&&!!chosen){notify('请先新建会话，再发送要求；输入内容会保留。');return}
  if(pendingUploadFiles.get(chosen)?.length){notify('请先重试上传或移除待上传附件，避免遗漏文件。');return}
- const files=[...(attachmentDrafts.get(chosen)||[])];if(!chosen||!detail||sending||uploadingTasks.has(chosen)||(!text.trim()&&!files.length))return;try{validateEngineAttachments(detail.task.engine,files.length)}catch(e){notify((e as Error).message);return}const epoch=shellEpoch,id=chosen,original=input('message').value,mode=selectedMessageMode();sending=true;renderTask();
- try{await api('tasks/'+id+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode,attachment_ids:files.map(f=>f.id)});attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(shellCurrent(epoch)&&chosen===id&&input('message').value===original)input('message').value=''}if(shellCurrent(epoch))await poll()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{if(shellCurrent(epoch)){sending=false;if(chosen===id)renderTask()}}
+ const files=[...(attachmentDrafts.get(chosen)||[])];if(!chosen||!detail||sending||uploadingTasks.has(chosen)||(!text.trim()&&!files.length))return;try{validateEngineAttachments(detail.task.engine,files.length)}catch(e){notify((e as Error).message);return}
+ const live=detail.interaction;
+ if(delivery!=='queue'&&(!live||(delivery==='steer'?!live.can_steer:!live.can_interrupt))){notify('当前执行状态已变化，请刷新后重试；输入内容会保留。');return}
+ if(delivery==='steer'&&files.length){notify('立即引导支持文字；附件请使用排队发送或中断后发送。');return}
+ const epoch=shellEpoch,id=chosen,original=input('message').value,mode=selectedMessageMode(),content=text.trim()||'请查看这些附件。';sending=true;renderTask();
+ try{
+  if(delivery==='steer'){
+   let attempt=steerDraftAttempts.get(id);if(!attempt||attempt.run!==live!.run_id||attempt.text!==content){attempt={run:live!.run_id,text:content,id:Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('')};steerDraftAttempts.set(id,attempt)}
+   const response=await api<{accepted:boolean;warning?:string}>('tasks/'+id+'/steer','POST',{content,expected_run_id:attempt.run,request_id:attempt.id});
+   if(!response.accepted)throw new Error('服务未确认接收引导，输入内容已保留。');steerDraftAttempts.delete(id);if(shellCurrent(epoch))notify(response.warning||'已引导当前执行，AI 会在可接收输入时调整方向。');
+  }else{
+   await api('tasks/'+id+'/messages','POST',{content,mode_id:mode,attachment_ids:files.map(f=>f.id),...(delivery==='interrupt'?{delivery,expected_run_id:live!.run_id}:{})});
+   if(delivery==='interrupt'&&shellCurrent(epoch))notify('已保存新要求，当前执行停止后优先开始；其他排队消息保留。');
+  }
+  attachmentDrafts.set(id,(attachmentDrafts.get(id)||[]).filter(f=>!files.some(sent=>sent.id===f.id)));if(clear){if(drafts.get(id)===original)drafts.delete(id);if(shellCurrent(epoch)&&chosen===id&&input('message').value===original)input('message').value=''}if(shellCurrent(epoch))await poll()
+ }catch(e){if(shellCurrent(epoch)){notify((e as Error).message);if((e as Error&{status?:number}).status===409)await poll()}}finally{if(shellCurrent(epoch)){sending=false;if(chosen===id)renderTask()}}
 }
 async function loadKnowledge(){const id=chosen,epoch=shellEpoch,selected=selection;try{const items=await api<Knowledge[]>('tasks/'+id+'/knowledge');if(id!==chosen||selected!==selection||!shellCurrent(epoch))return;storeKnowledge(items||[])}catch(e){if(shellCurrent(epoch)&&selected===selection)notify((e as Error).message)}}
 function editKnowledge(id:string|null){
