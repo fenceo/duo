@@ -633,3 +633,5 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .tabs .conversation-filter #chat-tab{font-size:12px;min-height:44px;padding:8px 0}
  .conversation-history button{min-height:44px}
 }
+#handoff-legacy .check-row{align-items:flex-start;line-height:1.65}
+#handoff-preserve-legacy{width:20px;height:20px;flex:0 0 20px;margin-top:2px}
