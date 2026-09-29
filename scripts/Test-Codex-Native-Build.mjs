@@ -40,12 +40,16 @@ try{
  assert.equal(catalog.modes.find(m=>m.id==='harness:read').allow_network,true);
  const headers={Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base};
  const automatic=await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json());
- assert.deepEqual(automatic,{capture:true,recall:true},'automatic accumulation works without setup');
+ assert.deepEqual(automatic,{capture:true,recall:true,organize:true},'automatic recording, organization and recall work without setup');
  assert.equal((await fetch(base+'/api/library/automatic',{method:'PUT',headers,body:JSON.stringify({capture:false,recall:false})})).status,200);
- assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:false,recall:false});
+ assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:false,recall:false,organize:true},'older clients preserve the organization preference');
+ assert.equal((await fetch(base+'/api/library/automatic',{method:'PUT',headers,body:JSON.stringify({capture:true,recall:true,organize:false})})).status,200);
+ assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:true,recall:true,organize:false},'organization can be disabled independently');
+ assert.equal((await fetch(base+'/api/library/automatic',{method:'PUT',headers,body:JSON.stringify({capture:false,recall:false})})).status,200);
+ assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:false,recall:false,organize:false},'older clients also preserve an explicit organization opt-out');
  const vault=await fetch(base+'/api/library/vault',{headers}).then(r=>r.json());
- assert.equal(vault.document_directory,'','unconfigured knowledge files have no managed directory');
- assert.equal(vault.config.enabled,false,'knowledge files remain opt-in');
+ assert.equal(vault.document_directory,join(data,'knowledge','Duo'),'new installations use their own data directory for portable documents');
+ assert.deepEqual(vault.config,{enabled:true,directory:join(data,'knowledge'),include_runs:true,include_automatic:true,task_folders:true},'new installations record task documents without manual configuration');
  const engines=await fetch(base+'/api/engines',{headers}).then(r=>r.json());
  assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'acp');
  const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
@@ -64,7 +68,8 @@ try{
  assert.ok(source.includes('setting-harness-provider'),'served entrypoint includes Harness configuration');
  assert.ok(source.includes('automatic-capture')&&source.includes('vault-automatic'),'built assets include automatic accumulation and separate Vault export settings');
  assert.ok(source.includes('settings-knowledge')&&source.includes('vault-document-directory')&&source.includes('library-manage-task'),'built assets include central knowledge settings and task management navigation');
- console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge, directory metadata and embedded settings UI verified. No model turn sent.');
+ assert.ok(source.includes('automatic-organize')&&source.includes('library-layer')&&source.includes('composer-resizer'),'built assets include document layers, automatic organization and composer resizing');
+ console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
 }finally{
  child.stdin.end();
  const timer=setTimeout(()=>child.kill(),5000);
