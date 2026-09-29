@@ -9,7 +9,7 @@ export async function createWebShellFixture(webRoot=new URL('../web/',import.met
 // credentials, model turn, storage directory or external network is accessed.
 const files=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
 const source=(await Promise.all(files.map(name=>readFile(new URL(name+'.ts',webRoot),'utf8')))).join('\n');
-const {document,window}=parseHTML('<!doctype html><html><body><div id="root"></div><div id="notice"></div></body></html>');
+const {document,window}=parseHTML('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><div id="notice"></div></body></html>');
 // linkedom implements real node attachment and selectors, but intentionally
 // omits some browser-only form/layout/media interfaces used at mount time.
 Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:true,get(){return this.querySelector('option[selected]')?.value??this.querySelector('option')?.value??''},set(value){for(const option of this.querySelectorAll('option')){if(option.value===value)option.setAttribute('selected','');else option.removeAttribute('selected')}}});

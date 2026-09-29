@@ -27,6 +27,7 @@ cases.push(['library','light',1280,800],['library','dark',1280,800],['library','
 cases.push(['sidebar','light',1280,800],['sidebar','dark',1280,800],['sidebar','dark',390,844],['sidebarempty','light',390,844],['sidebarnarrow','light',1024,600],['sidebarfull','dark',1280,800],['appmenu','light',1280,800],['appmenu','dark',390,844]);
 cases.push(['sidebarwide','light',1280,800],['sidebarmigrated','dark',1280,800],['hardware','light',1280,800],['hardware','dark',390,844]);
 cases.push(['home','light',1280,800],['home','dark',390,844],['normal','dark',320,844],['header','light',1024,800],['context','dark',390,844]);
+cases.push(['headernarrow','light',1101,800]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -46,6 +47,7 @@ for(const [view,theme,width,height] of cases){
  if(view==='menu')document.getElementById('session-info-open').onclick();
  if(view==='home')runInContext("chosen='';detail=null;renderShell();renderList()",ctx);
  if(view==='context')runInContext("taskContext=[{name:'AGENTS.md',label:'项目指令'}];renderSessionBanner()",ctx);
+ if(view==='headernarrow')runInContext('appearance.sidebar=420;applyAppearance(appearance)',ctx);
  if(view.startsWith('sidebar')){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
   if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
@@ -150,9 +152,9 @@ for(const [view,theme,width,height] of cases){
   }
   if(view==='hardware'){
    for(const id of ['hardware-panel','device-picker','device-refresh','device-ai','device-console']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1,id+' exceeds the viewport')}
-   assert(items['device-console'].height>=(width<=760?120:180),'hardware controls leave too little space for logs');
+   assert(items['device-console'].height>=180,'hardware controls leave too little space for logs');
   }
-  if(['normal','long','header','appmenu','home','context','create'].includes(view)){
+  if(['normal','long','header','headernarrow','appmenu','home','context','create'].includes(view)){
    const controls=['settings-open','theme-toggle','library-open','logout'];
    if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-info-open');
    for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct header action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
