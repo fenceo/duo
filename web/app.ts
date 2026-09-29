@@ -94,12 +94,20 @@ async function api<T=any>(path:string,method='GET',data?:unknown,signal?:AbortSi
 }
 function markdown(text:string):string{
  const chunks=text.split(/```[^\n]*\n([\s\S]*?)```/g);
- return chunks.map((part,i)=>i%2?'<pre><code>'+escapeHTML(part)+'</code></pre>':escapeHTML(part).split(/\n\s*\n/).map(block=>{
-  const inline=(s:string)=>s.replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
-  if(/^#{1,3} /.test(block)){const level=Math.min(3,block.match(/^#+/)![0].length);return `<h${level}>${inline(block.replace(/^#+ /,''))}</h${level}>`}
-  if(block.split('\n').every(l=>/^[-*] /.test(l)))return '<ul>'+block.split('\n').map(l=>'<li>'+inline(l.slice(2))+'</li>').join('')+'</ul>';
-  return '<p>'+inline(block).replace(/\n/g,'<br>')+'</p>';
- }).join('')).join('');
+ const inline=(s:string)=>s.replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+ return chunks.map((part,i)=>{
+  if(i%2)return '<pre><code>'+escapeHTML(part)+'</code></pre>';
+  const output:string[]=[];let paragraph:string[]=[],list:string[]=[];
+  const flush=()=>{if(paragraph.length){output.push('<p>'+paragraph.map(inline).join('<br>')+'</p>');paragraph=[]}if(list.length){output.push('<ul>'+list.map(line=>'<li>'+inline(line)+'</li>').join('')+'</ul>');list=[]}};
+  for(const line of escapeHTML(part).replace(/\r\n/g,'\n').split('\n')){
+   const heading=line.match(/^(#{1,3}) (.+)$/);
+   if(!line.trim()){flush();continue}
+   if(heading){flush();const level=heading[1].length;output.push(`<h${level}>${inline(heading[2])}</h${level}>`);continue}
+   if(/^[-*] /.test(line)){if(paragraph.length)flush();list.push(line.slice(2));continue}
+   if(list.length)flush();paragraph.push(line);
+  }
+  flush();return output.join('');
+ }).join('');
 }
 function showLogin(){
  renewShellScope();

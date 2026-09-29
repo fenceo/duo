@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 const {document,ctx}=await createWebShellFixture();
 const node=id=>document.getElementById(id),run=source=>runInContext(source,ctx);
+const formatted=document.createElement('div');formatted.innerHTML=ctx.markdown('## 标题\n普通正文\n- 条目\n后续文字\n\n```text\n## 原样代码\n```');
+assert.equal(formatted.querySelector('h2').textContent,'标题');assert.equal(formatted.querySelector('p').textContent,'普通正文');assert.equal(formatted.querySelector('li').textContent,'条目');assert.match(formatted.querySelector('pre').textContent,/## 原样代码/);
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}};
 const hits=[{id:'knowledge:k1',source:'auto',kind:'knowledge',task_id:'task',task_title:'合成任务',title:'<img src=x onerror=1> 自动记录',status:'observed',revision:1,updated:1,origin:'local',hash:'one',snippet:'自动保存不等于已验证'},
  {id:'knowledge:k2',source:'manual',kind:'knowledge',task_id:'task',task_title:'合成任务',title:'已验证操作',status:'verified',revision:1,updated:2,origin:'local',hash:'two',snippet:'已完成合成测试'}];

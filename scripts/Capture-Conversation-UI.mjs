@@ -52,7 +52,9 @@ for(const [view,theme,width,height] of cases){
   ctx.previewEntries=entries;
   runInContext('knowledgeItems=previewEntries;renderKnowledgeList()',ctx);
   if(view.startsWith('knowledge')){
-   runInContext("switchTab('note')",ctx);
+   // The DOM fixture has no MutationObserver; explicitly settle the same dock
+   // visibility that the live shell updates after a tab switch.
+   runInContext("switchTab('note');syncDocks()",ctx);
    if(view==='knowledgeexpanded')document.querySelector('[data-knowledge-toggle]').onclick();
   }else{
    const baseAPI=ctx.api;
