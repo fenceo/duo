@@ -6271,10 +6271,47 @@ function installEngineSettings() {
     element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>AI 引擎与账号</h3><p>引擎负责实际干活，执行环境负责在哪里干活；账号/API 只保存目标环境里的 profile 引用，不把密钥写进Duo数据库。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
     button('engine-profile-save').onclick = ()=>void saveEngineProfile();
     input('engine-profile-reference').nextElementSibling.textContent = '这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="codex-sync-dialog"><form id="codex-sync-form"><h2>同步 Codex 登录到环境</h2><p id="codex-sync-source" class="muted"></p><p>只同步官方 <code>auth.json</code>，每个目标会先保留备份。已运行的 Codex app-server 需要重启后读取新账号。</p><fieldset id="codex-sync-targets"></fieldset><p id="codex-sync-status" role="status"></p><div class="dialog-footer"><button type="button" id="codex-sync-cancel">取消</button><button type="submit" class="primary" id="codex-sync-submit">开始同步</button></div></form></dialog>`);
+    button('codex-sync-cancel').onclick = ()=>element('codex-sync-dialog').close();
+    element('codex-sync-form').addEventListener('submit', (e)=>{
+        e.preventDefault();
+        void submitCodexSync();
+    });
     installEngineOnboarding();
 }
 function engineTargetName(id) {
     return settings.config.environments.find((e)=>e.id === id)?.name || id;
+}
+let codexSyncProfileID = '';
+function openCodexSync(profileID) {
+    const profile = engineCatalog?.profiles.find((p)=>p.id === profileID);
+    if (!profile) return;
+    codexSyncProfileID = profileID;
+    element('codex-sync-targets').innerHTML = settings.config.environments.map((env)=>`<label class="check-row"><input type="checkbox" data-codex-sync-target="${escapeHTML(env.id)}" checked> ${escapeHTML(env.name)}（${escapeHTML(env.type)}）</label>`).join('');
+    element('codex-sync-source').textContent = '来源账号：' + profile.name + '；只读取该配置目录中的 auth.json。';
+    element('codex-sync-status').textContent = '';
+    button('codex-sync-submit').disabled = false;
+    element('codex-sync-dialog').showModal();
+}
+async function submitCodexSync() {
+    const ids = Array.from(document.querySelectorAll('[data-codex-sync-target]:checked')).map((x)=>x.dataset.codexSyncTarget).filter(Boolean);
+    if (!codexSyncProfileID || !ids.length) {
+        element('codex-sync-status').textContent = '请选择至少一个目标环境。';
+        return;
+    }
+    button('codex-sync-submit').disabled = true;
+    element('codex-sync-status').textContent = '正在写入目标环境…';
+    try {
+        const result = await api('codex-sync', 'POST', {
+            source_profile_id: codexSyncProfileID,
+            environment_ids: ids
+        });
+        element('codex-sync-status').textContent = result.results.map((r)=>`${engineTargetName(r.environment_id)}：${r.state === 'done' ? '已完成' : '失败'}，${r.message}`).join('\n');
+        button('codex-sync-submit').disabled = result.results.every((r)=>r.state === 'done');
+    } catch (e) {
+        element('codex-sync-status').textContent = e.message;
+        button('codex-sync-submit').disabled = false;
+    }
 }
 function engineCredentialLabel(kind) {
     return ({
@@ -6300,12 +6337,13 @@ function renderEngineCatalog() {
     if (!engineCatalog) return;
     const profiles = engineCatalog.profiles;
     element('engine-catalog').innerHTML = engineCatalog.engines.map((e)=>{
-        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">设为新任务默认</button></div>`).join('');
+        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">设为新任务默认</button>${e.id === 'codex' && p.kind === 'codex_home' ? `<button type="button" data-engine-sync="${escapeHTML(p.id)}">同步到环境</button>` : ''}</div>`).join('');
         const active = Object.entries(engineCatalog.active_profile).filter(([key])=>key.endsWith(':' + e.id)).map(([, value])=>value);
         return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable ? '可执行' : '待接入适配器'}</small></div><span>${active.length ? '已配置' : '未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="engine-detected-status">默认环境：${escapeHTML(detectedEngineStatus(e.id))}</p><p class="muted">${escapeHTML(e.install_description || '')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/配置指南</button>${e.documentation_url ? `<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>` : ''}</div>${rows || '<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
     }).join('');
     element('engine-catalog').querySelectorAll('[data-engine-plan]').forEach((b)=>b.onclick = ()=>void showEnginePlan(b.dataset.enginePlan));
     element('engine-catalog').querySelectorAll('[data-engine-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.engineActivate));
+    element('engine-catalog').querySelectorAll('[data-engine-sync]').forEach((b)=>b.onclick = ()=>openCodexSync(b.dataset.engineSync));
 }
 async function loadEngineSettings() {
     const epoch = shellEpoch, request = ++engineSettingsRequest;

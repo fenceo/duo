@@ -39,6 +39,7 @@ type App struct {
 	config          *ConfigFile
 	runner          Runner
 	mu              sync.Mutex
+	codexSyncMu     sync.Mutex
 	workers         map[string]*worker
 	slots           chan struct{}
 	ctx             context.Context

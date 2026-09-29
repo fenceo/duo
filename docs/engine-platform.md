@@ -29,6 +29,7 @@ Duo的长期结构分成四层：
 - `GET /api/engines`：查看引擎、传输协议、能力和目标环境支持情况。
 - `GET /api/environments/{id}/engines/{engine}/install-plan`：生成目标环境的安装/检查计划。现在只返回安全的人工确认步骤；后续适配器稳定后再增加受限的一键执行。
 - `PUT /api/engine-profiles`、`POST /api/engine-profiles/{id}/activate`：保存和切换外部账号/profile 引用。
+- `POST /api/codex-sync`：在用户明确选择后，把本地可读取的 Codex `auth.json` 安全投影到 Windows、WSL 或 SSH 目标的原生 `~/.codex/auth.json`；目标先保留 `.duo-backup`，远程凭据只经标准输入传输，已运行的 app-server 需要重启。
 - Codex profile 使用 `CODEX_HOME`，Claude profile 使用 `CLAUDE_CONFIG_DIR`；WSL/SSH 通过 `env` 前缀传入，Windows 通过子进程环境传入。
 - `env_file` 暂时只记录引用，不由 HTTP 服务读取任意密钥文件。后续由目标适配器按最小权限读取，并在进程环境中使用，禁止出现在命令行、任务文本和事件日志。
 

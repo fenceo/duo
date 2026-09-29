@@ -4,6 +4,8 @@
 
 首次实现支持 Windows x64 自动安装；WSL/SSH 继续使用已有的安装指南和环境配置。工具安装会访问网络，不下载本地模型权重。
 
+Codex 账号配置旁提供“同步到环境”。它只读取用户选择的本地 `codex_home/auth.json`，并在用户选择的 Windows、WSL、SSH 目标中写入原生 `~/.codex/auth.json`；已有文件会先保存为 `auth.json.duo-backup`。WSL/SSH 通过标准输入传输内容，不把凭据放入命令行或日志。同步完成后，已运行的 Codex app-server 需要重启才能读取新账号；当前实现不会自动停止任务，也不会修改 `config.toml`。
+
 Codex 可直接“添加账号 / API”：
 
 - ChatGPT：打开设备登录链接，输入页面给出的设备码；原生 Codex 完成 OAuth 并保存令牌。
