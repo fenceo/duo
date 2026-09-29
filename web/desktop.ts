@@ -10,7 +10,7 @@ function installDesktopSharing(){
 }
 function renderDesktopSharing(state?:DesktopState){
  if(state){desktopState=state;if(!state.active){const img=element<HTMLImageElement>('desktop-preview-image');img?.removeAttribute('src');img?.classList.add('hidden')}}
- const active=desktopState.active;button('desktop-open').textContent=active?'桌面共享中 · 接管':'桌面共享';
+ const active=desktopState.active;button('desktop-open').textContent=active?'桌面接管':'桌面共享';button('desktop-open').title=active?'桌面正在共享，打开面板停止共享或接管':'选择画面并授权当前任务查看或控制桌面';
  button('desktop-open').classList.toggle('desktop-sharing',active);
  const task=tasks.find(t=>t.id===desktopState.task_id),label=task?.title||desktopState.task_id||'';
  element('desktop-owner').textContent=active?'正在共享给 '+label+' · '+(desktopState.control?'允许键鼠控制':'仅查看'):'当前未共享桌面';

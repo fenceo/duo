@@ -322,7 +322,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .desktop-dialog img{display:block;max-width:100%;height:auto;margin-top:12px;border:1px solid var(--line)}
 .desktop-dialog select{max-width:100%;min-width:0}
 .desktop-dialog .actions{flex-wrap:wrap}
-.sidebar-footer .desktop-sharing{color:var(--danger);font-weight:600}
+.header-global-actions .desktop-sharing{color:var(--danger);font-weight:600}
 .engine-plan{max-width:100%;overflow:auto;overflow-wrap:anywhere;font-size:12px;line-height:1.65}
 .settings-result,.model-test-result{font-size:12px;overflow-wrap:anywhere}
 .data-directory-switch,.data-transfer{margin-top:20px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
@@ -499,9 +499,10 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 @media(max-width:760px){
  .header{display:flex;padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
  .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
- .header-global-actions{order:1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
+ .header-global-actions{order:1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
  .header #task-actions{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;width:100%}
  .header #menu,.header #task-actions>button,.header .header-global-actions>button{min-height:44px;min-width:0;font-size:12px;padding:5px 6px}
+ .header .header-global-actions>#desktop-open{font-size:11px;padding:5px 4px}
  .header-utilities #connection{order:3;max-width:none}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
  .library-dialog[open]{width:calc(100vw - 16px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:14px;gap:8px}

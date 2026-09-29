@@ -90,11 +90,6 @@ jobs:
           go vet ./...
           if ($LASTEXITCODE -ne 0) { throw 'Go vet failed.' }
 
-      - name: Check synthetic desktop and phone layouts
-        run: |
-          node scripts/Capture-Conversation-UI.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Conversation geometry checks failed.' }
-
       - name: Verify desktop input on an isolated synthetic window
         env:
           DUO_TEST_DESKTOP_NATIVE: '1'
@@ -107,6 +102,11 @@ jobs:
             Write-Output "::error title=Isolated desktop integration::$detail"
             throw 'Isolated desktop integration failed.'
           }
+
+      - name: Check synthetic desktop and phone layouts
+        run: |
+          node scripts/Capture-Conversation-UI.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Conversation geometry checks failed.' }
 
       - name: Test, build and publish the stable release
         env:
