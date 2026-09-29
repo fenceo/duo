@@ -54,7 +54,7 @@ function installLibraryBrowser(){
  list.insertAdjacentHTML('beforeend','<button type="button" id="library-more" class="hidden">加载更多</button>');
  workspace.insertAdjacentHTML('beforeend','<section id="library-preview" class="library-preview" aria-label="资料预览"><button type="button" id="library-preview-back" class="subtle">← 返回结果</button><h3 id="library-preview-title">选择一条资料</h3><p id="library-preview-meta" class="muted">预览内容和来源后，再决定是否引用。</p><div id="library-preview-content" class="content"></div><p id="library-preview-status" role="status"></p><div class="library-preview-actions"><button type="button" id="library-preview-cite" class="primary hidden">引用到输入框</button><button type="button" id="library-preview-source" class="hidden">打开来源任务</button></div></section>');
  button('library-more').onclick=()=>void searchLibrary(true);
- button('library-preview-back').onclick=()=>clearLibraryPreview();
+ button('library-preview-back').onclick=()=>clearLibraryPreview(true);
  button('library-preview-cite').onclick=()=>void citeLibrary(libraryPreviewID);
  button('library-preview-source').onclick=()=>{const hit=libraryHits.find(d=>d.id===libraryPreviewID);if(!hit||!tasks.some(t=>t.id===hit.task_id&&!t.deleted))return;dialog.close();void choose(hit.task_id,hit.kind==='knowledge'?'note':'chat')};
  element('library-results').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-library-reference],[data-library-preview]');if(!b)return;if(b.dataset.libraryReference)void citeLibrary(b.dataset.libraryReference);else void previewLibrary(b.dataset.libraryPreview||'')};
@@ -62,11 +62,15 @@ function installLibraryBrowser(){
  element('knowledge-filter').insertAdjacentHTML('beforebegin','<div class="knowledge-search"><input id="knowledge-query" aria-label="搜索本任务知识" placeholder="搜索本任务知识"><select id="knowledge-source" aria-label="筛选知识来源"><option value="">全部来源</option><option value="auto">对话自动记录</option><option value="manual">手工保存与整理</option></select></div>');
  input('knowledge-query').oninput=()=>renderKnowledgeList();input('knowledge-source').onchange=()=>renderKnowledgeList();
 }
-function clearLibraryPreview(){
+function clearLibraryPreview(returnFocus=false){
+ const previous=libraryPreviewID;
  libraryPreviewRequest++;libraryPreviewID='';element('library-workspace')?.classList.remove('preview-open');
  element('library-preview-title').textContent='选择一条资料';element('library-preview-meta').textContent='预览内容和来源后，再决定是否引用。';element('library-preview-content').textContent='';element('library-preview-status').textContent='';
  button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');
+ highlightLibraryPreview();
+ if(returnFocus)Array.from(element('library-results').querySelectorAll<HTMLButtonElement>('[data-library-preview]')).find(b=>b.dataset.libraryPreview===previous)?.focus();
 }
+function highlightLibraryPreview(){element('library-results').querySelectorAll<HTMLButtonElement>('[data-library-preview]').forEach(b=>{const selected=b.dataset.libraryPreview===libraryPreviewID;b.setAttribute('aria-pressed',String(selected));const card=b.closest<HTMLElement>('.library-card');if(card)card.dataset.selected=String(selected)})}
 async function loadLibraryOverview(){
  const token=++libraryOverviewRequest,epoch=shellEpoch;
  element('library-overview').textContent='正在读取积累与同步状态…';
@@ -137,7 +141,7 @@ async function searchLibrary(append=false){
  }catch(e){if(token===libraryRequest&&shellCurrent(epoch))element('library-state').textContent='检索失败，请重试：'+(e as Error).message}
  finally{if(token===libraryRequest&&shellCurrent(epoch)){libraryLoading=false;button('library-more').disabled=false}}
 }
-function libraryDescription(d:LibraryDocument){return (d.origin==='vault'?'文件笔记':d.kind==='run'?'原始对话':d.source==='auto'?'对话自动记录':'手工保存与整理')+' · '+(d.kind==='run'?(names[d.status]||d.status):knowledgeStateText(d.status))}
+function libraryDescription(d:LibraryDocument){return (d.origin==='vault'?'文件笔记':d.kind==='run'?'原始对话':d.source==='auto'?'对话自动记录':'手工保存与整理')+' · '+(d.kind==='run'?(({done:'已完成',failed:'执行失败',interrupted:'已中断'} as Record<string,string>)[d.status]||d.status):knowledgeStateText(d.status))}
 function renderLibraryHits(){
  element('library-results').innerHTML=libraryHits.length?libraryHits.map(d=>`<article class="library-card"${d.id===libraryPreviewID?' data-selected="true"':''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))}</p><p class="library-snippet">${escapeHTML(d.snippet)}</p><footer><span>${escapeHTML(d.task_title||'独立笔记')}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create)?' disabled':''}>引用</button></footer></article>`).join(''):'<div class="library-empty"><strong>没有匹配的资料</strong><p>试试简短关键词，或调整资料类型、来源和任务范围。旧对话可切换到“原始对话”查找。</p></div>';
 }
@@ -146,7 +150,7 @@ async function previewLibrary(id:string){
  const token=++libraryPreviewRequest,epoch=shellEpoch;libraryPreviewID=id;
  element('library-workspace').classList.add('preview-open');element('library-preview-title').textContent=hit.title;
  element('library-preview-meta').textContent=libraryDescription(hit)+' · '+(hit.task_title||'独立笔记')+(hit.path?' · Duo/'+hit.path:'');
- element('library-preview-content').textContent='';element('library-preview-status').textContent='正在读取预览…';button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');renderLibraryHits();
+ element('library-preview-content').textContent='';element('library-preview-status').textContent='正在读取预览…';button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');highlightLibraryPreview();
  try{const result=await api<LibraryReference>('library/reference?'+new URLSearchParams({id,hash:hit.hash}),'GET',undefined,shellController.signal);if(token!==libraryPreviewRequest||!shellCurrent(epoch))return;
   element('library-preview-content').innerHTML=markdown(result.preview||'');element('library-preview-status').textContent=result.truncated?'预览与引用均截取前 6000 字符；完整内容请查看来源。':'引用将保留来源和验证状态，不会直接发送。';
   button('library-preview-cite').classList.remove('hidden');button('library-preview-cite').disabled=libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create);

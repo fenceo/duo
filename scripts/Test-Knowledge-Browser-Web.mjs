@@ -27,7 +27,9 @@ assert.equal(document.querySelector('#library-results img'),null,'listing escape
 await ctx.searchLibrary(true);
 assert.equal(document.querySelectorAll('.library-card').length,2);
 assert(node('library-more').classList.contains('hidden'));
+const previewTrigger=document.querySelector('[data-library-preview]');
 await ctx.previewLibrary(hits[0].id);
+assert.equal(document.querySelector('[data-library-preview]'),previewTrigger,'opening a preview keeps the triggering node and keyboard focus stable');
 assert.match(node('library-preview-content').textContent,/历史资料/);
 assert.equal(node('library-preview-content').querySelector('script'),null,'preview cannot execute stored HTML');
 assert(!node('library-preview-cite').disabled);

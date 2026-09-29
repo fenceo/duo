@@ -409,7 +409,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 #library-preview-status{font-size:12px;line-height:1.6;margin:0;color:var(--muted)}.library-preview-actions{display:flex;flex-wrap:wrap;gap:8px}.library-preview-actions button{min-height:38px;font-size:12px}
 .knowledge-search{display:grid;grid-template-columns:minmax(0,1fr) minmax(125px,.7fr);gap:8px}.knowledge-search input,.knowledge-search select{min-width:0;font-size:12px;padding:9px}
 .knowledge-excerpt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0;font-size:12px;line-height:1.7;color:var(--muted)}
-.knowledge-title[aria-expanded="true"]{color:var(--accent)}.knowledge-actions{flex-wrap:wrap}.knowledge-actions button{min-height:32px}.knowledge-card[data-state="verified"] .knowledge-state{color:var(--ink);border-color:var(--line)}
+.knowledge-title[aria-expanded="true"]{color:var(--accent)}.knowledge-actions{flex-wrap:wrap;max-width:100%;min-width:0}.knowledge-actions button{min-height:32px}.knowledge-card[data-state="verified"] .knowledge-state{color:var(--ink);border-color:var(--line)}
 
 /* Notes sit above a stable utility footer, never below account controls. */
 #sidebar-footer{display:flex;flex-direction:column;align-items:stretch;gap:5px;border-top:1px solid var(--line);padding:9px 0 0}

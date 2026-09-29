@@ -109,7 +109,7 @@ function installLibraryBrowser() {
     list.insertAdjacentHTML('beforeend', '<button type="button" id="library-more" class="hidden">加载更多</button>');
     workspace.insertAdjacentHTML('beforeend', '<section id="library-preview" class="library-preview" aria-label="资料预览"><button type="button" id="library-preview-back" class="subtle">← 返回结果</button><h3 id="library-preview-title">选择一条资料</h3><p id="library-preview-meta" class="muted">预览内容和来源后，再决定是否引用。</p><div id="library-preview-content" class="content"></div><p id="library-preview-status" role="status"></p><div class="library-preview-actions"><button type="button" id="library-preview-cite" class="primary hidden">引用到输入框</button><button type="button" id="library-preview-source" class="hidden">打开来源任务</button></div></section>');
     button('library-more').onclick = ()=>void searchLibrary(true);
-    button('library-preview-back').onclick = ()=>clearLibraryPreview();
+    button('library-preview-back').onclick = ()=>clearLibraryPreview(true);
     button('library-preview-cite').onclick = ()=>void citeLibrary(libraryPreviewID);
     button('library-preview-source').onclick = ()=>{
         const hit = libraryHits.find((d)=>d.id === libraryPreviewID);
@@ -134,7 +134,8 @@ function installLibraryBrowser() {
     input('knowledge-query').oninput = ()=>renderKnowledgeList();
     input('knowledge-source').onchange = ()=>renderKnowledgeList();
 }
-function clearLibraryPreview() {
+function clearLibraryPreview(returnFocus = false) {
+    const previous = libraryPreviewID;
     libraryPreviewRequest++;
     libraryPreviewID = '';
     element('library-workspace')?.classList.remove('preview-open');
@@ -144,6 +145,16 @@ function clearLibraryPreview() {
     element('library-preview-status').textContent = '';
     button('library-preview-cite').classList.add('hidden');
     button('library-preview-source').classList.add('hidden');
+    highlightLibraryPreview();
+    if (returnFocus) Array.from(element('library-results').querySelectorAll('[data-library-preview]')).find((b)=>b.dataset.libraryPreview === previous)?.focus();
+}
+function highlightLibraryPreview() {
+    element('library-results').querySelectorAll('[data-library-preview]').forEach((b)=>{
+        const selected = b.dataset.libraryPreview === libraryPreviewID;
+        b.setAttribute('aria-pressed', String(selected));
+        const card = b.closest('.library-card');
+        if (card) card.dataset.selected = String(selected);
+    });
 }
 async function loadLibraryOverview() {
     const token = ++libraryOverviewRequest, epoch = shellEpoch;
@@ -314,7 +325,11 @@ async function searchLibrary(append = false) {
     }
 }
 function libraryDescription(d) {
-    return (d.origin === 'vault' ? '文件笔记' : d.kind === 'run' ? '原始对话' : d.source === 'auto' ? '对话自动记录' : '手工保存与整理') + ' · ' + (d.kind === 'run' ? names[d.status] || d.status : knowledgeStateText(d.status));
+    return (d.origin === 'vault' ? '文件笔记' : d.kind === 'run' ? '原始对话' : d.source === 'auto' ? '对话自动记录' : '手工保存与整理') + ' · ' + (d.kind === 'run' ? ({
+        done: '已完成',
+        failed: '执行失败',
+        interrupted: '已中断'
+    })[d.status] || d.status : knowledgeStateText(d.status));
 }
 function renderLibraryHits() {
     element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))}</p><p class="library-snippet">${escapeHTML(d.snippet)}</p><footer><span>${escapeHTML(d.task_title || '独立笔记')}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>没有匹配的资料</strong><p>试试简短关键词，或调整资料类型、来源和任务范围。旧对话可切换到“原始对话”查找。</p></div>';
@@ -331,7 +346,7 @@ async function previewLibrary(id) {
     element('library-preview-status').textContent = '正在读取预览…';
     button('library-preview-cite').classList.add('hidden');
     button('library-preview-source').classList.add('hidden');
-    renderLibraryHits();
+    highlightLibraryPreview();
     try {
         const result = await api('library/reference?' + new URLSearchParams({
             id,
