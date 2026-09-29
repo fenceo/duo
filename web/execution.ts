@@ -100,14 +100,15 @@ async function testModelList(target:ModelPickerTarget){
  try{
   const profiles=await api<EngineCatalog>('engines','GET',undefined,state.controller!.signal);
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
-  const profileID=profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=profiles.profiles.find(item=>item.id===profileID);
+  const binding=target==='task'?detail?.task.binding:undefined;
+  const profileID=binding?(binding.profile?.id||''):profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=binding?binding.profile:profiles.profiles.find(item=>item.id===profileID);
   if(profileID&&!profile)throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
   const account=profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
   const provider=context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
   if(!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令，可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   state.rows=Object.fromEntries(models.map(id=>[id,{status:'pending' as const}]));state.summary='正在建立测试连接…';renderModelProbe(target);
-  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID},state.controller!.signal,event=>{
+  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
    if(!modelProbeStillCurrent(target,state))return;
    if(event.type==='model_start'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model))state.rows[event.model]={status:'testing'};
    if(event.type==='result'){
@@ -289,7 +290,7 @@ function renderModelMenu(target:ModelPickerTarget){
  const efforts=levels.length?`<div class="model-efforts"><small>推理强度</small><div>${['',...levels].map(v=>`<button type="button" class="model-effort${(detail?.task.reasoning_effort||'')===v?' selected':''}" data-effort="${escapeHTML(v)}">${escapeHTML(v===''?'工具默认':(effortLabels[v]||v))}</button>`).join('')}</div></div>`:'<p class="model-empty">此模型不提供推理强度</p>';
  element(ids.list).innerHTML=body+efforts;
 }
-function taskCatalogContextKey(task:Task){return task.id+':'+catalogContextKey(settings.config.environments.find(env=>env.id===task.environment.id)||task.environment,task.engine||'codex',task.workspace)}
+function taskCatalogContextKey(task:Task){return task.id+':'+(task.binding?.revision||'legacy')+':'+catalogContextKey(settings.config.environments.find(env=>env.id===task.environment.id)||task.environment,task.engine||'codex',task.workspace)}
 function mergeTaskModels(task:Task,list:EngineModel[]):EngineModel[]{
  const models=[...list],known=new Set(models.map(m=>m.id));
  const configured=engineDefaultModel(task.environment,task.engine||'codex');
@@ -307,7 +308,7 @@ async function refreshTaskModels(refresh=false){
  modelCatalogControllers.task?.abort();const controller=new AbortController();modelCatalogControllers.task=controller;
  taskPickerModels=mergeTaskModels(task,[]);Object.assign(state,{key,loading:true,summary:'',details:'',failed:false});renderModelMenu('task');
  try{
-  const result=await api<ModelListResponse>(modelsURL(task.environment.id,task.engine||'codex',task.workspace,refresh),'GET',undefined,controller.signal);
+  const result=await api<ModelListResponse>(modelsURL(task.environment.id,task.engine||'codex',task.workspace,refresh)+'&task_id='+encodeURIComponent(task.id),'GET',undefined,controller.signal);
   if(request!==taskModelRequest||!detail||taskCatalogContextKey(detail.task)!==key)return;
   taskPickerModels=mergeTaskModels(task,result.models||[]);state.summary=catalogSummary(result);state.details=catalogDetails(result);
  }catch(e){

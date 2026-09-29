@@ -2387,7 +2387,7 @@ function conversationEventNode(item) {
     node.dataset.event = String(ev.seq);
     if (ev.kind === 'user' || ev.kind === 'assistant') {
         node.className = 'message ' + ev.kind;
-        node.innerHTML = '<div class="label">' + (ev.kind === 'user' ? '你' : taskEngineName(detail?.task.engine)) + '</div><div class="content">' + (ev.kind === 'user' ? escapeHTML(ev.text) : markdown(ev.text)) + '</div>';
+        node.innerHTML = '<div class="label">' + (ev.kind === 'user' ? '你' : taskEngineName(detail?.runs.find((r)=>r.id === ev.run_id)?.engine || detail?.task.engine)) + '</div><div class="content">' + (ev.kind === 'user' ? escapeHTML(ev.text) : markdown(ev.text)) + '</div>';
     } else if (ev.kind === 'tool' || ev.kind === 'log') {
         node.className = 'log';
         const disclosure = document.createElement('details'), summary = document.createElement('summary');
@@ -2598,7 +2598,7 @@ function applyConversationFilter(followBottom = true) {
         if (run?.status === 'done' && run.result && !final.size) {
             const node = document.createElement('div');
             node.className = 'message assistant';
-            node.innerHTML = '<div class="label">' + taskEngineName(detail?.task.engine) + '</div><div class="content">' + markdown(run.result) + '</div>';
+            node.innerHTML = '<div class="label">' + taskEngineName(run.engine || detail?.task.engine) + '</div><div class="content">' + markdown(run.result) + '</div>';
             turn.output.append(node);
         }
         if (turn.root.parentElement !== container) container.append(turn.root);
@@ -3019,7 +3019,7 @@ async function stopCodexApprovalRun(card) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换工具继续</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items) {
     return [
@@ -3100,9 +3100,8 @@ function installLayout() {
     const model = element('task-model');
     element('composer').querySelector('.composer-bottom').prepend(model);
     element('task-model-button').title = '本任务使用的 AI 工具、模型和推理强度';
-    element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');
+    element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="切换引擎、账号/API 和模型，接续当前任务">切换 AI</button>');
     button('task-handoff').onclick = ()=>void openHandoff();
-    button('task-link-copy').onclick = ()=>void copyTaskLink();
     const sessionActions = element('task-actions');
     sessionActions.classList.add('header-session-actions');
     sessionActions.setAttribute('role', 'group');
@@ -3110,20 +3109,12 @@ function installLayout() {
     sessionActions.insertAdjacentHTML('afterbegin', '<button type="button" id="session-reset" class="hidden">新建会话</button>');
     for (const id of [
         'task-handoff',
-        'task-link-copy',
         'bind-open',
         'scratch-tab'
     ])sessionActions.append(element(id));
-    sessionActions.insertAdjacentHTML('beforeend', '<button type="button" id="session-info-open" aria-haspopup="dialog">会话信息</button>');
     element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
     button('scratch-tab').textContent = '本任务待办';
     button('session-reset').onclick = ()=>void resetSession();
-    button('session-info-open').onclick = ()=>{
-        if (detail) {
-            renderSessionBanner();
-            element('session-info-dialog').showModal();
-        }
-    };
     button('session-info-close').onclick = ()=>element('session-info-dialog').close();
     element('composer').querySelector('.composer-bottom small').remove();
     input('message').title = 'Enter 发送，Shift + Enter 换行';
@@ -3138,6 +3129,7 @@ function installLayout() {
             if (action.disabled) return;
             const id = action.dataset.taskId || '', kind = action.dataset.taskAction;
             if (kind === 'handoff') void openHandoff(id);
+            else if (kind === 'session-info') void openSessionInfo(id);
             else if (kind === 'copy-link') void copyTaskLink(id);
             else if (kind === 'rename') void openTaskRename(id);
             else if (kind === 'pin') void changeTaskPreference('pinned', id);
@@ -3179,6 +3171,14 @@ try {
     document.documentElement.dataset.theme = localStorage.getItem('jianzuo-theme') === 'dark' ? 'dark' : 'light';
 } catch  {
     document.documentElement.dataset.theme = 'light';
+}
+async function openSessionInfo(id = chosen) {
+    if (!id) return;
+    if (chosen !== id) await choose(id);
+    if (chosen === id && detail) {
+        renderSessionBanner();
+        element('session-info-dialog').showModal();
+    }
 }
 let detectedEnvironments = [];
 let createEnvironmentDiscoveryAt = 0;
@@ -4597,7 +4597,8 @@ async function testModelList(target) {
     try {
         const profiles = await api('engines', 'GET', undefined, state.controller.signal);
         if (!modelProbeStillCurrent(target, state) || state.controller.signal.aborted) return;
-        const profileID = profiles.active_profile[context.environment.id + ':' + context.engine] || '', profile = profiles.profiles.find((item)=>item.id === profileID);
+        const binding = target === 'task' ? detail?.task.binding : undefined;
+        const profileID = binding ? binding.profile?.id || '' : profiles.active_profile[context.environment.id + ':' + context.engine] || '', profile = binding ? binding.profile : profiles.profiles.find((item)=>item.id === profileID);
         if (profileID && !profile) throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
         const account = profile ? `${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）` : '目标环境 CLI 的原生默认配置';
         const provider = context.engine === 'deepseek-harness' ? context.environment.harness_provider || 'deepseek-official' : '沿用该 CLI 的原生配置';
@@ -4619,7 +4620,11 @@ async function testModelList(target) {
             engine: context.engine,
             workspace: context.workspace,
             models,
-            expected_profile_id: profileID
+            expected_profile_id: profileID,
+            ...target === 'task' && detail?.task.binding ? {
+                task_id: detail.task.id,
+                binding_revision: detail.task.binding.revision
+            } : {}
         }, state.controller.signal, (event)=>{
             if (!modelProbeStillCurrent(target, state)) return;
             if (event.type === 'model_start' && typeof event.model === 'string' && Object.hasOwn(state.rows, event.model)) state.rows[event.model] = {
@@ -4998,7 +5003,7 @@ function renderModelMenu(target) {
     element(ids.list).innerHTML = body + efforts;
 }
 function taskCatalogContextKey(task) {
-    return task.id + ':' + catalogContextKey(settings.config.environments.find((env)=>env.id === task.environment.id) || task.environment, task.engine || 'codex', task.workspace);
+    return task.id + ':' + (task.binding?.revision || 'legacy') + ':' + catalogContextKey(settings.config.environments.find((env)=>env.id === task.environment.id) || task.environment, task.engine || 'codex', task.workspace);
 }
 function mergeTaskModels(task, list) {
     const models = [
@@ -5038,7 +5043,7 @@ async function refreshTaskModels(refresh = false) {
     });
     renderModelMenu('task');
     try {
-        const result = await api(modelsURL(task.environment.id, task.engine || 'codex', task.workspace, refresh), 'GET', undefined, controller.signal);
+        const result = await api(modelsURL(task.environment.id, task.engine || 'codex', task.workspace, refresh) + '&task_id=' + encodeURIComponent(task.id), 'GET', undefined, controller.signal);
         if (request !== taskModelRequest || !detail || taskCatalogContextKey(detail.task) !== key) return;
         taskPickerModels = mergeTaskModels(task, result.models || []);
         state.summary = catalogSummary(result);
@@ -6130,7 +6135,7 @@ function engineCredentialLabel(kind) {
 function engineProfileActivationMessage(profile) {
     if (profile?.kind === 'env_file') return '引用已选中，但环境文件尚未应用到运行进程；请在目标环境中配置。';
     if (profile?.engine === 'deepseek-harness') return profile.kind === 'native' ? '新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。' : '新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
-    return '账号/API 配置已切换，下一次运行生效。';
+    return '已设为新任务的默认账号/API；现有任务请通过“切换 AI”更换配置。';
 }
 function detectedEngineStatus(engine) {
     const target = settings.config.environments.find((e)=>e.id === settings.config.default_environment), item = target && detectedEnvironments.find((x)=>sameDetectedEnvironment(x.environment, target));
@@ -6142,7 +6147,7 @@ function renderEngineCatalog() {
     if (!engineCatalog) return;
     const profiles = engineCatalog.profiles;
     element('engine-catalog').innerHTML = engineCatalog.engines.map((e)=>{
-        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
+        const rows = profiles.filter((p)=>p.engine === e.id).map((p)=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind === 'native' ? '' : ': ' + escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">设为新任务默认</button></div>`).join('');
         const active = Object.entries(engineCatalog.active_profile).filter(([key])=>key.endsWith(':' + e.id)).map(([, value])=>value);
         return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable ? '可执行' : '待接入适配器'}</small></div><span>${active.length ? '已配置' : '未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="engine-detected-status">默认环境：${escapeHTML(detectedEngineStatus(e.id))}</p><p class="muted">${escapeHTML(e.install_description || '')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/配置指南</button>${e.documentation_url ? `<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>` : ''}</div>${rows || '<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
     }).join('');
@@ -6215,7 +6220,7 @@ async function saveEngineProfile() {
         await api('engine-profiles', 'PUT', profile);
         if (!shellCurrent(epoch)) return;
         invalidateModelCatalogs();
-        element('engine-profile-result').textContent = profile.kind === 'env_file' ? '已保存引用；环境文件目前仅记录，不会应用到运行进程。' : profile.engine === 'deepseek-harness' ? '已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。' : '已保存；点击对应配置的“切换”后对下一次运行生效。';
+        element('engine-profile-result').textContent = profile.kind === 'env_file' ? '已保存引用；环境文件目前仅记录，不会应用到运行进程。' : profile.engine === 'deepseek-harness' ? '已保存；设为新任务默认后，新建 Harness 任务使用该配置。' : '已保存；可设为新任务默认；现有任务请通过“切换 AI”选择此配置。';
         await loadEngineSettings();
     } catch (e) {
         if (shellCurrent(epoch)) element('engine-profile-result').textContent = e.message;
@@ -6231,6 +6236,235 @@ async function activateEngineProfile(id) {
         await loadEngineSettings();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
+    }
+}
+let handoffTask = null, handoffCatalog = null, handoffPreview = null;
+let handoffGeneration = 0, handoffPreviewRequest = 0, handoffModelRequest = 0, handoffBusy = false;
+let handoffController = null, handoffModels = [];
+let handoffSourceID = '';
+function handoffCurrent(generation, epoch) {
+    return generation === handoffGeneration && shellCurrent(epoch) && !!element('handoff-dialog')?.open;
+}
+function ensureHandoffDialog() {
+    if (element('handoff-dialog')) return;
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="handoff-dialog" aria-labelledby="handoff-title"><form id="handoff-form"><h2 id="handoff-title">切换 AI，继续当前任务</h2><p class="muted">聊天记录、任务知识和草稿保留。切换后发送下一条消息，目标 AI 才开始工作。</p><p id="handoff-source" class="muted"></p><fieldset id="handoff-fields" disabled><div class="handoff-grid"><div><label for="handoff-engine">AI 引擎</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select></div><div><label for="handoff-profile">账号 / API 配置</label><select id="handoff-profile"></select></div><div><label for="handoff-model">模型</label><input id="handoff-model" list="handoff-models" placeholder="沿用该配置默认模型" maxlength="120"><datalist id="handoff-models"></datalist></div><div><label for="handoff-effort">推理强度</label><select id="handoff-effort"></select></div></div><p id="handoff-model-status" class="muted" role="status"></p><button type="button" id="handoff-model-refresh">重读模型列表</button><button type="button" id="handoff-settings">管理账号 / API</button><label for="handoff-mode">工作权限</label><select id="handoff-mode"></select><details class="handoff-advanced"><summary>执行位置与接续范围</summary><label for="handoff-environment">执行环境</label><select id="handoff-environment"></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-context-mode">交给新会话的资料</label><select id="handoff-context-mode"><option value="full">完整历史文本 + 接续摘要</option><option value="summary">仅任务笔记与共识</option></select></details><p id="handoff-route-hint" class="muted"></p><p id="handoff-preview-status" role="status"></p><details><summary>查看将交接的摘要</summary><pre id="handoff-preview" class="handoff-preview"></pre></details><a id="handoff-archive" target="_blank" rel="noopener noreferrer">查看完整脱敏文本 ↗</a><p class="muted">跨引擎或账号会建立新原生会话；图片等附件请按需重新提供。API 地址和密钥由所选配置目录管理，不会随历史复制。</p></fieldset><p id="handoff-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">刷新预览</button><button class="primary" id="handoff-submit" disabled>确认切换</button></div></form></dialog>`);
+    element('handoff-form').onsubmit = (e)=>{
+        e.preventDefault();
+        void submitHandoff();
+    };
+    const dialog = element('handoff-dialog');
+    dialog.addEventListener('cancel', (e)=>{
+        if (handoffBusy) e.preventDefault();
+    });
+    dialog.addEventListener('close', ()=>{
+        handoffGeneration++;
+        handoffController?.abort();
+        handoffTask = null;
+        handoffPreview = null;
+    });
+    disposeWithShell(()=>{
+        handoffGeneration++;
+        handoffController?.abort();
+        handoffBusy = false;
+        handoffTask = null;
+        handoffPreview = null;
+    });
+    button('handoff-cancel').onclick = ()=>{
+        if (!handoffBusy) dialog.close();
+    };
+    button('handoff-refresh').textContent = '重读任务与预览';
+    button('handoff-refresh').onclick = ()=>void openHandoff(handoffSourceID);
+    button('handoff-model-refresh').onclick = ()=>void loadHandoffModels();
+    button('handoff-settings').onclick = async ()=>{
+        dialog.close();
+        await openSettings();
+        showSettingsSection('engines');
+    };
+    input('handoff-engine').onchange = ()=>updateHandoffTarget(true);
+    input('handoff-environment').onchange = ()=>{
+        const env = settings.config.environments.find((v)=>v.id === input('handoff-environment').value);
+        if (env) input('handoff-workspace').value = env.id === handoffTask?.environment.id ? handoffTask.workspace : env.workspaces[0] || '';
+        updateHandoffTarget(true);
+    };
+    input('handoff-profile').onchange = ()=>{
+        input('handoff-model').value = '';
+        updateHandoffHint();
+        void loadHandoffModels();
+    };
+    input('handoff-workspace').onchange = ()=>{
+        updateHandoffHint();
+        void loadHandoffModels();
+    };
+    input('handoff-model').oninput = ()=>updateHandoffEffort();
+    input('handoff-context-mode').onchange = ()=>void loadHandoffPreview();
+}
+function updateHandoffTarget(reset) {
+    const task = handoffTask;
+    if (!task || !handoffCatalog) return;
+    const engine = input('handoff-engine').value, env = input('handoff-environment').value, same = engine === task.engine && env === task.environment.id;
+    const profiles = handoffCatalog.profiles.filter((p)=>p.engine === engine && p.environment_id === env && p.kind !== 'env_file');
+    input('handoff-profile').innerHTML = (same && task.binding ? `<option value="__current__">当前绑定 · ${escapeHTML(task.binding.profile?.name || '原生默认配置')}</option>` : '') + '<option value="">原生默认配置</option>' + profiles.map((p)=>`<option value="${escapeHTML(p.id)}">${escapeHTML(p.name)}</option>`).join('');
+    input('handoff-profile').value = same && task.binding ? '__current__' : handoffCatalog.active_profile[env + ':' + engine] || '';
+    const modes = workCatalog.modes.filter((m)=>modeSupportsEngine(m, engine));
+    input('handoff-mode').innerHTML = modes.map((m)=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
+    input('handoff-mode').value = modes.some((m)=>m.id === task.mode?.id) ? task.mode.id : modes.find((m)=>m.id === 'work')?.id || modes[0]?.id || '';
+    if (reset) input('handoff-model').value = same ? task.model : '';
+    handoffModels = [];
+    updateHandoffEffort();
+    if (same) input('handoff-effort').value = task.reasoning_effort || '';
+    updateHandoffHint();
+    void loadHandoffModels();
+}
+function updateHandoffHint() {
+    const task = handoffTask;
+    if (!task) return;
+    const reuse = !!task.binding && input('handoff-engine').value === task.engine && input('handoff-profile').value === '__current__' && input('handoff-environment').value === task.environment.id && input('handoff-workspace').value === task.workspace;
+    element('handoff-route-hint').textContent = reuse ? '只更换模型时沿用原会话；若执行环境或 Harness 权限改变，会改用新会话接续。' : '将新建目标引擎会话，由摘要和所选历史接续当前任务。';
+}
+function updateHandoffEffort() {
+    const select = input('handoff-effort'), previous = select.value, levels = effortLevels(input('handoff-engine').value, handoffModels.find((m)=>m.id === input('handoff-model').value));
+    select.innerHTML = '<option value="">沿用模型默认</option>' + levels.map((v)=>`<option value="${escapeHTML(v)}">${escapeHTML(effortLabels[v] || v)}</option>`).join('');
+    select.value = levels.includes(previous) ? previous : '';
+}
+async function loadHandoffModels() {
+    if (!handoffTask) return;
+    const generation = handoffGeneration, epoch = shellEpoch, request = ++handoffModelRequest, task = handoffTask;
+    const engine = input('handoff-engine').value, env = input('handoff-environment').value, profile = input('handoff-profile').value, workspace = input('handoff-workspace').value;
+    const url = modelsURL(env, engine, workspace) + (profile === '__current__' ? '&task_id=' + encodeURIComponent(task.id) : '&profile_id=' + encodeURIComponent(profile));
+    element('handoff-model-status').textContent = '正在读取所选配置的模型列表…';
+    element('handoff-models').innerHTML = '';
+    try {
+        const result = await api(url, 'GET', undefined, handoffController?.signal);
+        if (!handoffCurrent(generation, epoch) || request !== handoffModelRequest) return;
+        handoffModels = result.models || [];
+        element('handoff-models').innerHTML = handoffModels.map((m)=>`<option value="${escapeHTML(m.id)}">${escapeHTML(m.name)}</option>`).join('');
+        element('handoff-model-status').textContent = catalogSummary(result) + '；也可填写模型 ID，是否可用以实际执行为准。';
+        updateHandoffEffort();
+    } catch (e) {
+        if (handoffCurrent(generation, epoch) && request === handoffModelRequest) {
+            handoffModels = [];
+            element('handoff-model-status').textContent = '模型列表读取失败，可重试或填写模型 ID：' + e.message;
+        }
+    }
+}
+async function loadHandoffPreview() {
+    if (!handoffTask || handoffBusy) return;
+    const task = handoffTask, generation = handoffGeneration, epoch = shellEpoch, request = ++handoffPreviewRequest, mode = input('handoff-context-mode').value;
+    handoffPreview = null;
+    button('handoff-submit').disabled = true;
+    element('handoff-error').textContent = '';
+    element('handoff-preview-status').textContent = '正在整理本地接续资料…';
+    element('handoff-preview').textContent = '';
+    element('handoff-archive').removeAttribute('href');
+    try {
+        const p = await api('tasks/' + encodeURIComponent(task.id) + '/continuation/preview?mode=' + encodeURIComponent(mode), 'GET', undefined, handoffController?.signal);
+        if (!handoffCurrent(generation, epoch) || request !== handoffPreviewRequest) return;
+        handoffPreview = p;
+        element('handoff-preview-status').textContent = `所选资料：${p.transferred_runs} 轮对话、${p.transferred_knowledge} 条笔记，全文 ${(p.archive_bytes / 1024).toFixed(1)} KiB。${p.context_truncated ? '摘要仅含重点，全文保留所选历史。' : ''}`;
+        element('handoff-preview').textContent = p.context;
+        element('handoff-archive').setAttribute('href', '/api/tasks/' + encodeURIComponent(task.id) + '/continuation/archive?mode=' + encodeURIComponent(mode));
+        button('handoff-submit').disabled = false;
+    } catch (e) {
+        if (handoffCurrent(generation, epoch) && request === handoffPreviewRequest) {
+            element('handoff-preview-status').textContent = '接续资料读取失败';
+            element('handoff-error').textContent = e.message;
+        }
+    }
+}
+async function openHandoff(id = chosen) {
+    if (!id || handoffBusy) return;
+    ensureHandoffDialog();
+    handoffController?.abort();
+    handoffController = new AbortController();
+    handoffTask = null;
+    handoffPreview = null;
+    handoffSourceID = id;
+    const generation = ++handoffGeneration, epoch = shellEpoch, dialog = element('handoff-dialog');
+    if (!dialog.open) dialog.showModal();
+    element('handoff-fields').disabled = true;
+    button('handoff-submit').disabled = true;
+    element('handoff-error').textContent = '';
+    element('handoff-source').textContent = '正在读取任务和配置…';
+    try {
+        const [snapshot, catalog] = await Promise.all([
+            api('tasks/' + encodeURIComponent(id) + '?recent=1', 'GET', undefined, handoffController.signal),
+            api('engines', 'GET', undefined, handoffController.signal)
+        ]);
+        if (!handoffCurrent(generation, epoch)) return;
+        handoffTask = snapshot.task;
+        handoffCatalog = catalog;
+        element('handoff-source').textContent = snapshot.task.title + ' · ' + taskEngineName(snapshot.task.engine) + (snapshot.task.binding ? '' : ' · 旧会话未记录账号配置，将通过新会话接续历史');
+        if (snapshot.task.archived || snapshot.task.deleted || snapshot.runs.some((r)=>r.status === 'running' || r.status === 'queued')) throw new Error('请先恢复任务，或等待执行结束 / 停止并取消排队后再切换。');
+        input('handoff-environment').innerHTML = settings.config.environments.map((v)=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');
+        input('handoff-environment').value = snapshot.task.environment.id;
+        input('handoff-engine').value = snapshot.task.engine;
+        input('handoff-workspace').value = snapshot.task.workspace;
+        input('handoff-context-mode').value = 'full';
+        element('handoff-fields').disabled = false;
+        updateHandoffTarget(true);
+        await loadHandoffPreview();
+    } catch (e) {
+        if (handoffCurrent(generation, epoch)) {
+            element('handoff-error').textContent = e.message;
+            button('handoff-submit').disabled = true;
+        }
+    }
+}
+async function submitHandoff() {
+    if (!handoffTask || !handoffPreview || handoffBusy) return;
+    const task = handoffTask, preview = handoffPreview, generation = handoffGeneration, epoch = shellEpoch, selectionAtStart = selection;
+    const profileID = input('handoff-profile').value;
+    const body = {
+        confirm: true,
+        expected_binding_revision: task.binding?.revision || 'legacy',
+        environment_id: input('handoff-environment').value,
+        engine: input('handoff-engine').value,
+        workspace: input('handoff-workspace').value,
+        model: input('handoff-model').value,
+        reasoning_effort: input('handoff-effort').value,
+        mode_id: input('handoff-mode').value,
+        profile_id: profileID,
+        expected_profile: profileID === '__current__' ? undefined : handoffCatalog?.profiles.find((p)=>p.id === profileID),
+        context_mode: input('handoff-context-mode').value,
+        fingerprint: preview.fingerprint
+    };
+    handoffBusy = true;
+    element('handoff-fields').disabled = true;
+    for (const id of [
+        'handoff-submit',
+        'handoff-refresh',
+        'handoff-cancel'
+    ])button(id).disabled = true;
+    element('handoff-error').textContent = '';
+    try {
+        const result = await api('tasks/' + encodeURIComponent(task.id) + '/handoff', 'POST', body);
+        if (!handoffCurrent(generation, epoch)) return;
+        handoffBusy = false;
+        tasks = tasks.map((t)=>t.id === result.task.id ? result.task : t);
+        if (chosen === task.id && selection === selectionAtStart && detail) {
+            detail.task = result.task;
+            invalidateModelCatalogs();
+            renderTask();
+            renderList();
+        }
+        element('handoff-dialog').close();
+        notify(result.new_session ? '已切换 AI。发送下一条消息时，将带上摘要和完整所选历史继续当前任务。' : '模型与配置已更新，下一条消息继续原会话。');
+    } catch (e) {
+        if (handoffCurrent(generation, epoch)) {
+            element('handoff-error').textContent = e.message + '；若提示预览过期，请刷新后重试。';
+        }
+    } finally{
+        if (shellCurrent(epoch)) {
+            handoffBusy = false;
+            if (element('handoff-dialog')) {
+                element('handoff-fields').disabled = false;
+                for (const id of [
+                    'handoff-refresh',
+                    'handoff-cancel'
+                ])button(id).disabled = false;
+                button('handoff-submit').disabled = !handoffPreview;
+            }
+        }
     }
 }
 const element = (id)=>document.getElementById(id);
@@ -6344,102 +6578,6 @@ async function copyTaskLink(id = chosen) {
         notify('任务链接已复制；打开后需要在这台 Duo 登录。');
     } catch  {
         notify('复制失败，请手动复制当前地址：' + url);
-    }
-}
-let handoffPreviewSource = '', handoffPreviewReady = false;
-function ensureHandoffDialog() {
-    if (element('handoff-dialog')) return;
-    document.body.insertAdjacentHTML('beforeend', `<dialog id="handoff-dialog"><form id="handoff-form"><h2>切换工具并继续</h2><p>这会创建一个新的执行路线。原任务不会改变；发送给目标引擎的是经过脱敏的知识和对话快照，不包含原生会话或附件。</p><label for="handoff-environment">目标环境</label><select id="handoff-environment"></select><label for="handoff-engine">AI 工具</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-model">模型（可留空，沿用目标工具默认）</label><input id="handoff-model" placeholder="目标环境中的模型 ID"><label for="handoff-context-mode">历史范围</label><select id="handoff-context-mode"><option value="recent">已验证知识 + 最近 8 条记录</option><option value="summary">仅已验证知识</option><option value="full">最近记录和知识（限长）</option></select><label for="handoff-message">本次继续要求</label><textarea id="handoff-message" rows="4" required>请先检查当前工作区，再根据历史上下文继续完成任务。</textarea><p id="handoff-preview-status" class="muted" role="status">正在读取脱敏预览…</p><pre id="handoff-preview" class="handoff-preview hidden"></pre><p id="handoff-error" class="error"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">重新读取预览</button><button class="primary" id="handoff-submit" disabled>确认并开始</button></div></form></dialog>`);
-    element('handoff-form').onsubmit = (e)=>{
-        e.preventDefault();
-        void submitHandoff();
-    };
-    button('handoff-cancel').onclick = ()=>element('handoff-dialog').close();
-    button('handoff-refresh').onclick = ()=>void loadHandoffPreview();
-    element('handoff-context-mode').onchange = ()=>void loadHandoffPreview();
-    const env = element('handoff-environment');
-    env.onchange = ()=>{
-        const target = settings.config.environments.find((v)=>v.id === env.value);
-        if (!target) return;
-        element('handoff-workspace').value = target.workspaces[0] || '';
-        updateHandoffModel();
-    };
-    element('handoff-engine').onchange = updateHandoffModel;
-}
-function updateHandoffModel() {
-    const env = settings.config.environments.find((v)=>v.id === element('handoff-environment').value);
-    if (!env) return;
-    const engine = element('handoff-engine').value;
-    element('handoff-model').value = engineDefaultModel(env, engine);
-}
-async function loadHandoffPreview() {
-    const source = handoffPreviewSource;
-    if (!source) return;
-    const status = element('handoff-preview-status'), pre = element('handoff-preview'), submit = button('handoff-submit');
-    submit.disabled = true;
-    status.textContent = '正在生成本地脱敏预览…';
-    pre.classList.add('hidden');
-    element('handoff-error').textContent = '';
-    try {
-        const mode = element('handoff-context-mode').value;
-        const p = await api('tasks/' + source + '/continuation/preview?mode=' + encodeURIComponent(mode));
-        if (source !== handoffPreviewSource) return;
-        handoffPreviewReady = true;
-        status.textContent = `将转交 ${p.transferred_runs} 条对话、${p.transferred_knowledge} 条知识${p.context_truncated ? '（已截断）' : ''}。请检查下面内容后确认。`;
-        pre.textContent = p.context;
-        pre.classList.remove('hidden');
-        submit.disabled = false;
-    } catch (e) {
-        handoffPreviewReady = false;
-        status.textContent = '无法生成预览';
-        element('handoff-error').textContent = e.message;
-    }
-}
-async function openHandoff(id = chosen) {
-    if (!id || !detail) return;
-    ensureHandoffDialog();
-    handoffPreviewSource = id;
-    handoffPreviewReady = false;
-    const env = element('handoff-environment');
-    env.innerHTML = settings.config.environments.map((v)=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');
-    env.value = detail.task.environment?.id || settings.config.default_environment;
-    element('handoff-engine').value = detail.task.engine || 'codex';
-    element('handoff-workspace').value = detail.task.workspace || '';
-    element('handoff-model').value = detail.task.model || '';
-    element('handoff-message').value = '请先检查当前工作区，再根据历史上下文继续完成任务。';
-    element('handoff-dialog').showModal();
-    await loadHandoffPreview();
-}
-async function submitHandoff() {
-    if (!handoffPreviewSource || !handoffPreviewReady) return;
-    const engine = element('handoff-engine').value, mode = modeForPermission(createPermission, engine);
-    if (!mode || !modeSupportsEngine(mode, engine)) {
-        element('handoff-error').textContent = '当前权限模式不适用于目标工具，请调整设置后重试。';
-        return;
-    }
-    const submit = button('handoff-submit');
-    submit.disabled = true;
-    try {
-        const result = await api('tasks/' + handoffPreviewSource + '/handoff', 'POST', {
-            confirm: true,
-            environment_id: element('handoff-environment').value,
-            engine,
-            workspace: element('handoff-workspace').value,
-            model: element('handoff-model').value,
-            reasoning_effort: '',
-            mode_id: mode.id,
-            message: element('handoff-message').value,
-            context_mode: element('handoff-context-mode').value
-        });
-        element('handoff-dialog').close();
-        if (result.task) {
-            tasks.unshift(result.task);
-            await choose(result.task.id);
-            notify('已创建新的执行路线，原任务保持不变。');
-        }
-    } catch (e) {
-        element('handoff-error').textContent = e.message;
-        submit.disabled = false;
     }
 }
 async function api(path, method = 'GET', data, signal) {
@@ -6998,11 +7136,6 @@ function renderSessionBanner() {
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
     const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
     const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
-    const info = button('session-info-open');
-    info.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
-    info.dataset.context = String(taskContext.length > 0);
-    info.textContent = closed ? '会话已结束' : taskContext.length ? '外部指令' : '会话信息';
-    info.title = title;
     element('session-summary').textContent = detail.task.archived ? '任务已归档' : title;
     element('session-location').textContent = [
         detail.task.environment?.name,

@@ -8,6 +8,10 @@ import (
 // Serialize model edits with submit/stop. A running or queued turn keeps its
 // route; idle edits apply through ACP before the next prompt on the same log.
 func (a *App) updateHarnessModel(id string, title, model, effort *string) (Task, error) {
+	return a.updateTaskModel(id, title, model, effort)
+}
+
+func (a *App) updateTaskModel(id string, title, model, effort *string) (Task, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	task, err := a.store.task(id)
@@ -35,7 +39,7 @@ func (a *App) updateHarnessModel(id string, title, model, effort *string) (Task,
 	}
 	if model != nil {
 		selected := strings.TrimSpace(*model)
-		if len(selected) > 120 || strings.ContainsAny(selected, "\r\n") {
+		if len(selected) > 120 || strings.ContainsAny(selected, "\x00\r\n") {
 			return Task{}, errors.New("模型名称无效")
 		}
 		if selected != task.Model {

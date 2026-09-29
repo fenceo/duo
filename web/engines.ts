@@ -15,7 +15,7 @@ function engineCredentialLabel(kind:string){return ({native:'继承目标环境�
 function engineProfileActivationMessage(profile?:EngineProfile){
  if(profile?.kind==='env_file')return '引用已选中，但环境文件尚未应用到运行进程；请在目标环境中配置。';
  if(profile?.engine==='deepseek-harness')return profile.kind==='native'?'新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。':'新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
- return '账号/API 配置已切换，下一次运行生效。';
+ return '已设为新任务的默认账号/API；现有任务请通过“切换 AI”更换配置。';
 }
 function detectedEngineStatus(engine:string){
  const target=settings.config.environments.find(e=>e.id===settings.config.default_environment),item=target&&detectedEnvironments.find(x=>sameDetectedEnvironment(x.environment,target));
@@ -27,7 +27,7 @@ function renderEngineCatalog(){
  if(!engineCatalog)return;
  const profiles=engineCatalog.profiles;
  element('engine-catalog').innerHTML=engineCatalog.engines.map(e=>{
-  const rows=profiles.filter(p=>p.engine===e.id).map(p=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind==='native'?'':': '+escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">切换</button></div>`).join('');
+  const rows=profiles.filter(p=>p.engine===e.id).map(p=>`<div class="engine-profile"><span>${escapeHTML(p.name)} · ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}${p.kind==='native'?'':': '+escapeHTML(p.reference)}</code><button type="button" data-engine-activate="${escapeHTML(p.id)}">设为新任务默认</button></div>`).join('');
   const active=Object.entries(engineCatalog!.active_profile).filter(([key])=>key.endsWith(':'+e.id)).map(([,value])=>value);
   return `<article class="engine-card"><header><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.transport)} · ${e.runnable?'可执行':'待接入适配器'}</small></div><span>${active.length?'已配置':'未配置'}</span></header><p>${escapeHTML(e.description)}</p><p class="engine-detected-status">默认环境：${escapeHTML(detectedEngineStatus(e.id))}</p><p class="muted">${escapeHTML(e.install_description||'')}</p><div class="engine-actions"><button type="button" data-engine-plan="${escapeHTML(e.id)}">查看安装/配置指南</button>${e.documentation_url?`<a href="${escapeHTML(e.documentation_url)}" target="_blank" rel="noopener noreferrer">官方文档 ↗</a>`:''}</div>${rows||'<p class="muted">还没有账号/API 引用。</p>'}<pre class="engine-plan hidden" data-engine-plan-result="${escapeHTML(e.id)}"></pre></article>`;
  }).join('');
@@ -51,6 +51,6 @@ async function showEnginePlan(engine:string){
 async function saveEngineProfile(){
  const profile:EngineProfile={id:input('engine-profile-id').value.trim(),name:input('engine-profile-name').value.trim(),engine:element<HTMLSelectElement>('engine-profile-engine').value,environment_id:element<HTMLSelectElement>('engine-profile-environment').value,kind:element<HTMLSelectElement>('engine-profile-kind').value,reference:input('engine-profile-reference').value.trim(),created:0,updated:0};
  const epoch=shellEpoch;
- try{await api('engine-profiles','PUT',profile);if(!shellCurrent(epoch))return;invalidateModelCatalogs();element('engine-profile-result').textContent=profile.kind==='env_file'?'已保存引用；环境文件目前仅记录，不会应用到运行进程。':profile.engine==='deepseek-harness'?'已保存；点击对应配置的“切换”后，新建 Harness 任务使用该配置。':'已保存；点击对应配置的“切换”后对下一次运行生效。';await loadEngineSettings()}catch(e){if(shellCurrent(epoch))element('engine-profile-result').textContent=(e as Error).message}
+ try{await api('engine-profiles','PUT',profile);if(!shellCurrent(epoch))return;invalidateModelCatalogs();element('engine-profile-result').textContent=profile.kind==='env_file'?'已保存引用；环境文件目前仅记录，不会应用到运行进程。':profile.engine==='deepseek-harness'?'已保存；设为新任务默认后，新建 Harness 任务使用该配置。':'已保存；可设为新任务默认；现有任务请通过“切换 AI”选择此配置。';await loadEngineSettings()}catch(e){if(shellCurrent(epoch))element('engine-profile-result').textContent=(e as Error).message}
 }
 async function activateEngineProfile(id:string){const epoch=shellEpoch;try{await api(`engine-profiles/${encodeURIComponent(id)}/activate`,'POST',{});if(!shellCurrent(epoch))return;invalidateModelCatalogs();notify(engineProfileActivationMessage(engineCatalog?.profiles.find(p=>p.id===id)));await loadEngineSettings()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}}

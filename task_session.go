@@ -84,7 +84,22 @@ func (a *App) resetSession(id string) (Task, error) {
 		}
 	}
 	stamp := now()
-	if _, err := a.store.Exec("UPDATE tasks SET session='',updated=? WHERE id=?", stamp, id); err != nil {
+	tx, err := a.store.Begin()
+	if err != nil {
+		return Task{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("UPDATE tasks SET session='',updated=? WHERE id=?", stamp, id); err != nil {
+		return Task{}, err
+	}
+	if task.Binding != nil {
+		task.Binding.HistoryID = ""
+		task.Binding.Revision = uid()
+		if err = saveEngineBinding(tx, id, task.Binding); err != nil {
+			return Task{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
 		return Task{}, err
 	}
 	task.Session, task.Updated = "", stamp

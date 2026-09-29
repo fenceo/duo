@@ -13,11 +13,11 @@ import assert from 'node:assert/strict';
 const output=path.resolve('build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
-const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
-const baseRef=process.env.DUO_UI_BASE||'v0.23.1';
+const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','handoff','app','panels'];
+const baseRef=process.env.DUO_UI_BASE||'v0.23.2';
 for(const file of [...sourceFiles.map(name=>name+'.ts'),'style.css','workbench.css']){
  const result=spawnSync('git',['show',baseRef+':web/'+file],{encoding:'utf8',windowsHide:true});
- if(result.status!==0)throw Error('Cannot read UI comparison baseline: '+baseRef);
+ if(result.status!==0&&file!=='handoff.ts')throw Error('Cannot read UI comparison baseline: '+baseRef);
  await fs.writeFile(path.join(baseline,file),result.stdout);
 }
 const browser=['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync);
@@ -32,6 +32,7 @@ cases.push(['live','light',1280,800],['live','dark',390,844],['live','light',320
 cases.push(['questionsfull','light',1280,800],['questionsfull','dark',390,844],['questionsmanyfull','light',320,844]);
 cases.push(['composerlarge','light',1280,800],['composerlarge','dark',390,844]);
 cases.push(['history','light',1280,800],['history','dark',390,844],['filters','light',1280,800],['filtered','dark',320,844]);
+cases.push(['handoff','light',1280,800],['handoff','dark',390,844],['handoff','light',320,844],['handoffbottom','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -57,7 +58,7 @@ for(const [view,theme,width,height] of cases){
  `.replace('VIEW',JSON.stringify(view)),ctx);
  if(view==='long')runInContext(`detail.task.title='很长的任务标题：检查知识记录与对话排版';detail.task.workspace='C:/Projects/a-very-long-workspace/knowledge-and-conversation-layout';renderTask()`,ctx);
  if(view==='closed')runInContext(`detail.task.engine='deepseek-harness';detail.runtime={state:'closed',can_continue:false};renderTask()`,ctx);
- if(view==='menu')document.getElementById('session-info-open').onclick();
+ if(view==='menu')await ctx.openSessionInfo();
  if(view==='home')runInContext("chosen='';detail=null;renderShell();renderList()",ctx);
  if(view==='context')runInContext("taskContext=[{name:'AGENTS.md',label:'项目指令'}];renderSessionBanner()",ctx);
  if(view==='headernarrow')runInContext('appearance.sidebar=420;applyAppearance(appearance)',ctx);
@@ -121,13 +122,26 @@ for(const [view,theme,width,height] of cases){
    if(view==='librarypreview')await ctx.previewLibrary('knowledge:'+entries[0].id);
   }
  }
+ if(view.startsWith('handoff')){
+  runInContext("detail.task.environment=settings.config.environments[0];detail.task.workspace='/fixture/duo';detail.task.binding={revision:'fixture-binding'}",ctx);
+  const snapshot=runInContext('detail',ctx),env=snapshot.task.environment;
+  ctx.api=async route=>{
+   if(route==='engines')return {engines:[],profiles:[{id:'team',name:'团队 API 配置',engine:'codex',environment_id:env.id,kind:'codex_home',reference:'/fixture/team',updated:1}],active_profile:{}};
+   if(route.endsWith('?recent=1'))return snapshot;
+   if(route.includes('/continuation/preview'))return {source_task_id:snapshot.task.id,source_title:snapshot.task.title,source_engine:'codex',transferred_runs:27,transferred_knowledge:6,archive_bytes:102400,fingerprint:'fixture-preview',context_truncated:true,context:'任务目标：继续完成页面优化。已有验证：合成回归通过。未解决：真实模型接续效果尚未验证。完整历史包含 27 轮记录。'};
+   if(route.includes('/models?'))return {models:[{id:'gpt-6-astra',name:'gpt-6-astra'}],source:'本地配置',status:'ready',modified:0};
+   throw Error('Unexpected switch preview request '+route);
+  };
+  await ctx.openHandoff();await new Promise(resolve=>setImmediate(resolve));
+ }
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);
  document.documentElement.dataset.theme=theme;
  if(view.startsWith('questions')&&view.endsWith('full')){const open=document.createElement('script');open.textContent="window.addEventListener('load',()=>{const d=document.getElementById('codex-requests-dialog');d.removeAttribute('open');d.showModal()})";document.body.append(open)}
- const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}==='menu'){const dialog=document.getElementById('session-info-dialog');dialog.removeAttribute('open');dialog.showModal()}const ids=['chat-tab','conversation-process','conversation-tools','conversation-history','conversation-older','live-steer','live-interrupt','stop','codex-approvals','preview-answer-option','preview-answer-submit','task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-actions','session-info-open','session-info-dialog','session-info-close','session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu-items','logout','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}==='menu'){const dialog=document.getElementById('session-info-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}.startsWith('handoff')){const dialog=document.getElementById('handoff-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}==='handoffbottom')dialog.scrollTop=dialog.scrollHeight}const ids=['handoff-dialog','handoff-engine','handoff-profile','handoff-model','handoff-mode','handoff-submit','handoff-cancel','handoff-preview-status','chat-tab','conversation-process','conversation-tools','conversation-history','conversation-older','live-steer','live-interrupt','stop','codex-approvals','preview-answer-option','preview-answer-submit','task-title','task-workspace','tabs','note-tab','conversation','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-actions','session-info-open','session-info-dialog','session-info-close','session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu-items','logout','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
+ for(const control of document.querySelectorAll('fieldset'))if(typeof control.disabled==='boolean')control.toggleAttribute('disabled',control.disabled);
  const html=path.join(output,name+'.html');await fs.writeFile(html,document.toString());
  runInContext('authenticated=false;renewShellScope()',ctx);
  try{
@@ -159,7 +173,7 @@ for(const [view,theme,width,height] of cases){
    assert(items.conversation.height>metrics.height*.5,'conversation receives too little vertical space');
   }
   if(width<=760&&['normal','long','closed'].includes(view)){
-   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','session-info-open'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
+   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','task-handoff'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
   }
   if(view==='closed'){
    assert(items['session-recover'].visible&&items['session-recover'].height>=44,'missing accessible closed-session recovery');
@@ -192,8 +206,13 @@ for(const [view,theme,width,height] of cases){
   }
   if(['normal','long','header','headernarrow','appmenu','home','context','create'].includes(view)){
    const controls=['settings-open','theme-toggle','library-open','logout'];
-   if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-info-open');
+   if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','bind-open','scratch-tab');
    for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct header action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
+  }
+  if(view.startsWith('handoff')){
+   const box=items['handoff-dialog'];assert(box.visible&&box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,'engine switch dialog exceeds viewport');assert(box.scrollWidth<=box.clientWidth+1,'engine switch overflows horizontally');
+   for(const id of ['handoff-engine','handoff-profile','handoff-model','handoff-mode']){const b=items[id];assert(b.width>90&&b.x>=box.x&&b.x+b.width<=box.x+box.width,'engine switch field clipped: '+id);if(width<=760)assert(b.height>=44,'engine switch touch field too small: '+id)}
+   if(view==='handoffbottom'||width>760)for(const id of ['handoff-submit','handoff-cancel']){const b=items[id];assert(b.visible&&b.y>=box.y&&b.y+b.height<=box.y+box.height,'engine switch confirmation unavailable: '+id)}
   }
   if(view==='menu'){const b=items['session-info-dialog'];assert(b.visible&&b.y>=0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'session information exceeds viewport')}
   if(view==='createbottom')for(const id of ['library-create','create-submit']){

@@ -2,9 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -38,6 +36,8 @@ FROM task_continuations WHERE target_task_id=?`, target).Scan(&c.TargetTaskID, &
 // Duo. A later confirmation endpoint can submit this text after the user has
 // reviewed it.
 type ContinuationPreview struct {
+	Fingerprint  string `json:"fingerprint"`
+	ArchiveBytes int    `json:"archive_bytes"`
 	SourceTaskID string `json:"source_task_id"`
 	SourceEngine string `json:"source_engine"`
 	SourceTitle  string `json:"source_title"`
@@ -48,10 +48,11 @@ type ContinuationPreview struct {
 }
 
 var (
-	continuationPrivateKey = regexp.MustCompile(`(?is)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----`)
-	continuationCredential = regexp.MustCompile(`(?im)(\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth(?:orization)?|password|secret|private[_ -]?key)\b\s*[:=]\s*)([^\s,;]+)`)
-	continuationBearer     = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}`)
-	continuationToken      = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{16,})\b`)
+	continuationPrivateKey       = regexp.MustCompile(`(?is)-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----`)
+	continuationCredential       = regexp.MustCompile(`(?im)(\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth(?:orization)?|password|secret|private[_ -]?key)\b\s*[:=]\s*)([^\s,;]+)`)
+	continuationBearer           = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}`)
+	continuationToken            = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|xox[baprs]-[A-Za-z0-9-]{16,})\b`)
+	continuationQuotedCredential = regexp.MustCompile(`(?im)(["'](?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|auth(?:orization)?|password|secret|private[_ -]?key)["']\s*:\s*["'])([^"'\r\n]*)(["'])`)
 )
 
 // redactContinuation removes common credentials before a preview is shown or
@@ -61,6 +62,7 @@ func redactContinuation(text string) string {
 	text = continuationPrivateKey.ReplaceAllString(text, "[已隐藏的私钥]")
 	text = continuationBearer.ReplaceAllString(text, "Bearer [已隐藏]")
 	text = continuationToken.ReplaceAllString(text, "[已隐藏的令牌]")
+	text = continuationQuotedCredential.ReplaceAllString(text, "$1[已隐藏]$3")
 	text = continuationCredential.ReplaceAllString(text, "$1[已隐藏]")
 	return redactWorkspaceText(text)
 }
@@ -92,78 +94,10 @@ func (a *App) continuationPreview(id string, modes ...string) (ContinuationPrevi
 	if err != nil {
 		return ContinuationPreview{}, err
 	}
-	runs, err := a.store.runs(id)
-	if err != nil {
-		return ContinuationPreview{}, err
-	}
-	knowledge, err := a.store.knowledgeList(id)
-	if err != nil {
-		return ContinuationPreview{}, err
-	}
-	mode := "recent"
-	if len(modes) > 0 && modes[0] != "" {
+	mode := "full"
+	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	if mode != "recent" && mode != "summary" && mode != "full" {
-		return ContinuationPreview{}, fmt.Errorf("上下文范围无效")
-	}
-	completed := make([]Run, 0, len(runs))
-	for _, run := range runs {
-		if run.Status == "done" && run.Kind == "chat" {
-			completed = append(completed, run)
-		}
-	}
-	limit := 8
-	if mode == "full" {
-		limit = 20
-	}
-	if mode == "summary" {
-		completed = nil
-	} else if len(completed) > limit {
-		completed = completed[len(completed)-limit:]
-	}
-	filtered := knowledge[:0]
-	for _, item := range knowledge {
-		if knowledgeState(item.Status) == "stale" || mode != "full" && knowledgeState(item.Status) != "verified" {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	knowledge = filtered
-	clipped := false
-	sort.SliceStable(knowledge, func(i, j int) bool {
-		if knowledgeState(knowledge[i].Status) != knowledgeState(knowledge[j].Status) {
-			return knowledgeState(knowledge[i].Status) == "verified"
-		}
-		return knowledge[i].Updated > knowledge[j].Updated
-	})
-	if len(knowledge) > 12 {
-		knowledge = knowledge[:12]
-		clipped = true
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "你正在接手 Duo 任务“%s”。原执行引擎：%s。\n", redactContinuation(task.Title), continuationEngineLabel(task.Engine))
-	b.WriteString("以下内容是历史快照，可能不完整，也不代表目标引擎已经执行过其中的命令或修改。请先检查当前工作区状态，再继续任务。\n")
-	if len(knowledge) > 0 {
-		b.WriteString("\n## 已沉淀知识\n")
-		for _, item := range knowledge {
-			content, cut := clipContinuation(redactContinuation(item.Content), 2400)
-			clipped = clipped || cut
-			fmt.Fprintf(&b, "\n### %s（%s）\n%s\n", redactContinuation(item.Title), knowledgeStateLabel(item.Status), content)
-		}
-	}
-	if len(completed) > 0 {
-		b.WriteString("\n## 最近对话与执行结果\n")
-		for _, run := range completed {
-			input, inputCut := clipContinuation(redactContinuation(run.Input), 1800)
-			result, resultCut := clipContinuation(redactContinuation(run.Result), 3000)
-			clipped = clipped || inputCut || resultCut
-			if run.Error != "" {
-				result = strings.TrimSpace(result + "\n错误：" + redactContinuation(run.Error))
-			}
-			fmt.Fprintf(&b, "\n### 用户要求\n%s\n\n### 原引擎结果（%s）\n%s\n", input, run.Status, result)
-		}
-	}
-	context, truncated := clipContinuation(redactContinuation(b.String()), 24000)
-	return ContinuationPreview{SourceTaskID: task.ID, SourceEngine: task.Engine, SourceTitle: task.Title, Runs: len(completed), Knowledge: len(knowledge), Context: context, Truncated: truncated || clipped}, nil
+	preview, _, err := a.buildContinuation(task, mode)
+	return preview, err
 }

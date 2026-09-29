@@ -184,7 +184,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		id := r.PathValue("id")
-		task, e := s.app.store.task(id)
+		_, e := s.app.store.task(id)
 		if e != nil {
 			fail(w, 404, "任务不存在")
 			return
@@ -193,8 +193,8 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, "没有需要修改的内容")
 			return
 		}
-		if task.Engine == "deepseek-harness" && (v.Model != nil || v.ReasoningEffort != nil) {
-			updated, err := s.app.updateHarnessModel(id, v.Title, v.Model, v.ReasoningEffort)
+		if v.Model != nil || v.ReasoningEffort != nil {
+			updated, err := s.app.updateTaskModel(id, v.Title, v.Model, v.ReasoningEffort)
 			if err != nil {
 				fail(w, 409, err.Error())
 				return
@@ -209,33 +209,6 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			if _, e = s.app.store.Exec("UPDATE tasks SET title=?,updated=? WHERE id=?", title, now(), id); e != nil {
-				fail(w, 500, e.Error())
-				return
-			}
-		}
-		if v.Model != nil {
-			model := strings.TrimSpace(*v.Model)
-			if len(model) > 120 || strings.ContainsAny(model, "\r\n") {
-				fail(w, 400, "模型名称无效")
-				return
-			}
-			if _, e = s.app.store.Exec("UPDATE tasks SET model=?,updated=? WHERE id=?", model, now(), id); e != nil {
-				fail(w, 500, e.Error())
-				return
-			}
-		}
-		if v.ReasoningEffort != nil {
-			reasoning := strings.TrimSpace(*v.ReasoningEffort)
-			if !validEngineReasoning(task.Engine, reasoning) {
-				fail(w, 400, "此 AI 工具不支持所选推理强度")
-				return
-			}
-			if _, e = s.app.store.Exec("UPDATE tasks SET updated=? WHERE id=?", now(), id); e != nil {
-				fail(w, 500, e.Error())
-				return
-			}
-			// Older tasks predate task_execution rows, so create the row on demand.
-			if _, e = s.app.store.Exec("INSERT INTO task_execution(task_id,reasoning_effort,engine) VALUES(?,?,?) ON CONFLICT(task_id) DO UPDATE SET reasoning_effort=excluded.reasoning_effort", id, reasoning, task.Engine); e != nil {
 				fail(w, 500, e.Error())
 				return
 			}
@@ -356,6 +329,30 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		profileEnv := s.app.activeEngineEnvironment(Task{Engine: engine, Environment: &env})
+		if taskID := r.URL.Query().Get("task_id"); taskID != "" {
+			task, err := s.app.store.task(taskID)
+			if err != nil || task.Environment == nil || task.Environment.ID != env.ID || task.Engine != engine {
+				fail(w, http.StatusBadRequest, "任务与模型目录目标不匹配")
+				return
+			}
+			if task.Binding == nil && task.Session != "" {
+				fail(w, http.StatusConflict, "旧会话未记录账号，请先通过切换 AI 确认配置")
+				return
+			}
+			env = *task.Environment
+			env.Workspaces = []string{task.Workspace}
+			profileEnv = s.app.activeEngineEnvironment(task)
+		} else if r.URL.Query().Has("profile_id") {
+			profile, err := s.app.store.selectedEngineProfile(env.ID, engine, r.URL.Query().Get("profile_id"))
+			if err != nil {
+				fail(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			profileEnv = nil
+			if profile != nil {
+				profileEnv = engineProfileEnv(*profile)
+			}
+		}
 		models, e := modelsForEngine(r.Context(), env, engine, profileEnv)
 		if e != nil {
 			fail(w, 400, e.Error())

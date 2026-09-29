@@ -6,9 +6,9 @@ import (
 )
 
 func TestRedactContinuation(t *testing.T) {
-	input := "api_key=abc123 password: hunter2 Authorization: Bearer abcdefghijklmnop sk-abcdefghijklmnopqr\n-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
+	input := "api_key=abc123 password: hunter2 Authorization: Bearer abcdefghijklmnop sk-abcdefghijklmnopqr\n-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n{\"api_key\":\"json-credential\",\"password\":\"json-password\"}"
 	got := redactContinuation(input)
-	for _, secret := range []string{"abc123", "hunter2", "abcdefghijklmnop", "sk-abcdefghijklmnopqr", "BEGIN PRIVATE KEY", "secret"} {
+	for _, secret := range []string{"abc123", "hunter2", "abcdefghijklmnop", "sk-abcdefghijklmnopqr", "BEGIN PRIVATE KEY", "secret", "json-credential", "json-password"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("redacted output contains %q: %s", secret, got)
 		}

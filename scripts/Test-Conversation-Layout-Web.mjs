@@ -12,11 +12,15 @@ assert.equal(node('library-create').parentElement,node('create-submit').parentEl
 assert.equal(node('message').previousElementSibling?.id,'composer-resizer','the only element above the draft is its thin resize edge');
 assert(node('task-title').parentElement.classList.contains('task-identity'));
 assert.equal(node('task-title').parentElement,node('task-workspace').parentElement);
-for(const id of ['session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-info-open']){
+for(const id of ['session-reset','task-handoff','bind-open','scratch-tab']){
   assert.equal(node(id).parentElement,node('task-actions'));
   assert.equal(node(id).closest('details'),null,'session actions are directly accessible');
   assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
 }
+assert.equal(node('task-link-copy'),null,'duplicate link action is removed from the header');
+assert.equal(node('session-info-open'),null,'diagnostics do not occupy a header button');
+assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="session-info"/);
+assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="copy-link"/);
 assert(!node('app-menu')&&!node('task-session-menu'),'header actions have no menu gate');
 for(const id of ['settings-open','theme-toggle','library-open','logout']){
  assert.equal(node(id).parentElement,node('app-menu-items'));
@@ -33,14 +37,14 @@ assert(node('session-banner').classList.contains('hidden'),'ordinary sessions do
 assert(node('run-status').classList.contains('hidden'),'idle status does not reserve a second composer heading');
 assert(!node('session-reset').classList.contains('hidden'));
 assert.equal(node('session-reset').disabled,false);
-const reset=node('session-reset');node('session-info-open').onclick();
+const reset=node('session-reset');await ctx.openSessionInfo();
 ctx.renderSessionBanner();
 assert.equal(node('session-info-dialog').open,true,'polling must not close session information');
 assert.equal(node('session-reset'),reset,'polling must retain focused action nodes');
 node('session-info-close').onclick();assert(!node('session-info-dialog').open);
 runInContext(`taskContext=[{name:'<img src=x onerror=alert(1)>',label:'外部指令'}];renderSessionBanner()`,ctx);
 assert.equal(node('session-context').querySelector('img'),null,'context names remain escaped text');
-assert.match(node('session-info-open').textContent,/指令/,'external instructions stay discoverable');
+assert.match(node('session-context').textContent,/外部 AI 指令/,'external instructions stay discoverable in task information');
 runInContext(`detail.runs.push({id:'busy',status:'running'});renderTask()`,ctx);
 assert.equal(node('session-reset').disabled,true,'cannot reset a running session');
 assert(!node('run-status').classList.contains('hidden'),'execution status remains visible');

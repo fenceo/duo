@@ -118,6 +118,10 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 		return Task{}, errors.New("模型名称无效")
 	}
 	t := Task{Engine: engine, ReasoningEffort: reasoning, Environment: &env, ID: uid(), Title: title, Workspace: workspace, Model: model, Status: "idle", Created: now(), Updated: now()}
+	t.Binding, err = a.store.defaultEngineBinding(t)
+	if err != nil {
+		return Task{}, err
+	}
 	tx, e := a.store.Begin()
 	if e != nil {
 		return Task{}, e
@@ -143,6 +147,9 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 			return Task{}, e
 		}
 		t.Mode = &selected
+	}
+	if e = saveEngineBinding(tx, t.ID, t.Binding); e != nil {
+		return Task{}, e
 	}
 	if e = tx.Commit(); e != nil {
 		return Task{}, e
@@ -193,6 +200,15 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	}
 	if task.Archived || task.Deleted {
 		return Run{}, errors.New("任务已归档，请先在网页恢复任务")
+	}
+	if task.Binding == nil {
+		if task.Session != "" {
+			return Run{}, errors.New("旧会话未记录账号/API 配置，请先点击“切换 AI”确认配置并接续历史")
+		}
+		task.Binding, e = a.store.defaultEngineBinding(task)
+		if e != nil {
+			return Run{}, e
+		}
 	}
 	mode, e := a.store.resolveMode(options.ModeID, task.Mode)
 	if e != nil {
@@ -245,6 +261,12 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	defer tx.Rollback()
 	_, e = tx.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES(?,?,?,?,?,?,?)", r.ID, id, input, kind, source, r.Status, r.Created)
 	if e != nil {
+		return r, e
+	}
+	if e = saveEngineBinding(tx, id, task.Binding); e != nil {
+		return r, e
+	}
+	if e = saveRunExecution(tx, r.ID, task); e != nil {
 		return r, e
 	}
 	_, e = tx.Exec("INSERT INTO events(task_id,run_id,kind,text,created) VALUES(?,?,?,?,?)", id, r.ID, "user", input, r.Created)
@@ -328,6 +350,9 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		_, _ = a.store.Exec("INSERT INTO run_metrics(run_id,started) VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET started=excluded.started", r.ID, now())
 		task, err := a.store.task(id)
 		if err == nil {
+			err = a.store.applyRunExecution(r.ID, &task)
+		}
+		if err == nil {
 			err = a.store.hydrateRun(&r)
 			task.Mode = r.Mode
 			// Summaries must not inherit a full-access or hardware-enabled mode.
@@ -340,6 +365,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			err = errors.New("任务缺少固定的执行环境，请检查迁移结果")
 		}
 		cleanupAttachments := func() {}
+		handoffInput := ""
 		if err == nil {
 			cfg := runtimeConfig(a.config.get(), *task.Environment)
 			cfg.EngineEnv = a.activeEngineEnvironment(task)
@@ -348,12 +374,25 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			if err == nil {
 				cleanupAttachments = stagedCleanup
 			}
+			if err == nil && r.Kind == "chat" {
+				var historyFiles []RuntimeAttachment
+				var historyCleanup func()
+				handoffInput, historyFiles, historyCleanup, err = a.stageContinuation(runCtx, task)
+				if err == nil {
+					task.Files = append(task.Files, historyFiles...)
+					attachmentCleanup := cleanupAttachments
+					cleanupAttachments = func() { historyCleanup(); attachmentCleanup() }
+				}
+			}
 			var release = func() {}
 			if err == nil && (task.Mode == nil || task.Mode.Permission != "read") {
 				cfg.HardwareAI, release, err = a.prepareHardwareAI(runCtx, task, r.ID, cfg)
 			}
 			if err == nil {
 				input := r.Input
+				if handoffInput != "" {
+					input = handoffInput + "\n\n本轮用户要求：\n" + input
+				}
 				if r.Kind == "chat" {
 					contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
 					if recallErr != nil {

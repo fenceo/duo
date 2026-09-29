@@ -147,7 +147,18 @@ func attachmentPathInStage(root, value string) bool {
 
 func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) ([]RuntimeAttachment, func(), error) {
 	result := []RuntimeAttachment{}
-	if len(files) == 0 {
+	for _, f := range files {
+		var data []byte
+		if err := a.store.QueryRow("SELECT data FROM attachments WHERE id=? AND task_id=?", f.ID, t.ID).Scan(&data); err != nil {
+			return nil, nil, err
+		}
+		result = append(result, RuntimeAttachment{Attachment: f, Data: data})
+	}
+	return a.stageRuntimeFiles(ctx, t, result)
+}
+
+func (a *App) stageRuntimeFiles(ctx context.Context, t Task, result []RuntimeAttachment) ([]RuntimeAttachment, func(), error) {
+	if len(result) == 0 {
 		return result, func() {}, nil
 	}
 	cleanup := func() {}
@@ -158,14 +169,10 @@ func (a *App) stageAttachments(ctx context.Context, t Task, files []Attachment) 
 		}
 	}()
 	var payload []map[string]string
-	for _, f := range files {
-		var data []byte
-		if err := a.store.QueryRow("SELECT data FROM attachments WHERE id=? AND task_id=?", f.ID, t.ID).Scan(&data); err != nil {
-			return nil, nil, err
-		}
-		result = append(result, RuntimeAttachment{Attachment: f, Data: data})
-		payload = append(payload, map[string]string{"name": attachmentFileName(f), "data": base64.StdEncoding.EncodeToString(data)})
+	for _, f := range result {
+		payload = append(payload, map[string]string{"name": attachmentFileName(f.Attachment), "data": base64.StdEncoding.EncodeToString(f.Data)})
 	}
+
 	if t.Environment.Type == "windows" {
 		base := filepath.Join(filepath.Dir(a.config.path), "attachments")
 		if err := os.MkdirAll(base, 0700); err != nil {

@@ -62,6 +62,14 @@ try{
  assert.equal((await fetch(base+'/api/tasks/'+task.id+'?recent=1&after=invalid',{headers})).status,400,'invalid history cursors are rejected');
  assert.deepEqual(await fetch(base+'/api/tasks/'+task.id+'/knowledge?summary=1',{headers}).then(r=>r.json()),[],'knowledge metadata can load independently');
  assert.equal((await fetch(base+'/api/tasks/'+task.id,{method:'PATCH',headers,body:JSON.stringify({model:'other-model'})})).status,200,'idle Harness task can change model');
+ const handoffPreview=await fetch(base+'/api/tasks/'+task.id+'/continuation/preview?mode=full',{headers}).then(r=>r.json());
+ assert(handoffPreview.fingerprint&&handoffPreview.archive_bytes>0);
+ const switchBody={confirm:true,expected_binding_revision:task.binding.revision,environment_id:task.environment.id,workspace:task.workspace,engine:'codex',profile_id:'',model:'synthetic-no-call',mode_id:'work',context_mode:'full',fingerprint:handoffPreview.fingerprint};
+ const switched=await fetch(base+'/api/tasks/'+task.id+'/handoff',{method:'POST',headers,body:JSON.stringify(switchBody)});assert.equal(switched.status,200);
+ const switchResult=await switched.json();assert.equal(switchResult.task.id,task.id);assert.equal(switchResult.task.engine,'codex');assert.equal(switchResult.task.session,'');assert(switchResult.task.binding.history_id);
+ assert.equal((await fetch(base+'/api/tasks/'+task.id+'/handoff',{method:'POST',headers,body:JSON.stringify(switchBody)})).status,200,'switch retries are idempotent');
+ const unchanged=await fetch(base+'/api/tasks/'+task.id+'?recent=1',{headers}).then(r=>r.json());assert.deepEqual(unchanged.runs,[],'switching never starts a paid turn');
+ const archive=await fetch(base+'/api/tasks/'+task.id+'/continuation/archive?mode=full',{headers});assert.equal(archive.status,200);assert.match(archive.headers.get('content-type'),/text\/plain/);
  const noCSRF=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(noCSRF.status,403);
  const expired=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
@@ -75,6 +83,7 @@ try{
  assert.ok(source.includes('settings-knowledge')&&source.includes('vault-document-directory')&&source.includes('library-manage-task'),'built assets include central knowledge settings and task management navigation');
  assert.ok(source.includes('automatic-organize')&&source.includes('library-layer')&&source.includes('composer-resizer'),'built assets include document layers, automatic organization and composer resizing');
  assert.ok(source.includes('conversation-older')&&!source.includes('id="conversation-all"'),'built conversation includes lazy history without the trajectory preset');
+ assert.ok(source.includes('handoff-profile')&&source.includes('完整历史文本 + 接续摘要')&&!source.includes('id="task-link-copy"')&&!source.includes('id="session-info-open"'),'built switch UI and compact header are embedded');
  console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
 }finally{
  child.stdin.end();

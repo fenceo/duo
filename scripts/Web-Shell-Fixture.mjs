@@ -7,7 +7,7 @@ export async function createWebShellFixture(webRoot=new URL('../web/',import.met
 // Run every production feature initializer against a real connected/detached
 // DOM implementation. HTTP is a synthetic in-memory fixture; no browser, CLI,
 // credentials, model turn, storage directory or external network is accessed.
-const files=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','app','panels'];
+const files=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','engines','handoff','app','panels'];
 const source=(await Promise.all(files.map(name=>readFile(new URL(name+'.ts',webRoot),'utf8')))).join('\n');
 const {document,window}=parseHTML('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><div id="notice"></div></body></html>');
 // linkedom implements real node attachment and selectors, but intentionally
@@ -27,7 +27,7 @@ const ctx=createContext({
  MutationObserver:class {observe(){}disconnect(){}},setInterval:(callback,ms)=>{intervals.set(++intervalID,{callback,ms});return intervalID},clearInterval:id=>intervals.delete(id),setTimeout:()=>0,clearTimeout(){},requestAnimationFrame:()=>0,
  fetch:async(path,options)=>{
   requests.push({path,method:options?.method||'GET'});
-  const responses={'/api/auth':{authenticated:true,csrf:'synthetic-token',version:'0.23.2'},'/api/tasks':[], '/api/settings':{config:configuration,data_dir:'C:/fixture/data',secret_configured:false,feishu_status:'disabled',chat:''}, '/api/workbench':{modes:[{id:'work',name:'Work',permission:'workspace',approval:'request',allow_network:true,prompt:''},{id:'codex:auto',name:'Auto',permission:'workspace',approval:'auto',allow_network:true,prompt:''}],commands:[]},'/api/sticky':{revision:0,color:'neutral',items:[]},'/api/scratch':[], '/api/library/automatic':{capture:true,recall:true},'/api/library/vault':{config:{enabled:false,directory:'',include_runs:false,include_automatic:false},report:{conflicts:[],warnings:[]},document_directory:''}};
+  const responses={'/api/auth':{authenticated:true,csrf:'synthetic-token',version:'0.24.0'},'/api/tasks':[], '/api/settings':{config:configuration,data_dir:'C:/fixture/data',secret_configured:false,feishu_status:'disabled',chat:''}, '/api/workbench':{modes:[{id:'work',name:'Work',permission:'workspace',approval:'request',allow_network:true,prompt:''},{id:'codex:auto',name:'Auto',permission:'workspace',approval:'auto',allow_network:true,prompt:''}],commands:[]},'/api/sticky':{revision:0,color:'neutral',items:[]},'/api/scratch':[], '/api/library/automatic':{capture:true,recall:true},'/api/library/vault':{config:{enabled:false,directory:'',include_runs:false,include_automatic:false},report:{conflicts:[],warnings:[]},document_directory:''}};
   if(!(path in responses))throw new Error('Unexpected fixture request: '+path);
   return {ok:true,status:200,json:async()=>structuredClone(responses[path])};
  }

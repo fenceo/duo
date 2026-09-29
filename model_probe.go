@@ -25,6 +25,8 @@ const (
 const modelProbePrompt = "Reply with exactly OK. Do not read files, call tools, use the network, or modify anything."
 
 type ModelProbeRequest struct {
+	TaskID            string   `json:"task_id,omitempty"`
+	BindingRevision   string   `json:"binding_revision,omitempty"`
 	Engine            string   `json:"engine"`
 	Workspace         string   `json:"workspace"`
 	Models            []string `json:"models"`
@@ -220,12 +222,28 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profileID := s.app.store.activeEngineProfile(env.ID, request.Engine)
+	var boundTask *Task
+	if request.TaskID != "" {
+		task, err := s.app.store.task(request.TaskID)
+		if err != nil || task.Binding == nil || task.Binding.Revision != request.BindingRevision || task.Environment == nil || task.Environment.ID != env.ID || task.Engine != request.Engine || task.Workspace != request.Workspace {
+			fail(w, http.StatusConflict, "任务的账号/API 配置已改变，请重读列表后确认测试")
+			return
+		}
+		boundTask = &task
+		env = *task.Environment
+		profileID = ""
+		if task.Binding.Profile != nil {
+			profileID = task.Binding.Profile.ID
+		}
+	}
 	if request.ExpectedProfileID != nil && *request.ExpectedProfileID != profileID {
 		fail(w, http.StatusConflict, "账号/API 配置已变化，请重新读取模型列表并确认测试")
 		return
 	}
 	runtime := runtimeConfig(c, env)
-	if profileID != "" {
+	if boundTask != nil {
+		runtime.EngineEnv = s.app.activeEngineEnvironment(*boundTask)
+	} else if profileID != "" {
 		found := false
 		for _, profile := range s.app.store.engineProfiles() {
 			if profile.ID == profileID && profile.Engine == request.Engine && profile.EnvironmentID == env.ID {

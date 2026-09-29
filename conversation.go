@@ -28,8 +28,9 @@ type conversationWindow struct {
 }
 
 const conversationRunSelect = `SELECT r.id,r.task_id,r.input,r.kind,r.source,r.status,r.result,r.error,r.created,r.finished,
-COALESCE(m.started,0),COALESCE(m.usage,''),COALESCE(o.mode,''),COALESCE(o.attachments,'')
-FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN run_options o ON o.run_id=r.id `
+COALESCE(m.started,0),COALESCE(m.usage,''),COALESCE(o.mode,''),COALESCE(o.attachments,''),
+COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
+FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN run_options o ON o.run_id=r.id LEFT JOIN run_execution x ON x.run_id=r.id `
 
 // Tool output is fetched in full only when its disclosure is opened. Neither
 // display preferences nor these read-only projections alter the stored record.

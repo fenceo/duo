@@ -111,7 +111,7 @@ function addConversationEvent(event:EventRecord){
 function conversationEventNode(item:ConversationItem):HTMLElement{
  if(item.node)return item.node;
  const ev=item.event,node=document.createElement('div');node.dataset.event=String(ev.seq);
- if(ev.kind==='user'||ev.kind==='assistant'){node.className='message '+ev.kind;node.innerHTML='<div class="label">'+(ev.kind==='user'?'你':taskEngineName(detail?.task.engine))+'</div><div class="content">'+(ev.kind==='user'?escapeHTML(ev.text):markdown(ev.text))+'</div>'}
+ if(ev.kind==='user'||ev.kind==='assistant'){node.className='message '+ev.kind;node.innerHTML='<div class="label">'+(ev.kind==='user'?'你':taskEngineName(detail?.runs.find(r=>r.id===ev.run_id)?.engine||detail?.task.engine))+'</div><div class="content">'+(ev.kind==='user'?escapeHTML(ev.text):markdown(ev.text))+'</div>'}
  else if(ev.kind==='tool'||ev.kind==='log'){
   node.className='log';const disclosure=document.createElement('details'),summary=document.createElement('summary');
   const newline=ev.text.indexOf('\n');summary.textContent=ev.text.slice(0,newline<0?200:Math.min(newline,200));disclosure.append(summary);node.append(disclosure);
@@ -198,7 +198,7 @@ function applyConversationFilter(followBottom=true){
   }
   reconcileConversationNodes(turn.input,inputs);reconcileConversationNodes(turn.output,outputs);reconcileConversationNodes(turn.body,body);
   if(!inputs.length&&run?.input){const node=document.createElement('div');node.className='message user';node.innerHTML='<div class="content">'+escapeHTML(run.input)+'</div>';turn.input.append(node)}
-  if(run?.status==='done'&&run.result&&!final.size){const node=document.createElement('div');node.className='message assistant';node.innerHTML='<div class="label">'+taskEngineName(detail?.task.engine)+'</div><div class="content">'+markdown(run.result)+'</div>';turn.output.append(node)}
+  if(run?.status==='done'&&run.result&&!final.size){const node=document.createElement('div');node.className='message assistant';node.innerHTML='<div class="label">'+taskEngineName(run.engine||detail?.task.engine)+'</div><div class="content">'+markdown(run.result)+'</div>';turn.output.append(node)}
   if(turn.root.parentElement!==container)container.append(turn.root);
   turn.process.classList.toggle('hidden',!records.length&&!(remote&&(conversationFilter.tools||conversationFilter.process)));
   const label=waiting?'等待你处理':run?.status==='running'?'正在执行':run?.status==='queued'?'排队中':'执行记录';

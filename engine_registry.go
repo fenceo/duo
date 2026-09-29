@@ -283,6 +283,12 @@ func engineProfileEnv(profile EngineCredentialProfile) map[string]string {
 }
 
 func (a *App) activeEngineEnvironment(task Task) map[string]string {
+	if task.Binding != nil {
+		if task.Binding.Profile == nil {
+			return nil
+		}
+		return engineProfileEnv(*task.Binding.Profile)
+	}
 	if task.Environment == nil {
 		return nil
 	}

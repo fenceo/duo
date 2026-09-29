@@ -1,6 +1,6 @@
 function taskItemMenu(t:Task):string{
  const busy=!t.archived&&(t.status==='running'||t.status==='queued');
- return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换工具继续</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
+ return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items:Task[]):string{
  return [...items].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated-a.updated).map(t=>{
@@ -29,14 +29,12 @@ function installLayout(){
  tabs.append(element('note-tab'));
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';
  const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);element('task-model-button').title='本任务使用的 AI 工具、模型和推理强度';
- element('bind-open').insertAdjacentHTML('beforebegin','<button id="task-handoff" title="把已保存的对话和知识交给新的 AI 工具">切换继续</button><button id="task-link-copy" title="复制当前 Duo 任务链接">复制链接</button>');button('task-handoff').onclick=()=>void openHandoff();button('task-link-copy').onclick=()=>void copyTaskLink();
+ element('bind-open').insertAdjacentHTML('beforebegin','<button id="task-handoff" title="切换引擎、账号/API 和模型，接续当前任务">切换 AI</button>');button('task-handoff').onclick=()=>void openHandoff();
  const sessionActions=element('task-actions');sessionActions.classList.add('header-session-actions');sessionActions.setAttribute('role','group');sessionActions.setAttribute('aria-label','当前会话操作');
  sessionActions.insertAdjacentHTML('afterbegin','<button type="button" id="session-reset" class="hidden">新建会话</button>');
- for(const id of ['task-handoff','task-link-copy','bind-open','scratch-tab'])sessionActions.append(element(id));
- sessionActions.insertAdjacentHTML('beforeend','<button type="button" id="session-info-open" aria-haspopup="dialog">会话信息</button>');
+ for(const id of ['task-handoff','bind-open','scratch-tab'])sessionActions.append(element(id));
  element('root').insertAdjacentHTML('beforeend','<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
  button('scratch-tab').textContent='本任务待办';button('session-reset').onclick=()=>void resetSession();
- button('session-info-open').onclick=()=>{if(detail){renderSessionBanner();element<HTMLDialogElement>('session-info-dialog').showModal()}};
  button('session-info-close').onclick=()=>element<HTMLDialogElement>('session-info-dialog').close();
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
  element('composer-wrap').querySelector('.footnote')!.remove();
@@ -49,7 +47,7 @@ function installLayout(){
    menu.removeAttribute('open');
    if(action.disabled)return;
    const id=action.dataset.taskId||'',kind=action.dataset.taskAction;
-   if(kind==='handoff')void openHandoff(id);else if(kind==='copy-link')void copyTaskLink(id);else if(kind==='rename')void openTaskRename(id);else if(kind==='pin')void changeTaskPreference('pinned',id);else if(kind==='archive')void changeTaskPreference('archived',id);else if(kind==='trash')void trashCurrentTask(id);
+   if(kind==='handoff')void openHandoff(id);else if(kind==='session-info')void openSessionInfo(id);else if(kind==='copy-link')void copyTaskLink(id);else if(kind==='rename')void openTaskRename(id);else if(kind==='pin')void changeTaskPreference('pinned',id);else if(kind==='archive')void changeTaskPreference('archived',id);else if(kind==='trash')void trashCurrentTask(id);
    return;
   }
  });
@@ -71,3 +69,5 @@ function installLayout(){
 }
 // Apply before authentication to avoid a dark login screen flashing first.
 try{document.documentElement.dataset.theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{document.documentElement.dataset.theme='light'}
+
+async function openSessionInfo(id=chosen){if(!id)return;if(chosen!==id)await choose(id);if(chosen===id&&detail){renderSessionBanner();element<HTMLDialogElement>('session-info-dialog').showModal()}}

@@ -1,8 +1,9 @@
 /// <reference path="./codex-approvals.ts" />
+/// <reference path="./handoff.ts" />
 type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
 type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
-type Task={mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
-type Run={input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
+type Task={binding?:{revision:string;profile?:EngineProfile;history_id?:string};mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
+type Run={engine?:string;model?:string;input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number;truncated?:boolean};
 type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
 type LiveInteraction={run_id:string;can_steer:boolean;can_interrupt:boolean;steering:boolean;interrupting:boolean};
@@ -11,7 +12,6 @@ type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
 type Settings={config:Configuration;data_dir:string;data_switch_supported?:boolean;secret_configured:boolean;feishu_status:string;chat:string};
-type HandoffPreview={source_task_id:string;source_engine:string;source_title:string;transferred_runs:number;transferred_knowledge:number;context:string;context_truncated:boolean};
 const element=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
 const input=(id:string)=>element<HTMLInputElement>(id);
 const button=(id:string)=>element<HTMLButtonElement>(id);
@@ -73,23 +73,7 @@ async function copyTaskLink(id=chosen){
   notify('任务链接已复制；打开后需要在这台 Duo 登录。');
  }catch{notify('复制失败，请手动复制当前地址：'+url)}
 }
-let handoffPreviewSource='',handoffPreviewReady=false;
-function ensureHandoffDialog(){
- if(element('handoff-dialog'))return;
- document.body.insertAdjacentHTML('beforeend',`<dialog id="handoff-dialog"><form id="handoff-form"><h2>切换工具并继续</h2><p>这会创建一个新的执行路线。原任务不会改变；发送给目标引擎的是经过脱敏的知识和对话快照，不包含原生会话或附件。</p><label for="handoff-environment">目标环境</label><select id="handoff-environment"></select><label for="handoff-engine">AI 工具</label><select id="handoff-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="handoff-workspace">工作目录</label><input id="handoff-workspace" required><label for="handoff-model">模型（可留空，沿用目标工具默认）</label><input id="handoff-model" placeholder="目标环境中的模型 ID"><label for="handoff-context-mode">历史范围</label><select id="handoff-context-mode"><option value="recent">已验证知识 + 最近 8 条记录</option><option value="summary">仅已验证知识</option><option value="full">最近记录和知识（限长）</option></select><label for="handoff-message">本次继续要求</label><textarea id="handoff-message" rows="4" required>请先检查当前工作区，再根据历史上下文继续完成任务。</textarea><p id="handoff-preview-status" class="muted" role="status">正在读取脱敏预览…</p><pre id="handoff-preview" class="handoff-preview hidden"></pre><p id="handoff-error" class="error"></p><div class="dialog-footer"><button type="button" id="handoff-cancel">取消</button><button type="button" id="handoff-refresh">重新读取预览</button><button class="primary" id="handoff-submit" disabled>确认并开始</button></div></form></dialog>`);
- element('handoff-form').onsubmit=e=>{e.preventDefault();void submitHandoff()};button('handoff-cancel').onclick=()=>element<HTMLDialogElement>('handoff-dialog').close();button('handoff-refresh').onclick=()=>void loadHandoffPreview();element<HTMLSelectElement>('handoff-context-mode').onchange=()=>void loadHandoffPreview();
- const env=element<HTMLSelectElement>('handoff-environment');env.onchange=()=>{const target=settings.config.environments.find(v=>v.id===env.value);if(!target)return;element<HTMLInputElement>('handoff-workspace').value=target.workspaces[0]||'';updateHandoffModel()};element<HTMLSelectElement>('handoff-engine').onchange=updateHandoffModel;
-}
-function updateHandoffModel(){const env=settings.config.environments.find(v=>v.id===element<HTMLSelectElement>('handoff-environment').value);if(!env)return;const engine=element<HTMLSelectElement>('handoff-engine').value;element<HTMLInputElement>('handoff-model').value=engineDefaultModel(env,engine)}
-async function loadHandoffPreview(){
- const source=handoffPreviewSource;if(!source)return;const status=element('handoff-preview-status'),pre=element('handoff-preview'),submit=button('handoff-submit');submit.disabled=true;status.textContent='正在生成本地脱敏预览…';pre.classList.add('hidden');element('handoff-error').textContent='';
- try{const mode=element<HTMLSelectElement>('handoff-context-mode').value;const p=await api<HandoffPreview>('tasks/'+source+'/continuation/preview?mode='+encodeURIComponent(mode));if(source!==handoffPreviewSource)return;handoffPreviewReady=true;status.textContent=`将转交 ${p.transferred_runs} 条对话、${p.transferred_knowledge} 条知识${p.context_truncated?'（已截断）':''}。请检查下面内容后确认。`;pre.textContent=p.context;pre.classList.remove('hidden');submit.disabled=false}catch(e){handoffPreviewReady=false;status.textContent='无法生成预览';element('handoff-error').textContent=(e as Error).message}
-}
-async function openHandoff(id=chosen){
- if(!id||!detail)return;ensureHandoffDialog();handoffPreviewSource=id;handoffPreviewReady=false;const env=element<HTMLSelectElement>('handoff-environment');env.innerHTML=settings.config.environments.map(v=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');env.value=detail.task.environment?.id||settings.config.default_environment;element<HTMLSelectElement>('handoff-engine').value=detail.task.engine||'codex';element<HTMLInputElement>('handoff-workspace').value=detail.task.workspace||'';element<HTMLInputElement>('handoff-model').value=detail.task.model||'';element<HTMLTextAreaElement>('handoff-message').value='请先检查当前工作区，再根据历史上下文继续完成任务。';element<HTMLDialogElement>('handoff-dialog').showModal();await loadHandoffPreview();
-}
-async function submitHandoff(){
- if(!handoffPreviewSource||!handoffPreviewReady)return;const engine=element<HTMLSelectElement>('handoff-engine').value,mode=modeForPermission(createPermission,engine);if(!mode||!modeSupportsEngine(mode,engine)){element('handoff-error').textContent='当前权限模式不适用于目标工具，请调整设置后重试。';return}const submit=button('handoff-submit');submit.disabled=true;try{const result=await api<any>('tasks/'+handoffPreviewSource+'/handoff','POST',{confirm:true,environment_id:element<HTMLSelectElement>('handoff-environment').value,engine,workspace:element<HTMLInputElement>('handoff-workspace').value,model:element<HTMLInputElement>('handoff-model').value,reasoning_effort:'',mode_id:mode.id,message:element<HTMLTextAreaElement>('handoff-message').value,context_mode:element<HTMLSelectElement>('handoff-context-mode').value});element<HTMLDialogElement>('handoff-dialog').close();if(result.task){tasks.unshift(result.task);await choose(result.task.id);notify('已创建新的执行路线，原任务保持不变。')}}catch(e){element('handoff-error').textContent=(e as Error).message;submit.disabled=false}}
+
 async function api<T=any>(path:string,method='GET',data?:unknown,signal?:AbortSignal):Promise<T>{
  const epoch=shellEpoch;
  const response=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',signal,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:data===undefined?undefined:JSON.stringify(data)});
@@ -241,8 +225,6 @@ function renderSessionBanner(){
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
  const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'新会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'新会话已就绪';
  const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
- const info=button('session-info-open');info.dataset.state=closed?'closed':busy?'busy':'live';info.dataset.context=String(taskContext.length>0);
- info.textContent=closed?'会话已结束':taskContext.length?'外部指令':'会话信息';info.title=title;
  element('session-summary').textContent=detail.task.archived?'任务已归档':title;
  element('session-location').textContent=[detail.task.environment?.name,detail.task.workspace].filter(Boolean).join(' · ');
  element('session-description').textContent=explanation;

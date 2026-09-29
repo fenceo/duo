@@ -23,6 +23,7 @@ func uid() string {
 func now() int64 { return time.Now().UnixMilli() }
 
 type Task struct {
+	Binding         *TaskEngineBinding  `json:"binding,omitempty"`
 	Mode            *WorkMode           `json:"mode,omitempty"`
 	Deleted         bool                `json:"deleted"`
 	Files           []RuntimeAttachment `json:"-"`
@@ -41,6 +42,8 @@ type Task struct {
 	Updated         int64               `json:"updated"`
 }
 type Run struct {
+	Engine      string       `json:"engine,omitempty"`
+	Model       string       `json:"model,omitempty"`
 	Started     int64        `json:"started"`
 	Usage       *RunUsage    `json:"usage"`
 	Mode        *WorkMode    `json:"mode,omitempty"`
@@ -137,7 +140,7 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
 		db.Close()
 		return nil, err
 	}
-	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema); err != nil {
+	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema + engineBindingSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -206,7 +209,7 @@ func (s *Store) tasks(includeDeleted ...bool) ([]Task, error) {
 	if len(includeDeleted) > 0 && includeDeleted[0] {
 		filter = ""
 	}
-	rows, e := s.Query("SELECT tasks.id,title,workspace,model,session,status,created,updated,COALESCE(environment,''),COALESCE(pinned,0),COALESCE(archived,0),COALESCE(reasoning_effort,''),COALESCE(engine,'codex'),COALESCE(o.mode,'{}'),COALESCE(o.deleted,0) FROM tasks LEFT JOIN task_environments ON tasks.id=task_environments.task_id LEFT JOIN task_preferences ON tasks.id=task_preferences.task_id LEFT JOIN task_execution ON tasks.id=task_execution.task_id LEFT JOIN task_options o ON tasks.id=o.task_id" + filter + " ORDER BY COALESCE(pinned,0) DESC,updated DESC,tasks.id")
+	rows, e := s.Query("SELECT tasks.id,title,workspace,model,session,status,created,updated,COALESCE(environment,''),COALESCE(pinned,0),COALESCE(archived,0),COALESCE(reasoning_effort,''),COALESCE(engine,'codex'),COALESCE(o.mode,'{}'),COALESCE(o.deleted,0),COALESCE(b.binding,'null') FROM tasks LEFT JOIN task_environments ON tasks.id=task_environments.task_id LEFT JOIN task_preferences ON tasks.id=task_preferences.task_id LEFT JOIN task_execution ON tasks.id=task_execution.task_id LEFT JOIN task_options o ON tasks.id=o.task_id LEFT JOIN task_engine_bindings b ON tasks.id=b.task_id" + filter + " ORDER BY COALESCE(pinned,0) DESC,updated DESC,tasks.id")
 	if e != nil {
 		return nil, e
 	}
@@ -214,8 +217,8 @@ func (s *Store) tasks(includeDeleted ...bool) ([]Task, error) {
 	out := []Task{}
 	for rows.Next() {
 		var t Task
-		var envJSON, modeJSON string
-		if e = rows.Scan(&t.ID, &t.Title, &t.Workspace, &t.Model, &t.Session, &t.Status, &t.Created, &t.Updated, &envJSON, &t.Pinned, &t.Archived, &t.ReasoningEffort, &t.Engine, &modeJSON, &t.Deleted); e != nil {
+		var envJSON, modeJSON, bindingJSON string
+		if e = rows.Scan(&t.ID, &t.Title, &t.Workspace, &t.Model, &t.Session, &t.Status, &t.Created, &t.Updated, &envJSON, &t.Pinned, &t.Archived, &t.ReasoningEffort, &t.Engine, &modeJSON, &t.Deleted, &bindingJSON); e != nil {
 			return nil, e
 		}
 		if envJSON != "" {
@@ -224,26 +227,37 @@ func (s *Store) tasks(includeDeleted ...bool) ([]Task, error) {
 			}
 		}
 		_ = json.Unmarshal([]byte(modeJSON), &t.Mode)
+		if err := json.Unmarshal([]byte(bindingJSON), &t.Binding); err != nil {
+			return nil, err
+		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
 }
 func (s *Store) task(id string) (Task, error) {
 	var t Task
-	var envJSON, modeJSON string
-	e := s.QueryRow("SELECT tasks.id,title,workspace,model,session,status,created,updated,COALESCE(environment,''),COALESCE(pinned,0),COALESCE(archived,0),COALESCE(reasoning_effort,''),COALESCE(engine,'codex'),COALESCE(o.mode,'{}'),COALESCE(o.deleted,0) FROM tasks LEFT JOIN task_environments ON tasks.id=task_environments.task_id LEFT JOIN task_preferences ON tasks.id=task_preferences.task_id LEFT JOIN task_execution ON tasks.id=task_execution.task_id LEFT JOIN task_options o ON tasks.id=o.task_id WHERE tasks.id=?", id).Scan(&t.ID, &t.Title, &t.Workspace, &t.Model, &t.Session, &t.Status, &t.Created, &t.Updated, &envJSON, &t.Pinned, &t.Archived, &t.ReasoningEffort, &t.Engine, &modeJSON, &t.Deleted)
+	var envJSON, modeJSON, bindingJSON string
+	e := s.QueryRow("SELECT tasks.id,title,workspace,model,session,status,created,updated,COALESCE(environment,''),COALESCE(pinned,0),COALESCE(archived,0),COALESCE(reasoning_effort,''),COALESCE(engine,'codex'),COALESCE(o.mode,'{}'),COALESCE(o.deleted,0),COALESCE(b.binding,'null') FROM tasks LEFT JOIN task_environments ON tasks.id=task_environments.task_id LEFT JOIN task_preferences ON tasks.id=task_preferences.task_id LEFT JOIN task_execution ON tasks.id=task_execution.task_id LEFT JOIN task_options o ON tasks.id=o.task_id LEFT JOIN task_engine_bindings b ON tasks.id=b.task_id WHERE tasks.id=?", id).Scan(&t.ID, &t.Title, &t.Workspace, &t.Model, &t.Session, &t.Status, &t.Created, &t.Updated, &envJSON, &t.Pinned, &t.Archived, &t.ReasoningEffort, &t.Engine, &modeJSON, &t.Deleted, &bindingJSON)
 	if e == nil && envJSON != "" {
 		e = json.Unmarshal([]byte(envJSON), &t.Environment)
 	}
 	_ = json.Unmarshal([]byte(modeJSON), &t.Mode)
+	if e != nil {
+		return t, e
+	}
+	if err := json.Unmarshal([]byte(bindingJSON), &t.Binding); err != nil {
+		return Task{}, err
+	}
 	return t, e
 }
 func (s *Store) runs(id string) ([]Run, error) {
 	rows, e := s.Query(`SELECT runs.id,runs.task_id,runs.input,runs.kind,runs.source,runs.status,runs.result,runs.error,runs.created,runs.finished,
-COALESCE(run_metrics.started,0),COALESCE(run_metrics.usage,''),COALESCE(run_options.mode,''),COALESCE(run_options.attachments,'')
+COALESCE(run_metrics.started,0),COALESCE(run_metrics.usage,''),COALESCE(run_options.mode,''),COALESCE(run_options.attachments,''),
+COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
 FROM runs
 LEFT JOIN run_metrics ON run_metrics.run_id=runs.id
 LEFT JOIN run_options ON run_options.run_id=runs.id
+LEFT JOIN run_execution x ON x.run_id=runs.id
 WHERE runs.task_id=?
 ORDER BY runs.created,runs.id`, id)
 	if e != nil {
@@ -258,7 +272,7 @@ func readRuns(rows *sql.Rows) ([]Run, error) {
 	for rows.Next() {
 		var r Run
 		var usageJSON, modeJSON, filesJSON string
-		if e := rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON); e != nil {
+		if e := rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON, &r.Engine, &r.Model); e != nil {
 			return nil, e
 		}
 		if usageJSON != "" {
