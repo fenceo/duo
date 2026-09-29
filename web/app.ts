@@ -147,7 +147,7 @@ function renderShell(){
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('settings-open').onclick=openSettings;button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
- input('message').oninput=()=>{drafts.set(chosen,input('message').value);renderWorkflow()};input('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();element<HTMLFormElement>('composer').requestSubmit()}};
+ input('message').oninput=()=>{drafts.set(chosen,input('message').value);updateComposerSendState()};input('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();element<HTMLFormElement>('composer').requestSubmit()}};
 
   button('knowledge-new').onclick=()=>editKnowledge(null);button('export-note').onclick=()=>{location.href='/api/tasks/'+chosen+'/knowledge?download=1'};
  button('save-draft').onclick=()=>void saveRunKnowledge();
@@ -282,18 +282,11 @@ function renderTask(){
  element('run-status').classList.toggle('hidden',!active&&!latest?.error&&!detail.approvals?.length&&!t.archived&&!harnessSessionClosed());
  const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived||harness;button('summarize').title=harness?harnessKnowledgeHint:'根据任务记录生成知识草稿';
  let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('notebook').querySelector('.note-head')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
- renderWorkflow();renderCodexApprovals(detail);renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
+ renderWorkflow();renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
 }
 function appendEvents(events:EventRecord[]){
- const container=element('conversation'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<100;
- for(const ev of events){if(ev.seq<=sequence)continue;sequence=ev.seq;const node=document.createElement('div');node.dataset.event=String(ev.seq);
-  if(ev.kind==='user'||ev.kind==='assistant'){node.className='message '+ev.kind;node.innerHTML='<div class="label">'+(ev.kind==='user'?'你':taskEngineName(detail?.task.engine))+'</div><div class="content">'+(ev.kind==='user'?escapeHTML(ev.text):markdown(ev.text))+'</div>'}
-  else if(ev.kind==='tool'||ev.kind==='log'){node.className='log';node.innerHTML='<details><summary>'+escapeHTML(ev.text.split('\n')[0].slice(0,200))+'</summary><pre>'+escapeHTML(ev.text)+'</pre></details>'}
-  else {node.className='progress'+(ev.kind==='error'?' error':'');node.textContent=ev.kind==='status'?'本轮执行 · '+(names[ev.text.trim()]||ev.text):ev.text}
-  container.append(node);conversationItems.push({event:ev,node});
- }
+ for(const ev of events){if(ev.seq<=sequence)continue;sequence=ev.seq;addConversationEvent(ev)}
  applyConversationFilter();
- if(nearBottom)container.scrollTop=container.scrollHeight;
 }
 async function poll(){
  if(!authenticated||polling||document.hidden||sessionResetTask===chosen&&!!chosen)return;polling=true;const epoch=shellEpoch,signal=shellController.signal,id=chosen,token=selection,approvalRevision=codexApprovalRevision;

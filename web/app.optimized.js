@@ -1008,9 +1008,8 @@ function installWorkflow() {
             void addAttachments(files);
         }
     });
-    input('message').addEventListener('input', ()=>{
-        renderWorkflow();
-        if (input('message').value === '/') openCommands();
+    input('message').addEventListener('input', (e)=>{
+        if (!e.isComposing && input('message').value === '/') openCommands();
     });
     button('mode-manage').onclick = ()=>openPresetEditor('modes');
     button('command-open').onclick = openCommands;
@@ -1218,6 +1217,10 @@ async function selectWorkspace() {
         button('workspace-select').disabled = false;
     }
 }
+function updateComposerSendState() {
+    const disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || harnessSessionClosed() || sessionResetTask === chosen || (pendingUploadFiles.get(chosen)?.length || 0) > 0 || !input('message').value.trim() && !attachmentDrafts.get(chosen)?.length;
+    if (button('send').disabled !== disabled) button('send').disabled = disabled;
+}
 function renderWorkflow() {
     if (!element('message-mode')) return;
     if (detail) {
@@ -1250,7 +1253,7 @@ function renderWorkflow() {
     button('send').textContent = sending ? '▶' : '↑';
     button('send').title = sending ? '正在开始' : active ? '追加要求并排队' : '开始执行';
     button('send').setAttribute('aria-label', button('send').title);
-    button('send').disabled = sending || uploadingTasks.has(chosen) || !!detail?.task.archived || harnessSessionClosed() || sessionResetTask === chosen || pending.length > 0 || !input('message').value.trim() && !files.length;
+    updateComposerSendState();
     const attachmentsBlocked = detail?.task.engine === 'deepseek-harness';
     button('attach-open').disabled = attachmentsBlocked || !!detail?.task.archived || uploadingTasks.has(chosen);
     button('attach-open').title = attachmentsBlocked ? harnessAttachmentHint : '添加文件或图片，也可以拖放、粘贴图片';
@@ -1784,7 +1787,8 @@ let conversationFilter = {
     tools: false,
     process: false
 };
-let conversationItems = [];
+const conversationItems = new Map();
+const conversationPageSize = 100;
 const conversationTurns = new Map();
 function readConversationFilter(raw) {
     try {
@@ -1824,7 +1828,7 @@ function conversationEventVisible(category, filter) {
     return category === 'message' || category === 'error' || (category === 'tools' ? filter.tools : filter.process);
 }
 function resetConversation() {
-    conversationItems = [];
+    conversationItems.clear();
     conversationTurns.clear();
 }
 function conversationTurn(id) {
@@ -1834,6 +1838,9 @@ function conversationTurn(id) {
     root.className = 'conversation-turn';
     root.dataset.run = id;
     root.innerHTML = '<div class="turn-input"></div><div class="turn-attachments"></div><details class="turn-process"><summary></summary><div class="turn-records"></div></details><div class="turn-output"></div><footer class="turn-footer"></footer>';
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'conversation-more';
     const turn = {
         root,
         input: root.children[0],
@@ -1842,18 +1849,94 @@ function conversationTurn(id) {
         body: root.querySelector('.turn-records'),
         output: root.querySelector('.turn-output'),
         files: root.querySelector('.turn-attachments'),
-        footer: root.querySelector('.turn-footer')
+        footer: root.querySelector('.turn-footer'),
+        items: [],
+        dirty: true,
+        state: '',
+        result: '',
+        limit: conversationPageSize,
+        hidden: 0,
+        more
     };
     turn.process.open = conversationFilter.tools || conversationFilter.process;
+    turn.process.addEventListener('toggle', ()=>{
+        if (conversationTurns.get(id) === turn) applyConversationFilter();
+    });
+    more.onclick = ()=>{
+        if (conversationTurns.get(id) !== turn) return;
+        const anchor = turn.body.querySelector('[data-event]'), container = element('conversation'), top = anchor?.getBoundingClientRect().top;
+        turn.limit += conversationPageSize;
+        turn.dirty = true;
+        applyConversationFilter(false);
+        if (anchor && top !== undefined) container.scrollTop += anchor.getBoundingClientRect().top - top;
+    };
     conversationTurns.set(id, turn);
-    element('conversation').append(root);
     return turn;
+}
+function addConversationEvent(event) {
+    if (conversationItems.has(event.seq)) return;
+    const item = {
+        event
+    };
+    conversationItems.set(event.seq, item);
+    const turn = conversationTurn(event.run_id || '');
+    turn.items.push(item);
+    turn.dirty = true;
+}
+function conversationEventNode(item) {
+    if (item.node) return item.node;
+    const ev = item.event, node = document.createElement('div');
+    node.dataset.event = String(ev.seq);
+    if (ev.kind === 'user' || ev.kind === 'assistant') {
+        node.className = 'message ' + ev.kind;
+        node.innerHTML = '<div class="label">' + (ev.kind === 'user' ? '你' : taskEngineName(detail?.task.engine)) + '</div><div class="content">' + (ev.kind === 'user' ? escapeHTML(ev.text) : markdown(ev.text)) + '</div>';
+    } else if (ev.kind === 'tool' || ev.kind === 'log') {
+        node.className = 'log';
+        const disclosure = document.createElement('details'), summary = document.createElement('summary');
+        const newline = ev.text.indexOf('\n');
+        summary.textContent = ev.text.slice(0, newline < 0 ? 200 : Math.min(newline, 200));
+        disclosure.append(summary);
+        node.append(disclosure);
+        disclosure.addEventListener('toggle', ()=>{
+            if (disclosure.open && !disclosure.querySelector('pre')) {
+                const pre = document.createElement('pre');
+                pre.textContent = ev.text;
+                disclosure.append(pre);
+            } else if (!disclosure.open) disclosure.querySelector('pre')?.remove();
+        });
+    } else {
+        node.className = 'progress' + (ev.kind === 'error' ? ' error' : '');
+        node.textContent = ev.kind === 'status' ? '本轮执行 · ' + (names[ev.text.trim()] || ev.text) : ev.text;
+    }
+    item.node = node;
+    return node;
+}
+function reconcileConversationNodes(parent, nodes) {
+    const wanted = new Set(nodes);
+    for (const child of Array.from(parent.children))if (!wanted.has(child)) child.remove();
+    let next = parent.firstElementChild;
+    for (const node of nodes){
+        if (node === next) next = next.nextElementSibling;
+        else parent.insertBefore(node, next);
+    }
+}
+function revealConversationEvent(seq) {
+    const item = conversationItems.get(seq);
+    if (!item) return null;
+    item.searchMatch = true;
+    const turn = conversationTurn(item.event.run_id || '');
+    turn.process.open = true;
+    turn.dirty = true;
+    applyConversationFilter(false);
+    const node = conversationEventNode(item), tool = node.querySelector('details');
+    if (tool) tool.open = true;
+    return node;
 }
 function installConversationFilter() {
     try {
         conversationFilter = readConversationFilter(localStorage.getItem(conversationFilterKey));
     } catch  {}
-    element('conversation').insertAdjacentHTML('beforebegin', `<div id="conversation-filter" class="conversation-filter hidden" role="group" aria-label="对话显示"><div class="filter-presets"><button id="conversation-results" title="折叠每轮执行过程，保留回复和错误">对话</button><button id="conversation-all" title="展开全部执行记录">轨迹</button></div><details class="display-menu"><summary>筛选</summary><div><label><input type="checkbox" id="conversation-tools">命令与工具</label><label><input type="checkbox" id="conversation-process">中间过程</label><small>仅改变显示，记录完整保留</small></div></details><small id="conversation-hidden"></small></div>`);
+    element('conversation').insertAdjacentHTML('beforebegin', `<div id="conversation-filter" class="conversation-filter hidden" role="group" aria-label="对话显示"><div class="filter-presets"><button id="conversation-results" title="折叠每轮执行过程，保留回复和错误">对话</button><button id="conversation-all" title="展开各轮执行记录，较早记录可继续加载">轨迹</button></div><details class="display-menu"><summary>筛选</summary><div><label><input type="checkbox" id="conversation-tools">命令与工具</label><label><input type="checkbox" id="conversation-process">中间过程</label><small>仅改变显示，记录完整保留</small></div></details><small id="conversation-hidden"></small></div>`);
     button('conversation-results').onclick = ()=>setConversationFilter({
             tools: false,
             process: false
@@ -1898,41 +1981,98 @@ function updateConversationFilterControls() {
         button(id).setAttribute('aria-pressed', String(selected));
     }
 }
-function applyConversationFilter() {
+function applyConversationFilter(followBottom = true) {
     const container = element('conversation');
     if (!container) return;
-    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100, top = container.scrollTop;
-    const final = finalConversationEvents(conversationItems.map((item)=>item.event), detail?.runs || []), counts = new Map();
-    let hidden = 0;
-    const compact = !conversationFilter.tools && !conversationFilter.process;
-    for (const { event, node } of conversationItems){
-        const category = conversationCategory(event, final), record = category === 'tools' || category === 'process';
-        const turn = event.run_id ? conversationTurn(event.run_id) : null;
-        const visible = node.dataset.searchMatch === 'true' || conversationEventVisible(category, conversationFilter) || !!turn && compact;
-        node.dataset.category = category;
-        node.classList.toggle('hidden', !visible);
-        node.classList.toggle('error', category === 'error');
-        if (!visible) hidden++;
-        if (turn) {
-            const parent = record ? turn.body : event.kind === 'user' ? turn.input : turn.output;
-            if (node.parentElement !== parent) parent.append(node);
-            if (record) counts.set(event.run_id, (counts.get(event.run_id) || 0) + 1);
-            if (node.dataset.searchMatch === 'true') turn.process.open = true;
-        }
-    }
+    const runs = new Map((detail?.runs || []).map((run)=>[
+            run.id,
+            run
+        ])), pending = new Set((detail?.approvals || []).map((request)=>request.run_id));
+    const changes = [];
     for (const [id, turn] of conversationTurns){
-        const count = counts.get(id) || 0, run = detail?.runs.find((r)=>r.id === id);
+        const run = runs.get(id), knowledge = typeof knowledgeForRun === 'function' ? knowledgeForRun(id) : null, waiting = pending.has(id);
+        const state = JSON.stringify([
+            run?.status,
+            run?.created,
+            run?.started,
+            run?.finished,
+            run?.usage,
+            run?.attachments,
+            knowledge?.id,
+            knowledge?.revision,
+            knowledge?.source,
+            waiting,
+            conversationFilter.tools,
+            conversationFilter.process,
+            turn.process.open
+        ]);
+        if (turn.dirty || turn.state !== state || turn.result !== (run?.result || '')) changes.push({
+            turn,
+            run,
+            state,
+            waiting
+        });
+    }
+    if (!changes.length) return;
+    const nearBottom = followBottom && container.scrollHeight - container.scrollTop - container.clientHeight < 100, top = container.scrollTop;
+    const compact = !conversationFilter.tools && !conversationFilter.process;
+    for (const { turn, run, state, waiting } of changes){
+        const final = finalConversationEvents(turn.items.map((item)=>item.event), run ? [
+            run
+        ] : []), inputs = [], outputs = [], records = [];
+        let count = 0;
+        turn.hidden = 0;
+        for (const item of turn.items){
+            const category = conversationCategory(item.event, final), record = category === 'tools' || category === 'process';
+            if (record) count++;
+            const visible = item.searchMatch || conversationEventVisible(category, conversationFilter) || record && compact;
+            if (!visible) {
+                turn.hidden++;
+                continue;
+            }
+            if (record) records.push(item);
+            else {
+                const node = conversationEventNode(item);
+                node.dataset.category = category;
+                node.classList.toggle('error', category === 'error');
+                if (item.searchMatch) node.dataset.searchMatch = 'true';
+                (item.event.kind === 'user' ? inputs : outputs).push(node);
+            }
+        }
+        const body = [];
+        if (turn.process.open) {
+            const start = Math.max(0, records.length - turn.limit);
+            if (start) {
+                const text = '加载更早的 ' + Math.min(start, conversationPageSize) + ' 条记录（还有 ' + start + ' 条）';
+                if (turn.more.textContent !== text) turn.more.textContent = text;
+                body.push(turn.more);
+            }
+            records.forEach((item, index)=>{
+                if (index < start && !item.searchMatch) return;
+                const node = conversationEventNode(item);
+                node.dataset.category = conversationCategory(item.event, final);
+                if (item.searchMatch) node.dataset.searchMatch = 'true';
+                body.push(node);
+            });
+        }
+        reconcileConversationNodes(turn.input, inputs);
+        reconcileConversationNodes(turn.output, outputs);
+        reconcileConversationNodes(turn.body, body);
+        if (turn.root.parentElement !== container) container.append(turn.root);
         turn.process.classList.toggle('hidden', count === 0);
-        const label = detail?.approvals?.some((request)=>request.run_id === id) ? '等待你处理' : run?.status === 'running' ? '正在执行' : run?.status === 'queued' ? '排队中' : '执行记录';
+        const label = waiting ? '等待你处理' : run?.status === 'running' ? '正在执行' : run?.status === 'queued' ? '排队中' : '执行记录';
         const text = label + ' · ' + count + ' 条';
         if (turn.summary.textContent !== text) turn.summary.textContent = text;
         const footer = run ? runFooter(run) : '';
         if (turn.footer.innerHTML !== footer) turn.footer.innerHTML = footer;
         const files = (run?.attachments || []).map((f)=>`<a href="/api/tasks/${encodeURIComponent(chosen)}/attachments/${encodeURIComponent(f.id)}" class="attachment-chip" download="${escapeHTML(f.name)}">↧ ${escapeHTML(f.name)}</a>`).join('');
         if (turn.files.innerHTML !== files) turn.files.innerHTML = files;
+        turn.dirty = false;
+        turn.state = state;
+        turn.result = run?.result || '';
     }
-    const counter = element('conversation-hidden');
-    if (counter) counter.textContent = hidden ? '已筛除 ' + hidden + ' 条' : '';
+    const hidden = Array.from(conversationTurns.values()).reduce((sum, turn)=>sum + turn.hidden, 0), counter = element('conversation-hidden'), text = hidden ? '已筛除 ' + hidden + ' 条' : '';
+    if (counter && counter.textContent !== text) counter.textContent = text;
     if (nearBottom) container.scrollTop = container.scrollHeight;
     else container.scrollTop = top;
 }
@@ -5027,12 +5167,8 @@ async function openSearchHit(hit) {
                 element('conversation').innerHTML = '<div class="search-context">正在显示搜索位置附近的对话。<button id="search-full-chat">从开头查看</button></div>';
                 appendEvents(d.events);
                 button('search-full-chat').onclick = ()=>void choose(hit.task_id);
-                const target = element('conversation').querySelector(`[data-event="${seq}"]`);
-                if (target) {
-                    target.dataset.searchMatch = 'true';
-                    applyConversationFilter();
-                    notify('已临时显示搜索命中的消息，筛选偏好保持不变。');
-                }
+                const target = revealConversationEvent(seq);
+                if (target) notify('已临时显示搜索命中的消息，筛选偏好保持不变。');
                 target?.scrollIntoView({
                     block: 'center'
                 });
@@ -5955,7 +6091,7 @@ function renderShell() {
     };
     input('message').oninput = ()=>{
         drafts.set(chosen, input('message').value);
-        renderWorkflow();
+        updateComposerSendState();
     };
     input('message').onkeydown = (e)=>{
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -6418,37 +6554,18 @@ function renderTask() {
     knowledgeHint.textContent = harnessKnowledgeHint;
     knowledgeHint.classList.toggle('hidden', !harness);
     renderWorkflow();
-    renderCodexApprovals(detail);
     renderTerminal();
     const i = tasks.findIndex((x)=>x.id === t.id);
     if (i >= 0) tasks[i] = t;
     renderList();
 }
 function appendEvents(events) {
-    const container = element('conversation'), nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     for (const ev of events){
         if (ev.seq <= sequence) continue;
         sequence = ev.seq;
-        const node = document.createElement('div');
-        node.dataset.event = String(ev.seq);
-        if (ev.kind === 'user' || ev.kind === 'assistant') {
-            node.className = 'message ' + ev.kind;
-            node.innerHTML = '<div class="label">' + (ev.kind === 'user' ? '你' : taskEngineName(detail?.task.engine)) + '</div><div class="content">' + (ev.kind === 'user' ? escapeHTML(ev.text) : markdown(ev.text)) + '</div>';
-        } else if (ev.kind === 'tool' || ev.kind === 'log') {
-            node.className = 'log';
-            node.innerHTML = '<details><summary>' + escapeHTML(ev.text.split('\n')[0].slice(0, 200)) + '</summary><pre>' + escapeHTML(ev.text) + '</pre></details>';
-        } else {
-            node.className = 'progress' + (ev.kind === 'error' ? ' error' : '');
-            node.textContent = ev.kind === 'status' ? '本轮执行 · ' + (names[ev.text.trim()] || ev.text) : ev.text;
-        }
-        container.append(node);
-        conversationItems.push({
-            event: ev,
-            node
-        });
+        addConversationEvent(ev);
     }
     applyConversationFilter();
-    if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 async function poll() {
     if (!authenticated || polling || document.hidden || sessionResetTask === chosen && !!chosen) return;
