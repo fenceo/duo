@@ -422,6 +422,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .sidebar>.task-views{gap:3px}.sidebar>.task-views button{padding:5px 2px;min-height:30px;font-size:11px}
 .sidebar .task-list{gap:6px;min-height:90px}.sidebar .workspace-heading{padding:5px 3px;min-height:28px}
 .sidebar .task{padding:7px 8px 7px 20px;min-height:32px}.sidebar .task-state{max-width:68px;overflow:hidden;text-overflow:ellipsis}
+@media (min-width:761px){.sidebar[data-narrow="true"] .task-state{display:none}.sidebar[data-narrow="true"]>.task-views button{font-size:10px;white-space:nowrap}}
 .header-utilities{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
 .app-menu{position:relative;flex:none}.app-menu>summary{display:flex;align-items:center;justify-content:center;list-style:none;width:34px;height:34px;min-height:34px;padding:0;border:1px solid var(--line);border-radius:8px;cursor:pointer;color:var(--muted)}
 .app-menu>summary::-webkit-details-marker{display:none}.app-menu[open]>summary,.app-menu>summary:hover{color:var(--ink);background:var(--surface)}

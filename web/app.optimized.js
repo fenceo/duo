@@ -1685,6 +1685,18 @@ function installStickyBoard() {
         stickyRequest++;
         stickyLoading = false;
     });
+    if (typeof ResizeObserver !== 'undefined') {
+        let width = 0;
+        const observer = new ResizeObserver((entries)=>{
+            const next = entries[0]?.contentRect.width || 0;
+            if (next > 0 && next !== width) {
+                width = next;
+                element('sticky-list').querySelectorAll('textarea').forEach(fitQuickNote);
+            }
+        });
+        observer.observe(element('sticky-list'));
+        disposeWithShell(()=>observer.disconnect());
+    }
     if (stickyDirty) {
         stickyError = '便签草稿尚未保存，请重试';
         renderStickyBoard();
@@ -1831,7 +1843,7 @@ function addQuickNote() {
 }
 function fitQuickNote(field) {
     field.style.height = 'auto';
-    field.style.height = Math.max(32, Math.min(96, field.scrollHeight)) + 'px';
+    if (Number.isFinite(field.scrollHeight)) field.style.height = Math.max(32, Math.min(96, field.scrollHeight)) + 'px';
 }
 function renderStickyBoard() {
     const list = element('sticky-list');
@@ -1902,6 +1914,7 @@ function applyAppearance(value) {
     root.dataset.density = value.compact ? 'compact' : 'normal';
     root.style.setProperty('--chat-font', value.font + 'px');
     root.style.setProperty('--sidebar-width', value.sidebar + 'px');
+    if (element('sidebar')) element('sidebar').dataset.narrow = String(value.sidebar < 220);
     root.style.setProperty('--chat-width', value.width + 'px');
     element('workspace')?.style.setProperty('--tool-width', value.tool + '%');
     element('sticky-board')?.classList.toggle('hidden', !value.notes);
