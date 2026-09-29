@@ -123,6 +123,22 @@ func splitTaskMemory(result, run string) (string, *taskMemory) {
 	return clean, &m
 }
 
+// Harness sends cumulative text chunks. Hide the reserved suffix before its
+// JSON is complete, so partial metadata never becomes a chat event or causes
+// dozens of identical visible updates while the suffix streams in.
+func visibleMemoryStream(text, run string) (string, bool) {
+	marker := memoryMarker(run)
+	if start := strings.Index(text, marker); start >= 0 {
+		return strings.TrimSpace(text[:start]), true
+	}
+	for length := min(len(marker)-1, len(text)); length >= len("<!-- duo-"); length-- {
+		if strings.HasSuffix(text, marker[:length]) {
+			return strings.TrimSpace(text[:len(text)-length]), true
+		}
+	}
+	return text, false
+}
+
 func captureTaskMemory(tx *sql.Tx, task, run string, m *taskMemory) error {
 	if m == nil {
 		return nil

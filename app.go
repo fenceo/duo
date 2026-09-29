@@ -380,6 +380,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				runCtx = withCodexInteraction(runCtx, func(requestCtx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 					return a.requestCodexInteraction(requestCtx, id, r.ID, method, params)
 				})
+				lastVisibleAssistant := ""
 				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
 					if kind == "usage" {
 						_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
@@ -391,7 +392,12 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						return
 					}
 					if kind == "assistant" && r.Kind == "chat" {
-						text, _ = splitTaskMemory(text, r.ID)
+						visible, hidden := visibleMemoryStream(text, r.ID)
+						if hidden && (visible == "" || visible == lastVisibleAssistant) {
+							return
+						}
+						text = visible
+						lastVisibleAssistant = text
 					}
 					_ = a.store.event(id, r.ID, kind, text)
 					a.changed()

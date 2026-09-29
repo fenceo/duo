@@ -47,6 +47,10 @@ func (f *notebookRunner) Run(ctx context.Context, c Config, task Task, input str
 		return "", "", errors.New("missing memory contract")
 	}
 	reply := memoryReply(parts[1], notebookSample())
+	at := strings.Index(reply, memoryMarker(parts[1]))
+	emit("assistant", strings.TrimSpace(reply[:at]))
+	emit("assistant", reply[:at+18])
+	emit("assistant", reply[:len(reply)-30])
 	emit("assistant", reply)
 	return "fixture-session", reply, nil
 }
@@ -73,6 +77,10 @@ func TestNotebookSameTurnCaptureReadAndRecall(t *testing.T) {
 	a.store.QueryRow("SELECT count(*) FROM events WHERE run_id=? AND kind='assistant' AND text LIKE '%duo-memory%'", r.ID).Scan(&leaked)
 	if leaked != 0 {
 		t.Fatal("private metadata shown as assistant reply")
+	}
+	a.store.QueryRow("SELECT count(*) FROM events WHERE run_id=? AND kind='assistant'", r.ID).Scan(&leaked)
+	if leaked != 1 {
+		t.Fatal("metadata chunks created duplicate visible replies", leaked)
 	}
 	docs, err := a.store.notebookDocuments(context.Background())
 	if err != nil {
