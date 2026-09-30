@@ -91,6 +91,7 @@ function conversationTurn(id:string):ConversationTurn{
  root.innerHTML='<div class="turn-input"></div><div class="turn-attachments"></div><details class="turn-process"><summary></summary><div class="turn-records"></div></details><div class="turn-output"></div><footer class="turn-footer"></footer>';
  const more=document.createElement('button');more.type='button';more.className='conversation-more';
  const turn:ConversationTurn={root,input:root.children[0] as HTMLElement,process:root.querySelector<HTMLDetailsElement>('details')!,summary:root.querySelector('summary')!,body:root.querySelector<HTMLElement>('.turn-records')!,output:root.querySelector<HTMLElement>('.turn-output')!,files:root.querySelector<HTMLElement>('.turn-attachments')!,footer:root.querySelector<HTMLElement>('.turn-footer')!,items:[],dirty:true,state:'',result:'',limit:conversationPageSize,hidden:0,more};
+ turn.footer.onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('button');if(b?.dataset.cancelRun)void cancelQueuedMessage(b.dataset.cancelRun);if(b?.dataset.restoreRun)restoreQueuedDraft(b.dataset.restoreRun)};
  turn.process.open=conversationFilter.tools||conversationFilter.process;
  turn.process.addEventListener('toggle',()=>{if(conversationTurns.get(id)===turn)applyConversationFilter()});
  more.onclick=()=>{
@@ -172,7 +173,7 @@ function applyConversationFilter(followBottom=true){
   const run=runs.get(id),knowledge=typeof knowledgeForRun==='function'?knowledgeForRun(id) as {id:string;revision:number;source:string}|null:null,waiting=pending.has(id);
   // Compare only small metadata. Event bodies are immutable and never serialized
   // on idle polls; result equality still detects completion without a new event.
-  const state=JSON.stringify([run?.status,run?.created,run?.started,run?.finished,run?.usage,run?.attachments,knowledge?.id,knowledge?.revision,knowledge?.source,waiting,conversationFilter.tools,conversationFilter.process,turn.process.open,visible.some(([,item])=>item===turn)]);
+  const state=JSON.stringify([run?.status,run?.error,run?.created,run?.started,run?.finished,run?.usage,run?.attachments,knowledge?.id,knowledge?.revision,knowledge?.source,waiting,conversationFilter.tools,conversationFilter.process,turn.process.open,visible.some(([,item])=>item===turn)]);
   if(turn.dirty||turn.state!==state||turn.result!==(run?.result||''))changes.push({turn,run,state,waiting});
  }
  // A quiet long task must do no history DOM work or synchronous layout reads.
@@ -216,7 +217,9 @@ function applyConversationFilter(followBottom=true){
 function formatTokens(n:number):string{if(n>=1000000)return (n/1000000).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1000)return (n/1000).toFixed(1).replace(/\.0$/,'')+'K';return String(n)}
 function formatDuration(ms:number):string{const seconds=Math.max(0,Math.round(ms/1000));return seconds>=60?Math.floor(seconds/60)+'分'+seconds%60+'秒':seconds+'秒'}
 function runFooter(run:Run):string{
- if(!run.finished||['queued','running'].includes(run.status))return '';
+ if(run.status==='queued')return '<span>排队中</span><button type="button" data-cancel-run="'+escapeHTML(run.id)+'">撤销</button>';
+ if(run.status==='interrupted'&&run.error==='已撤销排队')return '<span>已撤销排队 · 未执行</span><button type="button" data-restore-run="'+escapeHTML(run.id)+'">放回输入框</button>';
+ if(!run.finished||run.status==='running')return '';
  const usage=run.usage,usageTip=usage?`输入 ${usage.input} · 输出 ${usage.output} · 缓存读取 ${usage.cached||0} · 缓存写入 ${usage.cache_write||0}`:'此轮引擎未返回用量，历史记录不作估算';
  const durationTip=run.started?'从本轮实际开始执行计算':'旧记录未保存开始时间，包含排队时间';
  const runId=typeof run.id==='string'?run.id:'';

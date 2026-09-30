@@ -241,6 +241,8 @@ func (s *Server) Handler() http.Handler {
 		}
 		jsonOut(w, 202, run)
 	}))
+	m.HandleFunc("GET /api/usage", s.secure(s.usageSummary))
+	m.HandleFunc("POST /api/tasks/{id}/runs/{run}/cancel", s.secure(s.cancelQueuedRun))
 	m.HandleFunc("POST /api/tasks/{id}/stop", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		if e := s.app.stop(r.PathValue("id")); e != nil {
 			fail(w, 404, "任务不存在")

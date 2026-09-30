@@ -902,6 +902,53 @@ async function installNewVersion() {
     setUpdateBusy(false);
     await reconnectAfterUpdate();
 }
+const cancellingRuns = new Set();
+async function cancelQueuedMessage(id) {
+    const task = chosen, epoch = shellEpoch;
+    if (cancellingRuns.has(id)) return;
+    cancellingRuns.add(id);
+    const control = conversationTurns.get(id)?.footer.querySelector('[data-cancel-run]');
+    if (control) control.disabled = true;
+    try {
+        const run = await api(`tasks/${encodeURIComponent(task)}/runs/${encodeURIComponent(id)}/cancel`, 'POST', {});
+        if (!shellCurrent(epoch)) return;
+        if (chosen === task && detail) {
+            detail.runs = mergeConversationRuns([
+                run
+            ]);
+            applyConversationFilter(false);
+            renderTask();
+            if (!restoreQueuedDraft(id, true)) notify('已撤销排队；原文和附件保留，可点“放回输入框”继续编辑。');
+        } else notify('原任务中的消息已撤销排队。');
+    } catch (e) {
+        if (shellCurrent(epoch)) notify(e.message);
+    } finally{
+        cancellingRuns.delete(id);
+        if (control?.isConnected) control.disabled = false;
+    }
+}
+function restoreQueuedDraft(id, quiet = false) {
+    const run = detail?.runs.find((r)=>r.id === id);
+    if (!run || run.status !== 'interrupted' || run.error !== '已撤销排队' || detail?.task.archived) return false;
+    if (input('message').value || attachmentDrafts.get(chosen)?.length || pendingUploadFiles.get(chosen)?.length || uploadingTasks.has(chosen) || sending) {
+        if (!quiet) notify('输入框已有草稿或正在发送，请先处理；撤销的原文和附件仍保留在记录中。');
+        return false;
+    }
+    input('message').value = run.input || '';
+    drafts.set(chosen, run.input || '');
+    attachmentDrafts.set(chosen, [
+        ...run.attachments || []
+    ]);
+    if (run.mode && modeSupportsEngine(run.mode, detail?.task.engine)) {
+        modeOptions(element('message-mode'), run.mode);
+        input('message-mode').value = run.mode.id;
+    }
+    switchTab('chat');
+    renderWorkflow();
+    input('message').focus();
+    notify('已放回输入框，可编辑后重新发送。');
+    return true;
+}
 const harnessAttachmentHint = 'Harness 当前不支持附件。请切换到 Codex / Claude Code，或手动移除附件后继续；已选附件不会自动删除。';
 function validateEngineAttachments(engine, count) {
     if (engine === 'deepseek-harness' && count > 0) throw new Error(harnessAttachmentHint);
@@ -1096,7 +1143,7 @@ function installWorkflow() {
     });
     const bar = document.createElement('div');
     bar.className = 'composer-tools';
-    bar.innerHTML = '<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><button type="button" id="mode-manage" title="管理工作模式">⚙</button><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
+    bar.innerHTML = '<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
     element('composer').querySelector('.composer-bottom').prepend(bar);
     element('message').after(Object.assign(document.createElement('div'), {
         id: 'attachment-drafts',
@@ -1136,7 +1183,6 @@ function installWorkflow() {
     input('message').addEventListener('input', (e)=>{
         if (!e.isComposing && input('message').value === '/') openCommands();
     });
-    button('mode-manage').onclick = ()=>openPresetEditor('modes');
     button('command-open').onclick = openCommands;
     button('stop').before(Object.assign(document.createElement('button'), {
         id: 'live-steer',
@@ -1170,7 +1216,7 @@ function installWorkflow() {
     element('task-title').title = '双击重命名';
     element('root').insertAdjacentHTML('beforeend', `<dialog id="rename-dialog"><form id="rename-form"><h2>重命名会话</h2><label for="rename-title">新名称</label><input id="rename-title" required maxlength="180"><p id="rename-error" class="error"></p><div class="dialog-footer"><button type="button" id="rename-cancel">取消</button><button class="primary" id="rename-save">保存名称</button></div></form></dialog><dialog id="trash-confirm-dialog"><h2>删除会话</h2><p id="trash-confirm-title"></p><p>移入回收站，可随时恢复。此会话的飞书绑定会解除，工作目录文件保留。</p><p id="trash-confirm-error" class="error"></p><div class="dialog-footer"><button id="trash-cancel">取消</button><button id="trash-confirm" class="danger">移入回收站</button></div></dialog><dialog id="workspace-dialog" class="workspace-dialog"><h2>选择工作区</h2><select id="workspace-environment" aria-label="工作区执行环境"></select><div class="workspace-choices" id="workspace-recent"></div><div class="directory-address"><button id="directory-up" title="上一级">↑</button><input id="directory-path" aria-label="目录路径"><button id="directory-go">前往</button></div><div id="directory-list" class="directory-list"></div><p id="directory-status" role="status"></p><label class="check-row"><input type="checkbox" id="workspace-remember" checked>添加到常用工作区</label><div class="dialog-footer"><button id="workspace-cancel">取消</button><button class="primary" id="workspace-select">选择此目录</button></div></dialog>
  <dialog id="presets-dialog"><h2 id="presets-title">工作模式</h2><p id="presets-hint"></p><div class="preset-list" id="preset-list"></div><form id="preset-form"><label for="preset-name">名称</label><input id="preset-name" required maxlength="40"><div id="preset-permission-wrap"><label for="preset-permission">执行方式</label><select id="preset-permission"><option value="workspace">工作区内执行</option><option value="read">分析规划</option><option value="full">完全访问（高风险）</option></select><label class="check-row" id="preset-network-wrap"><input id="preset-network" type="checkbox">允许联网（下载、GitHub 等）</label></div><label for="preset-content" id="preset-content-label">要求（可留空）</label><textarea id="preset-content" rows="5" maxlength="16000"></textarea><p id="preset-error" class="error"></p><div class="dialog-footer"><button type="button" id="preset-delete" class="danger">删除</button><button type="button" id="presets-close">关闭</button><button class="primary" id="preset-save">保存</button></div></form></dialog>
- <dialog id="commands-dialog"><h2>快捷指令</h2><div id="commands-list" class="command-list"></div><div class="dialog-footer"><button id="commands-manage">管理指令</button><button id="commands-close">关闭</button></div></dialog>
+ <dialog id="commands-dialog"><h2>快捷指令</h2><div id="commands-list" class="command-list"></div><div class="dialog-footer"><button id="commands-manage">管理指令</button><button type="button" id="mode-manage">管理工作模式</button><button id="commands-close">关闭</button></div></dialog>
  <dialog id="trash-dialog"><h2>回收站</h2><p>恢复后放回“已归档”。删除会话不会删除工作目录中的文件。</p><div id="trash-list"></div><div class="dialog-footer"><button id="trash-close">关闭</button></div></dialog>`);
     input('preset-permission').insertAdjacentHTML('afterend', '<label for="preset-approval">审批方式</label><select id="preset-approval"><option value="request">需要提升权限时请求批准</option><option value="auto">Codex 原生自动风险评审（非全放行）</option><option value="never">不请求批准（仍受所选执行边界约束）</option></select>');
     button('rename-cancel').onclick = ()=>element('rename-dialog').close();
@@ -1202,6 +1248,10 @@ function installWorkflow() {
         syncPresetNetwork();
     };
     button('preset-delete').onclick = deletePreset;
+    button('mode-manage').onclick = ()=>{
+        element('commands-dialog').close();
+        openPresetEditor('modes');
+    };
     button('commands-close').onclick = ()=>element('commands-dialog').close();
     button('commands-manage').onclick = ()=>{
         element('commands-dialog').close();
@@ -2351,6 +2401,11 @@ function conversationTurn(id) {
         hidden: 0,
         more
     };
+    turn.footer.onclick = (e)=>{
+        const b = e.target.closest('button');
+        if (b?.dataset.cancelRun) void cancelQueuedMessage(b.dataset.cancelRun);
+        if (b?.dataset.restoreRun) restoreQueuedDraft(b.dataset.restoreRun);
+    };
     turn.process.open = conversationFilter.tools || conversationFilter.process;
     turn.process.addEventListener('toggle', ()=>{
         if (conversationTurns.get(id) === turn) applyConversationFilter();
@@ -2514,6 +2569,7 @@ function applyConversationFilter(followBottom = true) {
         const run = runs.get(id), knowledge = typeof knowledgeForRun === 'function' ? knowledgeForRun(id) : null, waiting = pending.has(id);
         const state = JSON.stringify([
             run?.status,
+            run?.error,
             run?.created,
             run?.started,
             run?.finished,
@@ -2635,10 +2691,9 @@ function formatDuration(ms) {
     return seconds >= 60 ? Math.floor(seconds / 60) + '分' + seconds % 60 + '秒' : seconds + '秒';
 }
 function runFooter(run) {
-    if (!run.finished || [
-        'queued',
-        'running'
-    ].includes(run.status)) return '';
+    if (run.status === 'queued') return '<span>排队中</span><button type="button" data-cancel-run="' + escapeHTML(run.id) + '">撤销</button>';
+    if (run.status === 'interrupted' && run.error === '已撤销排队') return '<span>已撤销排队 · 未执行</span><button type="button" data-restore-run="' + escapeHTML(run.id) + '">放回输入框</button>';
+    if (!run.finished || run.status === 'running') return '';
     const usage = run.usage, usageTip = usage ? `输入 ${usage.input} · 输出 ${usage.output} · 缓存读取 ${usage.cached || 0} · 缓存写入 ${usage.cache_write || 0}` : '此轮引擎未返回用量，历史记录不作估算';
     const durationTip = run.started ? '从本轮实际开始执行计算' : '旧记录未保存开始时间，包含排队时间';
     const runId = typeof run.id === 'string' ? run.id : '';
@@ -3469,6 +3524,65 @@ function addScannedEnvironment(index) {
         block: 'start'
     });
     notify('已填入环境。确认连接和工作目录后，点击保存设置。');
+}
+let usageRequest = 0, usageTask = '';
+function installUsageDashboard() {
+    const entry = document.createElement('button');
+    entry.id = 'usage-open';
+    entry.type = 'button';
+    entry.textContent = '用量统计';
+    element('settings-form').querySelector('.settings-nav').append(entry);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="usage-dialog" class="usage-dialog"><div class="usage-heading"><h2>Token 用量</h2><button type="button" id="usage-close">关闭</button></div><div class="usage-controls"><label>统计范围<select id="usage-scope"><option value="all">全部任务</option><option value="task">当前任务</option></select></label><label>每日用量<select id="usage-days"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option></select></label><button type="button" id="usage-refresh">刷新</button></div><p id="usage-status" role="status"></p><div id="usage-content"></div><p class="muted usage-explanation">只统计 Duo 已保存的引擎回报，包含归档和回收站任务；不代表账号账单或 CLI 在 Duo 外的用量。每日按本页时区的执行开始日期归属，跨日执行归入开始当天；旧记录以创建日期代替。执行中的数字可能继续增加。</p></dialog>`);
+    entry.onclick = ()=>void openUsageDashboard();
+    button('usage-close').onclick = ()=>element('usage-dialog').close();
+    element('usage-dialog').addEventListener('close', ()=>{
+        usageRequest++;
+    });
+    for (const id of [
+        'usage-scope',
+        'usage-days'
+    ])input(id).onchange = ()=>void loadUsageDashboard();
+    button('usage-refresh').onclick = ()=>void loadUsageDashboard();
+}
+async function openUsageDashboard() {
+    usageTask = chosen;
+    const choice = element('usage-scope').querySelector('[value="task"]');
+    choice.disabled = !usageTask;
+    choice.textContent = usageTask ? '当前任务：' + (detail?.task.title || '所选任务') : '当前任务（尚未选择）';
+    input('usage-scope').value = 'all';
+    element('usage-dialog').showModal();
+    await loadUsageDashboard();
+}
+async function loadUsageDashboard() {
+    const request = ++usageRequest, epoch = shellEpoch, zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const params = new URLSearchParams({
+        days: input('usage-days').value,
+        timezone: zone
+    });
+    if (input('usage-scope').value === 'task') params.set('task_id', usageTask);
+    button('usage-refresh').disabled = true;
+    element('usage-status').textContent = '正在读取用量…';
+    element('usage-content').replaceChildren();
+    try {
+        const report = await api('usage?' + params, 'GET', undefined, shellController.signal);
+        if (request !== usageRequest || !shellCurrent(epoch) || !element('usage-dialog').open) return;
+        renderUsageDashboard(report);
+    } catch (e) {
+        if (request === usageRequest && shellCurrent(epoch)) element('usage-status').textContent = '读取失败，可刷新重试：' + e.message;
+    } finally{
+        if (request === usageRequest && shellCurrent(epoch)) button('usage-refresh').disabled = false;
+    }
+}
+function usageCount(value, u) {
+    return u.reported || !u.runs ? value.toLocaleString('zh-CN') : '—';
+}
+function renderUsageDashboard(report) {
+    const total = report.total, period = report.period, today = report.days[0], tokens = (u, key)=>usageCount(u[key], u);
+    element('usage-status').textContent = `时区 ${report.timezone} · 更新于 ${new Date(report.generated).toLocaleTimeString()} · ${total.running} 轮执行中`;
+    const card = (label, value, note)=>`<div class="usage-card"><span>${label}</span><strong>${escapeHTML(value)}</strong><small>${escapeHTML(note)}</small></div>`;
+    const cells = (u)=>`<td>${u.runs.toLocaleString('zh-CN')}${u.missing ? `<small>缺失 ${u.missing} 轮用量</small>` : ''}</td><td>${tokens(u, 'input')}</td><td>${tokens(u, 'output')}</td><td>${tokens(u, 'total')}</td>`;
+    const rows = report.days.map((day)=>day.models.length ? day.models.map((m)=>`<tr><th scope="row">${day.date}</th><td class="usage-model">${escapeHTML(m.model || '默认模型（未记录名称）')}<small>${escapeHTML(m.engines.map((e)=>e ? taskEngineName(e) : '未记录引擎').join(' + '))}</small></td>${cells(m)}</tr>`).join('') : `<tr><th scope="row">${day.date}</th><td class="usage-model">全部模型</td>${cells(day)}</tr>`).join('');
+    element('usage-content').innerHTML = `<div class="usage-cards">${card('累计 Token', tokens(total, 'total'), `${total.reported} 轮有用量 · ${total.missing} 轮缺失`)}${card('本期 Token', tokens(period, 'total'), `最近 ${report.days.length} 天`)}${card('今日 Token', today ? tokens(today, 'total') : '—', today ? `${today.runs} 轮执行` : '')}${card('累计执行次数', total.runs.toLocaleString('zh-CN'), '按 Duo 执行轮次统计')}</div><p class="usage-detail">累计 Prompt tokens ${tokens(total, 'input')} · Completion tokens ${tokens(total, 'output')}</p><p class="muted">次数按 Duo 执行轮次统计，一轮可能发起多次模型 API 请求；当前无法还原 API 请求总次数。输入包含缓存，Total = Prompt + Completion。缺失用量显示“—”，部分缺失只合计已回报数据。</p><div class="usage-table-wrap" tabindex="0" role="region" aria-label="每日模型用量表，可横向滚动"><table class="usage-table"><caption>每日模型用量 · 最近 ${report.days.length} 天</caption><thead><tr><th>日期</th><th>模型合计</th><th title="Duo 执行轮次，不是底层 API 请求数">执行次数</th><th>Prompt tokens</th><th>Completion tokens</th><th>Total tokens</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th scope="row">本期合计</th><td>全部模型</td>${cells(period)}</tr></tfoot></table></div>`;
 }
 let desktopState = {
     active: false,
@@ -4312,7 +4426,7 @@ function hardwarePlainText(events) {
     return (text + decode.decode()).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '');
 }
 function installHardware() {
-    element('hardware-panel').innerHTML = `<div class="hardware-connect"><select id="device-picker" aria-label="硬件连接"></select><button id="device-connect" class="primary">连接</button><button id="device-disconnect" class="hidden">断开</button><button id="device-edit">配置</button><button id="device-library">设备库</button><button id="device-new" title="添加串口或网络连接">＋</button></div><div class="hardware-ownership"><span id="device-owner"></span><button id="device-claim" class="hidden">取得控制</button><button id="device-release" class="hidden">释放控制</button></div><section id="relay-panel" class="hidden"><strong id="relay-status">尚未查询</strong><div class="actions"><button data-relay="query">查询</button><button data-relay="on">上电</button><button data-relay="off">断电</button><button data-relay="cycle">断电重启</button></div><small>显示继电器触点反馈，不代表板子已启动。</small></section><div class="hardware-meta"><span id="device-status" role="status">未连接</span><span id="device-description"></span></div><div class="hardware-viewbar"><select id="device-view" aria-label="显示方式"><option value="terminal">交互终端</option><option value="text">收发日志</option><option value="hex">HEX 日志</option></select><button id="device-clear">清屏</button><button id="device-pause">暂停显示</button><button id="device-export">导出</button><button id="device-analyze">选中分析</button><label id="hardware-task-filter" class="check-row"><input type="checkbox" id="hardware-task-log">本任务日志</label></div><div id="hardware-terminal" role="group" aria-label="硬件交互终端"></div><pre id="device-console" class="hidden" tabindex="0" aria-label="硬件收发日志"></pre><div class="hardware-keys"><button data-hardware-key="enter">Enter</button><button data-hardware-key="tab">Tab</button><button data-hardware-key="up" aria-label="串口历史上一条">↑</button><button data-hardware-key="down" aria-label="串口历史下一条">↓</button><button data-hardware-key="ctrl-c">Ctrl+C</button><button data-hardware-key="esc">Esc</button><button id="device-bottom">到底部</button></div><p id="hardware-hint" class="muted">连接后点击终端，直接输入命令。</p><details id="hardware-send-details"><summary>文本 / HEX 发送与终端选项</summary><form id="device-send"><textarea id="device-data" rows="2" aria-label="发送内容" placeholder="输入文本或十六进制字节"></textarea><div class="device-toolbar"><select id="device-encoding" aria-label="发送编码"><option value="text">文本</option><option value="hex">HEX</option></select><select id="device-newline" aria-label="行尾"><option value="cr">CR</option><option value="lf">LF</option><option value="crlf">CRLF</option><option value="none">无</option></select><button type="button" id="device-interrupt">Ctrl+C</button><button id="device-send-button" class="primary">发送</button></div></form><div class="hardware-options"><label>终端回车<select id="hardware-enter"><option value="cr">CR</option><option value="lf">LF</option><option value="crlf">CRLF</option></select></label><label>退格<select id="hardware-backspace"><option value="del">DEL</option><option value="bs">BS</option></select></label><label class="check-row"><input type="checkbox" id="hardware-echo">本地回显</label></div><p class="muted">关闭面板不会断开设备。清屏只清当前显示，后台保留最近 2000 条收发记录。</p></details>`;
+    element('hardware-panel').innerHTML = `<div class="hardware-connect"><select id="device-picker" aria-label="硬件连接"></select><button id="device-connect" class="primary">连接</button><button id="device-disconnect" class="hidden">断开</button><button id="device-edit">配置</button><button id="device-library">设备库</button><button id="device-new" title="添加串口或网络连接">＋</button></div><div class="hardware-ownership"><span id="device-owner"></span><button id="device-claim" class="hidden">取得控制</button></div><section id="relay-panel" class="hidden"><strong id="relay-status">尚未查询</strong><div class="actions"><button data-relay="query">查询</button><button data-relay="on">上电</button><button data-relay="off">断电</button><button data-relay="cycle">断电重启</button></div><small>显示继电器触点反馈，不代表板子已启动。</small></section><div class="hardware-meta"><span id="device-status" role="status">未连接</span><span id="device-description"></span></div><div class="hardware-viewbar"><select id="device-view" aria-label="显示方式"><option value="terminal">交互终端</option><option value="text">收发日志</option><option value="hex">HEX 日志</option></select><button id="device-clear">清屏</button><button id="device-pause">暂停显示</button><button id="device-export">导出</button><button id="device-analyze">选中分析</button><label id="hardware-task-filter" class="check-row"><input type="checkbox" id="hardware-task-log">本任务日志</label></div><div id="hardware-terminal" role="group" aria-label="硬件交互终端"></div><pre id="device-console" class="hidden" tabindex="0" aria-label="硬件收发日志"></pre><div class="hardware-keys"><button data-hardware-key="enter">Enter</button><button data-hardware-key="tab">Tab</button><button data-hardware-key="up" aria-label="串口历史上一条">↑</button><button data-hardware-key="down" aria-label="串口历史下一条">↓</button><button data-hardware-key="ctrl-c">Ctrl+C</button><button data-hardware-key="esc">Esc</button><button id="device-bottom">到底部</button></div><p id="hardware-hint" class="muted">连接后点击终端，直接输入命令。</p><details id="hardware-send-details"><summary>文本 / HEX 发送与终端选项</summary><form id="device-send"><textarea id="device-data" rows="2" aria-label="发送内容" placeholder="输入文本或十六进制字节"></textarea><div class="device-toolbar"><select id="device-encoding" aria-label="发送编码"><option value="text">文本</option><option value="hex">HEX</option></select><select id="device-newline" aria-label="行尾"><option value="cr">CR</option><option value="lf">LF</option><option value="crlf">CRLF</option><option value="none">无</option></select><button type="button" id="device-interrupt">Ctrl+C</button><button id="device-send-button" class="primary">发送</button></div></form><div class="hardware-options"><label>终端回车<select id="hardware-enter"><option value="cr">CR</option><option value="lf">LF</option><option value="crlf">CRLF</option></select></label><label>退格<select id="hardware-backspace"><option value="del">DEL</option><option value="bs">BS</option></select></label><label class="check-row"><input type="checkbox" id="hardware-echo">本地回显</label></div><p class="muted">关闭面板不会断开设备。清屏只清当前显示，后台保留最近 2000 条收发记录。</p></details><details id="hardware-sharing" class="hidden"><summary>共享控制（高级）</summary><p class="muted">让其他任务接手时可释放控制，连接和接收日志会保持。结束使用请直接点“断开”。</p><button id="device-release">释放控制</button></details>`;
     element('root').insertAdjacentHTML('beforeend', `<dialog id="hardware-library-dialog"><h2>设备库</h2><p class="muted">查看每台设备关联的任务、AI 权限和当前控制权。</p><div id="hardware-library-list"></div><div class="dialog-footer"><button id="hardware-library-close">关闭</button></div></dialog>`);
     element('device-form').querySelector('label[for="device-name"]').insertAdjacentHTML('beforebegin', '<label for="device-kind">设备用途</label><select id="device-kind"><option value="console">串口 / 网络控制台</option><option value="relay">串口继电器 · 板子电源</option></select>');
     element('device-readonly').parentElement.insertAdjacentHTML('beforebegin', '<div id="relay-fields" class="hidden"><label for="relay-contact">实际接线</label><select id="relay-contact"><option value="">请选择接线方式…</option><option value="no">COM + NO（常开）</option><option value="nc">COM + NC（常闭）</option></select><div class="form-grid"><label>继电器地址<input id="relay-channel" type="number" min="1" max="254" value="1"></label><label>断电间隔（秒）<input id="relay-delay" type="number" min="1" max="60" value="3"></label></div><p class="muted">CH340 / A0 协议，9600 · 8N1。COM 口变更后在此修改，设备名称和任务关联会保留。</p></div>');
@@ -4837,7 +4951,7 @@ function renderHardwareState() {
     if (h) h.term.options.disableStdin = !hardwareCanWrite(h) || toolsTab !== 'hardware';
     element('device-owner').textContent = h?.connected ? h.controller === chosen ? '本任务控制' : h.controller ? '由「' + (h.controllerTitle || h.controller) + '」控制 · 当前只查看' : '设备已连接 · 控制权空闲' : '';
     button('device-claim').classList.toggle('hidden', !h?.connected || h.controller === chosen);
-    button('device-release').classList.toggle('hidden', !h?.connected || h.controller !== chosen);
+    element('hardware-sharing').classList.toggle('hidden', !h?.connected || h.controller !== chosen);
     button('device-claim').disabled = !!h?.busy || !!h?.relay?.busy;
     button('device-release').disabled = !!h?.busy || !!h?.relay?.busy;
     const power = h?.relay;
@@ -7912,6 +8026,7 @@ function renderShell() {
     installUpdates();
     installLibrary();
     installDesktopSharing();
+    installUsageDashboard();
     button('new-task').onclick = showCreate;
     button('empty-new').onclick = showCreate;
     button('menu').onclick = ()=>element('sidebar').classList.toggle('open');

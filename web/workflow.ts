@@ -2,6 +2,28 @@ type WorkMode={id:string;name:string;permission:'workspace'|'read'|'full';approv
 type QuickCommand={id:string;name:string;content:string};
 type WorkCatalog={modes:WorkMode[];commands:QuickCommand[]};
 type Attachment={id:string;name:string;mime:string;size:number};
+const cancellingRuns=new Set<string>();
+async function cancelQueuedMessage(id:string){
+ const task=chosen,epoch=shellEpoch;
+ if(cancellingRuns.has(id))return;
+ cancellingRuns.add(id);
+ const control=conversationTurns.get(id)?.footer.querySelector<HTMLButtonElement>('[data-cancel-run]');if(control)control.disabled=true;
+ try{
+  const run=await api<Run>(`tasks/${encodeURIComponent(task)}/runs/${encodeURIComponent(id)}/cancel`,'POST',{});
+  if(!shellCurrent(epoch))return;
+  if(chosen===task&&detail){detail.runs=mergeConversationRuns([run]);applyConversationFilter(false);renderTask();if(!restoreQueuedDraft(id,true))notify('已撤销排队；原文和附件保留，可点“放回输入框”继续编辑。')}
+  else notify('原任务中的消息已撤销排队。');
+ }catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
+ finally{cancellingRuns.delete(id);if(control?.isConnected)control.disabled=false}
+}
+function restoreQueuedDraft(id:string,quiet=false):boolean{
+ const run=detail?.runs.find(r=>r.id===id);
+ if(!run||run.status!=='interrupted'||run.error!=='已撤销排队'||detail?.task.archived)return false;
+ if(input('message').value||attachmentDrafts.get(chosen)?.length||pendingUploadFiles.get(chosen)?.length||uploadingTasks.has(chosen)||sending){if(!quiet)notify('输入框已有草稿或正在发送，请先处理；撤销的原文和附件仍保留在记录中。');return false}
+ input('message').value=run.input||'';drafts.set(chosen,run.input||'');attachmentDrafts.set(chosen,[...(run.attachments||[])]);
+ if(run.mode&&modeSupportsEngine(run.mode,detail?.task.engine)){modeOptions(element<HTMLSelectElement>('message-mode'),run.mode);input('message-mode').value=run.mode.id}
+ switchTab('chat');renderWorkflow();input('message').focus();notify('已放回输入框，可编辑后重新发送。');return true;
+}
 const harnessAttachmentHint='Harness 当前不支持附件。请切换到 Codex / Claude Code，或手动移除附件后继续；已选附件不会自动删除。';
 function validateEngineAttachments(engine:string|undefined,count:number){if(engine==='deepseek-harness'&&count>0)throw new Error(harnessAttachmentHint)}
 let workCatalog:WorkCatalog={modes:[],commands:[]};
@@ -90,14 +112,14 @@ function installWorkflow(){
   const files=clipboardFiles(e);
   if(files.length){e.preventDefault();addCreateFiles(files)}
  });
- const bar=document.createElement('div');bar.className='composer-tools';bar.innerHTML='<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><button type="button" id="mode-manage" title="管理工作模式">⚙</button><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
+ const bar=document.createElement('div');bar.className='composer-tools';bar.innerHTML='<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
  element('composer').querySelector('.composer-bottom')!.prepend(bar);element('message').after(Object.assign(document.createElement('div'),{id:'attachment-drafts',className:'attachment-drafts'}));
  modeOptions(element<HTMLSelectElement>('message-mode'));modeOptions(element<HTMLSelectElement>('create-mode'));setCreatePermission(createPermission);
  button('attach-open').onclick=()=>input('attachment-input').click();input('attachment-input').onchange=()=>{const files=Array.from(input('attachment-input').files||[]);input('attachment-input').value='';void addAttachments(files)};
  const composer=element('composer');composer.ondragover=e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();composer.classList.add('dragover')}};composer.ondragleave=()=>composer.classList.remove('dragover');composer.ondrop=e=>{composer.classList.remove('dragover');if(e.dataTransfer?.files.length){e.preventDefault();void addAttachments(Array.from(e.dataTransfer.files))}};
  input('message').addEventListener('paste',e=>{const files=clipboardFiles(e);if(files.length){e.preventDefault();void addAttachments(files)}});
  input('message').addEventListener('input',e=>{if(!(e as InputEvent).isComposing&&input('message').value==='/')openCommands()});
- button('mode-manage').onclick=()=>openPresetEditor('modes');button('command-open').onclick=openCommands;
+ button('command-open').onclick=openCommands;
  button('stop').before(Object.assign(document.createElement('button'),{id:'live-steer',type:'button',className:'hidden',textContent:'立即引导'}),Object.assign(document.createElement('button'),{id:'live-interrupt',type:'button',className:'hidden',textContent:'中断后发送'}));
  button('live-steer').onclick=()=>void send(input('message').value,true,'steer');button('live-interrupt').onclick=()=>void send(input('message').value,true,'interrupt');
  button('stop').onclick=async()=>{const id=chosen;stoppingTask=id;renderWorkflow();try{await api('tasks/'+id+'/stop','POST',{});await poll()}catch(e){stoppingTask='';notify((e as Error).message);renderWorkflow()}};
@@ -105,7 +127,7 @@ function installWorkflow(){
  element('task-title').ondblclick=()=>void openTaskRename();element('task-title').title='双击重命名';
  element('root').insertAdjacentHTML('beforeend',`<dialog id="rename-dialog"><form id="rename-form"><h2>重命名会话</h2><label for="rename-title">新名称</label><input id="rename-title" required maxlength="180"><p id="rename-error" class="error"></p><div class="dialog-footer"><button type="button" id="rename-cancel">取消</button><button class="primary" id="rename-save">保存名称</button></div></form></dialog><dialog id="trash-confirm-dialog"><h2>删除会话</h2><p id="trash-confirm-title"></p><p>移入回收站，可随时恢复。此会话的飞书绑定会解除，工作目录文件保留。</p><p id="trash-confirm-error" class="error"></p><div class="dialog-footer"><button id="trash-cancel">取消</button><button id="trash-confirm" class="danger">移入回收站</button></div></dialog><dialog id="workspace-dialog" class="workspace-dialog"><h2>选择工作区</h2><select id="workspace-environment" aria-label="工作区执行环境"></select><div class="workspace-choices" id="workspace-recent"></div><div class="directory-address"><button id="directory-up" title="上一级">↑</button><input id="directory-path" aria-label="目录路径"><button id="directory-go">前往</button></div><div id="directory-list" class="directory-list"></div><p id="directory-status" role="status"></p><label class="check-row"><input type="checkbox" id="workspace-remember" checked>添加到常用工作区</label><div class="dialog-footer"><button id="workspace-cancel">取消</button><button class="primary" id="workspace-select">选择此目录</button></div></dialog>
  <dialog id="presets-dialog"><h2 id="presets-title">工作模式</h2><p id="presets-hint"></p><div class="preset-list" id="preset-list"></div><form id="preset-form"><label for="preset-name">名称</label><input id="preset-name" required maxlength="40"><div id="preset-permission-wrap"><label for="preset-permission">执行方式</label><select id="preset-permission"><option value="workspace">工作区内执行</option><option value="read">分析规划</option><option value="full">完全访问（高风险）</option></select><label class="check-row" id="preset-network-wrap"><input id="preset-network" type="checkbox">允许联网（下载、GitHub 等）</label></div><label for="preset-content" id="preset-content-label">要求（可留空）</label><textarea id="preset-content" rows="5" maxlength="16000"></textarea><p id="preset-error" class="error"></p><div class="dialog-footer"><button type="button" id="preset-delete" class="danger">删除</button><button type="button" id="presets-close">关闭</button><button class="primary" id="preset-save">保存</button></div></form></dialog>
- <dialog id="commands-dialog"><h2>快捷指令</h2><div id="commands-list" class="command-list"></div><div class="dialog-footer"><button id="commands-manage">管理指令</button><button id="commands-close">关闭</button></div></dialog>
+ <dialog id="commands-dialog"><h2>快捷指令</h2><div id="commands-list" class="command-list"></div><div class="dialog-footer"><button id="commands-manage">管理指令</button><button type="button" id="mode-manage">管理工作模式</button><button id="commands-close">关闭</button></div></dialog>
  <dialog id="trash-dialog"><h2>回收站</h2><p>恢复后放回“已归档”。删除会话不会删除工作目录中的文件。</p><div id="trash-list"></div><div class="dialog-footer"><button id="trash-close">关闭</button></div></dialog>`);
  input('preset-permission').insertAdjacentHTML('afterend','<label for="preset-approval">审批方式</label><select id="preset-approval"><option value="request">需要提升权限时请求批准</option><option value="auto">Codex 原生自动风险评审（非全放行）</option><option value="never">不请求批准（仍受所选执行边界约束）</option></select>');
  button('rename-cancel').onclick=()=>element<HTMLDialogElement>('rename-dialog').close();element('rename-form').onsubmit=saveTaskRename;button('trash-cancel').onclick=()=>element<HTMLDialogElement>('trash-confirm-dialog').close();button('trash-confirm').onclick=confirmTrashTask;
@@ -113,7 +135,7 @@ function installWorkflow(){
  button('directory-up').onclick=()=>void browseDirectory(directoryParent);button('directory-go').onclick=()=>void browseDirectory(input('directory-path').value.trim());input('directory-path').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();void browseDirectory(input('directory-path').value.trim())}};
  button('workspace-cancel').onclick=()=>{directoryRequest++;element<HTMLDialogElement>('workspace-dialog').close()};button('workspace-select').onclick=selectWorkspace;
  button('presets-close').onclick=()=>element<HTMLDialogElement>('presets-dialog').close();element('preset-form').onsubmit=savePreset;input('preset-permission').onchange=()=>{input('preset-approval').value=input('preset-permission').value==='workspace'?'request':'never';syncPresetNetwork()};button('preset-delete').onclick=deletePreset;
- button('commands-close').onclick=()=>element<HTMLDialogElement>('commands-dialog').close();button('commands-manage').onclick=()=>{element<HTMLDialogElement>('commands-dialog').close();openPresetEditor('commands')};button('trash-close').onclick=()=>element<HTMLDialogElement>('trash-dialog').close();
+ button('mode-manage').onclick=()=>{element<HTMLDialogElement>('commands-dialog').close();openPresetEditor('modes')};button('commands-close').onclick=()=>element<HTMLDialogElement>('commands-dialog').close();button('commands-manage').onclick=()=>{element<HTMLDialogElement>('commands-dialog').close();openPresetEditor('commands')};button('trash-close').onclick=()=>element<HTMLDialogElement>('trash-dialog').close();
 }
 function modeForPermission(permission:'request'|'auto'|'full'|'read',engine='codex'){
  if(engine==='deepseek-harness'&&permission==='read')return workCatalog.modes.find(mode=>mode.id==='harness:read'&&mode.permission==='read'&&modeApproval(mode)==='never'&&mode.allow_network===true);
