@@ -106,13 +106,13 @@ Remove-Item Env:DUO_HARNESS_NATIVE_FIXTURE
 
 1. 同步修改 `portable.go`、`package.json` 和 `package-lock.json` 中的版本号。成品验收脚本、安装器从 package.json 读取版本，启动器不维护独立版本常量。
 2. 添加 `docs/releases/vX.Y.Z.md`，描述变更与迁移注意事项。
-3. 完成相关检查和源码提交，将源码推送到工作分支。
-4. 推荐通过 SSH 推送同一个提交到 `release/vX.Y.Z` 分支，分支版本必须与 package.json 一致。例如 `git push origin HEAD:refs/heads/release/v0.22.3`。`.github/workflows/release.yml` 在一次性的 GitHub Windows 构建机上安装固定工具链、运行 Go vet，再调用 `scripts/Publish-Release.ps1` 完成全部测试、构建和发布。只有此类发布分支的推送会触发发布；普通工作分支、标签推送不会触发，不需要上传 SSH 私钥或设置个人访问令牌。
+3. 完成相关检查和源码提交，将源码推送到 `main`。
+4. `main` 的版本修改会触发 `.github/workflows/release.yml`，也可在 `main` 手动触发。一次性的 GitHub Windows 构建机安装固定工具链，对同一提交运行 Go vet、桌面与浏览器验收，再调用 `scripts/Publish-Release.ps1` 完成全部测试、构建和发布。不再创建发布分支，不需要上传 SSH 私钥或设置个人访问令牌。
 5. 在仓库 Actions 页面确认流程成功，并检查 Release 及其四个文件。流程使用 GitHub 自动提供的 `GITHUB_TOKEN`，仅申请仓库内容写权限；构建不运行真实模型或生产账号的完整安装卸载测试。
 
-仍支持本机发布：在正常 Windows 用户环境登录 GitHub CLI 后运行 `scripts/Publish-Release.ps1`，脚本构建，推送分支和精确标签，创建草稿并上传便携 ZIP、安装器及两个 SHA-256 文件，检查大小后发布正式 Release。本机发布使用普通工作分支，避免推送 `release/v*` 同时触发云端发布。
+仍支持本机发布：在正常 Windows 用户环境登录 GitHub CLI 后运行 `scripts/Publish-Release.ps1`，脚本构建，推送分支和精确标签，创建草稿并上传便携 ZIP、安装器及两个 SHA-256 文件，检查大小后发布正式 Release。本机与云端不得同时发布同一版本，通常直接使用 `main` 的云端工作流。
 
-云端发布失败时，先查看 Actions 失败步骤。未修改源码且尚未创建 Release 时，可以在 Actions 页面重新运行；已有草稿时先检查草稿和上传情况，脚本不会覆盖它。需要修改源码时使用新版本和新发布分支，不覆盖已发布的标签或版本。
+云端发布失败时，先查看 Actions 失败步骤。未修改源码且尚未创建 Release 时，可以在 Actions 页面重新运行；已有草稿时先检查草稿和上传情况，脚本不会覆盖它。需要修改源码时在 `main` 使用新版本，不覆盖已发布的标签或版本。
 
 脚本不会覆盖已发布的版本；失败后保留草稿供检查。公开更新接口只识别 `vX.Y.Z` 正式版本，草稿和 prerelease 不作为升级推荐。
 

@@ -39,7 +39,7 @@ function fixture(){
   renderList(){counts.render++},renderTask(){counts.render++},renderShell(){counts.render++;ctx.renewShellScope()},
   showLogin(){counts.login++;ctx.renewShellScope()},choose:async()=>{},
   loadAccessSettings(){},environmentPickers(){},loadEnvironmentEditor(){},storeEnvironmentEditor(){},
-  updateFeishuStatus(){counts.status++},renderEngineCatalog(){counts.engine++},populateEngineProfileForm(){counts.profiles++},
+  updateFeishuStatus(){counts.status++},renderEngineCatalog(){counts.engine++},renderAccountCenter(){},populateEngineProfileForm(){counts.profiles++},
   storeKnowledge(){},appendEvents(){},
   fetch:async()=>{throw new Error('No unmocked HTTP requests permitted')},
  });

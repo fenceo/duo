@@ -74,7 +74,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "interrupt", "image_input"},
 			CredentialKinds:    []string{"native", "codex_home"},
-			InstallDescription: "请在目标环境安装并登录 Codex CLI；Duo 不复制令牌。",
+			InstallDescription: "支持 Windows/WSL/SSH 安装；在账号管理中登录、配置 API 或同步到所选环境。",
 			DocumentationURL:   "https://developers.openai.com/docs/app-server",
 		},
 		{
@@ -83,7 +83,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "mcp"},
 			CredentialKinds:    []string{"native", "claude_home"},
-			InstallDescription: "请在目标环境安装并登录 Claude Code；Duo 不复制令牌。",
+			InstallDescription: "支持 Windows/WSL/SSH 安装；可配置 API，或引用已有订阅登录目录并同步。",
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
@@ -331,6 +331,8 @@ func engineInstallPlan(env Environment, engineID string) (EngineInstallPlan, err
 func (s *Server) engineRoutes(m *http.ServeMux) {
 	s.engineSetupRoutes(m)
 	s.codexSyncRoutes(m)
+	s.accountSyncRoutes(m)
+	s.engineStatusRoutes(m)
 	m.HandleFunc("GET /api/engines", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		catalog := EngineCatalog{Engines: builtinEngineDefinitions(), Profiles: s.app.store.engineProfiles(), ActiveProfile: map[string]string{}}
 		for _, env := range s.app.config.get().Environments {

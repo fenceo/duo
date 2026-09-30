@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,29 +41,39 @@ type EngineSetupJob struct {
 	cancel        context.CancelFunc
 }
 type EngineSetup struct {
-	mu      sync.Mutex
-	jobs    map[string]*EngineSetupJob
-	active  bool
-	account func(context.Context, Environment, string, string, string, func(string, string)) error
-	install func(context.Context, string, string, func(string)) (string, error)
+	mu            sync.Mutex
+	jobs          map[string]*EngineSetupJob
+	active        bool
+	account       func(context.Context, Environment, string, string, string, func(string, string)) error
+	install       func(context.Context, string, string, func(string)) (string, error)
+	remoteInstall func(context.Context, Environment, string, string, func(string)) (string, error)
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine}
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {
-	if !safeWorkbenchID(r.ID) || len(r.ID) > 48 || env.Type != "windows" {
-		return errors.New("自动安装和账号创建目前支持本机 Windows；其它环境请使用配置目录引用")
+	if !safeWorkbenchID(r.ID) || len(r.ID) > 48 {
+		return errors.New("请求标识无效")
 	}
 	if r.Action == "install" {
 		if _, ok := managedEnginePackages[r.Engine]; !ok {
 			return errors.New("此引擎暂不支持自动安装")
 		}
+		if env.Type != "windows" && env.Type != "wsl" && env.Type != "ssh" {
+			return errors.New("目标环境类型不支持引擎安装")
+		}
 		return nil
 	}
-	if r.Action != "account" || r.Engine != "codex" || strings.TrimSpace(r.Name) == "" || len([]rune(r.Name)) > 60 {
-		return errors.New("请填写 Codex 账号名称")
+	if env.Type != "windows" {
+		return errors.New("Codex 账号登录向导目前需要本机 Windows；WSL/SSH 请先在目标环境登录，再添加配置目录引用")
+	}
+	if r.Action != "account" || (r.Engine != "codex" && r.Engine != "claude") || strings.TrimSpace(r.Name) == "" || len([]rune(r.Name)) > 60 {
+		return errors.New("请填写 Codex 或 Claude 账号名称")
+	}
+	if r.Engine == "claude" && r.Login != "apiKey" {
+		return errors.New("Claude 订阅登录请引用已登录的配置目录；此向导用于 API 配置")
 	}
 	if r.Login != "chatgptDeviceCode" && r.Login != "apiKey" {
 		return errors.New("请选择 ChatGPT 登录或 API key")
@@ -149,6 +160,8 @@ func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
 		var err error
 		if r.Action == "install" {
 			err = a.performEngineInstall(ctx, env, r)
+		} else if r.Engine == "claude" {
+			err = a.performClaudeAccount(ctx, env, r)
 		} else {
 			err = a.performCodexAccount(ctx, env, r)
 		}
@@ -212,8 +225,86 @@ func (a *App) performCodexAccount(ctx context.Context, env Environment, r Engine
 	a.engineSetup.update(r.ID, "done", "账号配置已保存。可设为新任务默认，或在现有任务中点击“切换 AI”。未发送模型请求。", "", "")
 	return nil
 }
+
+func remoteEngineBinary(engine string) (string, bool) {
+	switch engine {
+	case "codex":
+		return "codex", true
+	case "claude":
+		return "claude", true
+	case "deepseek-harness":
+		return "dsh", true
+	default:
+		return "", false
+	}
+}
+
+// installRemoteEngine is deliberately a small allowlisted adapter. It runs
+// the official npm package in the selected WSL/SSH environment and returns
+// only the discovered executable path. Package-manager output never enters
+// the task history or HTTP response.
+func installRemoteEngine(ctx context.Context, env Environment, engine, installID string, progress func(string)) (string, error) {
+	pkg, ok := managedEnginePackages[engine]
+	if !ok {
+		return "", errors.New("此引擎暂不支持远程自动安装")
+	}
+	binary, ok := remoteEngineBinary(engine)
+	if !ok {
+		return "", errors.New("此引擎没有可验证的远程 CLI 入口")
+	}
+	if env.Type != "wsl" && env.Type != "ssh" {
+		return "", errors.New("远程安装只适用于 WSL 或 SSH")
+	}
+	progress("正在连接目标环境并检查 npm…")
+	if !safeWorkbenchID(installID) {
+		return "", errors.New("安装目录标识无效")
+	}
+	script := remoteEngineInstallScript(pkg, binary, installID)
+	// Install on the exact selected user: never retry writes as WSL's default user.
+	cmd := commandWithContext(ctx, environmentProbeCommand(env, "sh", "-lc", script))
+	stdout := &limitedBuffer{limit: 64 * 1024}
+	cmd.Stdout = stdout
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = 2 * time.Second
+	hideCommand(cmd)
+	err := cmd.Run()
+	if err != nil {
+		return "", errors.New("目标环境安装失败，请检查连接、npm 和权限")
+	}
+	lines := strings.Split(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
+	path := ""
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "__DUO_ENGINE_PATH__" && i+1 < len(lines) {
+			path = strings.TrimSpace(lines[i+1])
+			break
+		}
+	}
+	if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\x00\r\n") {
+		return "", errors.New("安装完成但未找到目标环境的 CLI 路径")
+	}
+	progress("目标环境已安装并找到 " + path)
+	return path, nil
+}
+
+func remoteEngineInstallScript(pkg, binary, id string) string {
+	return "set -eu\ncommand -v node >/dev/null 2>&1\ncommand -v npm >/dev/null 2>&1\n" +
+		"prefix=\"$HOME/.local/share/duo/engine-tools/" + id + "\"\n" +
+		"mkdir -p -- \"$prefix\"\n" +
+		"npm install --global --prefix \"$prefix\" --registry=https://registry.npmjs.org --no-audit --no-fund " + posixQuote(pkg+"@latest") + " >/dev/null 2>&1\n" +
+		"test -x \"$prefix/bin/" + binary + "\"\n" +
+		"\"$prefix/bin/" + binary + "\" --version >/dev/null 2>&1\n" +
+		"printf '__DUO_ENGINE_PATH__\\n%s\\n' \"$prefix/bin/" + binary + "\"\n"
+}
+
 func (a *App) performEngineInstall(ctx context.Context, env Environment, r EngineSetupRequest) error {
-	path, err := a.engineSetup.install(ctx, filepath.Join(a.store.directory, "engine-tools", r.ID), r.Engine, func(message string) { a.engineSetup.update(r.ID, "running", message, "", "") })
+	progress := func(message string) { a.engineSetup.update(r.ID, "running", message, "", "") }
+	path := ""
+	var err error
+	if env.Type == "windows" {
+		path, err = a.engineSetup.install(ctx, filepath.Join(a.store.directory, "engine-tools", r.ID), r.Engine, progress)
+	} else {
+		path, err = a.engineSetup.remoteInstall(ctx, env, r.Engine, r.ID, progress)
+	}
 	if err != nil {
 		return err
 	}
@@ -225,7 +316,10 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 	c := a.config.get()
 	found := false
 	for i := range c.Environments {
-		if c.Environments[i].ID == env.ID && c.Environments[i].Type == "windows" {
+		if c.Environments[i].ID == env.ID {
+			if c.Environments[i].Type != env.Type || c.Environments[i].Distro != env.Distro || c.Environments[i].User != env.User || c.Environments[i].Host != env.Host || c.Environments[i].Port != env.Port || c.Environments[i].Identity != env.Identity {
+				return errors.New("安装完成，但目标连接已修改，未保存旧目标的工具路径")
+			}
 			found = true
 			switch r.Engine {
 			case "codex":

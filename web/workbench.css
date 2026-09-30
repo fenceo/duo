@@ -317,6 +317,13 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .engine-onboarding summary{padding:10px 0;cursor:pointer}
 .engine-onboarding pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:18px}
 .engine-onboarding p{overflow-wrap:anywhere}
+.sidebar-account-tools{display:flex;gap:6px;flex:none}.sidebar-account-tools>button{flex:1;min-width:0;min-height:36px;padding:5px;font-size:12px}
+#account-center-dialog{width:min(760px,calc(100vw - 24px));overflow-wrap:anywhere}
+#engine-account-fields{margin:14px 0;padding:12px;min-width:0;border:1px solid var(--line);border-radius:10px}
+#engine-account-fields summary{cursor:pointer;padding:10px 0}
+#account-center-dialog input,#account-center-dialog select{min-width:0;max-width:100%;box-sizing:border-box}
+#engine-account-status pre,#codex-sync-status{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:760px){.sidebar-account-tools>button{min-height:44px}#account-center-dialog{padding:14px}#account-center-dialog button,#account-center-dialog select{min-height:44px}}
 .desktop-dialog{width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
 .desktop-dialog p{line-height:1.65;overflow-wrap:anywhere}
 .desktop-dialog img{display:block;max-width:100%;height:auto;margin-top:12px;border:1px solid var(--line)}

@@ -27,7 +27,10 @@ Duo的长期结构分成四层：
 `engine_registry.go` 提供不依赖具体 CLI 的目录和配置 API：
 
 - `GET /api/engines`：查看引擎、传输协议、能力和目标环境支持情况。
-- `GET /api/environments/{id}/engines/{engine}/install-plan`：生成目标环境的安装/检查计划。现在只返回安全的人工确认步骤；后续适配器稳定后再增加受限的一键执行。
+- `GET /api/engine-status`：检测已保存的 Windows/WSL/SSH 环境中的 CLI 路径和可读取的登录状态；连接失败返回未知。
+- `POST /api/engine-setup`：在选定目标安装允许列表中的 CLI，或在本机创建独立账号；通过同名 GET/DELETE 接口读取状态或取消。
+- `POST /api/account-sync`：按源账号所在环境读取 Codex/Claude 原生账号文件，将登录与 API 路由合并到勾选目标，保留备份和其他工具设置。
+- `GET /api/environments/{id}/engines/{engine}/install-plan`：提供所选目标的安装/检查指南；允许列表中的一键安装使用独立 setup API。
 - `PUT /api/engine-profiles`、`POST /api/engine-profiles/{id}/activate`：保存和切换外部账号/profile 引用。
 - `POST /api/codex-sync`：在用户明确选择后，把本地可读取的 Codex `auth.json` 安全投影到 Windows、WSL 或 SSH 目标的原生 `~/.codex/auth.json`；目标先保留 `.duo-backup`，远程凭据只经标准输入传输，已运行的 app-server 需要重启。
 - Codex profile 使用 `CODEX_HOME`，Claude profile 使用 `CLAUDE_CONFIG_DIR`；WSL/SSH 通过 `env` 前缀传入，Windows 通过子进程环境传入。
