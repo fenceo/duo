@@ -28,20 +28,20 @@ assert.equal(node('handoff-preview').querySelector('unsafe'),null);
 assert.equal(node('handoff-archive').getAttribute('href'),'/api/tasks/other/continuation/archive?mode=full');
 assert(calls.every(x=>x.method==='GET'),'opening and model metadata never start model calls');
 node('handoff-cancel').onclick();await ctx.openHandoff('source');await flush();
-assert.equal(node('handoff-profile').value,'__current__');
-assert(calls.some(x=>x.path.includes('&task_id=source')),'current-bound model list follows the task account');
+assert.equal(node('handoff-profile'),null);
+assert(!calls.some(x=>x.path==='engines'),'task switching must not load the account manager');
 node('handoff-engine').value='claude';node('handoff-engine').onchange();await flush();
-assert.equal(node('handoff-profile').value,'__environment__');
+
 assert.equal(node('handoff-model').value,'','do not reuse another engine model ID');
 assert(calls.some(x=>x.path.includes('engine=claude')&&!x.path.includes('profile_id')&&!x.path.includes('task_id')));
-assert.equal(node('handoff-profile').querySelector('b'),null);
+
 assert.equal(node('handoff-mode').value,'work','use explicit target permission, independent of create-task state');
 
 let finishSave;const api=ctx.api;
 ctx.api=async(path,method,body)=>{if(method==='POST'){calls.push({path,method,body});return new Promise(resolve=>finishSave=resolve)}return api(path,method,body)};
 const first=ctx.submitHandoff();const duplicate=ctx.submitHandoff();await flush();
 assert.equal(calls.filter(x=>x.method==='POST').length,1);assert(node('handoff-submit').disabled);assert(node('handoff-cancel').disabled);
-const sent=calls.find(x=>x.method==='POST');assert.equal(sent.path,'tasks/source/handoff');assert.equal(sent.body.profile_id,'__environment__');assert.equal(sent.body.expected_profile.reference,'/fixture/account-b');assert.equal(sent.body.fingerprint,'preview-source');
+const sent=calls.find(x=>x.method==='POST');assert.equal(sent.path,'tasks/source/handoff');assert.equal(sent.body.profile_id,undefined);assert.equal(sent.body.expected_profile,undefined);assert.equal(sent.body.fingerprint,'preview-source');
 finishSave({task:{...source,engine:'claude',model:'',session:'',binding:{revision:'switched',profile:profiles.profiles[0],history_id:'history'}},new_session:true});await Promise.all([first,duplicate]);
 assert.equal(node('handoff-dialog').open,false);assert.equal(node('message').value,'unsent draft','switching must preserve the composer');
 assert.equal(runInContext('detail.task.id',ctx),'source');assert.equal(runInContext('tasks.length',ctx),1,'no task fork');
@@ -61,75 +61,13 @@ await ctx.submitHandoff();assert(node('handoff-dialog').open);assert.match(node(
 
 node('handoff-cancel').onclick();ctx.api=async(path,method,body)=>path.endsWith('?recent=1')?{...detail(source),runs:[{id:'active',status:'running'}]}:api(path,method,body);
 await ctx.openHandoff('source');assert(node('handoff-submit').disabled);assert.match(node('handoff-error').textContent,/停止/);
-// An old task requires an explicit original-account attestation; cancel is read-only.
+// Legacy tasks no longer require account attestation or an account handoff.
 node('handoff-cancel').onclick();
-const legacy={...source,binding:undefined};
-ctx.api=async(path,method,body)=>path.endsWith('?recent=1')?detail(legacy):api(path,method,body);
-const beforeLegacy=calls.filter(x=>x.method==='POST').length;
+ctx.api=async(path,method,body)=>path.endsWith('?recent=1')?detail({...source,binding:undefined}):api(path,method,body);
 await ctx.openHandoff('source');await flush();
-assert.equal(node('handoff-legacy').hidden,false);
-assert.equal(!!node('handoff-preserve-legacy').checked,false);
-node('handoff-preserve-legacy').checked=true;node('handoff-preserve-legacy').onchange();
-assert.match(node('handoff-submit').textContent,/保留原会话/);
+assert.equal(node('handoff-preserve-legacy'),null);assert.equal(node('handoff-profile'),null);
+assert.match(node('handoff-route-hint').textContent,/继续原会话/);
 node('handoff-cancel').onclick();
-assert.equal(calls.filter(x=>x.method==='POST').length,beforeLegacy,'cancelling legacy migration must not write');
-await ctx.openHandoff('source');await flush();
-assert.equal(!!node('handoff-preserve-legacy').checked,false,'reopening cannot retain account consent');
-node('handoff-preserve-legacy').checked=true;
-node('handoff-profile').onchange();
-assert.equal(node('handoff-preserve-legacy').checked,false,'profile changes require fresh consent');
-node('handoff-preserve-legacy').checked=true;
-node('handoff-workspace').value='/another';node('handoff-workspace').oninput();
-assert.equal(node('handoff-preserve-legacy').checked,false);assert(node('handoff-legacy').hidden);
-node('handoff-workspace').value=source.workspace;node('handoff-workspace').oninput();
-node('handoff-preserve-legacy').checked=true;node('handoff-preserve-legacy').onchange();
-ctx.api=async(path,method,body)=>{
- if(method==='POST'){
-  assert.equal(body.preserve_legacy_session,true);assert.equal(body.expected_legacy_session,'original-native');
-  assert.equal(body.profile_id,'__environment__');
-  return {task:{...source,binding:{revision:'migrated'}},new_session:false};
- }
- return api(path,method,body);
-};
-await ctx.submitHandoff();assert.equal(node('handoff-dialog').open,false);
 assert.equal(node('message').value,'unsent draft');
-
-// Account-card shortcuts choose the exact target; opening stays read-only.
-const remote={...environment,id:'remote',name:'Remote',type:'ssh',host:'fixture.invalid',workspaces:['/remote-work']};
-const selected={id:'selected',name:'Selected',environment_id:'remote',engine:'claude',kind:'claude_home',reference:'/fixture/selected',updated:9};
-ctx.shortcutRemote=remote;runInContext('settings.config.environments.push(shortcutRemote)',ctx);
-const shortcutCatalog={...profiles,engines:[{id:'codex',name:'Codex',runnable:true},{id:'claude',name:'Claude Code',runnable:true}],profiles:[...profiles.profiles,selected]};
-let shortcutSource=source;
-ctx.api=async(path,method='GET',body)=>{
- assert.equal(method,'GET','account shortcut must wait for the reviewed handoff');
- if(path==='engines')return shortcutCatalog;
- if(path.endsWith('?recent=1'))return detail(shortcutSource);
- return api(path,method,body);
-};
-await ctx.openHandoff('source','selected');await flush();
-assert.equal(node('handoff-environment').value,'remote');
-assert.equal(node('handoff-engine').value,'claude');
-assert.equal(node('handoff-workspace').value,'/remote-work');
-assert.equal(node('handoff-profile').value,'selected');
-assert.equal(node('handoff-model').value,'');
-assert(calls.some(x=>x.path.includes('profile_id=selected')));
-node('handoff-cancel').onclick();
-shortcutSource={...source,environment:remote,workspace:'/existing-work',engine:'claude',model:'model-b',binding:{revision:'same',profile:selected}};
-await ctx.openHandoff('source','selected');await flush();
-assert.equal(node('handoff-workspace').value,'/existing-work');
-assert.equal(node('handoff-profile').value,'__current__','same account keeps the current session binding');
-assert.equal(node('handoff-model').value,'model-b');
-node('handoff-cancel').onclick();
-shortcutSource={...shortcutSource,binding:{revision:'following',account_mode:'environment',profile:selected}};
-await ctx.openHandoff('source');await flush();
-assert.equal(node('handoff-profile').value,'__environment__');
-assert.match(node('handoff-route-hint').textContent,/每轮开始时/);
-node('handoff-cancel').onclick();
-await ctx.openHandoff('source','selected');await flush();
-assert.equal(node('handoff-profile').value,'selected','an account-card override must pin even when the current environment account is identical');
-assert.match(node('handoff-route-hint').textContent,/不跟随环境/);
-node('handoff-cancel').onclick();
-await ctx.openHandoff('source','removed');
-assert(node('handoff-submit').disabled);assert.match(node('handoff-error').textContent,/不可用/);
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: same-task engine/API/model switch, correct source and profile metadata, full-history default, escaped preview, draft preservation, duplicate lock, stale scope guards, explicit permissions and no model calls.');
+console.log('PASS: engine/model handoff remains independent of accounts; previews, duplicate locks, stale responses, permissions and unsent drafts preserved. Synthetic only.');

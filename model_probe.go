@@ -221,25 +221,16 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "AI 工具无效")
 		return
 	}
-	profileID := s.app.store.activeEngineProfile(env.ID, request.Engine)
+	profileID := s.app.store.currentEnvironmentAccount(env.ID, request.Engine)
 	var boundTask *Task
 	if request.TaskID != "" {
 		task, err := s.app.store.task(request.TaskID)
 		if err != nil || task.Binding == nil || task.Binding.Revision != request.BindingRevision || task.Environment == nil || task.Environment.ID != env.ID || task.Engine != request.Engine || task.Workspace != request.Workspace {
-			fail(w, http.StatusConflict, "任务的账号/API 配置已改变，请重读列表后确认测试")
-			return
-		}
-		task, err = s.app.store.taskAccountForLookup(task)
-		if err != nil {
-			fail(w, http.StatusConflict, err.Error())
+			fail(w, http.StatusConflict, "任务的引擎或执行位置已改变，请重读列表后确认测试")
 			return
 		}
 		boundTask = &task
 		env = *task.Environment
-		profileID = ""
-		if task.Binding.Profile != nil {
-			profileID = task.Binding.Profile.ID
-		}
 	}
 	if request.ExpectedProfileID != nil && *request.ExpectedProfileID != profileID {
 		fail(w, http.StatusConflict, "账号/API 配置已变化，请重新读取模型列表并确认测试")
@@ -248,7 +239,7 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	runtime := runtimeConfig(c, env)
 	if boundTask != nil {
 		runtime.EngineEnv = s.app.activeEngineEnvironment(*boundTask)
-	} else if profileID != "" {
+	} else if profileID != "" && request.Engine != "codex" && request.Engine != "claude" {
 		found := false
 		for _, profile := range s.app.store.engineProfiles() {
 			if profile.ID == profileID && profile.Engine == request.Engine && profile.EnvironmentID == env.ID {

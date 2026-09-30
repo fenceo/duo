@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -68,27 +67,25 @@ func TestEngineSwitchSameTaskModelAndAccount(t *testing.T) {
 	v = switchRequest(t, a, result.Task)
 	v.ProfileID = profile.ID
 	v.ExpectedProfile = &profile
-	result, err = a.switchTaskEngine(task.ID, v)
-	if err != nil {
-		t.Fatal(err)
+	if _, err = a.switchTaskEngine(task.ID, v); err == nil {
+		t.Fatal("task account override accepted")
 	}
-	if !result.NewSession || result.Task.Session != "" || result.Task.Binding.Profile.ID != profile.ID {
-		t.Fatal("account switch reused native identity")
+	current, err := a.store.task(task.ID)
+	if err != nil || current.Session != task.Session || current.Binding.Revision != result.Task.Binding.Revision {
+		t.Fatal("account override changed task", err)
+	}
+	v = switchRequest(t, a, current)
+	v.Model = "model-c"
+	result, err = a.switchTaskEngine(task.ID, v)
+	if err != nil || result.NewSession {
+		t.Fatal(err)
 	}
 	again, err := a.switchTaskEngine(task.ID, v)
 	if err != nil || again.Task.Binding.Revision != result.Task.Binding.Revision {
 		t.Fatal("lost-response retry not idempotent", err)
 	}
-	var tasks, switches int
-	a.store.QueryRow("SELECT count(*) FROM tasks").Scan(&tasks)
-	a.store.QueryRow("SELECT count(*) FROM task_engine_switches").Scan(&switches)
-	if tasks != 1 || switches != 2 {
-		t.Fatal("duplicate task/switch", tasks, switches)
-	}
-	if got := a.store.activeEngineProfile(task.Environment.ID, task.Engine); got != "" {
-		t.Fatal("task switch changed global default")
-	}
 }
+
 func TestEngineSwitchRejectsStaleBusyProfileAndRollsBack(t *testing.T) {
 	a, task := switchFixture(t, &fakeRunner{})
 	v := switchRequest(t, a, task)
@@ -132,8 +129,8 @@ func TestEngineSwitchRejectsStaleBusyProfileAndRollsBack(t *testing.T) {
 	changed := p
 	changed.Reference = t.TempDir()
 	a.store.saveEngineProfiles([]EngineCredentialProfile{changed})
-	if _, err := a.switchTaskEngine(task.ID, v); !errors.Is(err, errHandoffChanged) {
-		t.Fatal("changed account accepted", err)
+	if _, err := a.switchTaskEngine(task.ID, v); err == nil {
+		t.Fatal("task account override accepted", err)
 	}
 }
 
@@ -267,6 +264,7 @@ func TestEngineBindingQueuesKeepOriginalProfileAndModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	created.Binding.AccountMode = "pinned"
+	created.Binding.Profile = &p
 	saveTestBinding(t, a, created)
 	first, err := a.submit(created.ID, "first", "chat", "web")
 	if err != nil {
@@ -289,7 +287,7 @@ func TestEngineBindingQueuesKeepOriginalProfileAndModel(t *testing.T) {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	for _, call := range runner.calls {
-		if call.profile["CODEX_HOME"] != p.Reference || call.task.Model != "queued-model" {
+		if len(call.profile) != 0 || call.archive != "" || call.task.Model != "queued-model" {
 			t.Fatal("queued run drifted", call)
 		}
 	}
@@ -297,20 +295,22 @@ func TestEngineBindingQueuesKeepOriginalProfileAndModel(t *testing.T) {
 		t.Fatal("queue snapshot overrode newly created native session")
 	}
 }
-func TestEngineBindingLegacyRequiresExplicitHandoff(t *testing.T) {
-	a, task := switchFixture(t, &fakeRunner{})
+func TestLegacySessionSubmitsWithoutAccountAttestation(t *testing.T) {
+	runner := &switchRunner{}
+	a, task := switchFixture(t, runner)
 	a.store.Exec("DELETE FROM task_engine_bindings WHERE task_id=?", task.ID)
-	if _, err := a.submit(task.ID, "continue", "chat", "web"); err == nil {
-		t.Fatal("guessed old session owner")
+	run, err := a.submit(task.ID, "continue", "chat", "web")
+	if err != nil {
+		t.Fatal(err)
 	}
-	v := switchRequest(t, a, task)
-	v.ProfileID = ""
-	result, err := a.switchTaskEngine(task.ID, v)
-	if err != nil || !result.NewSession {
-		t.Fatal("legacy handoff unavailable", err)
-	}
-	raw, _ := json.Marshal(result)
-	if strings.Contains(string(raw), "native-original") {
-		t.Fatal("old native identity leaked into target")
+	waitUntil(t, func() bool {
+		var status string
+		a.store.QueryRow("SELECT status FROM runs WHERE id=?", run.ID).Scan(&status)
+		return status == "done"
+	})
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.calls) != 1 || runner.calls[0].task.Session != task.Session || runner.calls[0].archive != "" {
+		t.Fatal("legacy session was replaced")
 	}
 }

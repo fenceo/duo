@@ -24,7 +24,7 @@ func legacyBindingFixture(t *testing.T) (*App, Task, handoffRequest) {
 }
 
 func TestLegacyBindingPreservesNativeSessionAndSubmits(t *testing.T) {
-	for _, explicitProfile := range []bool{false, true} {
+	for _, explicitProfile := range []bool{false} {
 		t.Run(map[bool]string{false: "native-default", true: "profile"}[explicitProfile], func(t *testing.T) {
 			a, original, v := legacyBindingFixture(t)
 			profile := EngineCredentialProfile{ID: "original", Name: "Original", EnvironmentID: original.Environment.ID, Engine: "codex", Kind: "codex_home", Reference: t.TempDir(), Updated: 123}

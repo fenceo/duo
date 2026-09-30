@@ -94,31 +94,8 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	if !validPath || len(v.Workspace) > 4096 || strings.ContainsAny(v.Workspace, "\x00\r\n") {
 		return handoffResult{}, errors.New("请填写目标环境中的工作目录绝对路径")
 	}
-	var profile *EngineCredentialProfile
-	accountMode := "pinned"
-	if v.ProfileID == "__current__" {
-		if task.Binding == nil || task.Engine != v.Engine || task.Environment.ID != env.ID {
-			return handoffResult{}, errHandoffChanged
-		}
-		profile = task.Binding.Profile
-		accountMode = task.Binding.AccountMode
-	} else if v.ProfileID == "__environment__" {
-		accountMode = "environment"
-		profile, err = a.store.selectedEngineProfile(env.ID, v.Engine, a.store.activeEngineProfile(env.ID, v.Engine))
-		if err != nil {
-			return handoffResult{}, err
-		}
-		if !sameEngineProfile(profile, v.ExpectedProfile) || profile != nil && profile.Updated != v.ExpectedProfile.Updated {
-			return handoffResult{}, errHandoffChanged
-		}
-	} else {
-		profile, err = a.store.selectedEngineProfile(env.ID, v.Engine, v.ProfileID)
-		if err != nil {
-			return handoffResult{}, err
-		}
-		if !sameEngineProfile(profile, v.ExpectedProfile) || profile != nil && profile.Updated != v.ExpectedProfile.Updated {
-			return handoffResult{}, errHandoffChanged
-		}
+	if (v.ProfileID != "" && v.ProfileID != "__current__" && v.ProfileID != "__environment__") || v.ExpectedProfile != nil {
+		return handoffResult{}, errors.New("账号不再绑定任务，请在账号管理中切换目标环境的登录")
 	}
 	var mode *WorkMode
 	if v.ModeID == "__current__" {
@@ -148,16 +125,12 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	if preview.Fingerprint != v.Fingerprint {
 		return handoffResult{}, errHandoffChanged
 	}
-	newSession := task.Binding == nil || task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env) || !sameEngineProfile(task.Binding.Profile, profile)
-	if task.Binding != nil && (profile == nil || profile.Kind == "native") && task.Binding.NativeRevision != a.store.nativeAccountRevision(env.ID, v.Engine) {
-		newSession = true
-	}
+	newSession := task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env)
 	if task.Engine == "deepseek-harness" && !reflect.DeepEqual(task.Mode, mode) {
 		newSession = true
 	}
-	// Legacy rows cannot prove their original account. Only an explicit user
-	// attestation may attach a profile without replacing the native session.
-	// Never interpret merely opening the dialog or selecting a default as consent.
+	// Compatibility with old clients explicitly preserving a session. Modern
+	// model-only switches already preserve it without any account attestation.
 	if v.PreserveLegacySession {
 		if task.Binding != nil || task.Session == "" || v.ExpectedLegacySession != task.Session {
 			return handoffResult{}, errHandoffChanged
@@ -173,7 +146,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 			return handoffResult{}, err
 		}
 	}
-	binding := &TaskEngineBinding{Revision: operation, AccountMode: accountMode, Profile: profile, NativeRevision: a.store.nativeAccountRevision(env.ID, v.Engine)}
+	binding := &TaskEngineBinding{Revision: operation}
 	if !newSession && task.Binding != nil {
 		binding.HistoryID = task.Binding.HistoryID
 	}

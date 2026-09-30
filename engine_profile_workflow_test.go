@@ -75,7 +75,7 @@ func TestModelCatalogHTTPUsesSelectedAccountHome(t *testing.T) {
 		if err := a.store.activateEngineProfile(env.ID, "codex", id); err != nil {
 			t.Fatal(err)
 		}
-		req := httptest.NewRequest("GET", "http://127.0.0.1/api/environments/win/models?engine=codex", nil)
+		req := httptest.NewRequest("GET", "http://127.0.0.1/api/environments/win/models?engine=codex&profile_id="+id, nil)
 		req.AddCookie(&http.Cookie{Name: "jianzuo_session", Value: "fixture-session"})
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)

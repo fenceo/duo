@@ -241,13 +241,8 @@ func (s *Server) accountSyncRoutes(m *http.ServeMux) {
 		}
 		results := []CodexSyncTargetResult{}
 		for _, env := range targets {
-			s.app.mu.Lock()
 			targetCtx, targetCancel := context.WithTimeout(ctx, 20*time.Second)
-			err := s.app.environmentAccountIdle(env.ID, source.Engine)
-			var old map[string][]byte
-			if err == nil {
-				old, err = readNativeAccountFiles(targetCtx, env, "", source.Engine)
-			}
+			old, err := readNativeAccountFiles(targetCtx, env, "", source.Engine)
 			if err == nil {
 				var next map[string][]byte
 				next, err = mergeAccountFiles(source.Engine, from, old)
@@ -257,10 +252,9 @@ func (s *Server) accountSyncRoutes(m *http.ServeMux) {
 			}
 			targetCancel()
 			if err == nil {
-				err = s.app.store.useSyncedNativeAccount(env.ID, source.Engine)
+				err = s.app.store.useSyncedNativeAccount(env.ID, source.Engine, source.ID)
 			}
-			s.app.mu.Unlock()
-			result := CodexSyncTargetResult{EnvironmentID: env.ID, State: "done", Message: "账号及服务配置已同步，原文件已备份；跟随环境的 Duo 任务将在下一轮使用此账号。外部 CLI 请重新打开"}
+			result := CodexSyncTargetResult{EnvironmentID: env.ID, State: "done", Message: "目标环境的原生账号及服务配置已切换，原文件已备份；未修改任务或会话。已运行的 CLI 是否立即读取由工具决定，必要时重新打开"}
 			if err != nil {
 				result.State, result.Message = "failed", err.Error()
 			}

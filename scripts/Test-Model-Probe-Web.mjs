@@ -119,7 +119,7 @@ for(const accountMode of ['environment','pinned']){
  f.ctx.detail={task:{id:'bound',environment:f.environment,engine:'codex',workspace:'/task',model:'selected',binding:{revision:'binding-version',account_mode:accountMode,profile:{id:'old-account',name:'Old account',kind:'codex_home'}}}};
  f.value("taskPickerModels=[{id:'one',name:'one'}];modelCatalogState.task.key=taskCatalogContextKey(detail.task)");
  await f.ctx.testModelList('task');
- assert.equal(f.requests[0].body.expected_profile_id,accountMode==='environment'?'account-one':'old-account');
+ assert.equal(f.requests[0].body.expected_profile_id,'account-one');
  assert.equal(f.requests[0].body.binding_revision,'binding-version');
  assert.equal(f.requests[0].body.task_id,'bound');
  assert.equal(f.ctx.detail.task.binding.profile.id,'old-account','metadata must not rewrite native session ownership');

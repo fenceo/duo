@@ -255,18 +255,13 @@ func (s *Server) codexSyncRoutes(m *http.ServeMux) {
 		defer s.app.codexSyncMu.Unlock()
 		results := make([]CodexSyncTargetResult, 0, len(selected))
 		for _, env := range selected {
-			s.app.mu.Lock()
 			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-			err := s.app.environmentAccountIdle(env.ID, "codex")
-			if err == nil {
-				err = syncCodexAuth(ctx, env, auth)
-			}
+			err := syncCodexAuth(ctx, env, auth)
 			cancel()
 			if err == nil {
-				err = s.app.store.useSyncedNativeAccount(env.ID, "codex")
+				err = s.app.store.useSyncedNativeAccount(env.ID, "codex", source.ID)
 			}
-			s.app.mu.Unlock()
-			result := CodexSyncTargetResult{EnvironmentID: env.ID, State: "done", Message: "Codex 登录信息已写入目标环境；跟随环境的任务将在下一轮使用此账号，外部 CLI 请重新打开"}
+			result := CodexSyncTargetResult{EnvironmentID: env.ID, State: "done", Message: "Codex 登录信息已写入目标环境；任务及会话保持不变，已运行的 CLI 必要时重新打开"}
 			if err != nil {
 				result.State = "failed"
 				result.Message = err.Error()

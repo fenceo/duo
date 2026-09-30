@@ -254,10 +254,10 @@ for(const [view,theme,width,height] of cases){
    for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct header action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
   }
   if(view.startsWith('handoff')){
-   if(view.startsWith('handofflegacy')){const b=items['handoff-preserve-legacy'];assert(b.visible&&b.width>=16&&b.width<=32,'legacy confirmation must be a readable checkbox')}
+   if(view.startsWith('handofflegacy'))assert(!items['handoff-preserve-legacy'],'legacy task must not ask for an account binding');
    assert(metrics.handoffFooterBackground&&!['transparent','rgba(0, 0, 0, 0)'].includes(metrics.handoffFooterBackground),'fixed handoff actions must have an opaque background');
    const box=items['handoff-dialog'];assert(box.visible&&box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,'engine switch dialog exceeds viewport');assert(box.scrollWidth<=box.clientWidth+1,'engine switch overflows horizontally');
-   for(const id of ['handoff-engine','handoff-profile','handoff-model','handoff-mode']){const b=items[id];assert(b.width>90&&b.x>=box.x&&b.x+b.width<=box.x+box.width,'engine switch field clipped: '+id);if(width<=760)assert(b.height>=44,'engine switch touch field too small: '+id)}
+   for(const id of ['handoff-engine','handoff-model','handoff-mode']){const b=items[id];assert(b.width>90&&b.x>=box.x&&b.x+b.width<=box.x+box.width,'engine switch field clipped: '+id);if(width<=760)assert(b.height>=44,'engine switch touch field too small: '+id)}
    if(view.endsWith('bottom')||width>760)for(const id of ['handoff-submit','handoff-cancel']){const b=items[id];assert(b.visible&&b.y>=box.y&&b.y+b.height<=box.y+box.height,'engine switch confirmation unavailable: '+id)}
   }
   if(view==='menu'){const b=items['session-info-dialog'];assert(b.visible&&b.y>=0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'session information exceeds viewport')}

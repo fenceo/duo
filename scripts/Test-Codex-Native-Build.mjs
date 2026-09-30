@@ -83,7 +83,7 @@ try{
  assert.ok(source.includes('settings-knowledge')&&source.includes('vault-document-directory')&&source.includes('library-manage-task'),'built assets include central knowledge settings and task management navigation');
  assert.ok(source.includes('automatic-organize')&&source.includes('library-layer')&&source.includes('composer-resizer'),'built assets include document layers, automatic organization and composer resizing');
  assert.ok(source.includes('conversation-older')&&!source.includes('id="conversation-all"'),'built conversation includes lazy history without the trajectory preset');
- assert.ok(source.includes('handoff-profile')&&source.includes('完整历史文本 + 接续摘要')&&!source.includes('id="task-link-copy"')&&!source.includes('id="session-info-open"'),'built switch UI and compact header are embedded');
+ assert.ok(source.includes('handoff-engine')&&!source.includes('id="handoff-profile"')&&source.includes('完整历史文本 + 接续摘要')&&!source.includes('id="task-link-copy"')&&!source.includes('id="session-info-open"'),'built switch UI and compact header are embedded');
  console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
 }finally{
  child.stdin.end();

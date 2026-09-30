@@ -132,10 +132,10 @@ func TestAccountSyncAPIUsesSourceEnvironmentAndHidesSecrets(t *testing.T) {
 	if !strings.Contains(string(got), "synthetic-api-key") {
 		t.Fatal("target not updated")
 	}
-	if a.store.activeEngineProfile(env.ID, "codex") != "" || a.store.nativeAccountRevision(env.ID, "codex") == "" {
+	if a.store.currentEnvironmentAccount(env.ID, "codex") != p.ID {
 		t.Fatal("sync did not select native environment account")
 	}
-	// A queued task prevents writing the shared native credential files.
+	// Switching native login is independent of queued work.
 	task, err := a.createWithExecution("queued sync guard", env.Workspaces[0], "", "codex", "", env.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -144,8 +144,8 @@ func TestAccountSyncAPIUsesSourceEnvironmentAndHidesSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw = request("/api/account-sync", "POST", CodexSyncRequest{SourceProfileID: p.ID, EnvironmentIDs: []string{env.ID}}, 200)
-	if !strings.Contains(string(raw), `"state":"failed"`) || !strings.Contains(string(raw), "排队任务") {
-		t.Fatal("busy account sync was not blocked", string(raw))
+	if !strings.Contains(string(raw), `"state":"done"`) {
+		t.Fatal("account switch was coupled to task queue", string(raw))
 	}
 }
 

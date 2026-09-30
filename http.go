@@ -337,17 +337,8 @@ func (s *Server) Handler() http.Handler {
 				fail(w, http.StatusBadRequest, "任务与模型目录目标不匹配")
 				return
 			}
-			if task.Binding == nil && task.Session != "" {
-				fail(w, http.StatusConflict, "旧会话未记录账号，请先通过切换 AI 确认配置")
-				return
-			}
 			env = *task.Environment
 			env.Workspaces = []string{task.Workspace}
-			task, err = s.app.store.taskAccountForLookup(task)
-			if err != nil {
-				fail(w, http.StatusConflict, err.Error())
-				return
-			}
 			profileEnv = s.app.activeEngineEnvironment(task)
 		} else if r.URL.Query().Has("profile_id") {
 			profile, err := s.app.store.selectedEngineProfile(env.ID, engine, r.URL.Query().Get("profile_id"))

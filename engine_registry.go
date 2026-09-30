@@ -231,6 +231,9 @@ func (s *Store) removeEngineProfile(id string) error {
 	if _, err = tx.Exec("DELETE FROM settings WHERE key IN (?,?)", "codex_account_info:"+removed.ID, "account_organization:"+removed.ID); err != nil {
 		return err
 	}
+	if _, err = tx.Exec("DELETE FROM settings WHERE key LIKE 'engine_native_account:%' AND value=?", removed.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -292,11 +295,9 @@ func engineProfileEnv(profile EngineCredentialProfile) map[string]string {
 }
 
 func (a *App) activeEngineEnvironment(task Task) map[string]string {
-	if task.Binding != nil {
-		if task.Binding.Profile == nil {
-			return nil
-		}
-		return engineProfileEnv(*task.Binding.Profile)
+	// Credentials belong to the native environment; legacy task profiles are inert.
+	if task.Engine == "codex" || task.Engine == "claude" {
+		return nil
 	}
 	if task.Environment == nil {
 		return nil
@@ -395,7 +396,7 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 		}
 		for _, env := range s.app.config.get().Environments {
 			for _, engine := range catalog.Engines {
-				if profile := s.app.store.activeEngineProfile(env.ID, engine.ID); profile != "" {
+				if profile := s.app.store.currentEnvironmentAccount(env.ID, engine.ID); profile != "" {
 					catalog.ActiveProfile[env.ID+":"+engine.ID] = profile
 				}
 			}
@@ -479,6 +480,10 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 		}
 		if profile == nil {
 			fail(w, http.StatusNotFound, "账号/API 配置不存在")
+			return
+		}
+		if profile.Engine == "codex" || profile.Engine == "claude" {
+			fail(w, http.StatusConflict, "请在账号管理中选择“切换到环境”及目标环境，直接更新原生登录")
 			return
 		}
 		if err := s.app.store.activateEngineProfile(profile.EnvironmentID, profile.Engine, profile.ID); err != nil {

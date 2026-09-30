@@ -5,7 +5,7 @@ Duo的长期结构分成四层：
 1. **工作台控制面**：任务、权限、审批、知识、飞书、硬件授权、远程访问和升级。
 2. **执行目标**：Windows、WSL 发行版/用户、SSH 主机。目标保存自己的路径、登录状态和工具安装状态。
 3. **引擎适配器**：Codex app-server、Claude Code CLI、DeepSeek Harness headless/SDK、Kimi ACP、MiMo ACP。引擎负责会话、流式事件、审批和取消，不负责知识库或硬件业务。
-4. **模型/账号绑定**：模型是引擎下的选择；账号/API 配置只保存目标环境中的 profile 引用，不在 Duo 数据库或 Git 中保存密钥。
+4. **模型与账号**：模型是任务的引擎参数；账号/API 独立管理，通过切换目标环境的原生登录生效，不绑定任务。
 
 ## 代码边界与本轮收敛
 
@@ -33,14 +33,12 @@ Duo的长期结构分成四层：
 - `GET /api/environments/{id}/engines/{engine}/install-plan`：提供所选目标的安装/检查指南；允许列表中的一键安装使用独立 setup API。
 - `PUT /api/engine-profiles`、`POST /api/engine-profiles/{id}/activate`：保存和切换外部账号/profile 引用。
 - `POST /api/codex-sync`：在用户明确选择后，把本地可读取的 Codex `auth.json` 安全投影到 Windows、WSL 或 SSH 目标的原生 `~/.codex/auth.json`；目标先保留 `.duo-backup`，远程凭据只经标准输入传输，已运行的 app-server 需要重启。
-- Codex profile 使用 `CODEX_HOME`，Claude profile 使用 `CLAUDE_CONFIG_DIR`；WSL/SSH 通过 `env` 前缀传入，Windows 通过子进程环境传入。
+- Codex/Claude 运行使用目标环境的原生登录目录，不再由任务 profile 覆盖 CODEX_HOME / CLAUDE_CONFIG_DIR。账号管理中的独立目录只保存可切换的账号库存。
 - `env_file` 暂时只记录引用，不由 HTTP 服务读取任意密钥文件。后续由目标适配器按最小权限读取，并在进程环境中使用，禁止出现在命令行、任务文本和事件日志。
 
-v0.31.0 起，新任务默认跟随「环境 + 引擎」的当前账号，每轮执行前解析账号；正在执行的一轮保留原账号。任务可单独指定 profile，此时编辑或删除环境引用不会改变该任务已保存的目录。模型列表读取下一轮有效账号。账号变化时自动清空旧原生 session，并保存完整历史用于接续。升级迁移和原生同步边界见 [环境账号与任务](environment-accounts.md)。
+v0.31.1 起，账号管理通过原生文件切换 Windows、WSL 或 SSH 的账号，与对话和任务解耦。任务中的旧 profile 字段不再参与运行配置，不按账号自动创建会话或回放历史。旧的 activate 接口对 Codex/Claude 返回明确提示，避免把修改管理引用误报为切换原生登录。详见 [环境账号管理](environment-accounts.md)。
 
-“切换 AI”在同一个 Duo 任务内修改执行配置。相同引擎、环境、目录和账号引用仅换模型时复用原生会话；换引擎、账号、执行位置或 Harness 权限时清空目标原生 session，下一条消息携带接续摘要及完整所选历史文本。记录旧配置和原生会话供诊断；不把 session ID 跨引擎传递，不复制凭据。切换本身不调用模型，运行和排队期间拒绝切换。
-
-旧版带原生 session 的任务没有可信账号绑定，升级后首次继续需通过“切换 AI”确认配置、创建新会话并接续历史。不能根据当前默认账号猜测旧 session 归属。外部登录、密钥、API 地址仍由原生配置管理；修改同一配置目录里的账号或 provider 不属于 Duo 可隔离的行为。不同账号/API 建议使用不同配置目录。详见 [任务接续](continuation.md)。
+“切换 AI”仍在同一任务内切换引擎、模型、权限和执行位置。仅换模型时保留原生会话，切换引擎或执行位置时通过摘要及所选完整历史接续。该操作不能指定账号，不改变原生登录；运行或排队时需先结束当前执行。
 
 ## 接入顺序
 

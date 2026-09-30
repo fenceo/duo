@@ -233,9 +233,6 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		return Run{}, errors.New("任务已归档，请先在网页恢复任务")
 	}
 	if task.Binding == nil {
-		if task.Session != "" {
-			return Run{}, errors.New("旧会话未记录账号/API 配置，请点击“切换 AI”，确认原配置并勾选“保留原会话”后继续")
-		}
 		task.Binding, e = a.store.defaultEngineBinding(task)
 		if e != nil {
 			return Run{}, e
@@ -399,9 +396,6 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 		task, err := a.store.task(id)
 		if err == nil {
 			err = a.store.applyRunExecution(r.ID, &task)
-		}
-		if err == nil {
-			err = a.resolveRunAccount(r.ID, &task)
 		}
 		a.mu.Unlock()
 		if err == nil {
