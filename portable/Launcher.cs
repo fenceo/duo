@@ -19,6 +19,13 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 static class Portable {
+    public static readonly Icon AppIcon = ReadAppIcon();
+    static Icon ReadAppIcon() {
+        using(var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("Duo.AppIcon")) {
+            if(stream==null)throw new InvalidDataException("Duo application icon is missing.");
+            using(var icon=new Icon(stream,new Size(32,32)))return (Icon)icon.Clone();
+        }
+    }
     public static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     public static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     public static string Data;
@@ -149,7 +156,7 @@ sealed class TrayApp:ApplicationContext,IDisposable {
         startup=new ToolStripMenuItem("登录 Windows 后自动启动"){CheckOnClick=false};startup.Checked=IsStartup();startup.Click+=(s,e)=>Safe(ToggleStartup);menu.Items.Add(startup);
         menu.Items.Add("重新启动服务",null,(s,e)=>Safe(()=>{if(ConfirmStop("重新启动")){host.Stop();host.Start();}}));
         menu.Items.Add("退出Duo",null,(s,e)=>Safe(()=>{if(ConfirmStop("退出")){host.Stop();icon.Visible=false;ExitThread();}}));
-        icon=new NotifyIcon{Icon=SystemIcons.Application,Text="Duo · 本地任务工作台",ContextMenuStrip=menu,Visible=true};
+        icon=new NotifyIcon{Icon=Portable.AppIcon,Text="Duo · 本地任务工作台",ContextMenuStrip=menu,Visible=true};
         icon.DoubleClick+=(s,e)=>Safe(()=>Portable.Open(Portable.URL));
         timer=new System.Windows.Forms.Timer{Interval=500};timer.Tick+=(s,e)=>{
             if(host.DataSwitchRequested&&!host.Running){try{host.ApplyDataSwitch();status.Text="Duo · 已载入新数据目录";}catch(Exception err){status.Text="数据目录切换失败";MessageBox.Show(err.Message,"Duo",MessageBoxButtons.OK,MessageBoxIcon.Error);}}
@@ -267,6 +274,7 @@ sealed class SetupForm:Form {
     readonly Button detect=new Button{Text="重新检测",AutoSize=true},browse=new Button{Text="选择文件夹…",AutoSize=true};
     FoundChoice selected; bool applying, detecting;
     public SetupForm(){
+        Icon=Portable.AppIcon;
         Text="Duo · 首次使用";StartPosition=FormStartPosition.CenterScreen;ClientSize=new Size(520,390);MinimumSize=new Size(500,360);Font=new Font("Microsoft YaHei UI",9);AutoScaleMode=AutoScaleMode.Dpi;BackColor=Color.White;
         fields.Controls.Add(new Label{Text="设置密码，马上开始。",Font=new Font(Font.FontFamily,17,FontStyle.Bold),AutoSize=true,Margin=new Padding(0,0,0,8)});
         fields.Controls.Add(new Label{Text="首次启动只需设置工作台密码。进入工作台后，可随时在“设置”中修改执行环境、AI 工具、工作目录、网络和端口。",AutoSize=true,MaximumSize=new Size(450,0),ForeColor=Color.DimGray,Margin=new Padding(0,0,0,14)});

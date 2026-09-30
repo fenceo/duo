@@ -62,7 +62,8 @@ try {
     }
 } finally { $zip.Dispose(); $zipStream.Dispose() }
 $helper = Join-Path $work 'DuoMaintenance.exe'
-$compilerArgs = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',('/out:' + $helper),'/reference:System.Xml.dll')
+$appIcon = Join-Path $root 'web\favicon.ico'
+$compilerArgs = @('/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output','/codepage:65001',('/out:' + $helper),('/win32icon:' + $appIcon),'/reference:System.Xml.dll')
 if ($TestNamespace) {
     $identityFile = Join-Path $work 'test-namespace.txt'
     [IO.File]::WriteAllText($identityFile, $TestNamespace, [Text.UTF8Encoding]::new($false))
@@ -72,7 +73,7 @@ if ($TestNamespace) {
 if ($LASTEXITCODE -ne 0) { throw 'Installer maintenance helper compilation failed.' }
 $setup = Join-Path $output 'Duo-Setup-User-x64.exe'
 $hashFile = $setup + '.sha256'
-$innoArgs = @('/Qp',('/DAppVersion=' + $versionValue),('/DPayloadDir=' + $payloadDir),('/DHelperPath=' + $helper),('/DOutputPath=' + $output))
+$innoArgs = @('/Qp',('/DAppVersion=' + $versionValue),('/DPayloadDir=' + $payloadDir),('/DHelperPath=' + $helper),('/DOutputPath=' + $output),('/DAppIcon=' + $appIcon))
 if ($TestNamespace) { $innoArgs += '/DTestNamespace=' + $TestNamespace }
 & $InnoCompiler @innoArgs $definition
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Native Inno Setup compilation failed.' }

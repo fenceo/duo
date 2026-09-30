@@ -11,6 +11,8 @@
 - `scripts/Build-Portable.ps1`：检查、测试、构建便携包和安装器，并生成 SHA-256 校验文件。
 - `scripts/Install-Startup.ps1`：旧兼容入口已停用，仅提示使用安装器或托盘；不再直接覆盖计划任务。
 
+应用图标以 `web/icon.svg` 为唯一可编辑源。在 Windows 运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Icons.ps1`，生成并提交 `web/favicon.ico`、`web/icon-256.png` 和 `web/apple-touch-icon.png`。网页直接使用 SVG；启动程序同时嵌入 Win32 图标和托盘所需的托管资源，安装程序复用同一 ICO。修改图标内容时同步递增 `web/index.html` 中的图标缓存版本。
+
 ## 检查
 
 开发与稳定发布统一使用 `main`。修改 `package.json` 版本并推送到 `main` 会运行发布工作流；也可在 `main` 手动触发。发布执行同一提交的界面验收、测试与构建，不创建 release、review 或 ui-snapshots 分支。

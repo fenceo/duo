@@ -3,6 +3,32 @@ param([string]$Launcher = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist\Du
 $ErrorActionPreference = 'Stop'
 if (!(Test-Path -LiteralPath $Launcher -PathType Leaf)) { throw 'Compiled launcher fixture is missing.' }
 $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes([IO.Path]::GetFullPath($Launcher)))
+Add-Type -AssemblyName System.Drawing
+# Check the compiled executable and the resource used by tray/first-run windows.
+# This does not start the launcher, register a shortcut or change icon caches.
+$resource = $assembly.GetManifestResourceStream('Duo.AppIcon')
+if (!$resource) { throw 'Launcher is missing its managed application icon.' }
+$portableType = $assembly.GetType('Portable', $true)
+$appIcon = $portableType.GetField('AppIcon', [Reflection.BindingFlags]'Public,Static').GetValue($null)
+$nativeIcon = [Drawing.Icon]::ExtractAssociatedIcon([IO.Path]::GetFullPath($Launcher))
+try {
+    $expected = [Drawing.Icon]::new($resource, [Drawing.Size]::new(32,32))
+    try {
+        $expectedImage = $expected.ToBitmap()
+        try {
+            foreach ($candidate in @($appIcon, $nativeIcon)) {
+                if (!$candidate -or $candidate.Width -ne 32 -or $candidate.Height -ne 32) { throw 'Launcher icon cannot be loaded at 32 px.' }
+                $actual = $candidate.ToBitmap()
+                try {
+                    foreach ($point in @(@(9,16),@(22,16),@(16,4))) {
+                        if ($actual.GetPixel($point[0],$point[1]).ToArgb() -ne $expectedImage.GetPixel($point[0],$point[1]).ToArgb()) { throw 'Launcher native/tray icon differs from Duo artwork.' }
+                    }
+                } finally { $actual.Dispose() }
+            }
+        } finally { $expectedImage.Dispose() }
+    } finally { $expected.Dispose() }
+} finally { if ($nativeIcon) { $nativeIcon.Dispose() }; $resource.Dispose() }
+Write-Output 'PASS: compiled executable and tray icon use Duo artwork. No application started.'
 
 # The first-run wizard is a native WinForms surface, so it cannot be rendered
 # reliably in this headless build test. Keep a small source-level contract in

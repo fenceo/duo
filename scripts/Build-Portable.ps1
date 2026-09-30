@@ -91,7 +91,7 @@ try {
     # turns into a mangled name (CS2021). Compile to an ASCII temp name and rename afterwards.
     $launcher = Join-Path $packageDir 'duo-launcher.exe'
     Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
-    & $compiler /nologo /target:winexe /platform:x64 /utf8output /codepage:65001 ("/out:"+$launcher) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll portable\Launcher.cs
+    & $compiler /nologo /target:winexe /platform:x64 /utf8output /codepage:65001 ("/out:"+$launcher) '/win32icon:web\favicon.ico' '/resource:web\favicon.ico,Duo.AppIcon' /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll portable\Launcher.cs
     if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
     & (Join-Path $PSScriptRoot 'Test-Launcher.ps1') -Launcher $launcher
     if ($LASTEXITCODE -ne 0) { throw 'Launcher startup regression failed' }

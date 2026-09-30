@@ -10,6 +10,9 @@
 #ifndef OutputPath
   #error OutputPath is required
 #endif
+#ifndef AppIcon
+  #error AppIcon is required
+#endif
 #ifdef TestNamespace
   #define ProductKey "Jianzuo-Test-" + TestNamespace
   #define ProductName "Jianzuo Test " + TestNamespace
@@ -39,6 +42,7 @@ DisableDirPage=no
 DisableWelcomePage=no
 DisableStartupPrompt=yes
 UninstallDisplayIcon={app}\Duo.exe
+SetupIconFile={#AppIcon}
 UninstallDisplayName={#ProductName}
 OutputDir={#OutputPath}
 OutputBaseFilename=Duo-Setup-User-x64

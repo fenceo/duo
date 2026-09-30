@@ -316,6 +316,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 #account-import-fields input,#account-import-fields select{max-width:100%;min-width:0}
 .account-import{padding:14px 0;border-top:1px solid var(--line)}
 .account-import summary{cursor:pointer;font-weight:600}
+.brand img.logo,.sidebar .brand img.logo,:root[data-theme="light"] .brand img.logo{display:block;object-fit:contain;background:transparent;border-radius:0;flex-shrink:0}
 .account-manager-items{display:grid;gap:8px;max-height:340px;overflow:auto;margin:12px 0;min-width:0}
 .account-manager-items .account-manager-item{display:flex;align-items:flex-start;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;margin:0;cursor:pointer;min-width:0}
 .account-manager-items input[type=checkbox]{width:18px;flex:0 0 18px;margin:3px 0}

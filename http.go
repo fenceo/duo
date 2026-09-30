@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/app.optimized.js web/style.css web/workbench.css web/vendor
+//go:embed web/index.html web/app.optimized.js web/style.css web/workbench.css web/vendor web/icon.svg web/favicon.ico web/icon-256.png web/apple-touch-icon.png
 var assets embed.FS
 
 type attempts struct {
