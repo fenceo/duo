@@ -15,7 +15,7 @@ function ensureHandoffDialog(){
  button('handoff-cancel').onclick=()=>{if(!handoffBusy)dialog.close()};
  button('handoff-refresh').textContent='重读任务与预览';button('handoff-refresh').onclick=()=>void openHandoff(handoffSourceID);
  button('handoff-model-refresh').onclick=()=>void loadHandoffModels();
- button('handoff-settings').onclick=async()=>{dialog.close();await openSettings();showSettingsSection('engines')};
+ button('handoff-settings').onclick=async()=>{dialog.close();await openAccountCenter()};
  input('handoff-preserve-legacy').onchange=()=>updateHandoffHint();
  input('handoff-mode').onchange=()=>resetLegacyConfirmation();
  input('handoff-engine').onchange=()=>updateHandoffTarget(true);
@@ -71,7 +71,7 @@ async function loadHandoffPreview(){
  try{const p=await api<HandoffPreview>('tasks/'+encodeURIComponent(task.id)+'/continuation/preview?mode='+encodeURIComponent(mode),'GET',undefined,handoffController?.signal);if(!handoffCurrent(generation,epoch)||request!==handoffPreviewRequest)return;handoffPreview=p;element('handoff-preview-status').textContent=`所选资料：${p.transferred_runs} 轮对话、${p.transferred_knowledge} 条笔记，全文 ${(p.archive_bytes/1024).toFixed(1)} KiB。${p.context_truncated?'摘要仅含重点，全文保留所选历史。':''}`;element('handoff-preview').textContent=p.context;element('handoff-archive').setAttribute('href','/api/tasks/'+encodeURIComponent(task.id)+'/continuation/archive?mode='+encodeURIComponent(mode));button('handoff-submit').disabled=false}
  catch(e){if(handoffCurrent(generation,epoch)&&request===handoffPreviewRequest){element('handoff-preview-status').textContent='接续资料读取失败';element('handoff-error').textContent=(e as Error).message}}
 }
-async function openHandoff(id=chosen){
+async function openHandoff(id=chosen,preferredProfileID=''){
  if(!id||handoffBusy)return;
  ensureHandoffDialog();handoffController?.abort();handoffController=new AbortController();handoffTask=null;handoffPreview=null;
  handoffSourceID=id;input('handoff-preserve-legacy').checked=false;element('handoff-legacy').hidden=true;button('handoff-submit').textContent='确认切换';
@@ -85,7 +85,18 @@ async function openHandoff(id=chosen){
   if(snapshot.task.archived||snapshot.task.deleted||snapshot.runs.some(r=>r.status==='running'||r.status==='queued'))throw new Error('请先恢复任务，或等待执行结束 / 停止并取消排队后再切换。');
   input('handoff-environment').innerHTML=settings.config.environments.map(v=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');input('handoff-environment').value=snapshot.task.environment.id;
   input('handoff-engine').value=snapshot.task.engine;input('handoff-workspace').value=snapshot.task.workspace;input('handoff-context-mode').value='full';
-  element<HTMLFieldSetElement>('handoff-fields').disabled=false;updateHandoffTarget(true);await loadHandoffPreview();
+  if(preferredProfileID){
+   const profile=catalog.profiles.find(p=>p.id===preferredProfileID),env=settings.config.environments.find(e=>e.id===profile?.environment_id);
+   if(!profile||!env||profile.kind==='env_file'||!catalog.engines.some(e=>e.id===profile.engine&&e.runnable!==false))throw Error('所选账号或环境已不可用，请刷新账号列表。');
+   input('handoff-environment').value=env.id;input('handoff-engine').value=profile.engine;input('handoff-workspace').value=env.id===snapshot.task.environment.id?snapshot.task.workspace:env.workspaces[0]||'';
+  }
+  element<HTMLFieldSetElement>('handoff-fields').disabled=false;updateHandoffTarget(true);
+  if(preferredProfileID){
+   const profile=catalog.profiles.find(p=>p.id===preferredProfileID)!,bound=snapshot.task.binding?.profile;
+   const same=bound?.id===profile.id&&bound.engine===profile.engine&&bound.environment_id===profile.environment_id&&bound.kind===profile.kind&&bound.reference===profile.reference;
+   input('handoff-profile').value=same?'__current__':preferredProfileID;if(!same)input('handoff-model').value='';resetLegacyConfirmation();void loadHandoffModels();
+  }
+  await loadHandoffPreview();
  }catch(e){if(handoffCurrent(generation,epoch)){element('handoff-error').textContent=(e as Error).message;button('handoff-submit').disabled=true}}
 }
 async function submitHandoff(){

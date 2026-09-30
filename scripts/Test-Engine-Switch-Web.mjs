@@ -93,5 +93,34 @@ ctx.api=async(path,method,body)=>{
 };
 await ctx.submitHandoff();assert.equal(node('handoff-dialog').open,false);
 assert.equal(node('message').value,'unsent draft');
+
+// Account-card shortcuts choose the exact target; opening stays read-only.
+const remote={...environment,id:'remote',name:'Remote',type:'ssh',host:'fixture.invalid',workspaces:['/remote-work']};
+const selected={id:'selected',name:'Selected',environment_id:'remote',engine:'claude',kind:'claude_home',reference:'/fixture/selected',updated:9};
+ctx.shortcutRemote=remote;runInContext('settings.config.environments.push(shortcutRemote)',ctx);
+const shortcutCatalog={...profiles,engines:[{id:'codex',name:'Codex',runnable:true},{id:'claude',name:'Claude Code',runnable:true}],profiles:[...profiles.profiles,selected]};
+let shortcutSource=source;
+ctx.api=async(path,method='GET',body)=>{
+ assert.equal(method,'GET','account shortcut must wait for the reviewed handoff');
+ if(path==='engines')return shortcutCatalog;
+ if(path.endsWith('?recent=1'))return detail(shortcutSource);
+ return api(path,method,body);
+};
+await ctx.openHandoff('source','selected');await flush();
+assert.equal(node('handoff-environment').value,'remote');
+assert.equal(node('handoff-engine').value,'claude');
+assert.equal(node('handoff-workspace').value,'/remote-work');
+assert.equal(node('handoff-profile').value,'selected');
+assert.equal(node('handoff-model').value,'');
+assert(calls.some(x=>x.path.includes('profile_id=selected')));
+node('handoff-cancel').onclick();
+shortcutSource={...source,environment:remote,workspace:'/existing-work',engine:'claude',model:'model-b',binding:{revision:'same',profile:selected}};
+await ctx.openHandoff('source','selected');await flush();
+assert.equal(node('handoff-workspace').value,'/existing-work');
+assert.equal(node('handoff-profile').value,'__current__','same account keeps the current session binding');
+assert.equal(node('handoff-model').value,'model-b');
+node('handoff-cancel').onclick();
+await ctx.openHandoff('source','removed');
+assert(node('handoff-submit').disabled);assert.match(node('handoff-error').textContent,/不可用/);
 runInContext('authenticated=false;renewShellScope()',ctx);
 console.log('PASS: same-task engine/API/model switch, correct source and profile metadata, full-history default, escaped preview, draft preservation, duplicate lock, stale scope guards, explicit permissions and no model calls.');

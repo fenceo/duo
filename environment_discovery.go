@@ -286,6 +286,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 			result.Message = "未完成 WSL 检测。请确认所选发行版和用户可用；当前进程可能位于 Codex/受限沙箱，请从资源管理器、开始菜单或普通快捷方式启动Duo，再到高级设置手动配置。"
 			result.Codex = detectedTool{State: "unknown", Label: "未完成检测"}
 			result.Claude = result.Codex
+			result.Harness, result.Kimi, result.Mimo = result.Codex, result.Codex, result.Codex
 			return result
 		}
 		env.User = parts[0]
@@ -341,9 +342,7 @@ func executableCandidate(paths ...string) string {
 	}
 	return ""
 }
-func detectEnvironments(ctx context.Context) environmentDiscovery {
-	ctx, cancel := context.WithTimeout(ctx, 24*time.Second)
-	defer cancel()
+func environmentCandidates(ctx context.Context) ([]Environment, string) {
 	win := windowsEnvironment()
 	home, _ := os.UserHomeDir()
 	win.Codex = executableCandidate(win.Codex, filepath.Join(home, ".codex", "packages", "standalone", "current", "bin", "codex.exe"), "codex.exe")
@@ -365,6 +364,23 @@ func detectEnvironments(ctx context.Context) environmentDiscovery {
 	if err != nil {
 		result.Message += " WSL 列表未能读取，请检查 WSL 安装状态或服务权限。"
 	}
+	return envs, result.Message
+}
+
+func inspectDiscoveredEnvironment(ctx context.Context, env Environment) detectedEnvironment {
+	item := discoverOne(ctx, probeEnvironment, env)
+	if env.Type == "windows" {
+		item.Kimi = detectedInstalledTool(executableCandidate("kimi.cmd", "kimi.exe", "kimi", "kimi-code.exe", "kimi-code"))
+		item.Mimo = detectedInstalledTool(executableCandidate("mimo.cmd", "mimo.exe", "mimo", "mimo-code.exe", "mimo-code"))
+	}
+	return item
+}
+
+func detectEnvironments(ctx context.Context) environmentDiscovery {
+	ctx, cancel := context.WithTimeout(ctx, 24*time.Second)
+	defer cancel()
+	envs, message := environmentCandidates(ctx)
+	result := environmentDiscovery{Message: message}
 	result.Items = make([]detectedEnvironment, len(envs))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3)
@@ -374,12 +390,7 @@ func detectEnvironments(ctx context.Context) environmentDiscovery {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			item := discoverOne(ctx, probeEnvironment, env)
-			if env.Type == "windows" {
-				item.Kimi = detectedInstalledTool(executableCandidate("kimi.cmd", "kimi.exe", "kimi", "kimi-code.exe", "kimi-code"))
-				item.Mimo = detectedInstalledTool(executableCandidate("mimo.cmd", "mimo.exe", "mimo", "mimo-code.exe", "mimo-code"))
-			}
-			result.Items[i] = item
+			result.Items[i] = inspectDiscoveredEnvironment(ctx, env)
 		}(i, env)
 	}
 	wg.Wait()

@@ -8,7 +8,7 @@ ctx.api=async(path,method,body)=>{
  if(path==='engines')return {engines:[{id:'claude',name:'Claude Code',credential_kinds:['claude_home'],targets:['wsl','windows','ssh']}],profiles:[profile],active_profile:{}};
  if(path==='engine-setup')return [];
  if(path==='account-sync'){writes++;assert.equal(method,'POST');assert.equal(body.source_profile_id,profile.id);assert.deepEqual(Array.from(body.environment_ids),['fixture']);return new Promise(resolve=>finish=resolve)}
- if(path==='engine-status')return {items:[{environment_id:'fixture',name:'Synthetic SSH',type:'ssh',codex:{label:'已安装'},claude:{label:'未安装'},harness:{label:'已安装'},kimi:{label:'未安装'},mimo:{label:'未安装'}}]};
+ if(path==='environments/scan')return {items:[{environment_id:'fixture',name:'Synthetic SSH',type:'ssh',codex:{label:'已安装'},claude:{label:'未安装'},harness:{label:'已安装'},kimi:{label:'未安装'},mimo:{label:'未安装'}}]};
  throw Error(path);
 };
 assert(el('accounts-open'));assert(el('engines-open'));assert(el('desktop-open'));

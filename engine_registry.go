@@ -335,6 +335,45 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 	s.accountSyncRoutes(m)
 	s.engineStatusRoutes(m)
 	s.accountImportRoutes(m)
+	m.HandleFunc("PATCH /api/engine-profiles/{id}", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name            string `json:"name"`
+			ExpectedUpdated int64  `json:"expected_updated"`
+		}
+		if !body(w, r, &req) {
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
+		if req.Name == "" || len([]rune(req.Name)) > 60 {
+			fail(w, 400, "账号名称需要 1 至 60 个字符")
+			return
+		}
+		s.app.mu.Lock()
+		defer s.app.mu.Unlock()
+		if s.app.updating.Load() {
+			fail(w, 409, errUpdateBusy.Error())
+			return
+		}
+		profiles := s.app.store.engineProfiles()
+		for i := range profiles {
+			if profiles[i].ID != r.PathValue("id") {
+				continue
+			}
+			if profiles[i].Updated != req.ExpectedUpdated {
+				fail(w, 409, "账号配置已更改，请刷新列表后重试")
+				return
+			}
+			profiles[i].Name = req.Name
+			profiles[i].Updated = max(now(), profiles[i].Updated+1)
+			if err := s.app.store.saveEngineProfiles(profiles); err != nil {
+				fail(w, 500, "保存账号名称失败")
+				return
+			}
+			jsonOut(w, 200, profiles[i])
+			return
+		}
+		fail(w, 404, "账号配置不存在")
+	}))
 	m.HandleFunc("GET /api/engines", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		catalog := EngineCatalog{Engines: builtinEngineDefinitions(), Profiles: s.app.store.engineProfiles(), ActiveProfile: map[string]string{}}
 		for _, env := range s.app.config.get().Environments {

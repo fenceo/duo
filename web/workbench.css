@@ -340,7 +340,35 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .engine-onboarding pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:18px}
 .engine-onboarding p{overflow-wrap:anywhere}
 .sidebar-account-tools{display:flex;gap:6px;flex:none}.sidebar-account-tools>button{flex:1;min-width:0;min-height:36px;padding:5px;font-size:12px}
-#account-center-dialog{width:min(760px,calc(100vw - 24px));overflow-wrap:anywhere}
+#account-center-dialog{width:min(1180px,calc(100vw - 24px));overflow-wrap:anywhere}
+.account-center-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.account-center-heading h2{margin:0;font-size:23px}.account-center-heading p{margin:8px 0 0}
+.account-engine-tabs{display:flex;gap:8px;overflow:auto;padding:18px 0 12px;min-width:0;max-width:100%}
+.account-engine-tabs button{display:flex;align-items:center;gap:8px;flex-shrink:0;background:transparent;white-space:nowrap}
+.account-engine-tabs span{border-radius:12px;padding:1px 7px;background:var(--surface);font-size:11px}
+.account-engine-tabs button.selected,#account-center-dialog button[aria-pressed=true]{color:var(--accent);border-color:var(--accent);background:var(--tint)}
+.account-center-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.account-center-toolbar #account-search{flex:2 1 240px;width:auto}.account-center-toolbar select{flex:1 1 140px;width:auto}
+.account-view-controls{display:flex;gap:6px;flex-wrap:wrap}.account-view-controls button{font-size:12px;padding:8px 11px}
+.account-center-commandbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 8px}
+.account-center-commandbar p{margin:0}.account-center-hint{margin:8px 0 16px;line-height:1.7}
+.account-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:16px;min-width:0}
+.account-card{display:flex;flex-direction:column;min-width:0;padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 3px 14px #00000007}
+.account-card-active{border-color:var(--accent)}
+.account-card header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.account-engine-badge{font-size:12px;font-weight:650}.account-default-badge{font-size:11px;color:var(--accent);padding:4px 8px;border-radius:16px;background:var(--tint)}
+.account-card h3{font-size:18px;margin:20px 0 14px;line-height:1.5;overflow-wrap:anywhere}
+.account-card-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.account-card-meta span{border:1px solid var(--line);border-radius:5px;padding:2px 6px;font-size:10px}.account-card-meta strong{font-weight:400}
+.account-kind{margin:10px 0}.account-reference{margin:0 0 18px;font-size:12px;color:var(--muted)}.account-reference summary{cursor:pointer}
+.account-reference code{display:block;margin-top:8px;overflow-wrap:anywhere;white-space:pre-wrap;font-size:11px}
+.account-card .account-updated{font-size:11px;margin:auto 0 14px;color:var(--muted)}
+.account-card-actions{display:flex;gap:7px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--line)}.account-card-actions button{font-size:12px;padding:7px 10px}
+.account-grid.account-list-view{grid-template-columns:1fr}.account-list-view .account-card{padding:16px 20px}.account-list-view .account-card h3{margin:10px 0}
+.account-list-view .account-reference{margin-bottom:10px}.account-list-view .account-card-actions{padding-top:10px}
+.account-empty{grid-column:1/-1;text-align:center;padding:48px 20px;border:1px dashed var(--line);border-radius:14px}.account-empty strong{font-size:16px}
+#account-center-editor-wrap{margin-top:22px;border-top:1px solid var(--line);padding-top:14px}#account-center-editor-wrap>summary{cursor:pointer;font-size:13px;padding:6px 0}
+.engine-discovered{border-style:dashed}.engine-discovered .detected-tools{display:flex;flex-wrap:wrap;gap:8px}
 #engine-account-fields{margin:14px 0;padding:12px;min-width:0;border:1px solid var(--line);border-radius:10px}
 #engine-account-fields summary{cursor:pointer;padding:10px 0}
 #account-center-dialog input,#account-center-dialog select{min-width:0;max-width:100%;box-sizing:border-box}

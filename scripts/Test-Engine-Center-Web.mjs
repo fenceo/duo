@@ -8,10 +8,15 @@ run(`settings.config.environments=[{id:'win',name:'Windows fixture',type:'window
 assert.equal(document.querySelector('[data-settings="engines"]'),null);
 assert(el('settings-environment').contains(el('engine-catalog')));
 assert(el('engine-environment-editor').contains(el('setting-workspaces')));
+assert.equal(el('detect-local-environments'),null,'duplicate discovery action removed');assert.equal(el('detected-environments'),null,'duplicate result list removed');
 assert.equal(document.querySelectorAll('[data-install-engine]').length,0,'unknown status cannot offer install');
-ctx.api=async path=>{assert.equal(path,'engine-status');return {items:[{environment_id:'win',codex:{state:'installed',path:'C:/fixture/codex.exe',label:'已安装'},kimi:{state:'missing',path:'',label:'未安装'}},{environment_id:'remote',codex:{state:'missing',path:'',label:'未安装'},kimi:{state:'unknown',path:'',label:'未完成检测'}}]}};
+ctx.api=async(path,method)=>{assert.equal(path,'environments/scan');assert.equal(method,'POST');return {items:[{environment_id:'win',codex:{state:'installed',path:'C:/fixture/codex.exe',label:'已安装'},kimi:{state:'missing',path:'',label:'未安装'}},{environment_id:'remote',codex:{state:'missing',path:'',label:'未安装'},kimi:{state:'unknown',path:'',label:'未完成检测'}}]}};
 await ctx.refreshEngineStatus();
 assert.match(el('engine-catalog').textContent,/已安装/);assert.match(el('engine-catalog').textContent,/未安装/);assert.match(el('engine-catalog').textContent,/SSH fixture/);
+run(`engineDiscoveredEnvironments=[{environment:{id:'detected',name:'New WSL',type:'wsl',distro:'Debian',user:'fixture',codex:'/fixture/codex',workspaces:['/fixture']},codex:{state:'configured',path:'/fixture/codex',label:'已登录'},claude:{state:'missing',label:'未安装'},message:''}];renderEngineCatalog()`);
+const saved=run('JSON.stringify(settings.config.environments)');ctx.storeEnvironmentEditor=()=>{};ctx.loadEnvironmentEditor=()=>{};el('engine-environment-editor').scrollIntoView=()=>{};
+document.querySelector('[data-add-engine-environment]').onclick();assert.equal(run('editingEnvironments.length'),3);assert.equal(run('JSON.stringify(settings.config.environments)'),saved,'discovery must not save configuration');
+document.querySelector('[data-add-engine-environment]').onclick();assert.equal(run('editingEnvironments.length'),3,'new host added to draft only once');assert.match(el('engine-catalog').textContent,/待保存/);
 const install=document.querySelector('[data-install-engine]');assert.equal(document.querySelectorAll('[data-install-engine]').length,1);
 let target;const start=ctx.startEngineOnboarding;ctx.startEngineOnboarding=(action,body)=>{assert.equal(action,'install');target=body};install.onclick();assert.equal(target.engine,'codex');assert.equal(target.environment_id,'remote');ctx.startEngineOnboarding=start;
 let resolve;ctx.api=()=>new Promise(r=>resolve=r);const pending=ctx.refreshEngineStatus();run("settings.config.environments[1].host='changed.invalid'");resolve({items:[{environment_id:'remote',codex:{state:'missing'}}]});await pending;

@@ -28,11 +28,31 @@ type EngineEnvironmentStatus struct {
 }
 
 type EngineStatusResponse struct {
-	Items   []EngineEnvironmentStatus `json:"items"`
-	Message string                    `json:"message,omitempty"`
+	Items      []EngineEnvironmentStatus `json:"items"`
+	Message    string                    `json:"message,omitempty"`
+	Discovered []detectedEnvironment     `json:"discovered,omitempty"`
 }
 
 func (s *Server) engineStatusRoutes(m *http.ServeMux) {
+	m.HandleFunc("POST /api/environments/scan", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		if !s.environmentDetection.TryLock() {
+			fail(w, 409, "环境检测正在进行，请稍后重试")
+			return
+		}
+		defer s.environmentDetection.Unlock()
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		configured := s.app.config.get().Environments
+		candidates, message := environmentCandidates(ctx)
+		result := scanEngineEnvironments(ctx, configured, candidates, func(ctx context.Context, env Environment) detectedEnvironment {
+			return inspectEngineEnvironment(ctx, exactEngineProbe, env)
+		}, inspectDiscoveredEnvironment)
+		result.Message = "检测完成：已保存环境的引擎状态与新发现环境显示在同一列表；未修改环境配置，也未调用模型。"
+		if strings.Contains(message, "WSL 列表未能读取") {
+			result.Message += " WSL 列表未能读取，请检查 WSL 安装状态或服务权限。"
+		}
+		jsonOut(w, 200, result)
+	}))
 	m.HandleFunc("GET /api/engine-status", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		config := s.app.config.get()
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -66,6 +86,67 @@ func (s *Server) engineStatusRoutes(m *http.ServeMux) {
 		wg.Wait()
 		jsonOut(w, http.StatusOK, EngineStatusResponse{Items: items, Message: "检测只读取目标 CLI 的安装/登录状态，不调用模型"})
 	}))
+}
+
+func engineEnvironmentStatus(found detectedEnvironment) EngineEnvironmentStatus {
+	env := found.Environment
+	return EngineEnvironmentStatus{EnvironmentID: env.ID, Name: env.Name, Type: env.Type, Distro: env.Distro, User: env.User, Host: env.Host, Codex: found.Codex, Claude: found.Claude, Harness: found.Harness, Kimi: found.Kimi, Mimo: found.Mimo, Message: found.Message}
+}
+
+// Discovery inventories local hosts only. A saved host is inspected once with
+// its configured user and executable paths, never a second time as the default
+// WSL user. SSH is inspected only when it is already explicitly configured.
+func scanEngineEnvironments(ctx context.Context, configured, candidates []Environment, inspectSaved, inspectNew func(context.Context, Environment) detectedEnvironment) EngineStatusResponse {
+	newHosts := []Environment{}
+	for _, candidate := range candidates {
+		if candidate.Type != "windows" && candidate.Type != "wsl" {
+			continue
+		}
+		matches := func(env Environment) bool {
+			return env.Type == candidate.Type && (env.Type == "windows" || strings.EqualFold(strings.TrimSpace(env.Distro), strings.TrimSpace(candidate.Distro)))
+		}
+		found := false
+		for _, env := range append(append([]Environment(nil), configured...), newHosts...) {
+			if matches(env) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newHosts = append(newHosts, candidate)
+		}
+	}
+	result := EngineStatusResponse{Items: make([]EngineEnvironmentStatus, len(configured)), Discovered: make([]detectedEnvironment, len(newHosts))}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3)
+	run := func(env Environment, inspect func(context.Context, Environment) detectedEnvironment, save func(detectedEnvironment)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ctx.Err() != nil {
+				unknown := detectedTool{State: "unknown", Label: "未完成检测"}
+				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, Message: "检测已取消或超时"})
+				return
+			}
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				unknown := detectedTool{State: "unknown", Label: "未完成检测"}
+				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, Message: "检测已取消或超时"})
+				return
+			}
+			save(inspect(ctx, env))
+		}()
+	}
+	for i, env := range configured {
+		run(env, inspectSaved, func(found detectedEnvironment) { result.Items[i] = engineEnvironmentStatus(found) })
+	}
+	for i, env := range newHosts {
+		run(env, inspectNew, func(found detectedEnvironment) { result.Discovered[i] = found })
+	}
+	wg.Wait()
+	return result
 }
 
 func exactEngineProbe(ctx context.Context, env Environment, args ...string) (string, error) {

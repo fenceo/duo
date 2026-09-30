@@ -3377,23 +3377,6 @@ async function refreshCreateEnvironments(force = false) {
 }
 function installEnvironmentDiscovery() {
     const section = element('settings-environment');
-    section.insertAdjacentHTML('afterbegin', '<div class="environment-detection"><div><strong>找到这台电脑上的 AI 工具</strong><button type="button" id="detect-local-environments">检测环境</button></div><p>检测 Windows 和 WSL，可能启动已安装的 WSL。SSH 使用下方“发现局域网 SSH”。</p><p id="environment-detection-status" role="status"></p><div id="detected-environments"></div></div>');
-    button('detect-local-environments').onclick = async ()=>{
-        const control = button('detect-local-environments');
-        control.disabled = true;
-        element('environment-detection-status').textContent = '正在检测安装位置和本地登录配置，约需 10–25 秒…';
-        try {
-            const result = await api('environments/discover', 'POST', {});
-            if (!element('detected-environments')) return;
-            detectedEnvironments = result.items;
-            renderDetectedEnvironments();
-            element('environment-detection-status').textContent = result.message;
-        } catch (e) {
-            if (element('environment-detection-status')) element('environment-detection-status').textContent = e.message;
-        } finally{
-            control.disabled = false;
-        }
-    };
     const advanced = document.createElement('details');
     advanced.className = 'environment-advanced';
     advanced.innerHTML = '<summary>高级设置 · AI 程序位置和默认模型</summary>';
@@ -3455,41 +3438,37 @@ function renderConfiguredModels() {
             element('custom-model-result').textContent = '已移除，保存设置后生效';
         });
 }
-function renderDetectedEnvironments() {
-    const toolLabel = (name, tool)=>`<span class="detected-tool detected-tool-${escapeHTML(tool?.state || 'missing')}" title="${escapeHTML(tool?.path || '')}">${escapeHTML(name)}：${escapeHTML(tool?.label || '未发现安装')}</span>`;
-    element('detected-environments').innerHTML = detectedEnvironments.map((item, index)=>{
-        const env = item.environment, existing = editingEnvironments.find((e)=>sameDetectedEnvironment(e, env));
-        return `<div class="detected-environment"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML(env.user ? env.user + ' · ' + env.workspaces[0] : env.workspaces[0])}</small><div class="detected-tools">${toolLabel('Codex', item.codex)} ${toolLabel('Claude Code', item.claude)} ${toolLabel('DeepSeek Harness', item.harness)} ${toolLabel('Kimi', item.kimi)} ${toolLabel('MiMo', item.mimo)}</div>${item.message ? '<small>' + escapeHTML(item.message) + '</small>' : ''}</div><button type="button" data-detected="${index}">${existing ? '查看配置' : '添加'}</button></div>`;
-    }).join('');
-    element('detected-environments').querySelectorAll('[data-detected]').forEach((b)=>b.onclick = ()=>{
-            const item = detectedEnvironments[Number(b.dataset.detected)];
-            if (!item) return;
-            storeEnvironmentEditor();
-            const existing = editingEnvironments.find((e)=>sameDetectedEnvironment(e, item.environment));
-            if (existing) editingID = existing.id;
-            else {
-                if (editingEnvironments.length >= 30) {
-                    notify('最多配置 30 个环境');
-                    return;
-                }
-                const env = {
-                    ...item.environment,
-                    id: 'env_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-                    workspaces: [
-                        ...item.environment.workspaces
-                    ]
-                };
-                editingEnvironments.push(env);
-                editingID = env.id;
-            }
-            environmentPickers();
-            loadEnvironmentEditor();
-            renderDetectedEnvironments();
-            input('setting-workspaces').scrollIntoView({
-                block: 'center'
-            });
-            notify(existing ? '已打开已有配置，检测结果没有覆盖它。' : '已填入环境。选好工作目录后，点击保存设置。');
-        });
+function addScannedEnvironment(index) {
+    if (engineStatusBusy || engineStatusSignature !== engineEnvironmentSignature()) return;
+    const item = engineDiscoveredEnvironments[index];
+    if (!item) return;
+    storeEnvironmentEditor();
+    const existing = editingEnvironments.find((e)=>sameDetectedEnvironment(e, item.environment));
+    if (existing) editingID = existing.id;
+    else {
+        if (editingEnvironments.length >= 30) {
+            notify('最多配置 30 个环境');
+            return;
+        }
+        const env = {
+            ...item.environment,
+            id: detectedEnvironmentID(item.environment, new Set(editingEnvironments.map((e)=>e.id))),
+            workspaces: [
+                ...item.environment.workspaces
+            ]
+        };
+        editingEnvironments.push(env);
+        editingID = env.id;
+    }
+    environmentPickers();
+    loadEnvironmentEditor();
+    renderEngineCatalog();
+    const editor = element('engine-environment-editor');
+    editor.open = true;
+    editor.scrollIntoView({
+        block: 'start'
+    });
+    notify('已填入环境。确认连接和工作目录后，点击保存设置。');
 }
 let desktopState = {
     active: false,
@@ -3851,6 +3830,231 @@ async function submitAccountImport() {
             accountImportBusy = false;
             populateAccountImport();
         }
+    }
+}
+let accountCenterEngine = '', accountCenterBusy = false, accountCenterRequest = 0, accountEditID = '';
+let accountCenterView = 'cards', accountCenterPrivate = false;
+function installAccountCenter() {
+    accountCenterEngine = '';
+    accountCenterBusy = false;
+    accountEditID = '';
+    accountCenterRequest++;
+    accountCenterView = localStorage.getItem('duo.accountView') === 'list' ? 'list' : 'cards';
+    accountCenterPrivate = localStorage.getItem('duo.accountPrivate') === '1';
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="account-center-dialog" aria-labelledby="account-center-title"><header class="account-center-heading"><div><h2 id="account-center-title">账号管理</h2><p>集中管理账号与 API 配置，按引擎和环境快速切换。</p></div><button type="button" id="account-center-close">关闭</button></header><nav id="account-engine-tabs" class="account-engine-tabs" aria-label="账号引擎"></nav><div class="account-center-toolbar"><input id="account-search" type="search" placeholder="搜索账号名称、引擎或环境" aria-label="搜索账号"><select id="account-environment-filter" aria-label="按环境筛选"><option value="">全部环境</option></select><select id="account-default-filter" aria-label="按默认状态筛选"><option value="">全部账号</option><option value="default">新任务默认</option><option value="other">其他账号</option></select><select id="account-sort" aria-label="账号排序"><option value="updated">最近更新</option><option value="created">创建时间</option><option value="name">名称排序</option></select><div class="account-view-controls"><button type="button" id="account-view-cards" aria-pressed="true">卡片</button><button type="button" id="account-view-list" aria-pressed="false">列表</button><button type="button" id="account-privacy" aria-pressed="false">隐藏名称</button></div></div><div class="account-center-commandbar"><p id="account-center-summary" role="status"></p><div class="actions"><button type="button" id="account-center-refresh">刷新列表</button><button type="button" id="account-center-import">导入账号</button><button type="button" id="account-center-manage" class="primary">＋ 添加账号</button></div></div><p class="account-center-hint">设为默认用于 Duo 新任务；“当前任务使用”打开切换预览；“同步到环境”切换 Windows / WSL / SSH 的原生登录。</p><div id="account-center-list"></div><details id="account-center-editor-wrap"><summary>添加、导入与配置引用</summary><div id="account-center-editor"></div></details><div id="engine-account-status" role="status"></div><button type="button" id="engine-account-cancel" class="hidden">取消当前操作</button><p id="account-center-status" role="status"></p></dialog><dialog id="account-edit-dialog" aria-labelledby="account-edit-title"><form id="account-edit-form"><h2 id="account-edit-title">重命名账号</h2><label for="account-edit-name">账号名称</label><input id="account-edit-name" maxlength="60" required autocomplete="off"><p id="account-edit-status" role="status"></p><div class="dialog-footer"><button type="button" id="account-edit-cancel">取消</button><button type="submit" id="account-edit-save" class="primary">保存名称</button></div></form></dialog><dialog id="account-remove-dialog" aria-labelledby="account-remove-title"><h2 id="account-remove-title">移除账号引用</h2><p id="account-remove-description"></p><p>仅从 Duo 账号列表移除，保留原生账号文件和已有任务；若它是新任务默认，将恢复使用环境默认配置。</p><p id="account-remove-status" role="status"></p><div class="dialog-footer"><button type="button" id="account-remove-cancel">取消</button><button type="button" id="account-remove-confirm" class="danger">移除引用</button></div></dialog>`);
+    button('account-center-close').onclick = ()=>element('account-center-dialog').close();
+    button('account-center-refresh').onclick = ()=>void refreshAccountCenter();
+    button('account-center-manage').onclick = ()=>openAccountEditor(false);
+    button('account-center-import').onclick = ()=>openAccountEditor(true);
+    input('account-search').oninput = renderAccountCenter;
+    for (const id of [
+        'account-environment-filter',
+        'account-default-filter',
+        'account-sort'
+    ])element(id).onchange = renderAccountCenter;
+    for (const view of [
+        'cards',
+        'list'
+    ])button('account-view-' + view).onclick = ()=>{
+        accountCenterView = view;
+        localStorage.setItem('duo.accountView', view);
+        renderAccountCenter();
+    };
+    button('account-privacy').onclick = ()=>{
+        accountCenterPrivate = !accountCenterPrivate;
+        localStorage.setItem('duo.accountPrivate', accountCenterPrivate ? '1' : '0');
+        renderAccountCenter();
+    };
+    button('account-edit-cancel').onclick = ()=>{
+        if (!accountCenterBusy) element('account-edit-dialog').close();
+    };
+    button('account-remove-cancel').onclick = ()=>{
+        if (!accountCenterBusy) element('account-remove-dialog').close();
+    };
+    for (const id of [
+        'account-edit-dialog',
+        'account-remove-dialog'
+    ])element(id).addEventListener('cancel', (e)=>{
+        if (accountCenterBusy) e.preventDefault();
+    });
+    element('account-edit-form').onsubmit = (e)=>{
+        e.preventDefault();
+        void renameAccount();
+    };
+    button('account-remove-confirm').onclick = ()=>void removeAccountReference();
+    disposeWithShell(()=>{
+        accountCenterRequest++;
+        accountCenterBusy = false;
+        accountEditID = '';
+    });
+}
+function openAccountEditor(importing) {
+    element('account-center-editor-wrap').open = true;
+    const target = importing ? element('account-center-editor').querySelector('.account-import') : element('engine-account-fields').querySelector('details');
+    target.open = true;
+    target.scrollIntoView({
+        block: 'start'
+    });
+    input(importing ? 'account-import-source' : 'engine-account-name').focus();
+}
+async function openAccountCenter() {
+    const dialog = element('account-center-dialog');
+    if (!dialog.open) dialog.showModal();
+    await refreshAccountCenter();
+}
+async function refreshAccountCenter() {
+    const epoch = shellEpoch, request = ++accountCenterRequest, catalogRequest = ++engineSettingsRequest;
+    element('account-center-status').textContent = '正在读取账号配置…';
+    button('account-center-refresh').disabled = true;
+    try {
+        const catalog = await api('engines', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== accountCenterRequest || catalogRequest !== engineSettingsRequest) return;
+        engineCatalog = catalog;
+        renderAccountCenter();
+        populateEngineProfileForm();
+        populateEngineOnboarding();
+        void resumeEngineSetup();
+        element('account-center-status').textContent = '';
+    } catch (e) {
+        if (shellCurrent(epoch) && request === accountCenterRequest) element('account-center-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === accountCenterRequest) button('account-center-refresh').disabled = false;
+    }
+}
+function accountIsDefault(profile) {
+    return engineCatalog?.active_profile[profile.environment_id + ':' + profile.engine] === profile.id;
+}
+function accountVisibleName(profile) {
+    if (!accountCenterPrivate) return profile.name;
+    const name = Array.from(profile.name);
+    return name.length ? name[0] + '•••' + (name.length > 2 ? name[name.length - 1] : '') : '•••';
+}
+function renderAccountCenter() {
+    if (!engineCatalog) return;
+    const profiles = engineCatalog.profiles || [], engines = engineCatalog.engines;
+    if (accountCenterEngine && !engines.some((e)=>e.id === accountCenterEngine)) accountCenterEngine = '';
+    element('account-engine-tabs').innerHTML = [
+        {
+            id: '',
+            name: '全部'
+        },
+        ...engines.filter((e)=>e.runnable !== false || profiles.some((p)=>p.engine === e.id))
+    ].map((e)=>`<button type="button" data-account-engine="${escapeHTML(e.id)}" aria-pressed="${accountCenterEngine === e.id}" class="${accountCenterEngine === e.id ? 'selected' : ''}">${escapeHTML(e.name)} <span>${profiles.filter((p)=>!e.id || p.engine === e.id).length}</span></button>`).join('');
+    element('account-engine-tabs').querySelectorAll('[data-account-engine]').forEach((b)=>b.onclick = ()=>{
+            accountCenterEngine = b.dataset.accountEngine || '';
+            renderAccountCenter();
+        });
+    const select = input('account-environment-filter'), previous = select.value;
+    const envIDs = Array.from(new Set(profiles.map((p)=>p.environment_id)));
+    select.innerHTML = '<option value="">全部环境</option>' + envIDs.map((id)=>`<option value="${escapeHTML(id)}">${escapeHTML(engineTargetName(id))}</option>`).join('');
+    select.value = envIDs.includes(previous) ? previous : '';
+    const query = input('account-search').value.trim().toLocaleLowerCase(), filter = input('account-default-filter').value, sort = input('account-sort').value;
+    const visible = profiles.filter((p)=>(!accountCenterEngine || p.engine === accountCenterEngine) && (!select.value || p.environment_id === select.value) && (!filter || accountIsDefault(p) === (filter === 'default')) && (!query || [
+            p.name,
+            taskEngineName(p.engine),
+            engineTargetName(p.environment_id)
+        ].some((v)=>v.toLocaleLowerCase().includes(query))));
+    visible.sort((a, b)=>sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : (sort === 'created' ? (b.created || 0) - (a.created || 0) : (b.updated || 0) - (a.updated || 0)) || a.name.localeCompare(b.name, 'zh-CN'));
+    element('account-center-summary').textContent = `显示 ${visible.length} / ${profiles.length} 个账号 · ${profiles.filter(accountIsDefault).length} 个新任务默认`;
+    for (const view of [
+        'cards',
+        'list'
+    ])button('account-view-' + view).setAttribute('aria-pressed', String(accountCenterView === view));
+    button('account-privacy').setAttribute('aria-pressed', String(accountCenterPrivate));
+    button('account-privacy').textContent = accountCenterPrivate ? '显示名称' : '隐藏名称';
+    const list = element('account-center-list');
+    list.className = 'account-grid' + (accountCenterView === 'list' ? ' account-list-view' : '');
+    list.innerHTML = visible.map((p)=>{
+        const engine = engines.find((e)=>e.id === p.engine), env = settings.config.environments.find((e)=>e.id === p.environment_id), active = accountIsDefault(p), disabled = accountCenterBusy ? 'disabled' : '';
+        const available = !!env && engine?.runnable !== false && p.kind !== 'env_file';
+        const kind = p.kind === 'native' ? '环境默认登录' : p.kind === 'env_file' ? '环境文件引用' : '账号 / API 配置';
+        const changed = p.updated || p.created;
+        const stamp = changed ? new Date(changed).toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        }) : '时间未记录';
+        return `<article class="account-card ${active ? 'account-card-active' : ''}" data-account-card="${escapeHTML(p.id)}"><header><span class="account-engine-badge">${escapeHTML(engine?.name || p.engine)}</span>${active ? '<span class="account-default-badge">新任务默认</span>' : ''}</header><h3>${escapeHTML(accountVisibleName(p))}</h3><div class="account-card-meta"><span>${escapeHTML(env?.type.toUpperCase() || '环境已移除')}</span><strong>${escapeHTML(engineTargetName(p.environment_id))}</strong></div><p class="account-kind">${kind}</p><details class="account-reference"><summary>配置位置</summary><code>${escapeHTML(p.kind === 'native' ? '继承目标环境的原生配置' : p.reference)}</code></details><p class="account-updated">更新于 ${escapeHTML(stamp)}</p><div class="account-card-actions"><button type="button" data-account-activate="${escapeHTML(p.id)}" class="${active ? '' : 'primary'}" ${disabled} ${active || !available ? 'disabled' : ''}>${active ? '当前默认' : '设为默认'}</button>${chosen && available ? `<button type="button" data-account-task="${escapeHTML(p.id)}" ${disabled}>当前任务使用</button>` : ''}${[
+            'codex_home',
+            'claude_home'
+        ].includes(p.kind) ? `<button type="button" data-account-sync="${escapeHTML(p.id)}" ${disabled}>同步到环境</button>` : ''}<button type="button" data-account-rename="${escapeHTML(p.id)}" ${disabled}>重命名</button><button type="button" data-account-remove="${escapeHTML(p.id)}" ${disabled}>移除</button></div></article>`;
+    }).join('') || `<div class="account-empty"><strong>${profiles.length ? '没有匹配的账号' : '还没有添加账号'}</strong><p>${profiles.length ? '调整搜索内容或筛选条件。' : '添加 Codex 登录、配置 API，或从本地账号和 Cockpit Tools JSON 导入。'}</p></div>`;
+    list.querySelectorAll('[data-account-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.accountActivate));
+    list.querySelectorAll('[data-account-sync]').forEach((b)=>b.onclick = ()=>openCodexSync(b.dataset.accountSync));
+    list.querySelectorAll('[data-account-task]').forEach((b)=>b.onclick = ()=>{
+            if (accountCenterBusy) return;
+            const profile = b.dataset.accountTask;
+            element('account-center-dialog').close();
+            void openHandoff(chosen, profile);
+        });
+    list.querySelectorAll('[data-account-rename]').forEach((b)=>b.onclick = ()=>{
+            if (accountCenterBusy) return;
+            const p = profiles.find((p)=>p.id === b.dataset.accountRename);
+            if (!p) return;
+            accountEditID = p.id;
+            input('account-edit-name').value = p.name;
+            element('account-edit-status').textContent = '';
+            element('account-edit-dialog').showModal();
+            input('account-edit-name').focus();
+        });
+    list.querySelectorAll('[data-account-remove]').forEach((b)=>b.onclick = ()=>{
+            if (accountCenterBusy) return;
+            const p = profiles.find((p)=>p.id === b.dataset.accountRemove);
+            if (!p) return;
+            accountEditID = p.id;
+            element('account-remove-description').textContent = '移除「' + accountVisibleName(p) + '」？';
+            element('account-remove-status').textContent = '';
+            element('account-remove-dialog').showModal();
+        });
+}
+function setAccountMutationBusy(busy) {
+    accountCenterBusy = busy;
+    renderAccountCenter();
+    for (const id of [
+        'account-edit-save',
+        'account-edit-cancel',
+        'account-remove-confirm',
+        'account-remove-cancel'
+    ])button(id).disabled = busy;
+}
+async function renameAccount() {
+    if (accountCenterBusy) return;
+    const profile = engineCatalog?.profiles.find((p)=>p.id === accountEditID), name = input('account-edit-name').value.trim();
+    if (!profile || !name) return;
+    const epoch = shellEpoch;
+    setAccountMutationBusy(true);
+    element('account-edit-status').textContent = '正在保存…';
+    try {
+        await api('engine-profiles/' + encodeURIComponent(profile.id), 'PATCH', {
+            name,
+            expected_updated: profile.updated
+        });
+        if (!shellCurrent(epoch)) return;
+        element('account-edit-dialog').close();
+        await loadEngineSettings();
+    } catch (e) {
+        if (shellCurrent(epoch)) element('account-edit-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch)) setAccountMutationBusy(false);
+    }
+}
+async function removeAccountReference() {
+    if (accountCenterBusy || !accountEditID) return;
+    const epoch = shellEpoch, id = accountEditID;
+    setAccountMutationBusy(true);
+    element('account-remove-status').textContent = '正在移除…';
+    try {
+        await api('engine-profiles/' + encodeURIComponent(id), 'DELETE', {});
+        if (!shellCurrent(epoch)) return;
+        element('account-remove-dialog').close();
+        invalidateModelCatalogs();
+        await loadEngineSettings();
+    } catch (e) {
+        if (shellCurrent(epoch)) element('account-remove-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch)) setAccountMutationBusy(false);
     }
 }
 let hardwareView = null, hardwarePortsRequest = 0, hardwareEditingTask = '', hardwareLoadRequest = 0;
@@ -6526,19 +6730,11 @@ let engineSettingsRequest = 0;
 function installEngineSettings() {
     const form = element('settings-form'), nav = form.querySelector('.settings-nav');
     nav.querySelector('[data-settings="environment"]').textContent = '环境与引擎';
-    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>环境与引擎</h3><p>按已保存的环境检测 CLI 安装状态。账号与 API 在独立的“账号管理”中配置。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
+    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-engines" class="settings-section hidden"><h3>环境与引擎</h3><p>统一发现本机 Windows / WSL，并检查已保存的 Windows / WSL / SSH 引擎。账号与 API 在独立的“账号管理”中配置。</p><div id="engine-catalog" class="engine-catalog"><p class="muted">正在读取引擎目录…</p></div><details class="engine-profile-editor"><summary>添加或更新账号/API 引用</summary><label for="engine-profile-id">配置 ID</label><input id="engine-profile-id" placeholder="例如 codex-main"><label for="engine-profile-name">显示名称</label><input id="engine-profile-name" placeholder="工作账号"><label for="engine-profile-engine">引擎</label><select id="engine-profile-engine"></select><label for="engine-profile-environment">执行环境</label><select id="engine-profile-environment"></select><label for="engine-profile-kind">类型</label><select id="engine-profile-kind"></select><label for="engine-profile-reference">外部引用</label><input id="engine-profile-reference" placeholder="目录路径或 native profile 名称"><p class="muted">这里不填写 API key；只填写目标环境可访问的配置目录、profile 名称或后续适配器约定的引用。</p><button type="button" id="engine-profile-save" class="primary">保存引用</button><p id="engine-profile-result" role="status"></p></details></section>`);
     button('engine-profile-save').onclick = ()=>void saveEngineProfile();
     input('engine-profile-reference').nextElementSibling.textContent = '这里不填写 API key。native 继承目标环境默认配置，不指定命名 profile；配置目录引用必须是目标环境可访问的路径。';
     element('root').insertAdjacentHTML('beforeend', `<dialog id="codex-sync-dialog"><form id="codex-sync-form"><h2>同步账号到环境</h2><p id="codex-sync-source" class="muted"></p><p>将所选账号的登录信息、API 地址及默认模型写入勾选环境的原生配置。每个目标先备份原文件，保留工具权限和 MCP 设置。完成后重新打开目标 CLI；已有 Duo 任务请通过“切换 AI”重新选择环境默认配置。</p><fieldset id="codex-sync-targets"></fieldset><p id="codex-sync-status" role="status"></p><div class="dialog-footer"><button type="button" id="codex-sync-cancel">取消</button><button type="submit" class="primary" id="codex-sync-submit">开始同步</button></div></form></dialog>`);
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="account-center-dialog"><h2>账号管理</h2><p class="muted">管理各环境中的账号与中转站配置。“设为新任务默认”只影响 Duo 新任务；“同步到环境”会写入所选环境的原生账号文件。</p><div id="account-center-list"></div><div id="account-center-editor"></div><div id="engine-account-status" role="status"></div><button type="button" id="engine-account-cancel" class="hidden">取消当前操作</button><p id="account-center-status" role="status"></p><div class="dialog-footer"><button type="button" id="account-center-manage">添加账号或引用</button><button type="button" id="account-center-close">关闭</button></div></dialog>`);
-    button('account-center-close').onclick = ()=>element('account-center-dialog').close();
-    button('account-center-manage').onclick = ()=>{
-        element('engine-account-fields').querySelector('details').open = true;
-        element('account-center-editor').scrollIntoView({
-            block: 'start'
-        });
-        input('engine-account-name').focus();
-    };
+    installAccountCenter();
     button('codex-sync-cancel').onclick = ()=>element('codex-sync-dialog').close();
     element('codex-sync-form').addEventListener('submit', (e)=>{
         e.preventDefault();
@@ -6568,47 +6764,10 @@ function installEngineSettings() {
     engineCatalog = null;
     accountSyncBusy = false;
     engineEnvironmentStatuses = [];
+    engineDiscoveredEnvironments = [];
     engineStatusSignature = '';
     engineStatusRequest = 0;
     engineStatusBusy = false;
-}
-async function openAccountCenter() {
-    const epoch = shellEpoch, dialog = element('account-center-dialog');
-    if (!dialog.open) dialog.showModal();
-    element('account-center-status').textContent = '正在读取账号配置…';
-    try {
-        const catalog = await api('engines', 'GET', undefined, shellController.signal);
-        if (!shellCurrent(epoch)) return;
-        engineCatalog = catalog;
-        renderAccountCenter();
-        populateEngineProfileForm();
-        populateEngineOnboarding();
-        void resumeEngineSetup();
-        element('account-center-status').textContent = '';
-    } catch (e) {
-        if (shellCurrent(epoch)) element('account-center-status').textContent = e.message;
-    }
-}
-function renderAccountCenter() {
-    const list = element('account-center-list');
-    if (!engineCatalog) return;
-    const profiles = engineCatalog.profiles || [];
-    if (!profiles.length) {
-        list.innerHTML = '<p class="muted">还没有账号。可添加 Codex 登录、Codex/Claude API，或引用目标环境已有的账号目录。</p>';
-        return;
-    }
-    list.innerHTML = profiles.map((p)=>{
-        const engine = engineCatalog.engines.find((e)=>e.id === p.engine);
-        return `<article class="engine-profile"><strong>${escapeHTML(engine?.name || p.engine)}</strong><span>${escapeHTML(p.name)} / ${escapeHTML(engineTargetName(p.environment_id))}</span><code>${escapeHTML(engineCredentialLabel(p.kind))}</code><div class="actions"><button type="button" data-account-activate="${escapeHTML(p.id)}">设为新任务默认</button>${[
-            'codex_home',
-            'claude_home'
-        ].includes(p.kind) ? `<button type="button" data-account-sync="${escapeHTML(p.id)}">同步到环境</button>` : ''}</div></article>`;
-    }).join('');
-    list.querySelectorAll('[data-account-activate]').forEach((b)=>b.onclick = async ()=>{
-            await activateEngineProfile(b.dataset.accountActivate);
-            renderAccountCenter();
-        });
-    list.querySelectorAll('[data-account-sync]').forEach((b)=>b.onclick = ()=>openCodexSync(b.dataset.accountSync));
 }
 function engineTargetName(id) {
     return settings.config.environments.find((e)=>e.id === id)?.name || id;
@@ -6670,6 +6829,7 @@ function engineProfileActivationMessage(profile) {
     if (profile?.engine === 'deepseek-harness') return profile.kind === 'native' ? '新建 Harness 任务将继承目标环境的默认配置；当前运行会话保持不变。' : '新建 Harness 任务将使用该 DSH_HOME 配置目录；当前运行会话保持不变。';
     return '已设为新任务的默认账号/API；现有任务请通过“切换 AI”更换配置。';
 }
+let engineDiscoveredEnvironments = [];
 let engineEnvironmentStatuses = [], engineStatusSignature = '', engineStatusRequest = 0, engineStatusBusy = false;
 function engineEnvironmentSignature() {
     return JSON.stringify(settings.config.environments);
@@ -6709,7 +6869,37 @@ function renderEngineCatalog() {
             env.user,
             env.host
         ].filter(Boolean).join(' / ')) + '</small></div><button type="button" data-edit-engine-environment="' + escapeHTML(env.id) + '">环境配置</button></header>' + rows + (status?.message ? '<p class="muted">' + escapeHTML(status.message) + '</p>' : '') + '</article>';
-    }).join('') || '<p>请在下方添加执行环境并保存，再检测引擎。</p>';
+    }).join('') || '<p>点击检测发现本机环境，或在下方手动添加环境。</p>';
+    if (current) element('engine-catalog').insertAdjacentHTML('beforeend', engineDiscoveredEnvironments.map((item, index)=>{
+        const env = item.environment, draft = editingEnvironments.find((e)=>sameDetectedEnvironment(e, env));
+        return '<article class="engine-environment engine-discovered"><header><div><h4>' + escapeHTML(env.name) + '</h4><small>' + escapeHTML([
+            env.type,
+            env.distro,
+            env.user
+        ].filter(Boolean).join(' / ')) + ' · ' + (draft ? '待保存' : '新发现') + '</small></div><button type="button" data-add-engine-environment="' + index + '" ' + (engineStatusBusy ? 'disabled' : '') + '>' + (draft ? '编辑待保存环境' : '添加环境') + '</button></header><div class="detected-tools">' + [
+            [
+                'Codex',
+                item.codex
+            ],
+            [
+                'Claude Code',
+                item.claude
+            ],
+            [
+                'Harness',
+                item.harness
+            ],
+            [
+                'Kimi',
+                item.kimi
+            ],
+            [
+                'MiMo',
+                item.mimo
+            ]
+        ].map(([name, tool])=>'<span class="detected-tool">' + escapeHTML(String(name)) + '：' + escapeHTML(tool?.label || '未完成检测') + '</span>').join('') + '</div>' + (item.message ? '<p class="muted">' + escapeHTML(item.message) + '</p>' : '') + '<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
+    }).join(''));
+    element('engine-catalog').querySelectorAll('[data-add-engine-environment]').forEach((b)=>b.onclick = ()=>addScannedEnvironment(Number(b.dataset.addEngineEnvironment)));
     element('engine-catalog').querySelectorAll('[data-install-engine]').forEach((b)=>b.onclick = ()=>void startEngineOnboarding('install', {
                 engine: b.dataset.installEngine,
                 environment_id: b.dataset.installEnvironment
@@ -6792,7 +6982,9 @@ async function saveEngineProfile() {
     }
 }
 async function activateEngineProfile(id) {
+    if (accountCenterBusy) return;
     const epoch = shellEpoch;
+    setAccountMutationBusy(true);
     try {
         await api(`engine-profiles/${encodeURIComponent(id)}/activate`, 'POST', {});
         if (!shellCurrent(epoch)) return;
@@ -6801,6 +6993,8 @@ async function activateEngineProfile(id) {
         await loadEngineSettings();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
+    } finally{
+        if (shellCurrent(epoch)) setAccountMutationBusy(false);
     }
 }
 let engineSetupBusy = false, engineSetupJob = null, engineSetupPolling = false;
@@ -6810,7 +7004,7 @@ function installEngineOnboarding() {
     engineSetupJob = null;
     engineSetupPolling = false;
     engineSetupAttempt = null;
-    element('engine-catalog').insertAdjacentHTML('beforebegin', `<section class="engine-onboarding"><p>Windows、WSL、SSH 分别检测。可一键安装 Codex、Claude Code、DeepSeek Harness；WSL/SSH 需已具备 Node.js/npm。模型通过云端账号或 API 使用。</p><fieldset id="engine-setup-fields"><button type="button" id="engine-status-refresh">重新检测所有环境</button><details><summary>登录或配置 API</summary><label for="engine-account-name">账号名称</label><input id="engine-account-name" maxlength="60" placeholder="例如 工作账号"><label for="engine-account-login">连接方式</label><select id="engine-account-login"><option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key</option></select><div id="engine-account-api" class="hidden"><label for="engine-account-key">API key</label><input id="engine-account-key" type="password" autocomplete="off"><label for="engine-account-url">API 地址（可选）</label><input id="engine-account-url" placeholder="留空使用 OpenAI 官方 API"><p class="muted">Codex 需要 Responses 协议；Claude Code 需要 Anthropic Messages 协议。密钥保存到独立的原生账号目录。</p></div><label for="engine-account-model">默认云端模型（可选）</label><input id="engine-account-model" maxlength="120" placeholder="留空使用工具默认模型"><button type="button" id="engine-account-add" class="primary">添加账号</button><p class="muted">每个账号单独保存。添加后可设为新任务默认，或通过任务中的“切换 AI”选择。</p></details></fieldset><div id="engine-setup-status" role="status"></div><pre id="engine-status-result" class="engine-plan hidden"></pre><button type="button" id="engine-setup-cancel" class="hidden">取消当前操作</button></section>`);
+    element('engine-catalog').insertAdjacentHTML('beforebegin', `<section class="engine-onboarding"><p>一次检测，统一显示环境与 CLI 状态。未保存的新环境可直接添加；SSH 只检查已配置的连接，首次检测可能启动 WSL。</p><fieldset id="engine-setup-fields"><button type="button" id="engine-status-refresh">检测环境与引擎</button><details><summary>登录或配置 API</summary><label for="engine-account-name">账号名称</label><input id="engine-account-name" maxlength="60" placeholder="例如 工作账号"><label for="engine-account-login">连接方式</label><select id="engine-account-login"><option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key</option></select><div id="engine-account-api" class="hidden"><label for="engine-account-key">API key</label><input id="engine-account-key" type="password" autocomplete="off"><label for="engine-account-url">API 地址（可选）</label><input id="engine-account-url" placeholder="留空使用 OpenAI 官方 API"><p class="muted">Codex 需要 Responses 协议；Claude Code 需要 Anthropic Messages 协议。密钥保存到独立的原生账号目录。</p></div><label for="engine-account-model">默认云端模型（可选）</label><input id="engine-account-model" maxlength="120" placeholder="留空使用工具默认模型"><button type="button" id="engine-account-add" class="primary">添加账号</button><p class="muted">每个账号单独保存。添加后可设为新任务默认，或通过任务中的“切换 AI”选择。</p></details></fieldset><div id="engine-setup-status" role="status"></div><pre id="engine-status-result" class="engine-plan hidden"></pre><button type="button" id="engine-setup-cancel" class="hidden">取消当前操作</button></section>`);
     button('engine-status-refresh').onclick = ()=>void refreshEngineStatus();
     button('engine-account-add').onclick = ()=>void startEngineOnboarding('account');
     element('engine-account-login').onchange = ()=>element('engine-account-api').classList.toggle('hidden', element('engine-account-login').value !== 'apiKey');
@@ -6832,19 +7026,21 @@ async function refreshEngineStatus() {
     engineStatusBusy = true;
     engineStatusSignature = signature;
     engineEnvironmentStatuses = [];
+    engineDiscoveredEnvironments = [];
     const pre = element('engine-status-result');
     pre.classList.remove('hidden');
-    pre.textContent = '正在检测已保存的环境…';
+    pre.textContent = '正在发现 Windows / WSL 并检测已保存的环境与引擎…';
     button('engine-status-refresh').disabled = true;
     renderEngineCatalog();
     try {
-        const result = await api('engine-status', 'GET', undefined, shellController.signal);
+        const result = await api('environments/scan', 'POST', {}, shellController.signal);
         if (!shellCurrent(epoch) || request !== engineStatusRequest) return;
         if (signature !== engineEnvironmentSignature()) {
             pre.textContent = '环境配置已更改，请重新检测。';
             return;
         }
         engineEnvironmentStatuses = result.items;
+        engineDiscoveredEnvironments = result.discovered || [];
         pre.textContent = result.message || '检测完成。';
     } catch (e) {
         if (shellCurrent(epoch) && request === engineStatusRequest) pre.textContent = e.message;
@@ -7034,8 +7230,7 @@ function ensureHandoffDialog() {
     button('handoff-model-refresh').onclick = ()=>void loadHandoffModels();
     button('handoff-settings').onclick = async ()=>{
         dialog.close();
-        await openSettings();
-        showSettingsSection('engines');
+        await openAccountCenter();
     };
     input('handoff-preserve-legacy').onchange = ()=>updateHandoffHint();
     input('handoff-mode').onchange = ()=>resetLegacyConfirmation();
@@ -7140,7 +7335,7 @@ async function loadHandoffPreview() {
         }
     }
 }
-async function openHandoff(id = chosen) {
+async function openHandoff(id = chosen, preferredProfileID = '') {
     if (!id || handoffBusy) return;
     ensureHandoffDialog();
     handoffController?.abort();
@@ -7172,8 +7367,23 @@ async function openHandoff(id = chosen) {
         input('handoff-engine').value = snapshot.task.engine;
         input('handoff-workspace').value = snapshot.task.workspace;
         input('handoff-context-mode').value = 'full';
+        if (preferredProfileID) {
+            const profile = catalog.profiles.find((p)=>p.id === preferredProfileID), env = settings.config.environments.find((e)=>e.id === profile?.environment_id);
+            if (!profile || !env || profile.kind === 'env_file' || !catalog.engines.some((e)=>e.id === profile.engine && e.runnable !== false)) throw Error('所选账号或环境已不可用，请刷新账号列表。');
+            input('handoff-environment').value = env.id;
+            input('handoff-engine').value = profile.engine;
+            input('handoff-workspace').value = env.id === snapshot.task.environment.id ? snapshot.task.workspace : env.workspaces[0] || '';
+        }
         element('handoff-fields').disabled = false;
         updateHandoffTarget(true);
+        if (preferredProfileID) {
+            const profile = catalog.profiles.find((p)=>p.id === preferredProfileID), bound = snapshot.task.binding?.profile;
+            const same = bound?.id === profile.id && bound.engine === profile.engine && bound.environment_id === profile.environment_id && bound.kind === profile.kind && bound.reference === profile.reference;
+            input('handoff-profile').value = same ? '__current__' : preferredProfileID;
+            if (!same) input('handoff-model').value = '';
+            resetLegacyConfirmation();
+            void loadHandoffModels();
+        }
         await loadHandoffPreview();
     } catch (e) {
         if (handoffCurrent(generation, epoch)) {
