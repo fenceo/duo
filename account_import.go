@@ -287,6 +287,7 @@ func (a *App) importAccount(ctx context.Context, r AccountImportRequest) (Engine
 }
 
 func (s *Server) accountImportRoutes(m *http.ServeMux) {
+	s.managerAccountImportRoutes(m)
 	m.HandleFunc("POST /api/account-import", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var req AccountImportRequest
 		if !body(w, r, &req) {
