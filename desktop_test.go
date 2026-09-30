@@ -17,6 +17,7 @@ func desktopFixture(t *testing.T) *DesktopControl {
 	d.capture = func(target string) (desktopObservation, error) {
 		return desktopObservation{Data: []byte("synthetic-png"), Bounds: DesktopBounds{Width: 100, Height: 80}, Input: 10, Foreground: 1, Target: target}, nil
 	}
+	d.captureHuman = d.capture
 	d.input = func(desktopObservation, DesktopAction) error { return nil }
 	return d
 }

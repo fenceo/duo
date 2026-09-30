@@ -10,6 +10,9 @@ func nativeDesktopTargets() ([]DesktopTarget, error) {
 func nativeDesktopCapture(string) (desktopObservation, error) {
 	return desktopObservation{}, errors.New("此平台不支持桌面共享")
 }
+func nativeDesktopCaptureHuman(target string) (desktopObservation, error) {
+	return nativeDesktopCapture(target)
+}
 func nativeDesktopInput(desktopObservation, DesktopAction) error {
 	return errors.New("此平台不支持桌面控制")
 }

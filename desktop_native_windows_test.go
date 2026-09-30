@@ -94,6 +94,19 @@ class Fixture {
 		t.Fatal(err)
 	}
 	time.Sleep(150 * time.Millisecond)
+	if err = nativeDesktopInput(frame, DesktopAction{Action: "type", Text: "must-not-be-sent"}); err == nil {
+		t.Fatal("AI input failed to reject changed physical input")
+	}
+	frame = observe()
+	if err = nativeDesktopInput(frame, DesktopAction{Action: "key", Key: "end"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	frame.Human = true
+	if err = nativeDesktopInput(frame, DesktopAction{Action: "type", Text: "-manual"}); err != nil {
+		t.Fatal("manual input incorrectly treated as AI", err)
+	}
+	time.Sleep(150 * time.Millisecond)
 	frame = observe()
 	if err = nativeDesktopInput(frame, DesktopAction{Action: "click", X: point.X, Y: point.Y}); err != nil {
 		t.Fatal(err)
@@ -102,7 +115,7 @@ class Fixture {
 	for time.Now().Before(deadline) {
 		raw, err := os.ReadFile(filepath.Join(dir, "result.txt"))
 		if err == nil {
-			if strings.TrimSpace(string(raw)) != "duo-fixture" {
+			if strings.TrimSpace(string(raw)) != "duo-fixture-manual" {
 				t.Fatal("native input mismatch", string(raw))
 			}
 			return

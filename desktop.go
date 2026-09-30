@@ -23,6 +23,7 @@ type DesktopBounds struct {
 	Height int `json:"height"`
 }
 type desktopObservation struct {
+	Human      bool // Set only by the authenticated browser-control path.
 	Data       []byte
 	Bounds     DesktopBounds
 	Input      uint32
@@ -67,45 +68,65 @@ func (v *DesktopAction) UnmarshalJSON(raw []byte) error {
 }
 
 type DesktopState struct {
-	Active  bool   `json:"active"`
-	TaskID  string `json:"task_id,omitempty"`
-	Target  string `json:"target,omitempty"`
-	Control bool   `json:"control"`
-	Expires int64  `json:"expires,omitempty"`
+	Instance     string `json:"instance"`
+	Revision     uint64 `json:"revision"`
+	HumanControl bool   `json:"human_control"`
+	Active       bool   `json:"active"`
+	TaskID       string `json:"task_id,omitempty"`
+	Target       string `json:"target,omitempty"`
+	Control      bool   `json:"control"`
+	Expires      int64  `json:"expires,omitempty"`
 }
 type DesktopFrame struct {
 	ID     string        `json:"id"`
 	Image  string        `json:"image"`
 	Bounds DesktopBounds `json:"bounds"`
 }
-type DesktopControl struct {
-	mu          sync.Mutex
-	state       DesktopState
-	generation  string
-	frame       string
-	observed    time.Time
+type desktopHumanFrame struct {
 	observation desktopObservation
-	targets     func() ([]DesktopTarget, error)
-	capture     func(string) (desktopObservation, error)
-	input       func(desktopObservation, DesktopAction) error
+	observed    time.Time
+}
+type DesktopControl struct {
+	instance     string
+	revision     uint64
+	mu           sync.Mutex
+	state        DesktopState
+	generation   string
+	frame        string
+	observed     time.Time
+	observation  desktopObservation
+	humanToken   string
+	humanExpires time.Time
+	humanFrames  map[string]desktopHumanFrame
+	targets      func() ([]DesktopTarget, error)
+	capture      func(string) (desktopObservation, error)
+	captureHuman func(string) (desktopObservation, error)
+	input        func(desktopObservation, DesktopAction) error
 }
 
 func newDesktopControl() *DesktopControl {
-	return &DesktopControl{targets: nativeDesktopTargets, capture: nativeDesktopCapture, input: nativeDesktopInput}
+	return &DesktopControl{instance: uid(), targets: nativeDesktopTargets, capture: nativeDesktopCapture, captureHuman: nativeDesktopCaptureHuman, input: nativeDesktopInput}
 }
 func (d *DesktopControl) expire() {
+	if d.state.HumanControl && !time.Now().Before(d.humanExpires) {
+		d.clearHuman()
+	}
 	if d.state.Active && now() >= d.state.Expires {
 		d.state = DesktopState{}
 		d.generation = ""
 		d.frame = ""
 		d.observation = desktopObservation{}
+		d.clearHuman()
 	}
 }
 func (d *DesktopControl) status() DesktopState {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.expire()
-	return d.state
+	state := d.state
+	state.Instance = d.instance
+	state.Revision = d.revision
+	return state
 }
 func (d *DesktopControl) grant(task, target string, control bool) error {
 	d.mu.Lock()
@@ -127,6 +148,7 @@ func (d *DesktopControl) grant(task, target string, control bool) error {
 	}
 	d.state = DesktopState{Active: true, TaskID: task, Target: target, Control: control, Expires: time.Now().Add(30 * time.Minute).UnixMilli()}
 	d.generation = uid()
+	d.clearHuman()
 	d.frame = ""
 	d.observation = desktopObservation{}
 	return nil
@@ -135,6 +157,7 @@ func (d *DesktopControl) revoke() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.state = DesktopState{}
+	d.clearHuman()
 	d.generation = ""
 	d.frame = ""
 	d.observation = desktopObservation{}
@@ -156,6 +179,9 @@ func (d *DesktopControl) check(task, generation string) error {
 	return nil
 }
 func (d *DesktopControl) observe(ctx context.Context, task, generation string) (DesktopFrame, error) {
+	return d.observeAs(ctx, task, generation, "")
+}
+func (d *DesktopControl) observeAs(ctx context.Context, task, generation, human string) (DesktopFrame, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -164,7 +190,14 @@ func (d *DesktopControl) observe(ctx context.Context, task, generation string) (
 	if err := d.check(task, generation); err != nil {
 		return DesktopFrame{}, err
 	}
-	observation, err := d.capture(d.state.Target)
+	if err := d.checkHuman(human); err != nil {
+		return DesktopFrame{}, err
+	}
+	capture := d.capture
+	if human != "" {
+		capture = d.captureHuman
+	}
+	observation, err := capture(d.state.Target)
 	if err != nil {
 		return DesktopFrame{}, err
 	}
@@ -174,6 +207,27 @@ func (d *DesktopControl) observe(ctx context.Context, task, generation string) (
 	d.frame = uid()
 	d.observed = time.Now()
 	d.observation = observation
+	d.observation.Human = human != ""
+	if human != "" {
+		if d.humanFrames == nil {
+			d.humanFrames = map[string]desktopHumanFrame{}
+		}
+		if len(d.humanFrames) >= 8 {
+			oldest := ""
+			var stamp time.Time
+			for id, f := range d.humanFrames {
+				if oldest == "" || f.observed.Before(stamp) {
+					oldest = id
+					stamp = f.observed
+				}
+			}
+			delete(d.humanFrames, oldest)
+		}
+		metadata := d.observation
+		metadata.Data = nil
+		d.humanFrames[d.frame] = desktopHumanFrame{metadata, d.observed}
+		d.humanExpires = time.Now().Add(time.Minute)
+	}
 	return DesktopFrame{ID: d.frame, Image: base64.StdEncoding.EncodeToString(observation.Data), Bounds: observation.Bounds}, nil
 }
 func validDesktopAction(v DesktopAction) error {
@@ -224,6 +278,9 @@ func desktopKeyCodes(key string) ([]uint16, error) {
 	return keys, nil
 }
 func (d *DesktopControl) act(ctx context.Context, task, generation string, v DesktopAction) error {
+	return d.actAs(ctx, task, generation, "", v)
+}
+func (d *DesktopControl) actAs(ctx context.Context, task, generation, human string, v DesktopAction) error {
 	if err := validDesktopAction(v); err != nil {
 		return err
 	}
@@ -235,15 +292,28 @@ func (d *DesktopControl) act(ctx context.Context, task, generation string, v Des
 	if err := d.check(task, generation); err != nil {
 		return err
 	}
-	if !d.state.Control {
+	if err := d.checkHuman(human); err != nil {
+		return err
+	}
+	if human == "" && !d.state.Control {
 		return errors.New("共享仅允许查看，未开启键鼠控制")
 	}
-	if v.Frame == "" || v.Frame != d.frame || time.Since(d.observed) > 30*time.Second {
+	observation := d.observation
+	if human != "" {
+		frame, ok := d.humanFrames[v.Frame]
+		if !ok || time.Since(frame.observed) > 30*time.Second {
+			return errors.New("截图已过期或已被使用，请刷新画面后操作")
+		}
+		observation = frame.observation
+	} else if v.Frame == "" || v.Frame != d.frame || time.Since(d.observed) > 30*time.Second {
 		return errors.New("截图已过期或已被使用，请重新观察后操作")
 	}
-	observation := d.observation
+	if observation.Human != (human != "") {
+		return errors.New("操作来源已变化，请重新观察")
+	}
 	d.frame = ""
 	d.observation = desktopObservation{}
+	d.humanFrames = nil
 	if v.Action == "click" || v.Action == "double_click" || v.Action == "right_click" || v.Action == "scroll" {
 		if v.X < 0 || v.Y < 0 || v.X >= observation.Bounds.Width || v.Y >= observation.Bounds.Height {
 			return errors.New("操作坐标不在共享画面内")
@@ -252,7 +322,53 @@ func (d *DesktopControl) act(ctx context.Context, task, generation string, v Des
 	return d.input(observation, v)
 }
 
+func (d *DesktopControl) clearHuman() {
+	d.revision++
+	d.humanFrames = nil
+	d.humanToken = ""
+	d.humanExpires = time.Time{}
+	d.state.HumanControl = false
+	d.frame = ""
+	d.observation = desktopObservation{}
+}
+func (d *DesktopControl) checkHuman(token string) error {
+	if token != "" {
+		if !d.state.HumanControl || token != d.humanToken {
+			return errors.New("手动控制已结束或被其他页面接管，请重新点击“我来操作”")
+		}
+	} else if d.state.HumanControl {
+		return errors.New("用户正在手动控制桌面，请等待用户结束控制后重新观察")
+	}
+	return nil
+}
+func (d *DesktopControl) takeHuman(task string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.check(task, ""); err != nil {
+		return "", err
+	}
+	d.clearHuman()
+	d.humanToken = uid() + uid()
+	d.humanExpires = time.Now().Add(time.Minute)
+	d.state.HumanControl = true
+	return d.humanToken, nil
+}
+func (d *DesktopControl) releaseHuman(task, token string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.expire()
+	if !d.state.HumanControl {
+		return nil
+	}
+	if token == "" || token != d.humanToken || task != d.state.TaskID {
+		return errors.New("控制已被其他页面接管，不能结束它的控制")
+	}
+	d.clearHuman()
+	return nil
+}
+
 func (s *Server) desktopRoutes(m *http.ServeMux) {
+	s.desktopHumanRoutes(m)
 	m.HandleFunc("GET /api/desktop", s.secure(func(w http.ResponseWriter, r *http.Request) { jsonOut(w, 200, s.app.desktop.status()) }))
 	m.HandleFunc("GET /api/desktop/targets", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		targets, err := s.app.desktop.targets()
@@ -265,7 +381,7 @@ func (s *Server) desktopRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/desktop", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		s.app.desktop.revoke()
 		s.app.changed()
-		jsonOut(w, 200, map[string]bool{"ok": true})
+		jsonOut(w, 200, s.app.desktop.status())
 	}))
 	m.HandleFunc("PUT /api/tasks/{id}/desktop", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {

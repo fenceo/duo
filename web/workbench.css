@@ -386,6 +386,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .desktop-dialog p{line-height:1.65;overflow-wrap:anywhere}
 .desktop-dialog img{display:block;max-width:100%;height:auto;margin-top:12px;border:1px solid var(--line)}
 .desktop-dialog select{max-width:100%;min-width:0}
+.desktop-interactive{cursor:crosshair;touch-action:none;user-select:none}.desktop-dialog #desktop-manual-tools{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px}.desktop-text-send{display:flex;gap:8px;align-items:flex-end}.desktop-text-send textarea{flex:1;min-width:0}.desktop-text-send button{flex:none}.desktop-dialog #desktop-click-mode{width:auto}.desktop-dialog img:focus-visible{outline:2px solid var(--accent);outline-offset:2px}@media(max-width:600px){.desktop-text-send{flex-wrap:wrap}.desktop-text-send textarea{flex-basis:100%}.desktop-dialog #desktop-manual-tools button{min-height:44px}}
 .desktop-dialog .actions{flex-wrap:wrap}
 .header-global-actions .desktop-sharing{color:var(--danger);font-weight:600}
 .engine-plan{max-width:100%;overflow:auto;overflow-wrap:anywhere;font-size:12px;line-height:1.65}

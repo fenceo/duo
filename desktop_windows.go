@@ -117,6 +117,12 @@ func desktopTargetBounds(target string) (DesktopBounds, error) {
 	return DesktopBounds{X: x, Y: y, Width: right - x, Height: bottom - y}, nil
 }
 func nativeDesktopCapture(target string) (desktopObservation, error) {
+	return nativeDesktopCaptureAs(target, false)
+}
+func nativeDesktopCaptureHuman(target string) (desktopObservation, error) {
+	return nativeDesktopCaptureAs(target, true)
+}
+func nativeDesktopCaptureAs(target string, human bool) (desktopObservation, error) {
 	restore := desktopDPI()
 	defer restore()
 	out := desktopObservation{Target: target}
@@ -178,7 +184,7 @@ func nativeDesktopCapture(target string) (desktopObservation, error) {
 		return out, errors.New("截图编码失败")
 	}
 	after, err := desktopLastInput()
-	if err != nil || after != out.Input || desktopForeground() != out.Foreground {
+	if err != nil || !human && after != out.Input || desktopForeground() != out.Foreground {
 		return out, errors.New("用户正在操作桌面，请稍后重新观察")
 	}
 	afterBounds, err := desktopTargetBounds(target)
@@ -224,7 +230,7 @@ func nativeDesktopInput(observation desktopObservation, action DesktopAction) er
 	if err != nil {
 		return err
 	}
-	if tick != observation.Input {
+	if !observation.Human && tick != observation.Input {
 		return errors.New("检测到用户接管，请等待用户完成操作并重新观察")
 	}
 	entries := []desktopInput{}
