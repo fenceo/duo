@@ -155,6 +155,26 @@ func (f *Feishu) runCardContent(d runCardDelivery) (string, error) {
 		request = "整理本任务的知识草稿"
 	}
 	reply := r.Result
+	// Codex commentary is a progress event, not an assistant/final event. Keep
+	// recent progress on the final card too, so quick turns do not erase it.
+	rows, err := f.app.store.Query("SELECT text FROM (SELECT seq,substr(text,1,1601) AS text FROM events WHERE run_id=? AND kind='progress' ORDER BY seq DESC LIMIT 6) ORDER BY seq", r.ID)
+	if err != nil {
+		return "", err
+	}
+	var intermediate []string
+	for rows.Next() {
+		var text string
+		if err = rows.Scan(&text); err != nil {
+			rows.Close()
+			return "", err
+		}
+		intermediate = append(intermediate, text)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
 	progress := ""
 	if r.Status == "running" {
 		var tools int
@@ -200,6 +220,13 @@ func (f *Feishu) runCardContent(d runCardDelivery) (string, error) {
 		}
 		if progress != "" {
 			elements = append(elements, cardLine(progress))
+		}
+		if len(intermediate) > 0 {
+			lines := make([]string, len(intermediate))
+			for i, text := range intermediate {
+				lines[i] = cardExcerpt(text, min(800, limit))
+			}
+			elements = append(elements, cardLine("中间过程（最近 6 条）\n"+strings.Join(lines, "\n\n")))
 		}
 		if reply != "" {
 			elements = append(elements, cardLine(cardExcerpt(strings.TrimSpace(reply), limit)))

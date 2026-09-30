@@ -234,6 +234,15 @@ func (f *Feishu) receiveCard(event *cb.CardActionTriggerEvent) (*cb.CardActionTr
 	if !cfg.Enabled || cfg.Owner == "" || v.Operator.OpenID != cfg.Owner {
 		return cardToast("error", "仅已绑定账号可以操作"), nil
 	}
+	if v.Context.OpenChatID == "" {
+		return cardToast("error", "缺少对话标识"), nil
+	}
+	if _, err := f.app.store.Exec("INSERT OR IGNORE INTO feishu_chat_scopes VALUES(?,?,?)", v.Context.OpenChatID, cfg.AppID, cfg.Owner); err != nil {
+		return cardToast("error", "无法确认飞书会话"), nil
+	}
+	if token, ok := v.Action.Value["duo_question"].(string); ok {
+		return f.answerQuestionCard(v.Context.OpenChatID, token, v.Action)
+	}
 	token, _ := v.Action.Value["jianzuo_action"].(string)
 	return f.applyCardAction(v.Context.OpenChatID, token)
 }

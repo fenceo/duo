@@ -134,6 +134,8 @@ func main() {
 	go func() { defer a.wg.Done(); f.outboxLoop() }()
 	a.wg.Add(1)
 	go func() { defer a.wg.Done(); f.runCardsLoop() }()
+	a.wg.Add(1)
+	go func() { defer a.wg.Done(); f.questionCardsLoop() }()
 	done := make(chan os.Signal, 1)
 	handler := &Server{
 		app:           a,

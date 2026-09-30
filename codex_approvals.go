@@ -113,7 +113,7 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 		c.mu.Unlock()
 		a.changed()
 	}()
-	_ = a.store.event(taskID, runID, "progress", "Codex 等待网页确认 · "+method+" · "+p.ID)
+	_ = a.store.event(taskID, runID, "progress", "Codex 等待用户确认 · "+method+" · "+p.ID)
 	a.changed()
 	select {
 	case answer := <-p.answer:
@@ -234,7 +234,7 @@ func (a *App) answerCodexInteraction(taskID, id string, answer CodexAnswer) erro
 	if p.Method == "item/tool/requestUserInput" {
 		label = "已回答"
 	}
-	if err = a.store.event(taskID, p.RunID, "progress", "网页处理 Codex 请求 · "+p.ID+" · "+label); err != nil {
+	if err = a.store.event(taskID, p.RunID, "progress", "已处理 Codex 请求 · "+p.ID+" · "+label); err != nil {
 		return err
 	}
 	if p.ctx.Err() != nil {

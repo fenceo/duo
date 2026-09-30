@@ -191,6 +191,9 @@ func (f *Feishu) receive(messageID, sender, chat, text string) error {
 	if c.Feishu.Owner != sender {
 		return nil
 	}
+	if _, e := f.app.store.Exec("INSERT OR IGNORE INTO feishu_chat_scopes VALUES(?,?,?)", chat, c.Feishu.AppID, c.Feishu.Owner); e != nil {
+		return e
+	}
 	res, e := f.app.store.Exec("INSERT OR IGNORE INTO seen VALUES(?,?)", messageID, now())
 	if e != nil {
 		return e

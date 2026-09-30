@@ -133,6 +133,10 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
  CREATE TABLE IF NOT EXISTS outbox_cards(outbox_id TEXT PRIMARY KEY REFERENCES outbox(id),content TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS feishu_run_cards(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),chat_id TEXT NOT NULL,app_id TEXT NOT NULL,owner TEXT NOT NULL,message_id TEXT NOT NULL DEFAULT '',last_hash TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,first_attempt INTEGER NOT NULL DEFAULT 0,UNIQUE(run_id,chat_id));
  CREATE INDEX IF NOT EXISTS feishu_run_cards_due ON feishu_run_cards(state,next_at);
+ CREATE TABLE IF NOT EXISTS feishu_question_cards(id TEXT PRIMARY KEY,request_id TEXT NOT NULL,task_id TEXT NOT NULL,chat_id TEXT NOT NULL,app_id TEXT NOT NULL,owner TEXT NOT NULL,message_id TEXT NOT NULL DEFAULT '',last_hash TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,first_attempt INTEGER NOT NULL DEFAULT 0,UNIQUE(request_id,chat_id,app_id,owner));
+ CREATE INDEX IF NOT EXISTS feishu_question_cards_due ON feishu_question_cards(state,next_at);
+ CREATE TABLE IF NOT EXISTS feishu_chat_scopes(chat_id TEXT NOT NULL,app_id TEXT NOT NULL,owner TEXT NOT NULL,PRIMARY KEY(chat_id,app_id,owner));
+ INSERT OR IGNORE INTO feishu_chat_scopes SELECT DISTINCT chat_id,app_id,owner FROM feishu_run_cards;
  CREATE INDEX IF NOT EXISTS events_run ON events(run_id,kind,seq);
  CREATE TABLE IF NOT EXISTS feishu_card_actions(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,task_id TEXT NOT NULL,action TEXT NOT NULL,query TEXT NOT NULL DEFAULT '',offset INTEGER NOT NULL DEFAULT 0,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
  DELETE FROM feishu_card_actions WHERE expires<unixepoch()*1000;

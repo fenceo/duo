@@ -124,6 +124,10 @@ type AsyncAnswerDelivery struct {
 }
 
 func (a *App) submitAsyncAnswer(ctx context.Context, taskID, id string, answers []string) (AsyncAnswerDelivery, error) {
+	return a.submitAsyncAnswerFrom(ctx, taskID, id, answers, "web")
+}
+
+func (a *App) submitAsyncAnswerFrom(ctx context.Context, taskID, id string, answers []string, source string) (AsyncAnswerDelivery, error) {
 	empty := AsyncAnswerDelivery{}
 	a.mu.Lock()
 	content, previous, err := a.store.questionAnswer(taskID, id, answers)
@@ -160,7 +164,7 @@ func (a *App) submitAsyncAnswer(ctx context.Context, taskID, id string, answers 
 	}
 	if w == nil || w.runID == "" {
 		a.mu.Unlock()
-		run, err := a.submitWithOptions(taskID, "", "chat", "web", SubmitOptions{QuestionID: id, QuestionAnswers: answers, QuestionImmediate: true})
+		run, err := a.submitWithOptions(taskID, "", "chat", source, SubmitOptions{QuestionID: id, QuestionAnswers: answers, QuestionImmediate: true})
 		return AsyncAnswerDelivery{Accepted: err == nil, Delivery: "start", RunID: run.ID}, err
 	}
 	if w.runKind != "chat" || w.stopping || w.interrupting || w.steer == nil {
