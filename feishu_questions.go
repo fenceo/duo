@@ -222,22 +222,28 @@ func (f *Feishu) questionCard(task, token string, p CodexPendingRequest, open bo
 	} else if questions, ok := feishuQuestions(p); ok {
 		form := []any{}
 		for i, q := range questions {
-			form = append(form, cardLine(fmt.Sprintf("%d. %s", i+1, q.Question)))
+			fields := []any{cardLine(fmt.Sprintf("%d. %s", i+1, q.Question))}
 			if len(q.Options) > 0 {
 				options := []any{}
 				for j, o := range q.Options {
 					options = append(options, map[string]any{"text": plainCardText(o.Label), "value": strconv.Itoa(j)})
 					if o.Description != "" {
-						form = append(form, cardLine(o.Label+"："+o.Description))
+						fields = append(fields, cardLine(o.Label+"："+o.Description))
 					}
 				}
-				form = append(form, map[string]any{"tag": "select_static", "name": fmt.Sprintf("choice_%d", i), "placeholder": plainCardText("请选择"), "options": options})
+				fields = append(fields, map[string]any{"tag": "select_static", "name": fmt.Sprintf("choice_%d", i), "placeholder": plainCardText("请选择"), "options": options})
 			}
 			if q.Other || len(q.Options) == 0 {
-				form = append(form, map[string]any{"tag": "input", "name": fmt.Sprintf("text_%d", i), "placeholder": plainCardText("填写答案或补充（填写后优先提交）"), "max_length": 1000})
+				fields = append(fields, map[string]any{"tag": "input", "name": fmt.Sprintf("text_%d", i), "placeholder": plainCardText("填写答案或补充（填写后优先提交）"), "max_length": 1000})
 			}
+			// Card JSON 1.0 forbids div directly inside form. Keep each question
+			// and its controls in a supported single-column layout instead.
+			// https://open.feishu.cn/document/feishu-cards/card-components/containers/form-container
+			form = append(form, map[string]any{"tag": "column_set", "flex_mode": "none", "columns": []any{
+				map[string]any{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "top", "elements": fields},
+			}})
 		}
-		form = append(form, map[string]any{"tag": "button", "name": "duo_question_submit", "action_type": "form_submit", "text": plainCardText("提交答案"), "type": "primary", "value": map[string]string{"duo_question": token}})
+		form = append(form, map[string]any{"tag": "button", "name": "duo_question_submit", "action_type": "form_submit", "text": map[string]any{"tag": "lark_md", "content": "提交答案"}, "type": "primary", "value": map[string]string{"duo_question": token}})
 		elements = append(elements, cardLine("选择或填写全部问题后提交。执行中立即引导；本轮已结束则开始下一轮。"), map[string]any{"tag": "form", "name": "duo_questions", "elements": form})
 	} else {
 		title = "AI 等待网页处理"

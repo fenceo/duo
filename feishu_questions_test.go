@@ -4,12 +4,74 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	cb "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
+
+// Check the documented JSON 1.0 nesting contract on the serialized wire card.
+// The message API accepting a card does not establish that clients render it.
+// https://open.feishu.cn/document/feishu-cards/card-components/containers/form-container
+func checkQuestionFormNesting(raw string) error {
+	var card map[string]any
+	if err := json.Unmarshal([]byte(raw), &card); err != nil {
+		return err
+	}
+	var walk func(any, string) error
+	walk = func(value any, parent string) error {
+		switch node := value.(type) {
+		case []any:
+			for _, child := range node {
+				if err := walk(child, parent); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			tag, _ := node["tag"].(string)
+			if tag == "form" && parent != "" {
+				return errors.New("form must be at the card root")
+			}
+			if parent == "form" && (tag == "div" || tag == "table" || tag == "chart") {
+				return fmt.Errorf("JSON 1.0 form cannot directly contain %s", tag)
+			}
+			for _, key := range []string{"elements", "columns"} {
+				if err := walk(node[key], tag); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(card, "")
+}
+
+func TestFeishuQuestionCardJSON1Nesting(t *testing.T) {
+	// Reproduce the previous wire structure: the heading was a direct form child.
+	legacy := `{"elements":[{"tag":"form","elements":[{"tag":"div","text":{"tag":"plain_text","content":"问题"}}]}]}`
+	if checkQuestionFormNesting(legacy) == nil {
+		t.Fatal("invalid legacy form accepted by contract check")
+	}
+	a := fixture(t, &fakeRunner{})
+	params := `{"questions":[{"id":"choice","question":"能看到题目吗？","isOther":true,"options":[{"label":"能看到","description":"题目和选项都显示"},{"label":"看不到"}]},{"id":"text","question":"补充说明"}]}`
+	for _, method := range []string{"duo/asyncQuestion", "item/tool/requestUserInput"} {
+		card := a.feishu.questionCard("task", "delivery", CodexPendingRequest{Method: method, Params: json.RawMessage(params)}, true)
+		raw, err := json.Marshal(card)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = checkQuestionFormNesting(string(raw)); err != nil {
+			t.Fatal(method, err)
+		}
+		for _, expected := range []string{"1. 能看到题目吗？", "2. 补充说明", "能看到：题目和选项都显示", `"name":"choice_0"`, `"name":"text_0"`, `"name":"text_1"`, `"value":"0"`, `"value":"1"`, `"action_type":"form_submit"`, `"duo_question":"delivery"`} {
+			if !strings.Contains(string(raw), expected) {
+				t.Fatalf("%s: lost question/control %s", method, expected)
+			}
+		}
+	}
+}
 
 func questionCallback(a *App, chat, token string, form map[string]interface{}) *cb.CardActionTriggerEvent {
 	return &cb.CardActionTriggerEvent{Event: &cb.CardActionTriggerRequest{Operator: &cb.Operator{OpenID: a.config.get().Feishu.Owner}, Context: &cb.Context{OpenChatID: chat}, Action: &cb.CallBackAction{Tag: "button", Name: "duo_question_submit", Value: map[string]interface{}{"duo_question": token}, FormValue: form}}}
@@ -26,6 +88,9 @@ func seedQuestionDelivery(t *testing.T, a *App) (Task, CodexPendingRequest, stri
 	p := addAsyncQuestion(t, a, task)
 	content := ""
 	a.feishu.createRunCard = func(_ context.Context, _ FeishuConfig, chat, raw, id string) (string, error) {
+		if err := checkQuestionFormNesting(raw); err != nil {
+			t.Fatal(err)
+		}
 		content = raw
 		return "om-question", nil
 	}
