@@ -47,4 +47,5 @@ __pycache__/
 !/docs/automatic-knowledge.md
 !/docs/conversation-display.md
 !/docs/engine-onboarding.md
+!/docs/account-import.md
 !/docs/desktop-sharing.md

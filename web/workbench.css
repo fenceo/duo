@@ -302,6 +302,21 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .configured-model small{font-size:12px;line-height:1.5}
 :root .configured-model button{min-height:34px;font-size:12px;color:var(--danger);border-color:var(--line)}
 .engine-card{padding:18px;background:var(--surface);box-shadow:none}
+.engine-environment{border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:14px;min-width:0;background:var(--surface)}
+.engine-environment>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.engine-environment h4{margin:0 0 4px}
+.engine-environment small{display:block;color:var(--muted);overflow-wrap:anywhere}
+.engine-environment-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--line);margin-top:10px}
+.engine-environment-row>div:first-child{flex:1 1 200px;min-width:0}
+.engine-environment-row strong{display:inline-block;margin-right:10px}
+.engine-environment-row code{display:block;font-size:12px;white-space:normal;overflow-wrap:anywhere;margin-top:6px}
+.engine-environment-row .engine-actions{margin:0;flex-wrap:wrap}
+#settings-engines .engine-catalog{display:block}
+#engine-setup-fields,#account-import-fields{min-width:0;border:0;padding:0;margin:0}
+#account-import-fields input,#account-import-fields select{max-width:100%;min-width:0}
+.account-import{padding:14px 0;border-top:1px solid var(--line)}
+.account-import summary{cursor:pointer;font-weight:600}
+#engine-environment-editor{margin-top:20px}
 .engine-card header>div{min-width:0}
 .engine-card header strong{font-size:15px;line-height:1.5}
 .engine-card header small,.engine-card header>span{font-size:12px;line-height:1.5}

@@ -154,9 +154,9 @@ for(const changed of ['selection','codexApprovalRevision']){
  const sections=tabs.map(tab=>({id:'settings-'+tab.dataset.settings,classList:{toggle(){}}}));
  f.node('settings-form').querySelector=()=>({querySelectorAll:()=>tabs});
  f.node('settings-form').querySelectorAll=()=>sections;
- f.ctx.loadEngineSettings=()=>engineLoads++;f.ctx.loadUpdateInformation=()=>updateLoads++;
+ f.ctx.openEngineCenter=()=>engineLoads++;f.ctx.loadUpdateInformation=()=>updateLoads++;
  f.ctx.showSettingsSection('engines');f.ctx.showSettingsSection('updates');f.ctx.showSettingsSection('environment');
- assert.equal(engineLoads,1);assert.equal(updateLoads,1);assert.equal(f.node('settings-save').classList.toggle instanceof Function,true);
+ assert.equal(engineLoads,2);assert.equal(updateLoads,1);assert.equal(f.node('settings-save').classList.toggle instanceof Function,true);
  assert.doesNotMatch(engines,/nav\.querySelectorAll<HTMLButtonElement>/,'engine settings must not add a second navigation handler');
 }
 const webFiles=(await readdir(new URL('../web/',import.meta.url))).filter(name=>/\.(ts|html)$/.test(name));

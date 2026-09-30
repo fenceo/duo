@@ -128,7 +128,7 @@ func runCodexAppServerFixture() {
 			complete("completed")
 			return
 		}
-	case "steer", "steer-reject", "steer-wrong-turn", "steer-no-ack":
+	case "steer", "steer-question", "steer-reject", "steer-wrong-turn", "steer-no-ack":
 		steer := read("turn/steer")
 		var params struct {
 			ThreadID       string `json:"threadId"`
@@ -137,8 +137,15 @@ func runCodexAppServerFixture() {
 				Text string `json:"text"`
 			} `json:"input"`
 		}
-		if json.Unmarshal(steer.Params, &params) != nil || params.ThreadID != threadID || params.ExpectedTurnID != turnID || len(params.Input) != 1 || params.Input[0].Text != "先检查失败测试，不要重构" {
+		if json.Unmarshal(steer.Params, &params) != nil || params.ThreadID != threadID || params.ExpectedTurnID != turnID || len(params.Input) != 1 {
 			fail("steer payload or native identity mismatch")
+		}
+		if scenario == "steer-question" {
+			if !strings.HasPrefix(params.Input[0].Text, "对 AI 提问的回答：") || !strings.Contains(params.Input[0].Text, "不下载本地模型") {
+				fail("question answer not steered")
+			}
+		} else if params.Input[0].Text != "先检查失败测试，不要重构" {
+			fail("steer text mismatch")
 		}
 		var raw map[string]json.RawMessage
 		_ = json.Unmarshal(steer.Params, &raw)
@@ -146,7 +153,7 @@ func runCodexAppServerFixture() {
 			fail("steering must not override model, permissions or workspace")
 		}
 		switch scenario {
-		case "steer":
+		case "steer", "steer-question":
 			reply(steer, map[string]string{"turnId": turnID})
 		case "steer-reject":
 			write(map[string]any{"id": steer.ID, "error": map[string]any{"code": -32600, "message": "turn not active"}})

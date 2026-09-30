@@ -142,3 +142,109 @@ func TestAsyncQuestionRestartScopeAndDismiss(t *testing.T) {
 		t.Fatal(status)
 	}
 }
+
+func TestAsyncAnswerSteersNativeTurnWithoutQueue(t *testing.T) {
+	a := fixture(t, codexSteerBridgeRunner{config: codexFixtureConfig(t, "steer-question"), workspace: t.TempDir()})
+	task := taskFor(t, a)
+	first, err := a.submit(task.ID, "first", "chat", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, func() bool { state := a.liveInteraction(task.ID); return state != nil && state.CanSteer })
+	question := addAsyncQuestion(t, a, task)
+	request := toolsClient(t, a)
+	path := "/api/tasks/" + task.ID + "/questions/" + question.ID
+	body := map[string]any{"answers": map[string]any{"0": map[string]any{"answers": []string{"云端"}}, "1": map[string]any{"answers": []string{"不下载本地模型"}}}}
+	response := request(path, "POST", body, 200)
+	var result AsyncAnswerDelivery
+	if json.Unmarshal(response, &result) != nil || !result.Accepted || result.Delivery != "steer" || result.RunID != first.ID {
+		t.Fatal("answer did not steer the current turn", string(response))
+	}
+	waitUntil(t, func() bool { runs, _ := a.store.runs(task.ID); return len(runs) == 1 && runs[0].Status == "done" })
+	if retry := request(path, "POST", body, 200); string(response) != string(retry) {
+		t.Fatal("retry after completion changed delivery")
+	}
+	runs, _ := a.store.runs(task.ID)
+	if len(runs) != 1 {
+		t.Fatal("answer created a queued turn")
+	}
+	events, _ := a.store.events(task.ID, 0)
+	count := 0
+	for _, event := range events {
+		if event.Kind == "user" && strings.Contains(event.Text, "不下载本地模型") {
+			count++
+			if event.RunID != first.ID {
+				t.Fatal("answer stored in wrong turn")
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatal("answer must be recorded once after native acceptance", count)
+	}
+	var state string
+	a.store.QueryRow("SELECT status FROM async_questions WHERE id=?", question.ID).Scan(&state)
+	if state != "steered" {
+		t.Fatal(state)
+	}
+}
+
+func TestAsyncAnswerUnconfirmedNeverFallsBackAndRejectCanRetry(t *testing.T) {
+	for _, reject := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown", true: "rejected"}[reject], func(t *testing.T) {
+			a := fixture(t, &fakeRunner{})
+			task := taskFor(t, a)
+			question := addAsyncQuestion(t, a, task)
+			control := newCodexTurnControl(nil)
+			control.setReady()
+			a.mu.Lock()
+			a.workers[task.ID] = &worker{runID: "active", runKind: "chat", steer: control}
+			a.mu.Unlock()
+			t.Cleanup(func() { a.mu.Lock(); delete(a.workers, task.ID); a.mu.Unlock(); control.close() })
+			ack := make(chan struct{})
+			go func() {
+				r := <-control.requests
+				if reject {
+					control.resolve(r, errCodexSteerRejected, "")
+				} else {
+					control.close()
+				}
+				close(ack)
+			}()
+			answers := []string{"云端", "不下载本地模型"}
+			if _, err := a.submitAsyncAnswer(context.Background(), task.ID, question.ID, answers); err == nil {
+				t.Fatal("unconfirmed answer accepted")
+			}
+			<-ack
+			var state string
+			a.store.QueryRow("SELECT status FROM async_questions WHERE id=?", question.ID).Scan(&state)
+			if reject {
+				if state != "pending" {
+					t.Fatal("rejected answer cannot be retried", state)
+				}
+				control.mu.Lock()
+				attempts := len(control.attempts)
+				control.mu.Unlock()
+				if attempts != 0 {
+					t.Fatal("rejected attempt retained")
+				}
+			} else {
+				if state != "steering" {
+					t.Fatal("unknown delivery reservation lost", state)
+				}
+				a.mu.Lock()
+				delete(a.workers, task.ID)
+				a.mu.Unlock()
+				if _, err := a.submitAsyncAnswer(context.Background(), task.ID, question.ID, answers); err == nil {
+					t.Fatal("unknown answer retried as new turn")
+				}
+				if _, _, err := a.store.questionAnswer(task.ID, question.ID, []string{"本地", "changed"}); err == nil {
+					t.Fatal("pending delivery accepts changed answer")
+				}
+			}
+			runs, _ := a.store.runs(task.ID)
+			if len(runs) != 0 {
+				t.Fatal("failed steer was queued")
+			}
+		})
+	}
+}

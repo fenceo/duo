@@ -93,6 +93,16 @@ detail=snapshot([command]);ui.renderCodexApprovals(detail);card=ui.codexApproval
 let resolveOld,resolveNew;detail=snapshot([command]);globalThis.api=()=>new Promise(resolve=>{if(!resolveOld)resolveOld=resolve;else resolveNew=resolve});const older=ui.refreshCodexApprovals('task'),newer=ui.refreshCodexApprovals('task');resolveNew(snapshot([]));await newer;resolveOld(snapshot([command]));await older;assert.equal(detail.approvals.length,0,'older detail response cannot resurrect a resolved request');
 ui.resetCodexApprovals();assert.equal(ui.codexApprovalCards.size,0);
 
+const asyncQuestion=make('duo/asyncQuestion',{isBlocking:false,questions:[{id:'0',question:'安装范围？',isOther:true,options:[{label:'云端'}]}]},'async-question');
+detail=snapshot([asyncQuestion]);ui.renderCodexApprovals(detail);card=ui.codexApprovalCards.get(ui.codexApprovalKey(asyncQuestion));
+assert.match(card.node.querySelector('.codex-approval-scope').textContent,/立即引导/);
+const notices=[];globalThis.notify=message=>notices.push(message);
+globalThis.api=async(path,method,body)=>{if(method==='POST'){assert.equal(path,'tasks/task/questions/async-question');assert.equal(body.answers['0'].answers[0],'云端');return {accepted:true,delivery:'steer'}}return snapshot([])};
+await ui.submitCodexApproval(card,{answers:{'0':{answers:['云端']}}});assert.match(notices[0],/立即引导/);assert.equal(ui.codexApprovalCards.size,0);
+detail=snapshot([asyncQuestion]);ui.renderCodexApprovals(detail);card=ui.codexApprovalCards.get(ui.codexApprovalKey(asyncQuestion));
+globalThis.api=async()=>{throw new Error('接收结果未确认，未自动排队')};await ui.submitCodexApproval(card,{answers:{'0':{answers:['云端']}}});assert(!card.settled);assert.match(card.error,/未自动排队/);
+ui.resetCodexApprovals();
+
 const workflowSource=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
 assert.match(workflowSource,/Claude Code 当前不支持 Codex 网页交互审批或自动风险评审/);assert.match(workflowSource,/id="mode-engine-hint"/);
 const workflow=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(workflowSource,{mode:'transform'})+'\nexport {modeForPermission,modeLabel,modeSupportsEngine};export function setCatalog(value){workCatalog=value}').toString('base64'));

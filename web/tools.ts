@@ -76,11 +76,12 @@ function installSettingsSections(){
  input('access-lan').oninput=renderAccessPreview;input('access-tailscale').oninput=renderAccessPreview;footer.classList.add('settings-footer');
 }
 function showSettingsSection(page:string){
+ if(page==='engines')page='environment';
  const nav=element('settings-form').querySelector('.settings-nav')!;
  nav.querySelectorAll<HTMLButtonElement>('button[data-settings]').forEach(b=>b.classList.toggle('selected',b.dataset.settings===page));
  element('settings-form').querySelectorAll<HTMLElement>('.settings-section').forEach(section=>section.classList.toggle('hidden',section.id!=='settings-'+page));
  button('settings-save').classList.toggle('hidden',page==='updates'||page==='engines'||page==='data'||page==='knowledge');
- if(page==='engines')void loadEngineSettings();else if(page==='updates')void loadUpdateInformation();else if(page==='knowledge')void loadKnowledgeSettings();
+ if(page==='environment')void openEngineCenter();else if(page==='updates')void loadUpdateInformation();else if(page==='knowledge')void loadKnowledgeSettings();
 }
 function loadAccessSettings(){input('access-lan').value=settings.config.access?.lan||'';input('access-tailscale').value=settings.config.access?.tailscale||'';renderAccessPreview()}
 function renderAccessPreview(){

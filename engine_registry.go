@@ -20,6 +20,7 @@ type EngineDefinition struct {
 	Description        string   `json:"description"`
 	Transport          string   `json:"transport"`
 	Runnable           bool     `json:"runnable"`
+	AutoInstall        bool     `json:"auto_install"`
 	Targets            []string `json:"targets"`
 	Capabilities       []string `json:"capabilities"`
 	CredentialKinds    []string `json:"credential_kinds"`
@@ -70,7 +71,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 	return []EngineDefinition{
 		{
 			ID: "codex", Name: "Codex", Description: "OpenAI Codex 原生 app-server",
-			Transport: "codex_app_server", Runnable: true,
+			Transport: "codex_app_server", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "interrupt", "image_input"},
 			CredentialKinds:    []string{"native", "codex_home"},
@@ -79,7 +80,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 		},
 		{
 			ID: "claude", Name: "Claude Code", Description: "Anthropic Claude Code CLI",
-			Transport: "cli_stream_json", Runnable: true,
+			Transport: "cli_stream_json", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "mcp"},
 			CredentialKinds:    []string{"native", "claude_home"},
@@ -88,7 +89,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 		},
 		{
 			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 原生 ACP；支持模型切换、停止和重启后恢复会话；暂不支持交互审批、图片和硬件工具",
-			Transport: "acp", Runnable: true,
+			Transport: "acp", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox"},
 			CredentialKinds:    []string{"native", "dsh_home"},
@@ -333,6 +334,7 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 	s.codexSyncRoutes(m)
 	s.accountSyncRoutes(m)
 	s.engineStatusRoutes(m)
+	s.accountImportRoutes(m)
 	m.HandleFunc("GET /api/engines", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		catalog := EngineCatalog{Engines: builtinEngineDefinitions(), Profiles: s.app.store.engineProfiles(), ActiveProfile: map[string]string{}}
 		for _, env := range s.app.config.get().Environments {

@@ -164,12 +164,13 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 }
 
 type SubmitOptions struct {
-	QuestionID      string   `json:"-"`
-	QuestionAnswers []string `json:"-"`
-	ModeID          string   `json:"mode_id"`
-	AttachmentIDs   []string `json:"attachment_ids"`
-	Delivery        string   `json:"delivery,omitempty"`
-	ExpectedRunID   string   `json:"expected_run_id,omitempty"`
+	QuestionID        string   `json:"-"`
+	QuestionAnswers   []string `json:"-"`
+	QuestionImmediate bool     `json:"-"`
+	ModeID            string   `json:"mode_id"`
+	AttachmentIDs     []string `json:"attachment_ids"`
+	Delivery          string   `json:"delivery,omitempty"`
+	ExpectedRunID     string   `json:"expected_run_id,omitempty"`
 }
 
 func (a *App) submit(id, input, kind, source string) (Run, error) {
@@ -206,6 +207,18 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		}
 		if previous != "" {
 			return Run{ID: previous, TaskID: id}, nil
+		}
+		if options.QuestionImmediate {
+			var state string
+			if err := a.store.QueryRow("SELECT status FROM async_questions WHERE task_id=? AND id=?", id, options.QuestionID).Scan(&state); err != nil {
+				return Run{}, err
+			}
+			if state == "steering" {
+				return Run{}, errors.New("上次答案接收结果未确认，未自动排队")
+			}
+			if w := a.workers[id]; w != nil && w.runID != "" {
+				return Run{}, errLiveTurnChanged
+			}
 		}
 	}
 	input = strings.TrimSpace(input)
@@ -338,9 +351,15 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		w.interrupting = true
 		w.runCancel()
 	}
+	if options.QuestionImmediate && a.workers[id] != nil {
+		a.workers[id].nextRunID = r.ID
+	}
 	if a.workers[id] == nil {
 		ctx, cancel := context.WithCancel(a.ctx)
 		w := &worker{cancel: cancel}
+		if options.QuestionImmediate {
+			w.nextRunID = r.ID
+		}
 		a.workers[id] = w
 		a.wg.Add(1)
 		go a.work(ctx, id, w)

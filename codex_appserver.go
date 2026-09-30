@@ -486,7 +486,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				_ = json.Unmarshal(m.ID, &id)
 				if steering != nil && id == "duo-steer-"+steering.ID {
 					if m.Error != nil {
-						control.resolve(steering, fmt.Errorf("Codex 未接收引导：%s；内容已保留，可选择排队发送", redact(m.Error.Message)), "")
+						control.resolve(steering, fmt.Errorf("%w：%s；内容已保留，可选择排队发送", errCodexSteerRejected, redact(m.Error.Message)), "")
 					} else {
 						var accepted struct {
 							TurnID string `json:"turnId"`
@@ -495,8 +495,12 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 							control.resolve(steering, errors.New("Codex 引导确认的轮次不一致，未自动重发，请检查记录"), "")
 						} else {
 							warning := ""
-							if control.record != nil {
-								if saveErr := control.record(steering.Text); saveErr != nil {
+							record := steering.record
+							if record == nil {
+								record = control.record
+							}
+							if record != nil {
+								if saveErr := record(steering.Text); saveErr != nil {
 									warning = "Codex 已接收引导，但本地记录保存失败，请勿重复发送"
 								}
 							}

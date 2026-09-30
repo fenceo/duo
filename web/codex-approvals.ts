@@ -76,7 +76,7 @@ function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApp
  const node=document.createElement('article');node.className='codex-approval-card';node.dataset.request=request.id;
  const questionRequest=codexIsQuestion(request),asyncQuestion=request.method==='duo/asyncQuestion',background=questionRequest&&codexRecord(request.params).isBlocking===false;
  node.classList.toggle('codex-question-card',questionRequest);
- const scope=asyncQuestion?'AI 可以继续工作；答案将作为下一条消息排队发送。':questionRequest?(background?'AI 可以继续工作；提交后会收到你的补充。':'AI 正在等你回答。选择选项或填写答案后，点击提交。'):request.method==='item/permissions/requestApproval'?'仅授予本次请求列出的权限，有效范围为当前轮次。':'批准仅针对当前请求；不会改写会话的审批模式。';
+ const scope=asyncQuestion?'提交后立即引导当前执行；若本轮已结束，则作为新消息继续。':questionRequest?(background?'AI 可以继续工作；提交后会收到你的补充。':'AI 正在等你回答。选择选项或填写答案后，点击提交。'):request.method==='item/permissions/requestApproval'?'仅授予本次请求列出的权限，有效范围为当前轮次。':'批准仅针对当前请求；不会改写会话的审批模式。';
  node.innerHTML=`<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest?'':`<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request,task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
  const card:CodexApprovalCard={request,node,busy:false,settled:false,error:''},actions=node.querySelector<HTMLElement>('.codex-approval-actions')!;
  if(questionRequest){
@@ -128,7 +128,7 @@ async function refreshCodexApprovals(taskID:string){
 async function submitCodexApproval(card:CodexApprovalCard,body:unknown){
  if(card.busy||card.settled||stoppingTask===card.request.task_id||!detail?.approvals?.some(request=>codexApprovalKey(request)===codexApprovalKey(card.request)))return;
  card.busy=true;card.error='';codexApprovalRevision++;updateCodexApprovalCard(card);
- try{await api('tasks/'+encodeURIComponent(card.request.task_id)+(card.request.method==='duo/asyncQuestion'?'/questions/':'/approvals/')+encodeURIComponent(card.request.id),'POST',body);card.settled=true}
+ try{const response=await api<{accepted?:boolean;delivery?:string;warning?:string}>('tasks/'+encodeURIComponent(card.request.task_id)+(card.request.method==='duo/asyncQuestion'?'/questions/':'/approvals/')+encodeURIComponent(card.request.id),'POST',body);if(card.request.method==='duo/asyncQuestion'&&!codexRecord(body).dismiss){if(!response.accepted)throw Error('尚未确认答案接收，请检查记录后重试。');notify(response.warning||(response.delivery==='steer'?'答案已立即引导当前执行。':'答案已发送，将继续当前任务。'))}card.settled=true}
  catch(error){if((error as Error&{status?:number}).status===409){card.settled=true;card.error='请求已过期或已在其他窗口处理，正在刷新。'}else card.error=(error as Error).message}
  finally{card.busy=false;updateCodexApprovalCard(card)}
  if(card.settled)try{await refreshCodexApprovals(card.request.task_id)}catch(error){card.error='同步失败，请刷新请求：'+(error as Error).message;updateCodexApprovalCard(card)}

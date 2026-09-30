@@ -11,6 +11,7 @@ import (
 )
 
 var errLiveTurnChanged = errors.New("当前执行已变化或正在停止，请刷新后重试；内容未自动排队")
+var errCodexSteerRejected = errors.New("Codex 未接收引导")
 
 type codexSteerKey struct{}
 
@@ -20,6 +21,7 @@ type codexSteerRequest struct {
 	Done    chan struct{}
 	Err     error
 	Warning string
+	record  func(string) error
 }
 
 // One run owns this channel. Only the app-server event loop writes the native
@@ -59,6 +61,10 @@ func (c *codexTurnControl) state() (bool, bool) {
 }
 
 func (c *codexTurnControl) begin(id, text string) (*codexSteerRequest, error) {
+	return c.beginRecorded(id, text, nil)
+}
+
+func (c *codexTurnControl) beginRecorded(id, text string, record func(string) error) (*codexSteerRequest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old := c.attempts[id]; old != nil {
@@ -73,7 +79,7 @@ func (c *codexTurnControl) begin(id, text string) (*codexSteerRequest, error) {
 	if len(c.attempts) >= 128 {
 		return nil, errors.New("本轮引导次数已达上限，请使用排队发送")
 	}
-	r := &codexSteerRequest{ID: id, Text: text, Done: make(chan struct{})}
+	r := &codexSteerRequest{ID: id, Text: text, Done: make(chan struct{}), record: record}
 	c.attempts[id], c.active = r, r
 	c.requests <- r
 	return r, nil
@@ -148,6 +154,10 @@ func (a *App) steer(ctx context.Context, id, runID, requestID, text string) (str
 		return "", err
 	}
 	a.changed()
+	return a.waitForSteer(ctx, r)
+}
+
+func (a *App) waitForSteer(ctx context.Context, r *codexSteerRequest) (string, error) {
 	timer := time.NewTimer(15 * time.Second)
 	defer timer.Stop()
 	select {

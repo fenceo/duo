@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const {ctx,document}=await createWebShellFixture(),run=code=>runInContext(code,ctx),el=id=>document.getElementById(id);
 ctx.crypto=webcrypto;
 run(`settings.config.environments.push({id:'local',name:'Windows',type:'windows',codex:'fixture.exe',workspaces:['C:/fixture']});populateEngineOnboarding()`);
-assert.equal(el('engine-setup-environment').value,'fixture');
+assert(el('settings-environment').contains(el('settings-engines')));
 assert.equal(el('engine-account-environment').value,'local');
 assert(el('account-center-dialog').contains(el('engine-account-name')));
 assert(!el('settings-engines').contains(el('engine-account-name')));

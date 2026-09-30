@@ -101,7 +101,7 @@ function installEnvironmentDiscovery(){
   if(env.models.some(m=>m.id===id&&(m.engine||'')===engine)){element('custom-model-result').textContent='这个引擎的模型已经添加';return}
   env.models.push({id,name,engine});input('custom-model-id').value='';input('custom-model-name').value='';element('custom-model-result').textContent='已添加，保存设置后生效';renderConfiguredModels();
  };
- renderConfiguredModels();
+ renderConfiguredModels();installUnifiedEngineCenter();
 }
 function renderConfiguredModels(){
  const target=element('configured-models');if(!target)return;const env=editingEnvironments?.find(e=>e.id===editingID);const models=env?.models||[];
