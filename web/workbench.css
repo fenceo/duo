@@ -323,7 +323,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 #engine-account-fields summary{cursor:pointer;padding:10px 0}
 #account-center-dialog input,#account-center-dialog select{min-width:0;max-width:100%;box-sizing:border-box}
 #engine-account-status pre,#codex-sync-status{white-space:pre-wrap;overflow-wrap:anywhere}
-@media(max-width:760px){.sidebar-account-tools>button{min-height:44px}#account-center-dialog{padding:14px}#account-center-dialog button,#account-center-dialog select{min-height:44px}}
+@media(max-width:760px){.sidebar .sidebar-account-tools>button{min-height:44px}#account-center-dialog{padding:14px}#account-center-dialog button,#account-center-dialog select{min-height:44px}}
 .desktop-dialog{width:min(1000px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
 .desktop-dialog p{line-height:1.65;overflow-wrap:anywhere}
 .desktop-dialog img{display:block;max-width:100%;height:auto;margin-top:12px;border:1px solid var(--line)}
