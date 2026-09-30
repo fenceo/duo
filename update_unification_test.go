@@ -188,15 +188,13 @@ func TestInstalledUpdateValidatesAndPropagatesInstallerFailure(t *testing.T) {
 func TestUpdateBusyAndAdmissionGate(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	task := taskFor(t, a)
-	for _, kind := range []string{"AI", "terminal", "hardware", "queued"} {
+	for _, kind := range []string{"AI", "terminal", "queued"} {
 		t.Run(kind, func(t *testing.T) {
 			switch kind {
 			case "AI":
 				a.workers["synthetic"] = &worker{}
 			case "terminal":
 				a.terminals.links["synthetic"] = terminalLink{}
-			case "hardware":
-				a.hardware.links["synthetic"] = &hardwareLink{}
 			case "queued":
 				_, err := a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES(?,?,?,?,?,?,?)", "synthetic", task.ID, "test", "chat", "web", "queued", now())
 				if err != nil {

@@ -68,7 +68,7 @@ function syntheticClock(ctx){
  assert.equal(f.reloads,0,'202 scheduled is not proof of a completed update');assert.match(node('update-result').textContent,/确认新版前不会显示成功/);
  health.resolve({matched:true,lastVersion:'0.19.0'});await first;
  assert.equal(f.reloads,1);assert.equal(f.value('updatePhase'),'complete');assert.equal(node('update-install').disabled,true,'keep locked during navigation');
- assert.match(f.confirmations[0],/不会强停/);assert.doesNotMatch(f.confirmations[0],/会停止正在运行/);
+ assert.match(f.confirmations[0],/空闲硬件连接将在重启时断开/);assert.match(f.confirmations[0],/不会强停/);assert.doesNotMatch(f.confirmations[0],/会停止正在运行/);
 }
 for(const status of [401,403,409,500]){
  const f=fixture(),{ctx,node,calls}=f;ctx.renderUpdateInformation(info);

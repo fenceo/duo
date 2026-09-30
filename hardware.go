@@ -227,6 +227,10 @@ func (h *Hardware) sendConnection(id, generation string, b []byte) error {
 }
 func (h *Hardware) sendOwned(id, generation, task string, b []byte) error {
 	h.mu.Lock()
+	if h.updating {
+		h.mu.Unlock()
+		return errUpdateBusy
+	}
 	l := h.links[id]
 	if l == nil {
 		h.mu.Unlock()

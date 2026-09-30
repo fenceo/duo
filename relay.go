@@ -131,6 +131,10 @@ func (h *Hardware) operateRelay(ctx context.Context, c HardwareConfig, task, gen
 		return errors.New("电源操作无效")
 	}
 	h.mu.Lock()
+	if h.updating {
+		h.mu.Unlock()
+		return errUpdateBusy
+	}
 	l := h.links[c.ID]
 	if l == nil || generation == "" || generation != l.generation || l.controller != task {
 		h.mu.Unlock()

@@ -11,7 +11,8 @@ import (
 var errUpdateBusy = errors.New("正在准备更新，请等待更新完成后再操作")
 
 // Lock all work-admission points, including Feishu and WebSocket handshakes.
-// No existing work is cancelled merely to install an update.
+// No in-flight operation is cancelled merely to install an update. Idle hardware
+// connections stay open during preparation and close with the normal shutdown.
 func (a *App) beginUpdate() (func(), error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -43,8 +44,16 @@ func (a *App) beginUpdate() (func(), error) {
 	if len(a.terminals.links) > 0 {
 		busy = append(busy, "终端仍在连接")
 	}
-	if len(a.hardware.links) > 0 {
-		busy = append(busy, "串口/继电器等硬件仍在连接")
+	for _, link := range a.hardware.links {
+		if link.relay != nil && link.relay.isBusy() {
+			busy = append(busy, "继电器操作仍在进行")
+			break
+		}
+		if !link.writeMu.TryLock() {
+			busy = append(busy, "硬件数据仍在写入")
+			break
+		}
+		link.writeMu.Unlock()
 	}
 	if len(busy) > 0 {
 		return nil, fmt.Errorf("%w：%s；请先结束或断开后重试，不会强制停止", errUpdateBusy, strings.Join(busy, "、"))
