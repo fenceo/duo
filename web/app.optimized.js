@@ -3834,6 +3834,238 @@ async function submitAccountImport() {
 }
 let accountCenterEngine = '', accountCenterBusy = false, accountCenterRequest = 0, accountEditID = '';
 let accountCenterView = 'cards', accountCenterPrivate = false;
+let accountInfoLoading = new Set(), accountSelected = new Set(), accountVisibleIDs = [], accountBatchBusy = false, accountOrganizationID = '';
+const accountStateLabels = {
+    unknown: '未读取',
+    local: '本地身份',
+    ready: '额度已更新',
+    api: 'API / 中转站',
+    error: '刷新失败',
+    login_required: '需要登录'
+};
+function installCodexAccountInfo() {
+    accountInfoLoading = new Set();
+    accountSelected = new Set();
+    accountVisibleIDs = [];
+    accountBatchBusy = false;
+    element('account-sort').insertAdjacentHTML('beforeend', '<option value="quota">剩余额度优先</option>');
+    element('account-center-dialog').querySelector('.account-center-toolbar').insertAdjacentHTML('beforeend', '<select id="account-plan-filter" aria-label="按套餐筛选"><option value="">全部套餐</option></select><select id="account-state-filter" aria-label="按账号状态筛选"><option value="">全部状态</option>' + Object.entries(accountStateLabels).map(([v, l])=>`<option value="${v}">${l}</option>`).join('') + '</select><select id="account-tag-filter" aria-label="按标签筛选"><option value="">全部标签</option></select>');
+    for (const id of [
+        'account-plan-filter',
+        'account-state-filter',
+        'account-tag-filter'
+    ])element(id).onchange = renderAccountCenter;
+    element('account-center-dialog').querySelector('.account-center-commandbar').insertAdjacentHTML('afterend', '<div class="account-batchbar"><label><input type="checkbox" id="account-select-all"> 选择当前结果</label><span id="account-selected-count"></span><button type="button" id="account-refresh-info">刷新 Codex 账号</button><span id="account-info-progress" role="status"></span></div>');
+    input('account-select-all').onchange = ()=>{
+        for (const id of accountVisibleIDs){
+            if (input('account-select-all').checked) accountSelected.add(id);
+            else accountSelected.delete(id);
+        }
+        renderAccountCenter();
+    };
+    button('account-refresh-info').onclick = ()=>void refreshCodexAccounts(true);
+    element('root').insertAdjacentHTML('beforeend', '<dialog id="account-organization-dialog"><form id="account-organization-form"><h2>账号备注与标签</h2><label for="account-organization-note">备注</label><textarea id="account-organization-note" maxlength="1000" placeholder="例如用途、所属团队；不要填写密码或令牌"></textarea><label for="account-organization-tags">标签（逗号分隔，最多 12 个）</label><input id="account-organization-tags" maxlength="380"><p id="account-organization-status" role="status"></p><div class="dialog-footer"><button type="button" id="account-organization-cancel">取消</button><button type="submit" id="account-organization-save" class="primary">保存</button></div></form></dialog>');
+    button('account-organization-cancel').onclick = ()=>{
+        if (!button('account-organization-save').disabled) element('account-organization-dialog').close();
+    };
+    element('account-organization-dialog').addEventListener('cancel', (e)=>{
+        if (button('account-organization-save').disabled) e.preventDefault();
+    });
+    element('account-organization-form').onsubmit = (e)=>{
+        e.preventDefault();
+        void saveAccountOrganization();
+    };
+    disposeWithShell(()=>{
+        accountInfoLoading.clear();
+        accountSelected.clear();
+        accountBatchBusy = false;
+    });
+}
+function updateAccountInfoFilters() {
+    const options = (id, values, label)=>{
+        const e = input(id), before = e.value;
+        e.innerHTML = `<option value="">${label}</option>` + Array.from(new Set(values)).filter(Boolean).sort().map((v)=>`<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join('');
+        e.value = values.includes(before) ? before : '';
+    };
+    options('account-plan-filter', Object.values(engineCatalog?.accounts || {}).map((a)=>a.auth_type === 'apikey' ? 'API' : a.plan || ''), '全部套餐');
+    options('account-tag-filter', Object.values(engineCatalog?.organization || {}).flatMap((a)=>a.tags || []), '全部标签');
+}
+function accountSearchValues(p) {
+    const i = engineCatalog?.accounts?.[p.id], o = engineCatalog?.organization?.[p.id];
+    return [
+        p.name || '',
+        i?.email || '',
+        i?.display_name || '',
+        i?.account_id || '',
+        i?.provider || '',
+        o?.note || '',
+        ...o?.tags || [],
+        taskEngineName(p.engine),
+        engineTargetName(p.environment_id)
+    ];
+}
+function accountInfoMatches(p) {
+    const i = engineCatalog?.accounts?.[p.id], o = engineCatalog?.organization?.[p.id], plan = input('account-plan-filter').value, state = input('account-state-filter').value, tag = input('account-tag-filter').value;
+    return (!plan || plan === (i?.auth_type === 'apikey' ? 'API' : i?.plan)) && (!state || state === (i?.state || 'unknown')) && (!tag || o?.tags?.includes(tag));
+}
+function accountRemaining(p) {
+    const i = engineCatalog?.accounts?.[p.id];
+    if (i?.state !== 'ready' || !i.limits?.length) return -1;
+    return Math.min(...i.limits.map((l)=>100 - l.used_percent));
+}
+function accountMask(s) {
+    if (!accountCenterPrivate) return s;
+    const chars = Array.from(s);
+    return chars.length ? chars[0] + '•••' + (chars.length > 2 ? chars.at(-1) : '') : '•••';
+}
+function accountIdentityHTML(p) {
+    const i = engineCatalog?.accounts?.[p.id], actual = i?.email || i?.display_name, alias = p.name || '';
+    return (actual && alias && actual !== alias ? `<p class="account-alias">备注名：${escapeHTML(accountMask(alias))}</p>` : '') + (i?.plan ? `<span class="account-plan">${escapeHTML(i.plan.toUpperCase())}</span>` : '');
+}
+function accountInfoHTML(p) {
+    const i = engineCatalog?.accounts?.[p.id], o = engineCatalog?.organization?.[p.id];
+    let html = '';
+    if (p.engine === 'codex') {
+        html = `<section class="codex-account-info"><span class="account-state account-state-${escapeHTML(i?.state || 'unknown')}">${escapeHTML(accountStateLabels[i?.state || 'unknown'] || '账号信息')}</span>`;
+        if (i?.account_id) html += `<p class="account-identity-id">账号 ID：${escapeHTML(accountMask(i.account_id))}</p>`;
+        if (i?.auth_type === 'apikey') html += `<p>${escapeHTML(i.provider || 'API 服务')}</p><code>${escapeHTML(i.base_url || '服务地址由目标环境配置')}</code>`;
+        if (i?.limits?.length) {
+            const stale = i.state !== 'ready' || !i.quota_updated || Date.now() - i.quota_updated > 5 * 60 * 1000;
+            if (stale) html += '<p class="account-quota-stale">上次额度快照，请刷新确认</p>';
+            html += i.limits.map((l)=>{
+                const minutes = l.window_minutes, window1 = minutes % 10080 === 0 ? minutes / 10080 + ' 周' : minutes % 1440 === 0 ? minutes / 1440 + ' 天' : minutes % 60 === 0 ? minutes / 60 + ' 小时' : minutes + ' 分钟', remaining = Math.max(0, Math.min(100, 100 - l.used_percent));
+                return `<div class="account-quota"><div><strong>${escapeHTML(l.name)} · ${window1}</strong><span>剩余 ${Math.round(remaining)}%</span></div><progress max="100" value="${remaining}" aria-label="${escapeHTML(l.name)} ${window1}剩余额度"></progress><small>${l.resets_at > 0 ? '重置：' + escapeHTML(new Date(l.resets_at * 1000).toLocaleString('zh-CN')) : '未提供重置时间'}</small></div>`;
+            }).join('');
+        }
+        if (i?.subscription_until) html += `<p>本地订阅截止：${escapeHTML(new Date(i.subscription_until).toLocaleDateString('zh-CN'))}</p>`;
+        html += `<p class="account-info-message">${escapeHTML(i?.message || '正在等待身份读取；也可点击刷新账号。')}</p>`;
+        if (i?.quota_updated) html += `<small>额度更新：${escapeHTML(new Date(i.quota_updated).toLocaleString('zh-CN'))}</small>`;
+        html += '</section>';
+    }
+    if (o?.tags?.length) html += '<div class="account-tags">' + o.tags.map((tag)=>`<span>${escapeHTML(tag)}</span>`).join('') + '</div>';
+    if (o?.note) html += `<p class="account-note">${escapeHTML(accountCenterPrivate ? '备注已隐藏' : o.note)}</p>`;
+    return html;
+}
+function updateAccountBatchControls() {
+    const profiles = engineCatalog?.profiles || [];
+    accountSelected = new Set(Array.from(accountSelected).filter((id)=>profiles.some((p)=>p.id === id)));
+    input('account-select-all').checked = accountVisibleIDs.length > 0 && accountVisibleIDs.every((id)=>accountSelected.has(id));
+    input('account-select-all').indeterminate = accountVisibleIDs.some((id)=>accountSelected.has(id)) && !input('account-select-all').checked;
+    element('account-selected-count').textContent = accountSelected.size ? `已选择 ${accountSelected.size} 个` : '';
+    button('account-refresh-info').textContent = accountSelected.size ? '刷新选中的 Codex 账号' : '刷新 Codex 账号';
+    button('account-refresh-info').disabled = accountBatchBusy;
+}
+function bindAccountInfoActions() {
+    element('account-center-list').querySelectorAll('[data-account-select]').forEach((e)=>e.onchange = ()=>{
+            if (e.checked) accountSelected.add(e.dataset.accountSelect);
+            else accountSelected.delete(e.dataset.accountSelect);
+            updateAccountBatchControls();
+        });
+    element('account-center-list').querySelectorAll('[data-account-refresh]').forEach((e)=>e.onclick = ()=>void refreshCodexAccount(e.dataset.accountRefresh, true));
+    element('account-center-list').querySelectorAll('[data-account-organize]').forEach((e)=>e.onclick = ()=>{
+            accountOrganizationID = e.dataset.accountOrganize;
+            const value = engineCatalog?.organization?.[accountOrganizationID];
+            input('account-organization-note').value = value?.note || '';
+            input('account-organization-tags').value = (value?.tags || []).join(', ');
+            element('account-organization-status').textContent = '';
+            element('account-organization-dialog').showModal();
+        });
+}
+function accountRouteSignature(p) {
+    return JSON.stringify([
+        p.id,
+        p.created,
+        p.environment_id,
+        p.engine,
+        p.kind,
+        p.reference,
+        settings.config.environments.find((e)=>e.id === p.environment_id)
+    ]);
+}
+async function refreshCodexAccount(id, online) {
+    const profile = engineCatalog?.profiles.find((p)=>p.id === id);
+    if (!profile || profile.engine !== 'codex' || accountInfoLoading.has(id)) return;
+    const epoch = shellEpoch, signature = accountRouteSignature(profile);
+    accountInfoLoading.add(id);
+    renderAccountCenter();
+    try {
+        const info = await api('engine-profiles/' + encodeURIComponent(id) + '/account/refresh', 'POST', {
+            online
+        }, shellController.signal);
+        const current = engineCatalog?.profiles.find((p)=>p.id === id);
+        if (!shellCurrent(epoch) || !current || accountRouteSignature(current) !== signature) return;
+        engineCatalog.accounts ??= {};
+        engineCatalog.accounts[id] = info;
+    } catch (e) {
+        if (shellCurrent(epoch)) {
+            const current = engineCatalog?.profiles.find((p)=>p.id === id);
+            if (current && accountRouteSignature(current) === signature) {
+                engineCatalog.accounts ??= {};
+                engineCatalog.accounts[id] = {
+                    ...engineCatalog.accounts[id] || {},
+                    state: 'error',
+                    message: e.message
+                };
+            }
+        }
+    } finally{
+        if (shellCurrent(epoch)) {
+            accountInfoLoading.delete(id);
+            renderAccountCenter();
+        }
+    }
+}
+async function refreshCodexAccounts(online, missingOnly = false) {
+    if (accountBatchBusy || !engineCatalog) return;
+    const epoch = shellEpoch;
+    const profiles = engineCatalog.profiles.filter((p)=>p.engine === 'codex' && (!online || !accountSelected.size || accountSelected.has(p.id)) && (!missingOnly || !engineCatalog.accounts?.[p.id]?.identity_updated || Date.now() - (engineCatalog.accounts?.[p.id]?.identity_updated || 0) > 60000));
+    if (!profiles.length) return;
+    accountBatchBusy = true;
+    updateAccountBatchControls();
+    let index = 0, finished = 0;
+    const worker = async ()=>{
+        while(index < profiles.length && shellCurrent(epoch)){
+            const p = profiles[index++];
+            await refreshCodexAccount(p.id, online);
+            finished++;
+            if (shellCurrent(epoch)) element('account-info-progress').textContent = `${online ? '刷新账号' : '读取身份'} ${finished} / ${profiles.length}`;
+        }
+    };
+    try {
+        await Promise.all(online ? [
+            worker()
+        ] : [
+            worker(),
+            worker()
+        ]);
+    } finally{
+        if (shellCurrent(epoch)) {
+            accountBatchBusy = false;
+            updateAccountBatchControls();
+        }
+    }
+}
+async function saveAccountOrganization() {
+    if (button('account-organization-save').disabled) return;
+    const id = accountOrganizationID, epoch = shellEpoch;
+    const body = {
+        note: input('account-organization-note').value.trim(),
+        tags: input('account-organization-tags').value.split(/[,，]/).map((v)=>v.trim()).filter(Boolean)
+    };
+    button('account-organization-save').disabled = true;
+    try {
+        const result = await api('engine-profiles/' + encodeURIComponent(id) + '/organization', 'PATCH', body);
+        if (!shellCurrent(epoch)) return;
+        engineCatalog.organization ??= {};
+        engineCatalog.organization[id] = result;
+        element('account-organization-dialog').close();
+        renderAccountCenter();
+    } catch (e) {
+        if (shellCurrent(epoch)) element('account-organization-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch)) button('account-organization-save').disabled = false;
+    }
+}
 function installAccountCenter() {
     accountCenterEngine = '';
     accountCenterBusy = false;
@@ -3882,6 +4114,7 @@ function installAccountCenter() {
         void renameAccount();
     };
     button('account-remove-confirm').onclick = ()=>void removeAccountReference();
+    installCodexAccountInfo();
     disposeWithShell(()=>{
         accountCenterRequest++;
         accountCenterBusy = false;
@@ -3915,6 +4148,7 @@ async function refreshAccountCenter() {
         populateEngineOnboarding();
         void resumeEngineSetup();
         element('account-center-status').textContent = '';
+        if (catalog.accounts) void refreshCodexAccounts(false, true);
     } catch (e) {
         if (shellCurrent(epoch) && request === accountCenterRequest) element('account-center-status').textContent = e.message;
     } finally{
@@ -3925,8 +4159,9 @@ function accountIsDefault(profile) {
     return engineCatalog?.active_profile[profile.environment_id + ':' + profile.engine] === profile.id;
 }
 function accountVisibleName(profile) {
-    if (!accountCenterPrivate) return profile.name;
-    const name = Array.from(profile.name);
+    const info = engineCatalog?.accounts?.[profile.id], label = info?.email || info?.display_name || profile.name || '未命名账号';
+    if (!accountCenterPrivate) return label;
+    const name = Array.from(label);
     return name.length ? name[0] + '•••' + (name.length > 2 ? name[name.length - 1] : '') : '•••';
 }
 function renderAccountCenter() {
@@ -3948,13 +4183,11 @@ function renderAccountCenter() {
     const envIDs = Array.from(new Set(profiles.map((p)=>p.environment_id)));
     select.innerHTML = '<option value="">全部环境</option>' + envIDs.map((id)=>`<option value="${escapeHTML(id)}">${escapeHTML(engineTargetName(id))}</option>`).join('');
     select.value = envIDs.includes(previous) ? previous : '';
+    updateAccountInfoFilters();
     const query = input('account-search').value.trim().toLocaleLowerCase(), filter = input('account-default-filter').value, sort = input('account-sort').value;
-    const visible = profiles.filter((p)=>(!accountCenterEngine || p.engine === accountCenterEngine) && (!select.value || p.environment_id === select.value) && (!filter || accountIsDefault(p) === (filter === 'default')) && (!query || [
-            p.name,
-            taskEngineName(p.engine),
-            engineTargetName(p.environment_id)
-        ].some((v)=>v.toLocaleLowerCase().includes(query))));
-    visible.sort((a, b)=>sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : (sort === 'created' ? (b.created || 0) - (a.created || 0) : (b.updated || 0) - (a.updated || 0)) || a.name.localeCompare(b.name, 'zh-CN'));
+    const visible = profiles.filter((p)=>(!accountCenterEngine || p.engine === accountCenterEngine) && (!select.value || p.environment_id === select.value) && (!filter || accountIsDefault(p) === (filter === 'default')) && accountInfoMatches(p) && (!query || accountSearchValues(p).some((v)=>v.toLocaleLowerCase().includes(query))));
+    accountVisibleIDs = visible.map((p)=>p.id);
+    visible.sort((a, b)=>sort === 'quota' ? accountRemaining(b) - accountRemaining(a) : sort === 'name' ? accountVisibleName(a).localeCompare(accountVisibleName(b), 'zh-CN') : (sort === 'created' ? (b.created || 0) - (a.created || 0) : (b.updated || 0) - (a.updated || 0)) || (a.name || a.id).localeCompare(b.name || b.id, 'zh-CN'));
     element('account-center-summary').textContent = `显示 ${visible.length} / ${profiles.length} 个账号 · ${profiles.filter(accountIsDefault).length} 个新任务默认`;
     for (const view of [
         'cards',
@@ -3962,6 +4195,7 @@ function renderAccountCenter() {
     ])button('account-view-' + view).setAttribute('aria-pressed', String(accountCenterView === view));
     button('account-privacy').setAttribute('aria-pressed', String(accountCenterPrivate));
     button('account-privacy').textContent = accountCenterPrivate ? '显示名称' : '隐藏名称';
+    updateAccountBatchControls();
     const list = element('account-center-list');
     list.className = 'account-grid' + (accountCenterView === 'list' ? ' account-list-view' : '');
     list.innerHTML = visible.map((p)=>{
@@ -3976,11 +4210,12 @@ function renderAccountCenter() {
             hour: '2-digit',
             minute: '2-digit'
         }) : '时间未记录';
-        return `<article class="account-card ${active ? 'account-card-active' : ''}" data-account-card="${escapeHTML(p.id)}"><header><span class="account-engine-badge">${escapeHTML(engine?.name || p.engine)}</span>${active ? '<span class="account-default-badge">新任务默认</span>' : ''}</header><h3>${escapeHTML(accountVisibleName(p))}</h3><div class="account-card-meta"><span>${escapeHTML(env?.type.toUpperCase() || '环境已移除')}</span><strong>${escapeHTML(engineTargetName(p.environment_id))}</strong></div><p class="account-kind">${kind}</p><details class="account-reference"><summary>配置位置</summary><code>${escapeHTML(p.kind === 'native' ? '继承目标环境的原生配置' : p.reference)}</code></details><p class="account-updated">更新于 ${escapeHTML(stamp)}</p><div class="account-card-actions"><button type="button" data-account-activate="${escapeHTML(p.id)}" class="${active ? '' : 'primary'}" ${disabled} ${active || !available ? 'disabled' : ''}>${active ? '当前默认' : '设为默认'}</button>${chosen && available ? `<button type="button" data-account-task="${escapeHTML(p.id)}" ${disabled}>当前任务使用</button>` : ''}${[
+        return `<article class="account-card ${active ? 'account-card-active' : ''}" data-account-card="${escapeHTML(p.id)}"><header><label class="account-pick"><input type="checkbox" data-account-select="${escapeHTML(p.id)}" aria-label="选择账号" ${accountSelected.has(p.id) ? 'checked' : ''}></label><span class="account-engine-badge">${escapeHTML(engine?.name || p.engine)}</span>${active ? '<span class="account-default-badge">新任务默认</span>' : ''}</header><h3>${escapeHTML(accountVisibleName(p))}</h3>${accountIdentityHTML(p)}<div class="account-card-meta"><span>${escapeHTML(env?.type?.toUpperCase() || '环境已移除')}</span><strong>${escapeHTML(engineTargetName(p.environment_id))}</strong></div><p class="account-kind">${kind}</p>${accountInfoHTML(p)}<details class="account-reference"><summary>配置位置</summary><code>${escapeHTML(p.kind === 'native' ? '继承目标环境的原生配置' : p.reference || '未记录配置位置')}</code></details><p class="account-updated">更新于 ${escapeHTML(stamp)}</p><div class="account-card-actions">${p.engine === 'codex' ? `<button type="button" data-account-refresh="${escapeHTML(p.id)}" ${accountInfoLoading.has(p.id) ? 'disabled' : ''}>${accountInfoLoading.has(p.id) ? '刷新中…' : '刷新账号'}</button>` : ''}<button type="button" data-account-organize="${escapeHTML(p.id)}">备注 / 标签</button><button type="button" data-account-activate="${escapeHTML(p.id)}" class="${active ? '' : 'primary'}" ${disabled} ${active || !available ? 'disabled' : ''}>${active ? '当前默认' : '设为默认'}</button>${chosen && available ? `<button type="button" data-account-task="${escapeHTML(p.id)}" ${disabled}>当前任务使用</button>` : ''}${[
             'codex_home',
             'claude_home'
         ].includes(p.kind) ? `<button type="button" data-account-sync="${escapeHTML(p.id)}" ${disabled}>同步到环境</button>` : ''}<button type="button" data-account-rename="${escapeHTML(p.id)}" ${disabled}>重命名</button><button type="button" data-account-remove="${escapeHTML(p.id)}" ${disabled}>移除</button></div></article>`;
     }).join('') || `<div class="account-empty"><strong>${profiles.length ? '没有匹配的账号' : '还没有添加账号'}</strong><p>${profiles.length ? '调整搜索内容或筛选条件。' : '添加 Codex 登录、配置 API，或从本地账号和 Cockpit Tools JSON 导入。'}</p></div>`;
+    bindAccountInfoActions();
     list.querySelectorAll('[data-account-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.accountActivate));
     list.querySelectorAll('[data-account-sync]').forEach((b)=>b.onclick = ()=>openCodexSync(b.dataset.accountSync));
     list.querySelectorAll('[data-account-task]').forEach((b)=>b.onclick = ()=>{
@@ -6932,6 +7167,7 @@ async function loadEngineSettings() {
         populateEngineProfileForm();
         populateEngineOnboarding();
         void resumeEngineSetup();
+        if (catalog.accounts && element('account-center-dialog').open) void refreshCodexAccounts(false, true);
     } catch (e) {
         if (shellCurrent(epoch) && request === engineSettingsRequest) element('engine-catalog').textContent = e.message;
     }

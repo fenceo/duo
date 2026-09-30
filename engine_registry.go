@@ -60,9 +60,11 @@ type EngineInstallPlan struct {
 }
 
 type EngineCatalog struct {
-	Engines       []EngineDefinition        `json:"engines"`
-	Profiles      []EngineCredentialProfile `json:"profiles"`
-	ActiveProfile map[string]string         `json:"active_profile"`
+	Engines       []EngineDefinition             `json:"engines"`
+	Profiles      []EngineCredentialProfile      `json:"profiles"`
+	ActiveProfile map[string]string              `json:"active_profile"`
+	Accounts      map[string]CodexAccountInfo    `json:"accounts,omitempty"`
+	Organization  map[string]AccountOrganization `json:"organization,omitempty"`
 }
 
 const engineProfilesSetting = "engine_profiles_v1"
@@ -223,6 +225,9 @@ func (s *Store) removeEngineProfile(id string) error {
 	if _, err = tx.Exec("DELETE FROM settings WHERE key=? AND value=?", engineProfileKey(removed.EnvironmentID, removed.Engine), removed.ID); err != nil {
 		return err
 	}
+	if _, err = tx.Exec("DELETE FROM settings WHERE key IN (?,?)", "codex_account_info:"+removed.ID, "account_organization:"+removed.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -335,6 +340,7 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 	s.accountSyncRoutes(m)
 	s.engineStatusRoutes(m)
 	s.accountImportRoutes(m)
+	s.codexAccountInfoRoutes(m)
 	m.HandleFunc("PATCH /api/engine-profiles/{id}", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name            string `json:"name"`
@@ -376,6 +382,14 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 	}))
 	m.HandleFunc("GET /api/engines", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		catalog := EngineCatalog{Engines: builtinEngineDefinitions(), Profiles: s.app.store.engineProfiles(), ActiveProfile: map[string]string{}}
+		catalog.Accounts = map[string]CodexAccountInfo{}
+		catalog.Organization = map[string]AccountOrganization{}
+		for _, p := range catalog.Profiles {
+			catalog.Organization[p.ID] = s.app.store.accountOrganization(p.ID)
+			if env, e := s.app.config.get().environment(p.EnvironmentID); e == nil && p.Engine == "codex" {
+				catalog.Accounts[p.ID] = s.app.store.cachedCodexInfo(p, env)
+			}
+		}
 		for _, env := range s.app.config.get().Environments {
 			for _, engine := range catalog.Engines {
 				if profile := s.app.store.activeEngineProfile(env.ID, engine.ID); profile != "" {

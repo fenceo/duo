@@ -1,6 +1,6 @@
 type EngineDefinition={id:string;name:string;description:string;transport:string;runnable:boolean;auto_install?:boolean;targets:string[];capabilities:string[];credential_kinds:string[];install_description?:string;documentation_url?:string};
 type EngineProfile={id:string;name:string;engine:string;environment_id:string;kind:string;reference:string;created:number;updated:number};
-type EngineCatalog={engines:EngineDefinition[];profiles:EngineProfile[];active_profile:Record<string,string>};
+type EngineCatalog={engines:EngineDefinition[];profiles:EngineProfile[];active_profile:Record<string,string>;accounts?:Record<string,CodexAccountInfo>;organization?:Record<string,AccountOrganization>};
 type CodexSyncResult={environment_id:string;state:string;message:string};
 type CodexSyncResponse={source_profile_id:string;results:CodexSyncResult[]};
 type DetectedEngineTool={path:string;state:string;label:string};
@@ -77,7 +77,7 @@ function renderEngineCatalog(){
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-edit-engine-environment]').forEach(b=>b.onclick=()=>{storeEnvironmentEditor();editingID=b.dataset.editEngineEnvironment!;environmentPickers();loadEnvironmentEditor();const editor=element<HTMLDetailsElement>('engine-environment-editor');editor.open=true;editor.scrollIntoView({block:'start'})});
 }
 async function openEngineCenter(){const epoch=shellEpoch;await loadEngineSettings();if(shellCurrent(epoch)&&element<HTMLDialogElement>('settings-dialog').open)void refreshEngineStatus()}
-async function loadEngineSettings(){const epoch=shellEpoch,request=++engineSettingsRequest;try{const catalog=await api<EngineCatalog>('engines','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==engineSettingsRequest)return;engineCatalog=catalog;renderEngineCatalog();renderAccountCenter();populateEngineProfileForm();populateEngineOnboarding();void resumeEngineSetup()}catch(e){if(shellCurrent(epoch)&&request===engineSettingsRequest)element('engine-catalog').textContent=(e as Error).message}}
+async function loadEngineSettings(){const epoch=shellEpoch,request=++engineSettingsRequest;try{const catalog=await api<EngineCatalog>('engines','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==engineSettingsRequest)return;engineCatalog=catalog;renderEngineCatalog();renderAccountCenter();populateEngineProfileForm();populateEngineOnboarding();void resumeEngineSetup();if(catalog.accounts&&element<HTMLDialogElement>('account-center-dialog').open)void refreshCodexAccounts(false,true)}catch(e){if(shellCurrent(epoch)&&request===engineSettingsRequest)element('engine-catalog').textContent=(e as Error).message}}
 function populateEngineProfileForm(){
  if(!engineCatalog)return;
  const engines=element<HTMLSelectElement>('engine-profile-engine'),envs=element<HTMLSelectElement>('engine-profile-environment');

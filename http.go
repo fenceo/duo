@@ -33,6 +33,8 @@ type Server struct {
 	mu                   sync.Mutex
 	attempts             map[string]attempts
 	environmentDetection sync.Mutex
+	accountInfoMu        sync.Mutex
+	accountInfoBusy      map[string]bool
 	updateMu             sync.Mutex
 	modelProbeMu         sync.Mutex
 	updateRoot           string
