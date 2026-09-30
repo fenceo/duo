@@ -186,6 +186,9 @@ func (s *Store) activateEngineProfile(environmentID, engine, profileID string) e
 	}
 	for _, profile := range s.engineProfiles() {
 		if profile.ID == profileID && profile.EnvironmentID == environmentID && profile.Engine == engine {
+			if !validEngineCredentialKind(engine, profile.Kind) || profile.Kind == "env_file" {
+				return errors.New("此账号配置尚不能用于执行")
+			}
 			return s.set(engineProfileKey(environmentID, engine), profileID)
 		}
 	}
@@ -482,6 +485,7 @@ func (s *Server) engineRoutes(m *http.ServeMux) {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		s.app.changed()
 		jsonOut(w, http.StatusOK, map[string]any{"ok": true, "profile": profile})
 	}))
 	m.HandleFunc("DELETE /api/engine-profiles/{id}", s.secure(func(w http.ResponseWriter, r *http.Request) {

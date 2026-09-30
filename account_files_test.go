@@ -120,6 +120,9 @@ func TestAccountSyncAPIUsesSourceEnvironmentAndHidesSecrets(t *testing.T) {
 	if err := a.store.saveEngineProfiles([]EngineCredentialProfile{p}); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.store.activateEngineProfile(env.ID, "codex", p.ID); err != nil {
+		t.Fatal(err)
+	}
 	request := toolsClient(t, a)
 	raw := request("/api/account-sync", "POST", CodexSyncRequest{SourceProfileID: p.ID, EnvironmentIDs: []string{env.ID}}, 200)
 	if strings.Contains(string(raw), "synthetic-api-key") || !strings.Contains(string(raw), `"state":"done"`) {
@@ -128,6 +131,21 @@ func TestAccountSyncAPIUsesSourceEnvironmentAndHidesSecrets(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(target, "auth.json"))
 	if !strings.Contains(string(got), "synthetic-api-key") {
 		t.Fatal("target not updated")
+	}
+	if a.store.activeEngineProfile(env.ID, "codex") != "" || a.store.nativeAccountRevision(env.ID, "codex") == "" {
+		t.Fatal("sync did not select native environment account")
+	}
+	// A queued task prevents writing the shared native credential files.
+	task, err := a.createWithExecution("queued sync guard", env.Workspaces[0], "", "codex", "", env.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.store.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES('guard',?,'synthetic','chat','web','queued',?)", task.ID, now()); err != nil {
+		t.Fatal(err)
+	}
+	raw = request("/api/account-sync", "POST", CodexSyncRequest{SourceProfileID: p.ID, EnvironmentIDs: []string{env.ID}}, 200)
+	if !strings.Contains(string(raw), `"state":"failed"`) || !strings.Contains(string(raw), "排队任务") {
+		t.Fatal("busy account sync was not blocked", string(raw))
 	}
 }
 

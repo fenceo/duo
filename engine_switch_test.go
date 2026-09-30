@@ -258,7 +258,7 @@ func TestEngineBindingQueuesKeepOriginalProfileAndModel(t *testing.T) {
 	p := EngineCredentialProfile{ID: "profile-a", Name: "A", EnvironmentID: task.Environment.ID, Engine: "codex", Kind: "codex_home", Reference: filepath.Join(t.TempDir(), "account-a")}
 	a.store.saveEngineProfiles([]EngineCredentialProfile{p})
 	a.store.activateEngineProfile(task.Environment.ID, "codex", p.ID)
-	// Existing task is explicitly bound to native defaults; new tasks capture A.
+	// Account env is frozen only after per-run resolution; pinned queues keep A.
 	if env := a.activeEngineEnvironment(task); env != nil {
 		t.Fatal("global profile redirected an existing task")
 	}
@@ -266,6 +266,8 @@ func TestEngineBindingQueuesKeepOriginalProfileAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	created.Binding.AccountMode = "pinned"
+	saveTestBinding(t, a, created)
 	first, err := a.submit(created.ID, "first", "chat", "web")
 	if err != nil {
 		t.Fatal(err)

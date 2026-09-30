@@ -114,6 +114,16 @@ for(const changed of ['environment','engine','workspace','profile','shell','clos
  assert.match(f.node('task-model-list').innerHTML,/model-probe-available/);assert.equal(f.ctx.detail.task.model,'old-selection','testing does not change task model');assert(f.requests.every(request=>!request.path.includes('/tasks/')),'no conversation pollution');
  f.ctx.detail.task.engine='deepseek-harness';await f.ctx.testModelList('task');assert.equal(f.requests.length,1,'Harness live-session boundaries preserved');
 }
+for(const accountMode of ['environment','pinned']){
+ const f=fixture();f.ctx.creatingTask=false;
+ f.ctx.detail={task:{id:'bound',environment:f.environment,engine:'codex',workspace:'/task',model:'selected',binding:{revision:'binding-version',account_mode:accountMode,profile:{id:'old-account',name:'Old account',kind:'codex_home'}}}};
+ f.value("taskPickerModels=[{id:'one',name:'one'}];modelCatalogState.task.key=taskCatalogContextKey(detail.task)");
+ await f.ctx.testModelList('task');
+ assert.equal(f.requests[0].body.expected_profile_id,accountMode==='environment'?'account-one':'old-account');
+ assert.equal(f.requests[0].body.binding_revision,'binding-version');
+ assert.equal(f.requests[0].body.task_id,'bound');
+ assert.equal(f.ctx.detail.task.binding.profile.id,'old-account','metadata must not rewrite native session ownership');
+}
 const workflow=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
 for(const field of ['distro','user','host','port','identity','claude','type','deleted']){
  const f=fixture();f.ctx.creatingTask=false;f.ctx.detail={task:{id:'old-task',environment:{...f.environment},engine:'claude',workspace:'/task',model:'old'}};

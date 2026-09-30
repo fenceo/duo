@@ -25,12 +25,18 @@ func TestEngineBindingModelCatalogUsesTaskAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	following, err := a.createWithExecution("following", task.Workspace, "", "codex", "", task.Environment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.Binding.AccountMode = "pinned"
+	saveTestBinding(t, a, bound)
 	a.store.activateEngineProfile(task.Environment.ID, "codex", "b")
 	if _, err = a.store.Exec("INSERT INTO sessions VALUES(?,?,?)", hash("switch-http"), "switch-csrf", now()+60000); err != nil {
 		t.Fatal(err)
 	}
 	handler := (&Server{app: a}).Handler()
-	for _, test := range []struct{ query, want string }{{"&task_id=" + bound.ID, "model-a"}, {"&profile_id=a", "model-a"}, {"&profile_id=b", "model-b"}, {"", "model-b"}} {
+	for _, test := range []struct{ query, want string }{{"&task_id=" + bound.ID, "model-a"}, {"&task_id=" + following.ID, "model-b"}, {"&profile_id=a", "model-a"}, {"&profile_id=b", "model-b"}, {"", "model-b"}} {
 		req := httptest.NewRequest("GET", "http://127.0.0.1/api/environments/"+task.Environment.ID+"/models?engine=codex"+test.query, nil)
 		req.AddCookie(&http.Cookie{Name: "jianzuo_session", Value: "switch-http"})
 		response := httptest.NewRecorder()

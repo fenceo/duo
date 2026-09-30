@@ -82,7 +82,7 @@ async function submitAccountImport(){
   const signature=JSON.stringify(body);if(accountImportAttempt?.signature!==signature)accountImportAttempt={signature,id:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};
   await api<EngineProfile>('account-import','POST',{...body,id:accountImportAttempt!.id});if(!shellCurrent(epoch))return;
   accountImportAttempt=null;input('account-import-file').value='';input('account-import-config').value='';input('account-import-name').value='';
-  result.textContent='已导入独立账号。可设为新任务默认或同步到环境；尚未验证登录有效性。';invalidateModelCatalogs();await loadEngineSettings();
+  result.textContent='已导入独立账号。可切换为环境账号或同步到环境；尚未验证登录有效性。';invalidateModelCatalogs();await loadEngineSettings();
  }catch(e){if(shellCurrent(epoch))result.textContent=(e as Error).message}
  finally{if(shellCurrent(epoch)){accountImportBusy=false;populateAccountImport()}}
 }

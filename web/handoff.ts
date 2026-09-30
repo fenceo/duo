@@ -30,8 +30,9 @@ function updateHandoffTarget(reset:boolean){
  const task=handoffTask;if(!task||!handoffCatalog)return;
  const engine=input('handoff-engine').value,env=input('handoff-environment').value,same=engine===task.engine&&env===task.environment.id;
  const profiles=handoffCatalog.profiles.filter(p=>p.engine===engine&&p.environment_id===env&&p.kind!=='env_file');
- input('handoff-profile').innerHTML=(same&&task.binding?`<option value="__current__">当前绑定 · ${escapeHTML(task.binding.profile?.name||'原生默认配置')}</option>`:'')+'<option value="">原生默认配置</option>'+profiles.map(p=>`<option value="${escapeHTML(p.id)}">${escapeHTML(p.name)}</option>`).join('');
- input('handoff-profile').value=same&&task.binding?'__current__':handoffCatalog.active_profile[env+':'+engine]||'';
+ const active=profiles.find(p=>p.id===handoffCatalog!.active_profile[env+':'+engine]);
+ input('handoff-profile').innerHTML=`<option value="__environment__">跟随环境账号 · ${escapeHTML(active?.name||'原生默认登录')}</option>`+(same&&task.binding&&task.binding.account_mode!=='environment'?`<option value="__current__">仅此任务 · ${escapeHTML(task.binding.profile?.name||'原生默认配置')}</option>`:'')+'<option value="">仅此任务 · 原生默认配置</option>'+profiles.map(p=>`<option value="${escapeHTML(p.id)}">仅此任务 · ${escapeHTML(p.name)}</option>`).join('');
+ input('handoff-profile').value=same&&task.binding&&task.binding.account_mode!=='environment'?'__current__':'__environment__';
  const modes=workCatalog.modes.filter(m=>modeSupportsEngine(m,engine));
  input('handoff-mode').innerHTML=(same&&!task.binding?'<option value="__current__">原任务权限（保持不变）</option>':'')+modes.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
  input('handoff-mode').value=same&&!task.binding?'__current__':modes.some(m=>m.id===task.mode?.id)?task.mode!.id:modes.find(m=>m.id==='work')?.id||modes[0]?.id||'';
@@ -47,7 +48,7 @@ function updateHandoffHint(){
  const preserve=eligible&&input('handoff-preserve-legacy').checked;
  button('handoff-submit').textContent=preserve?'确认原配置，保留原会话':'确认切换';
  const reuse=!!task.binding&&input('handoff-engine').value===task.engine&&input('handoff-profile').value==='__current__'&&input('handoff-environment').value===task.environment.id&&input('handoff-workspace').value===task.workspace;
- element('handoff-route-hint').textContent=preserve?'只补齐账号配置绑定，保留原生会话；下一条消息继续原上下文。':reuse?'只更换模型时沿用原会话；若执行环境或 Harness 权限改变，会改用新会话接续。':'将新建目标引擎会话，由摘要和所选历史接续当前任务。';
+ element('handoff-route-hint').textContent=preserve?'只补齐账号配置绑定，保留原生会话；下一条消息继续原上下文。':input('handoff-profile').value==='__environment__'?'每轮开始时使用此环境的当前账号；环境账号改变后自动以完整任务历史接续，正在执行的一轮保持原账号。':reuse?'仅此任务固定使用所选账号；只更换模型时沿用原会话，环境或 Harness 权限改变时通过新会话接续。':'仅此任务使用所选账号，不跟随环境账号切换；账号改变时通过新会话接续历史。';
 }
 function updateHandoffEffort(){
  const select=input('handoff-effort'),previous=select.value,levels=effortLevels(input('handoff-engine').value,handoffModels.find(m=>m.id===input('handoff-model').value));
@@ -58,7 +59,7 @@ async function loadHandoffModels(){
  if(!handoffTask)return;
  const generation=handoffGeneration,epoch=shellEpoch,request=++handoffModelRequest,task=handoffTask;
  const engine=input('handoff-engine').value,env=input('handoff-environment').value,profile=input('handoff-profile').value,workspace=input('handoff-workspace').value;
- const url=modelsURL(env,engine,workspace)+(profile==='__current__'?'&task_id='+encodeURIComponent(task.id):'&profile_id='+encodeURIComponent(profile));
+ const url=modelsURL(env,engine,workspace)+(profile==='__current__'?'&task_id='+encodeURIComponent(task.id):profile==='__environment__'?'':'&profile_id='+encodeURIComponent(profile));
  element('handoff-model-status').textContent='正在读取所选配置的模型列表…';element('handoff-models').innerHTML='';
  try{const result=await api<ModelListResponse>(url,'GET',undefined,handoffController?.signal);if(!handoffCurrent(generation,epoch)||request!==handoffModelRequest)return;handoffModels=result.models||[];element('handoff-models').innerHTML=handoffModels.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(m.name)}</option>`).join('');element('handoff-model-status').textContent=catalogSummary(result)+'；也可填写模型 ID，是否可用以实际执行为准。';updateHandoffEffort()}
  catch(e){if(handoffCurrent(generation,epoch)&&request===handoffModelRequest){handoffModels=[];element('handoff-model-status').textContent='模型列表读取失败，可重试或填写模型 ID：'+(e as Error).message}}
@@ -93,7 +94,7 @@ async function openHandoff(id=chosen,preferredProfileID=''){
   element<HTMLFieldSetElement>('handoff-fields').disabled=false;updateHandoffTarget(true);
   if(preferredProfileID){
    const profile=catalog.profiles.find(p=>p.id===preferredProfileID)!,bound=snapshot.task.binding?.profile;
-   const same=bound?.id===profile.id&&bound.engine===profile.engine&&bound.environment_id===profile.environment_id&&bound.kind===profile.kind&&bound.reference===profile.reference;
+   const same=snapshot.task.binding?.account_mode!=='environment'&&bound?.id===profile.id&&bound.engine===profile.engine&&bound.environment_id===profile.environment_id&&bound.kind===profile.kind&&bound.reference===profile.reference;
    input('handoff-profile').value=same?'__current__':preferredProfileID;if(!same)input('handoff-model').value='';resetLegacyConfirmation();void loadHandoffModels();
   }
   await loadHandoffPreview();
@@ -103,8 +104,9 @@ async function submitHandoff(){
  if(!handoffTask||!handoffPreview||handoffBusy)return;
  const task=handoffTask,preview=handoffPreview,generation=handoffGeneration,epoch=shellEpoch,selectionAtStart=selection;
  const profileID=input('handoff-profile').value;
+ const expectedProfileID=profileID==='__environment__'?handoffCatalog?.active_profile[input('handoff-environment').value+':'+input('handoff-engine').value]||'':profileID;
  const preserve=!task.binding&&!!task.session&&input('handoff-preserve-legacy').checked;
- const body={preserve_legacy_session:preserve,expected_legacy_session:preserve?task.session:undefined,confirm:true,expected_binding_revision:task.binding?.revision||'legacy',environment_id:input('handoff-environment').value,engine:input('handoff-engine').value,workspace:input('handoff-workspace').value,model:input('handoff-model').value,reasoning_effort:input('handoff-effort').value,mode_id:input('handoff-mode').value,profile_id:profileID,expected_profile:profileID==='__current__'?undefined:handoffCatalog?.profiles.find(p=>p.id===profileID),context_mode:input('handoff-context-mode').value,fingerprint:preview.fingerprint};
+ const body={preserve_legacy_session:preserve,expected_legacy_session:preserve?task.session:undefined,confirm:true,expected_binding_revision:task.binding?.revision||'legacy',environment_id:input('handoff-environment').value,engine:input('handoff-engine').value,workspace:input('handoff-workspace').value,model:input('handoff-model').value,reasoning_effort:input('handoff-effort').value,mode_id:input('handoff-mode').value,profile_id:profileID,expected_profile:profileID==='__current__'?undefined:handoffCatalog?.profiles.find(p=>p.id===expectedProfileID),context_mode:input('handoff-context-mode').value,fingerprint:preview.fingerprint};
  handoffBusy=true;element<HTMLFieldSetElement>('handoff-fields').disabled=true;for(const id of ['handoff-submit','handoff-refresh','handoff-cancel'])button(id).disabled=true;element('handoff-error').textContent='';
  try{
   const result=await api<{task:Task;new_session:boolean}>('tasks/'+encodeURIComponent(task.id)+'/handoff','POST',body);

@@ -31,9 +31,9 @@ node('handoff-cancel').onclick();await ctx.openHandoff('source');await flush();
 assert.equal(node('handoff-profile').value,'__current__');
 assert(calls.some(x=>x.path.includes('&task_id=source')),'current-bound model list follows the task account');
 node('handoff-engine').value='claude';node('handoff-engine').onchange();await flush();
-assert.equal(node('handoff-profile').value,'account-b');
+assert.equal(node('handoff-profile').value,'__environment__');
 assert.equal(node('handoff-model').value,'','do not reuse another engine model ID');
-assert(calls.some(x=>x.path.includes('&profile_id=account-b')));
+assert(calls.some(x=>x.path.includes('engine=claude')&&!x.path.includes('profile_id')&&!x.path.includes('task_id')));
 assert.equal(node('handoff-profile').querySelector('b'),null);
 assert.equal(node('handoff-mode').value,'work','use explicit target permission, independent of create-task state');
 
@@ -41,7 +41,7 @@ let finishSave;const api=ctx.api;
 ctx.api=async(path,method,body)=>{if(method==='POST'){calls.push({path,method,body});return new Promise(resolve=>finishSave=resolve)}return api(path,method,body)};
 const first=ctx.submitHandoff();const duplicate=ctx.submitHandoff();await flush();
 assert.equal(calls.filter(x=>x.method==='POST').length,1);assert(node('handoff-submit').disabled);assert(node('handoff-cancel').disabled);
-const sent=calls.find(x=>x.method==='POST');assert.equal(sent.path,'tasks/source/handoff');assert.equal(sent.body.profile_id,'account-b');assert.equal(sent.body.expected_profile.reference,'/fixture/account-b');assert.equal(sent.body.fingerprint,'preview-source');
+const sent=calls.find(x=>x.method==='POST');assert.equal(sent.path,'tasks/source/handoff');assert.equal(sent.body.profile_id,'__environment__');assert.equal(sent.body.expected_profile.reference,'/fixture/account-b');assert.equal(sent.body.fingerprint,'preview-source');
 finishSave({task:{...source,engine:'claude',model:'',session:'',binding:{revision:'switched',profile:profiles.profiles[0],history_id:'history'}},new_session:true});await Promise.all([first,duplicate]);
 assert.equal(node('handoff-dialog').open,false);assert.equal(node('message').value,'unsent draft','switching must preserve the composer');
 assert.equal(runInContext('detail.task.id',ctx),'source');assert.equal(runInContext('tasks.length',ctx),1,'no task fork');
@@ -86,7 +86,7 @@ node('handoff-preserve-legacy').checked=true;node('handoff-preserve-legacy').onc
 ctx.api=async(path,method,body)=>{
  if(method==='POST'){
   assert.equal(body.preserve_legacy_session,true);assert.equal(body.expected_legacy_session,'original-native');
-  assert.equal(body.profile_id,'');
+  assert.equal(body.profile_id,'__environment__');
   return {task:{...source,binding:{revision:'migrated'}},new_session:false};
  }
  return api(path,method,body);
@@ -119,6 +119,15 @@ await ctx.openHandoff('source','selected');await flush();
 assert.equal(node('handoff-workspace').value,'/existing-work');
 assert.equal(node('handoff-profile').value,'__current__','same account keeps the current session binding');
 assert.equal(node('handoff-model').value,'model-b');
+node('handoff-cancel').onclick();
+shortcutSource={...shortcutSource,binding:{revision:'following',account_mode:'environment',profile:selected}};
+await ctx.openHandoff('source');await flush();
+assert.equal(node('handoff-profile').value,'__environment__');
+assert.match(node('handoff-route-hint').textContent,/每轮开始时/);
+node('handoff-cancel').onclick();
+await ctx.openHandoff('source','selected');await flush();
+assert.equal(node('handoff-profile').value,'selected','an account-card override must pin even when the current environment account is identical');
+assert.match(node('handoff-route-hint').textContent,/不跟随环境/);
 node('handoff-cancel').onclick();
 await ctx.openHandoff('source','removed');
 assert(node('handoff-submit').disabled);assert.match(node('handoff-error').textContent,/不可用/);

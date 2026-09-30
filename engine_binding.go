@@ -6,12 +6,14 @@ import (
 	"errors"
 )
 
-// Bind references, never credential contents. Editing the global default (or
-// deleting a profile entry) must not move an existing native session elsewhere.
+// Profile records the account that owns the native session, even for followers.
+// Resolve environment defaults once per run, never halfway through execution.
 type TaskEngineBinding struct {
-	Revision  string                   `json:"revision"`
-	Profile   *EngineCredentialProfile `json:"profile,omitempty"`
-	HistoryID string                   `json:"history_id,omitempty"`
+	Revision       string                   `json:"revision"`
+	AccountMode    string                   `json:"account_mode,omitempty"`
+	NativeRevision string                   `json:"native_revision,omitempty"`
+	Profile        *EngineCredentialProfile `json:"profile,omitempty"`
+	HistoryID      string                   `json:"history_id,omitempty"`
 }
 
 const engineBindingSchema = `
@@ -19,6 +21,9 @@ CREATE TABLE IF NOT EXISTS task_engine_bindings(task_id TEXT PRIMARY KEY REFEREN
 CREATE TABLE IF NOT EXISTS run_execution(run_id TEXT PRIMARY KEY REFERENCES runs(id),snapshot TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS task_handoff_context(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),context TEXT NOT NULL,archive TEXT NOT NULL,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS task_engine_switches(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),previous TEXT NOT NULL,created INTEGER NOT NULL);
+UPDATE task_engine_bindings SET binding=json_set(binding,'$.account_mode',
+ CASE WHEN EXISTS(SELECT 1 FROM task_engine_switches s WHERE s.task_id=task_engine_bindings.task_id) THEN 'pinned' ELSE 'environment' END)
+ WHERE json_type(binding)='object' AND json_extract(binding,'$.account_mode') IS NULL;
 `
 
 func (s *Store) selectedEngineProfile(environment, engine, id string) (*EngineCredentialProfile, error) {
@@ -44,7 +49,24 @@ func (s *Store) defaultEngineBinding(task Task) (*TaskEngineBinding, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TaskEngineBinding{Revision: uid(), Profile: profile}, nil
+	return &TaskEngineBinding{Revision: uid(), AccountMode: "environment", Profile: profile, NativeRevision: s.nativeAccountRevision(task.Environment.ID, task.Engine)}, nil
+}
+
+func (s *Store) nativeAccountRevision(environment, engine string) string {
+	return s.setting("engine_native_revision:" + environment + ":" + engine)
+}
+
+// Metadata must describe the account used by the next turn, not the last turn.
+// This copy does not alter session ownership or start a continuation.
+func (s *Store) taskAccountForLookup(task Task) (Task, error) {
+	if task.Binding != nil && task.Binding.AccountMode == "environment" {
+		binding, err := s.defaultEngineBinding(task)
+		if err != nil {
+			return task, err
+		}
+		task.Binding = binding
+	}
+	return task, nil
 }
 
 func saveEngineBinding(tx *sql.Tx, task string, binding *TaskEngineBinding) error {
@@ -63,8 +85,8 @@ func sameEngineProfile(a, b *EngineCredentialProfile) bool {
 	return a.ID == b.ID && a.Engine == b.Engine && a.EnvironmentID == b.EnvironmentID && a.Kind == b.Kind && a.Reference == b.Reference
 }
 
-// Queued runs retain the model and profile selected at submission. Session ID
-// is deliberately NOT snapshotted: the preceding queued turn may create it.
+// Queued runs retain the model and account mode selected at submission. Pinned
+// profiles stay fixed; followers resolve the environment when execution starts.
 type RunExecution struct {
 	Engine    string             `json:"engine"`
 	Model     string             `json:"model"`
@@ -93,6 +115,10 @@ func (s *Store) applyRunExecution(run string, task *Task) error {
 	var snapshot RunExecution
 	if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
 		return err
+	}
+	if snapshot.Binding != nil && snapshot.Binding.AccountMode == "environment" && task.Binding != nil {
+		// A preceding queued turn may have changed both account and history.
+		snapshot.Binding = task.Binding
 	}
 	task.Engine, task.Model, task.ReasoningEffort, task.Binding = snapshot.Engine, snapshot.Model, snapshot.Reasoning, snapshot.Binding
 	return nil

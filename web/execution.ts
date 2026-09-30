@@ -101,7 +101,8 @@ async function testModelList(target:ModelPickerTarget){
   const profiles=await api<EngineCatalog>('engines','GET',undefined,state.controller!.signal);
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   const binding=target==='task'?detail?.task.binding:undefined;
-  const profileID=binding?(binding.profile?.id||''):profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=binding?binding.profile:profiles.profiles.find(item=>item.id===profileID);
+  const pinned=binding&&binding.account_mode!=='environment';
+  const profileID=pinned?(binding.profile?.id||''):profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=pinned?binding.profile:profiles.profiles.find(item=>item.id===profileID);
   if(profileID&&!profile)throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
   const account=profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
   const provider=context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';

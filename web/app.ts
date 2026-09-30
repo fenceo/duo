@@ -3,7 +3,7 @@
 /// <reference path="./desktop.ts" />
 type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
 type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
-type Task={binding?:{revision:string;profile?:EngineProfile;history_id?:string};mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
+type Task={binding?:{revision:string;account_mode?:'environment'|'pinned';profile?:EngineProfile;history_id?:string};mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={engine?:string;model?:string;input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number;truncated?:boolean};
 type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
@@ -260,7 +260,7 @@ async function loadTaskContext(id:string){
 }
 function renderTask(){
  renderDesktopSharing(detail?.desktop);
- if(!detail)return;renderSessionBanner();const t=detail.task;element('task-title').textContent=t.title;element('task-workspace').textContent=(t.environment?.name?t.environment.name+' · ':'')+t.workspace;element('task-workspace').title=element('task-workspace').textContent;const modelLabel=[taskEngineName(t.engine),t.model||'默认模型',effortLabels[t.reasoning_effort]||''].filter(Boolean).join(' · ');element('task-model-label').textContent=modelLabel;element('task-model-button').title=modelLabel;
+ if(!detail)return;renderSessionBanner();const t=detail.task;element('task-title').textContent=t.title;element('task-workspace').textContent=(t.environment?.name?t.environment.name+' · ':'')+t.workspace+(t.binding?.account_mode==='environment'?' · 跟随环境账号':t.binding?' · 单独指定账号':'');element('task-workspace').title=element('task-workspace').textContent;const modelLabel=[taskEngineName(t.engine),t.model||'默认模型',effortLabels[t.reasoning_effort]||''].filter(Boolean).join(' · ');element('task-model-label').textContent=modelLabel;element('task-model-button').title=modelLabel;
  const active=detail.runs.some(r=>['running','queued'].includes(r.status));const queued=detail.runs.filter(r=>r.status==='queued').length;const latest=detail.runs.at(-1);
  element('run-status').textContent=detail.approvals?.length?'等待你处理 '+detail.approvals.length+' 个 Codex 请求':active?'正在执行'+(queued?' · '+queued+' 条要求排队中':''):latest?.error||names[t.status]||t.status;
  element('run-status').classList.toggle('error',!active&&!!latest?.error);button('stop').classList.toggle('hidden',!active);button('send').disabled=sending;input('message').placeholder=active?'追加要求将排队，也可以停止当前执行…':'下一步，要做什么？';

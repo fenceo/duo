@@ -229,6 +229,11 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusConflict, "任务的账号/API 配置已改变，请重读列表后确认测试")
 			return
 		}
+		task, err = s.app.store.taskAccountForLookup(task)
+		if err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
 		boundTask = &task
 		env = *task.Environment
 		profileID = ""

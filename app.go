@@ -395,10 +395,15 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			continue
 		}
 		_, _ = a.store.Exec("INSERT INTO run_metrics(run_id,started) VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET started=excluded.started", r.ID, now())
+		a.mu.Lock()
 		task, err := a.store.task(id)
 		if err == nil {
 			err = a.store.applyRunExecution(r.ID, &task)
 		}
+		if err == nil {
+			err = a.resolveRunAccount(r.ID, &task)
+		}
+		a.mu.Unlock()
 		if err == nil {
 			err = a.store.hydrateRun(&r)
 			task.Mode = r.Mode

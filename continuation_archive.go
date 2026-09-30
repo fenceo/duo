@@ -13,7 +13,7 @@ import (
 const continuationArchiveLimit = 64 << 20
 
 // The inline brief is bounded; the attached archive is not silently truncated.
-// Archive construction happens only for an explicit preview/switch, never polls.
+// Build for previews/switches or account changes at run admission, never polls.
 func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, string, error) {
 	if mode == "" {
 		mode = "full"

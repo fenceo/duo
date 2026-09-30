@@ -343,6 +343,11 @@ func (s *Server) Handler() http.Handler {
 			}
 			env = *task.Environment
 			env.Workspaces = []string{task.Workspace}
+			task, err = s.app.store.taskAccountForLookup(task)
+			if err != nil {
+				fail(w, http.StatusConflict, err.Error())
+				return
+			}
 			profileEnv = s.app.activeEngineEnvironment(task)
 		} else if r.URL.Query().Has("profile_id") {
 			profile, err := s.app.store.selectedEngineProfile(env.ID, engine, r.URL.Query().Get("profile_id"))

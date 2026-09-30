@@ -94,8 +94,8 @@ assert.deepEqual(globalThis.createFiles,[retainedFile]);
 assert.match(errorNode.textContent,/已选附件不会自动删除/);
 
 const engines=await load('engines.ts','engineProfileActivationMessage,engineCredentialLabel');
-assert.match(engines.engineProfileActivationMessage({engine:'deepseek-harness',kind:'native'}),/继承目标环境的默认配置/);
-assert.match(engines.engineProfileActivationMessage({engine:'deepseek-harness',kind:'dsh_home'}),/DSH_HOME/);
+assert.match(engines.engineProfileActivationMessage({engine:'deepseek-harness',kind:'native'}),/跟随环境的任务从下一轮生效/);
+assert.match(engines.engineProfileActivationMessage({engine:'deepseek-harness',kind:'dsh_home'}),/正在执行的一轮继续使用原账号/);
 assert.match(engines.engineProfileActivationMessage({engine:'codex',kind:'env_file'}),/尚未应用/);
 assert.match(engines.engineCredentialLabel('native'),/继承/);
 

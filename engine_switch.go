@@ -95,11 +95,22 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 		return handoffResult{}, errors.New("请填写目标环境中的工作目录绝对路径")
 	}
 	var profile *EngineCredentialProfile
+	accountMode := "pinned"
 	if v.ProfileID == "__current__" {
 		if task.Binding == nil || task.Engine != v.Engine || task.Environment.ID != env.ID {
 			return handoffResult{}, errHandoffChanged
 		}
 		profile = task.Binding.Profile
+		accountMode = task.Binding.AccountMode
+	} else if v.ProfileID == "__environment__" {
+		accountMode = "environment"
+		profile, err = a.store.selectedEngineProfile(env.ID, v.Engine, a.store.activeEngineProfile(env.ID, v.Engine))
+		if err != nil {
+			return handoffResult{}, err
+		}
+		if !sameEngineProfile(profile, v.ExpectedProfile) || profile != nil && profile.Updated != v.ExpectedProfile.Updated {
+			return handoffResult{}, errHandoffChanged
+		}
 	} else {
 		profile, err = a.store.selectedEngineProfile(env.ID, v.Engine, v.ProfileID)
 		if err != nil {
@@ -138,6 +149,9 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 		return handoffResult{}, errHandoffChanged
 	}
 	newSession := task.Binding == nil || task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env) || !sameEngineProfile(task.Binding.Profile, profile)
+	if task.Binding != nil && (profile == nil || profile.Kind == "native") && task.Binding.NativeRevision != a.store.nativeAccountRevision(env.ID, v.Engine) {
+		newSession = true
+	}
 	if task.Engine == "deepseek-harness" && !reflect.DeepEqual(task.Mode, mode) {
 		newSession = true
 	}
@@ -159,7 +173,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 			return handoffResult{}, err
 		}
 	}
-	binding := &TaskEngineBinding{Revision: operation, Profile: profile}
+	binding := &TaskEngineBinding{Revision: operation, AccountMode: accountMode, Profile: profile, NativeRevision: a.store.nativeAccountRevision(env.ID, v.Engine)}
 	if !newSession && task.Binding != nil {
 		binding.HistoryID = task.Binding.HistoryID
 	}
