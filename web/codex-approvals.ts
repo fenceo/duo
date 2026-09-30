@@ -51,12 +51,25 @@ function installCodexApprovals(){
  const workspace=element('workspace');
  const panel=document.createElement('section');panel.id='codex-approvals';panel.className='codex-approvals hidden';panel.setAttribute('aria-label','Codex 待处理请求');
  panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span><button type="button" id="codex-approvals-expand" aria-haspopup="dialog">放大</button></div><div id="codex-approval-list"></div>';
- // Outside the conversation/tool dock: visible even with a collapsed trace or a mobile tool panel.
- workspace.before(panel);
+ element('composer-wrap').before(panel);
  const dialog=document.createElement('dialog');dialog.id='codex-requests-dialog';dialog.className='codex-requests-dialog';dialog.setAttribute('aria-labelledby','codex-approvals-title');workspace.before(dialog);
  const expand=panel.querySelector<HTMLButtonElement>('#codex-approvals-expand')!;
- dialog.addEventListener('close',()=>{if(dialog.open)return;workspace.before(panel);expand.textContent='放大'});
+ dialog.addEventListener('close',()=>{if(dialog.open)return;positionCodexApprovals();expand.textContent='放大'});
  expand.onclick=()=>{if(dialog.open){dialog.close();return}dialog.append(panel);expand.textContent='收起';dialog.showModal()};
+ const observer=new MutationObserver(positionCodexApprovals);for(const node of [workspace,element('composer-wrap')])observer.observe(node,{attributes:true,attributeFilter:['class']});disposeWithShell(()=>observer.disconnect());
+ listenWithShell(window,'resize',positionCodexApprovals);
+ positionCodexApprovals();
+}
+function positionCodexApprovals(){
+ const panel=element('codex-approvals'),workspace=element('workspace'),composer=element('composer-wrap');
+ if(!panel||!workspace||!composer||element<HTMLDialogElement>('codex-requests-dialog')?.open)return;
+ const hiddenChat=workspace.classList.contains('tool-full')||(workspace.classList.contains('tool-open')&&matchMedia('(max-width:760px)').matches);
+ const besideComposer=!hiddenChat&&!composer.classList.contains('hidden');
+ if(besideComposer?panel.nextElementSibling===composer:workspace.nextElementSibling===panel)return;
+ const active=document.activeElement as HTMLElement|null,focus=active&&panel.contains(active)?active:null;
+ // Keep the same form nodes, including unsubmitted answers, when changing layout.
+ if(besideComposer)composer.before(panel);else workspace.after(panel);
+ focus?.focus({preventScroll:true});
 }
 function resetCodexApprovals(){codexApprovalRevision++;codexApprovalCards.clear();const dialog=element<HTMLDialogElement>('codex-requests-dialog');if(dialog?.open)dialog.close();element('codex-approval-list')?.replaceChildren();element('codex-approvals')?.classList.add('hidden')}
 function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApprovalCard{
@@ -104,6 +117,7 @@ function renderCodexApprovals(current:Detail|null){
  panel.classList.toggle('hidden',!pending.length);const questions=pending.filter(codexIsQuestion),onlyQuestions=questions.length===pending.length;
  const heading=element('codex-approvals-title'),title=(onlyQuestions?'Codex 有问题需要你回答':'Codex 等待处理')+' · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
  const hint=element('codex-approvals-hint'),hintText=onlyQuestions?'答案会直接交回当前 Codex 会话':'批准只针对当前请求，不创建永久授权规则';if(hint.textContent!==hintText)hint.textContent=hintText;
+ positionCodexApprovals();
 }
 async function refreshCodexApprovals(taskID:string){
  if(taskID!==chosen||!authenticated)return;const token=selection,revision=++codexApprovalRevision;

@@ -2798,7 +2798,7 @@ function installCodexApprovals() {
     panel.className = 'codex-approvals hidden';
     panel.setAttribute('aria-label', 'Codex 待处理请求');
     panel.innerHTML = '<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span><button type="button" id="codex-approvals-expand" aria-haspopup="dialog">放大</button></div><div id="codex-approval-list"></div>';
-    workspace.before(panel);
+    element('composer-wrap').before(panel);
     const dialog = document.createElement('dialog');
     dialog.id = 'codex-requests-dialog';
     dialog.className = 'codex-requests-dialog';
@@ -2807,7 +2807,7 @@ function installCodexApprovals() {
     const expand = panel.querySelector('#codex-approvals-expand');
     dialog.addEventListener('close', ()=>{
         if (dialog.open) return;
-        workspace.before(panel);
+        positionCodexApprovals();
         expand.textContent = '放大';
     });
     expand.onclick = ()=>{
@@ -2819,6 +2819,32 @@ function installCodexApprovals() {
         expand.textContent = '收起';
         dialog.showModal();
     };
+    const observer = new MutationObserver(positionCodexApprovals);
+    for (const node of [
+        workspace,
+        element('composer-wrap')
+    ])observer.observe(node, {
+        attributes: true,
+        attributeFilter: [
+            'class'
+        ]
+    });
+    disposeWithShell(()=>observer.disconnect());
+    listenWithShell(window, 'resize', positionCodexApprovals);
+    positionCodexApprovals();
+}
+function positionCodexApprovals() {
+    const panel = element('codex-approvals'), workspace = element('workspace'), composer = element('composer-wrap');
+    if (!panel || !workspace || !composer || element('codex-requests-dialog')?.open) return;
+    const hiddenChat = workspace.classList.contains('tool-full') || workspace.classList.contains('tool-open') && matchMedia('(max-width:760px)').matches;
+    const besideComposer = !hiddenChat && !composer.classList.contains('hidden');
+    if (besideComposer ? panel.nextElementSibling === composer : workspace.nextElementSibling === panel) return;
+    const active = document.activeElement, focus = active && panel.contains(active) ? active : null;
+    if (besideComposer) composer.before(panel);
+    else workspace.after(panel);
+    focus?.focus({
+        preventScroll: true
+    });
 }
 function resetCodexApprovals() {
     codexApprovalRevision++;
@@ -2970,6 +2996,7 @@ function renderCodexApprovals(current) {
     if (heading.textContent !== title) heading.textContent = title;
     const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 Codex 会话' : '批准只针对当前请求，不创建永久授权规则';
     if (hint.textContent !== hintText) hint.textContent = hintText;
+    positionCodexApprovals();
 }
 async function refreshCodexApprovals(taskID) {
     if (taskID !== chosen || !authenticated) return;

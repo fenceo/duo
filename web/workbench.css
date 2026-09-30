@@ -503,6 +503,8 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  #sticky-board.quick-notes #sticky-new{min-height:36px;font-size:12px}#sticky-board .sticky-save button{min-height:32px;font-size:12px}
 }
 
+#chat-column>.codex-approvals{margin:0 max(20px,calc((100% - var(--chat-width) - 20px)/2)) 8px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 @media(max-width:760px){
  .header{display:flex;padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
  .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
@@ -618,7 +620,8 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .composer.live-turn .actions{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr) 44px;width:100%;gap:4px}
  .composer.live-turn .actions button{grid-row:1;min-width:0;min-height:44px;padding:6px;font-size:12px}
  .composer.live-turn #live-steer{grid-column:1}.composer.live-turn #live-interrupt{grid-column:2}.composer.live-turn .actions #send{grid-column:3;margin:0}.composer.live-turn #stop{grid-column:4}
- .codex-approvals{max-height:min(38dvh,max(150px,calc(100dvh - 560px)))}
+ .codex-approvals{max-height:min(38dvh,max(150px,calc(100dvh - 572px)))}
+ #chat-column>.codex-approvals{margin:0 12px 8px;padding:8px}
  .codex-approvals-heading>span{display:none}
  .codex-question-card .codex-answer-option{min-height:44px;padding:8px}
 }

@@ -9,6 +9,9 @@ class Node {
  getAttribute(name){if(name==='class')return this.className;if(name==='id')return this.id;if(name.startsWith('data-'))return this.dataset[name.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())];return this.attributes[name]}
  append(...nodes){for(const node of nodes){node.remove();node.parentElement=this;this.children.push(node)}}
  before(node){const parent=this.parentElement;if(!parent)return;node.remove();const index=parent.children.indexOf(this);parent.children.splice(index,0,node);node.parentElement=parent}
+ after(node){const parent=this.parentElement;if(!parent)return;node.remove();parent.children.splice(parent.children.indexOf(this)+1,0,node);node.parentElement=parent}
+ get nextElementSibling(){return this.parentElement?.children[this.parentElement.children.indexOf(this)+1]||null}
+ contains(node){return node===this||this.children.some(child=>child.contains(node))}
  remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(node=>node!==this);this.parentElement=null}
  replaceChildren(...nodes){for(const child of this.children)child.parentElement=null;this.children=[];this._text='';this.append(...nodes)}
  get childElementCount(){return this.children.length}
@@ -23,6 +26,8 @@ class Node {
  addEventListener(type,handler){this['on'+type]=handler}
 }
 const root=new Node('main'),workspace=new Node();workspace.id='workspace';root.append(workspace);
+const chat=new Node(),composer=new Node();chat.id='chat-column';composer.id='composer-wrap';workspace.append(chat);chat.append(composer);
+Object.assign(globalThis,{window:{},MutationObserver:class{observe(){}disconnect(){}},disposeWithShell(){},listenWithShell(){},matchMedia:()=>({matches:false})});
 globalThis.document={createElement:tag=>new Node(tag),getElementById:id=>root.querySelector('#'+id),activeElement:null};
 globalThis.element=id=>document.getElementById(id);
 globalThis.input=globalThis.element;
@@ -59,7 +64,7 @@ assert.throws(()=>ui.codexQuestions({...question,params:{questions:[{id:'a'},{id
 const proto=make('item/tool/requestUserInput',{questions:[{id:'__proto__',question:'文本'}]});assert.equal(JSON.parse(JSON.stringify(ui.codexAnswersBody(proto,()=>['value']))).answers.__proto__.answers[0],'value');
 const constrained=make('item/tool/requestUserInput',{questions:[{id:'choice',isOther:false,options:[{label:'A'}]}]});assert.throws(()=>ui.codexAnswersBody(constrained,()=>['unexpected']));
 
-ui.installCodexApprovals();assert.equal(element('codex-approvals').parentElement,root);assert.equal(root.children[0],element('codex-approvals'),'approval area stays outside the conversation and mobile/fullscreen tool dock');
+ui.installCodexApprovals();assert.equal(element('codex-approvals').parentElement,chat);assert.equal(element('codex-approvals').nextElementSibling,composer,'approval area stays immediately above the composer');
 detail=snapshot([question]);ui.renderCodexApprovals(detail);
 let card=ui.codexApprovalCards.get(ui.codexApprovalKey(question));const answerInput=card.node.querySelector('[data-answer="free"]');answerInput.value='还在写的答案';answerInput.focus();
 const secret=card.node.querySelectorAll('[data-answer="free"]')[1];assert.equal(secret.type,'password');assert.equal(secret.autocomplete,'off');
