@@ -56,6 +56,17 @@ func runCodexAppServerFixture() {
 		}
 	}
 	scenario := os.Getenv("JIANZUO_TEST_CODEX_SCENARIO")
+	if scenario == "active-writer" {
+		if thread.Method != "thread/resume" {
+			fail("busy thread must not be replaced with thread/start")
+		}
+		write(map[string]any{"id": thread.ID, "error": map[string]any{"code": -32600, "message": "thread " + threadID + " already has an active writer"}})
+		var next codexRPC
+		if err := decoder.Decode(&next); err != io.EOF {
+			fail("request sent after busy thread: " + next.Method)
+		}
+		return
+	}
 	if scenario == "wrong-thread" {
 		threadID = "different-thread"
 	}
@@ -260,6 +271,60 @@ func codexFixtureConfig(t *testing.T, scenario string) Config {
 		t.Fatal(err)
 	}
 	return Config{Codex: exe}
+}
+
+func TestCodexAppServerOccupiedThreadPreservesSession(t *testing.T) {
+	config := codexFixtureConfig(t, "active-writer")
+	task := Task{Workspace: t.TempDir(), Session: "retained-occupied-thread"}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var newSession, output int
+	session, result, err := runCodexAppServer(ctx, config, task, "continue", func(kind, value string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if kind == "session" {
+			newSession++
+		}
+		if kind == "assistant" || kind == "tool" {
+			output++
+		}
+	})
+	if !errors.Is(err, errCodexSessionBusy) || !strings.Contains(err.Error(), "Codex 桌面版或终端会话") {
+		t.Fatalf("missing actionable busy-thread error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if session != task.Session || result != "" || newSession != 0 || output != 0 {
+		t.Fatalf("occupied thread replaced or executed: session=%s new=%d output=%d", session, newSession, output)
+	}
+}
+
+func TestCodexCleanupKeepsFailureAndRequiresExitConfirmation(t *testing.T) {
+	primary := codexRequestError("jianzuo-thread", "thread original already has an active writer")
+	stopErr := &codexLocalStopError{tree: errors.New("taskkill fixture failed"), direct: errors.New("TerminateProcess: Access is denied.")}
+	for _, exited := range []bool{false, true} {
+		err := codexCleanupError(primary, stopErr, exited)
+		if !errors.Is(err, errCodexSessionBusy) || !strings.HasPrefix(err.Error(), errCodexSessionBusy.Error()) {
+			t.Fatalf("cleanup masked initial failure: %v", err)
+		}
+		if exited {
+			if !strings.Contains(err.Error(), "已确认本轮 Codex 主进程退出") || !strings.Contains(err.Error(), "无法确认全部子进程") || strings.Contains(err.Error(), "TerminateProcess") {
+				t.Fatalf("incorrect confirmed-exit diagnosis: %v", err)
+			}
+		} else if !strings.Contains(err.Error(), "无法确认 Codex 进程已停止") {
+			t.Fatalf("unconfirmed exit was hidden: %v", err)
+		}
+	}
+	if err := codexCleanupError(nil, stopErr, false); !errors.Is(err, stopErr) {
+		t.Fatal("cleanup-only failure lost", err)
+	}
+	if err := codexCleanupError(primary, nil, false); !errors.Is(err, primary) {
+		t.Fatal("successful cleanup lost primary failure", err)
+	}
+	if err := codexRequestError("jianzuo-turn", "already has an active writer"); errors.Is(err, errCodexSessionBusy) {
+		t.Fatal("unrelated RPC misclassified as a thread ownership failure")
+	}
 }
 
 func TestCodexAppServerNativeRoundTrip(t *testing.T) {

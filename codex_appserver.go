@@ -157,6 +157,43 @@ func codexSupportedInteraction(method string) bool {
 	return false
 }
 
+var errCodexSessionBusy = errors.New("Codex 原生会话正被其他执行器占用")
+
+func codexRequestError(id, message string) error {
+	if id == "jianzuo-thread" && strings.Contains(strings.ToLower(message), "already has an active writer") {
+		return fmt.Errorf("%w：请先结束占用它的 Codex 桌面版或终端会话，再到 Duo 重试。并行工作需要独立会话。原始信息：%s", errCodexSessionBusy, message)
+	}
+	return fmt.Errorf("Codex 原生请求 %s 失败：%s", id, message)
+}
+
+type codexLocalStopError struct {
+	tree, direct error
+}
+
+func (e *codexLocalStopError) Error() string {
+	return fmt.Sprintf("无法确认 Codex 进程已停止：%v", e.direct)
+}
+
+func (e *codexLocalStopError) Unwrap() error { return e.direct }
+
+// A Windows process may exit between taskkill and TerminateProcess, which can
+// report access denied for an already terminated process. Only cmd.Wait with a
+// confirmed ProcessState permits correcting that root-process diagnostic; it
+// does not prove that all descendants exited.
+func codexCleanupError(runErr, stopErr error, exited bool) error {
+	var local *codexLocalStopError
+	if exited && errors.As(stopErr, &local) {
+		stopErr = fmt.Errorf("已确认本轮 Codex 主进程退出，但无法确认全部子进程已停止：%w", local.tree)
+	}
+	if stopErr == nil {
+		return runErr
+	}
+	if runErr != nil {
+		return fmt.Errorf("%w；进程清理：%v", runErr, stopErr)
+	}
+	return stopErr
+}
+
 // stopAppServerTree is a last-resort cleanup after native turn/interrupt. A
 // failed remote cleanup is observable rather than reported as a confirmed stop.
 func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
@@ -181,7 +218,7 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 	err := kill.Run()
 	if err != nil {
 		if direct := cmd.Process.Kill(); direct != nil && !errors.Is(direct, os.ErrProcessDone) {
-			return fmt.Errorf("无法确认 Codex 进程已停止：%w", direct)
+			return &codexLocalStopError{tree: err, direct: direct}
 		}
 		return fmt.Errorf("Codex 主进程已清理，但无法确认全部子进程已停止：%w", err)
 	}
@@ -315,22 +352,20 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			return
 		case <-time.After(time.Second):
 		}
-		if stopErr := stopAppServerTree(c, cmd, pid); stopErr != nil {
-			emit("error", stopErr.Error())
-			if runErr != nil {
-				runErr = fmt.Errorf("%w；本轮状态：%v", stopErr, runErr)
-			} else {
-				runErr = stopErr
-			}
-		}
+		stopErr := stopAppServerTree(c, cmd, pid)
 		_ = stdout.Close()
 		_ = stderr.Close()
+		exited := false
 		select {
 		case <-wait:
+			exited = cmd.ProcessState != nil && cmd.ProcessState.Exited()
 		case <-time.After(time.Second):
-			if runErr == nil {
-				runErr = errors.New("Codex 会话已结束，但未能确认执行进程退出")
+			if stopErr == nil {
+				stopErr = errors.New("Codex 会话已结束，但未能确认执行进程退出")
 			}
+		}
+		if stopErr != nil {
+			runErr = codexCleanupError(runErr, stopErr, exited)
 		}
 	}()
 	// A wedged server must not trap cancellation in a full stdin pipe. All
@@ -511,7 +546,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					continue
 				}
 				if m.Error != nil {
-					return session, result, fmt.Errorf("Codex 原生请求 %s 失败：%s", id, redact(m.Error.Message))
+					return session, result, codexRequestError(id, redact(m.Error.Message))
 				}
 				if stopping || ctx.Err() != nil {
 					if id != "jianzuo-turn" {
