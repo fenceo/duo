@@ -30,6 +30,40 @@ let workCatalog:WorkCatalog={modes:[],commands:[]};
 const attachmentDrafts=new Map<string,Attachment[]>(),uploadingTasks=new Set<string>();
 const pendingUploadFiles=new Map<string,File[]>();
 let renameTaskID='',trashTaskID='',stoppingTask='',presetType:'modes'|'commands'='modes',presetID='',directoryEnvironment='',directoryPath='',directoryParent='',directoryRequest=0,workspacePicked:((path:string,environment:string)=>void)|null=null;
+const forkingTasks=new Set<string>();
+async function copyReopenTaskCommand(id=chosen){
+ if(!id)return;
+ const epoch=shellEpoch;
+ try{
+  const result=await api<{command:string}>(`tasks/${encodeURIComponent(id)}/open-command`);
+  if(!shellCurrent(epoch))return;
+  try{await navigator.clipboard.writeText(result.command);if(shellCurrent(epoch))notify('已复制重新打开命令，请在服务所在电脑的终端执行。')}
+  catch{if(shellCurrent(epoch))notify(result.command)}
+ }catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
+}
+async function reopenTask(id=chosen){
+ if(!id||!mayLeave())return;
+ const epoch=shellEpoch;
+ if(chosen)drafts.set(chosen,input('message').value);
+ await choose(id);
+ if(shellCurrent(epoch)&&chosen===id&&detail?.task.id===id)notify('已重新打开任务，历史和原生会话保持不变。');
+}
+async function forkTask(id=chosen){
+ if(!id||forkingTasks.has(id)||!mayLeave())return;
+ const source=tasks.find(t=>t.id===id)||(detail?.task.id===id?detail.task:null);
+ if(!source)return;
+ if(source.status==='running'||source.status==='queued'){notify('请先停止执行并取消排队，再分叉会话。');return}
+ const epoch=shellEpoch,token=selection,previous=chosen;
+ if(chosen)drafts.set(chosen,input('message').value);
+ forkingTasks.add(id);
+ try{
+  const task=await api<Task>(`tasks/${encodeURIComponent(id)}/fork`,'POST',{});
+  if(!shellCurrent(epoch))return;
+  if(!tasks.some(t=>t.id===task.id))tasks=[task,...tasks];
+  if(chosen===previous&&selection===token){taskView='active';input('search').value='';await choose(task.id)}
+  if(shellCurrent(epoch)){renderList();notify('已创建分叉会话，继承此前历史，之后分别继续。')}
+ }catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{forkingTasks.delete(id)}
+}
 function modeOptions(select:HTMLSelectElement,snapshot?:WorkMode){
  const previous=select.value,engine=select.id==='create-mode'?input('create-engine')?.value:detail?.task.engine,items=workCatalog.modes.filter(m=>m.id!=='harness:read'||engine==='deepseek-harness');if(snapshot?.id&&!items.some(m=>m.id===snapshot.id))items.push(snapshot);
  select.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m,engine)?'':' disabled'}>${escapeHTML(modeLabel(m))}${modeSupportsEngine(m,engine)?'':'（当前引擎不支持）'}</option>`).join('');

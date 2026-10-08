@@ -76,7 +76,8 @@ func (s *Store) usageSummary(ctx context.Context, task string, days int, zone *t
 	query := `SELECT r.status,COALESCE(NULLIF(m.started,0),r.created),COALESCE(m.usage,'null'),
 		COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
 		FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN run_execution x ON x.run_id=r.id
-		WHERE r.status<>'queued' AND (r.status<>'interrupted' OR COALESCE(m.started,0)>0 OR COALESCE(m.usage,'null') NOT IN ('','null'))`
+		WHERE NOT EXISTS(SELECT 1 FROM run_fork_sources f WHERE f.run_id=r.id)
+		AND r.status<>'queued' AND (r.status<>'interrupted' OR COALESCE(m.started,0)>0 OR COALESCE(m.usage,'null') NOT IN ('','null'))`
 	args := []any{}
 	if task != "" {
 		query += " AND r.task_id=?"

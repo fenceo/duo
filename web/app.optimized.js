@@ -960,6 +960,63 @@ let workCatalog = {
 const attachmentDrafts = new Map(), uploadingTasks = new Set();
 const pendingUploadFiles = new Map();
 let renameTaskID = '', trashTaskID = '', stoppingTask = '', presetType = 'modes', presetID = '', directoryEnvironment = '', directoryPath = '', directoryParent = '', directoryRequest = 0, workspacePicked = null;
+const forkingTasks = new Set();
+async function copyReopenTaskCommand(id = chosen) {
+    if (!id) return;
+    const epoch = shellEpoch;
+    try {
+        const result = await api(`tasks/${encodeURIComponent(id)}/open-command`);
+        if (!shellCurrent(epoch)) return;
+        try {
+            await navigator.clipboard.writeText(result.command);
+            if (shellCurrent(epoch)) notify('已复制重新打开命令，请在服务所在电脑的终端执行。');
+        } catch  {
+            if (shellCurrent(epoch)) notify(result.command);
+        }
+    } catch (e) {
+        if (shellCurrent(epoch)) notify(e.message);
+    }
+}
+async function reopenTask(id = chosen) {
+    if (!id || !mayLeave()) return;
+    const epoch = shellEpoch;
+    if (chosen) drafts.set(chosen, input('message').value);
+    await choose(id);
+    if (shellCurrent(epoch) && chosen === id && detail?.task.id === id) notify('已重新打开任务，历史和原生会话保持不变。');
+}
+async function forkTask(id = chosen) {
+    if (!id || forkingTasks.has(id) || !mayLeave()) return;
+    const source = tasks.find((t)=>t.id === id) || (detail?.task.id === id ? detail.task : null);
+    if (!source) return;
+    if (source.status === 'running' || source.status === 'queued') {
+        notify('请先停止执行并取消排队，再分叉会话。');
+        return;
+    }
+    const epoch = shellEpoch, token = selection, previous = chosen;
+    if (chosen) drafts.set(chosen, input('message').value);
+    forkingTasks.add(id);
+    try {
+        const task = await api(`tasks/${encodeURIComponent(id)}/fork`, 'POST', {});
+        if (!shellCurrent(epoch)) return;
+        if (!tasks.some((t)=>t.id === task.id)) tasks = [
+            task,
+            ...tasks
+        ];
+        if (chosen === previous && selection === token) {
+            taskView = 'active';
+            input('search').value = '';
+            await choose(task.id);
+        }
+        if (shellCurrent(epoch)) {
+            renderList();
+            notify('已创建分叉会话，继承此前历史，之后分别继续。');
+        }
+    } catch (e) {
+        if (shellCurrent(epoch)) notify(e.message);
+    } finally{
+        forkingTasks.delete(id);
+    }
+}
 function modeOptions(select, snapshot) {
     const previous = select.value, engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine, items = workCatalog.modes.filter((m)=>m.id !== 'harness:read' || engine === 'deepseek-harness');
     if (snapshot?.id && !items.some((m)=>m.id === snapshot.id)) items.push(snapshot);
@@ -3112,7 +3169,7 @@ async function stopCodexApprovalRun(card) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function workspaceTaskList(items) {
     return [
@@ -3229,7 +3286,10 @@ function installLayout() {
             menu.removeAttribute('open');
             if (action.disabled) return;
             const id = action.dataset.taskId || '', kind = action.dataset.taskAction;
-            if (kind === 'handoff') void openHandoff(id);
+            if (kind === 'reopen') void reopenTask(id);
+            else if (kind === 'copy-open-command') void copyReopenTaskCommand(id);
+            else if (kind === 'fork') void forkTask(id);
+            else if (kind === 'handoff') void openHandoff(id);
             else if (kind === 'session-info') void openSessionInfo(id);
             else if (kind === 'copy-link') void copyTaskLink(id);
             else if (kind === 'rename') void openTaskRename(id);

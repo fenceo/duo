@@ -104,6 +104,7 @@ func openStore(dir string) (*Store, error) {
  CREATE INDEX IF NOT EXISTS events_task ON events(task_id,seq);
  CREATE INDEX IF NOT EXISTS runs_task ON runs(task_id,created);
  CREATE INDEX IF NOT EXISTS runs_task_cursor ON runs(task_id,created,id);
+ CREATE TABLE IF NOT EXISTS run_fork_sources(run_id TEXT PRIMARY KEY REFERENCES runs(id),source_task_id TEXT NOT NULL,source_run_id TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS events_task_run ON events(task_id,run_id,seq);
  CREATE TABLE IF NOT EXISTS async_questions(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL,item_id TEXT NOT NULL,session TEXT NOT NULL,questions TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',answer TEXT NOT NULL DEFAULT '',answer_run TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,UNIQUE(task_id,run_id,item_id));
  CREATE INDEX IF NOT EXISTS async_questions_pending ON async_questions(task_id,status,created);
@@ -257,7 +258,15 @@ func (s *Store) task(id string) (Task, error) {
 	return t, e
 }
 func (s *Store) runs(id string) ([]Run, error) {
-	rows, e := s.Query(`SELECT runs.id,runs.task_id,runs.input,runs.kind,runs.source,runs.status,runs.result,runs.error,runs.created,runs.finished,
+	return storedRuns(s, id)
+}
+
+type storeQueryer interface {
+	Query(string, ...any) (*sql.Rows, error)
+}
+
+func storedRuns(reader storeQueryer, id string) ([]Run, error) {
+	rows, e := reader.Query(`SELECT runs.id,runs.task_id,runs.input,runs.kind,runs.source,runs.status,runs.result,runs.error,runs.created,runs.finished,
 COALESCE(run_metrics.started,0),COALESCE(run_metrics.usage,''),COALESCE(run_options.mode,''),COALESCE(run_options.attachments,''),
 COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
 FROM runs

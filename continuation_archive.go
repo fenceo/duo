@@ -12,9 +12,15 @@ import (
 
 const continuationArchiveLimit = 64 << 20
 
+var errContinuationArchiveTooLarge = errors.New("接续历史超过 64 MiB，请精简任务资料后重试；没有切换或丢弃历史")
+
 // The inline brief is bounded; the attached archive is not silently truncated.
 // Build for explicit engine/location handoffs, never account switches or polls.
-func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, string, error) {
+func (a *App) buildContinuation(task Task, mode string, snapshot ...storeQueryer) (ContinuationPreview, string, error) {
+	var reader storeQueryer = a.store
+	if len(snapshot) > 0 {
+		reader = snapshot[0]
+	}
 	if mode == "" {
 		mode = "full"
 	}
@@ -27,13 +33,15 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 	archive.WriteString(header)
 	brief.WriteString(header)
 	verifiedOnly := mode == "summary" || mode == "recent"
-	if recall, _, err := a.store.notebookRecall(context.Background(), task.ID); err != nil {
-		return p, "", err
-	} else if recall != "" && !verifiedOnly {
-		text, _ := clipContinuation(redactContinuation(recall), 4500)
-		brief.WriteString("\n## 任务共识与未解决事项\n" + text + "\n")
+	if len(snapshot) == 0 {
+		if recall, _, err := a.store.notebookRecall(context.Background(), task.ID); err != nil {
+			return p, "", err
+		} else if recall != "" && !verifiedOnly {
+			text, _ := clipContinuation(redactContinuation(recall), 4500)
+			brief.WriteString("\n## 任务共识与未解决事项\n" + text + "\n")
+		}
 	}
-	rows, err := a.store.Query("SELECT title,content FROM knowledge_entries WHERE task_id=? AND status<>'stale' AND (?=0 OR status='verified') ORDER BY updated DESC,id", task.ID, verifiedOnly)
+	rows, err := reader.Query("SELECT title,content FROM knowledge_entries WHERE task_id=? AND status<>'stale' AND (?=0 OR status='verified') ORDER BY updated DESC,id", task.ID, verifiedOnly)
 	if err != nil {
 		return p, "", err
 	}
@@ -55,7 +63,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 		}
 		if archive.Len() > continuationArchiveLimit {
 			rows.Close()
-			return p, "", errors.New("接续历史超过 64 MiB，请精简任务资料后重试；没有切换或丢弃历史")
+			return p, "", errContinuationArchiveTooLarge
 		}
 	}
 	err = rows.Err()
@@ -63,7 +71,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 	if err != nil {
 		return p, "", err
 	}
-	memories, err := a.store.Query("SELECT payload FROM task_memories WHERE task_id=? AND ?=0 ORDER BY updated,run_id", task.ID, verifiedOnly)
+	memories, err := reader.Query("SELECT payload FROM task_memories WHERE task_id=? AND ?=0 ORDER BY updated,run_id", task.ID, verifiedOnly)
 	if err != nil {
 		return p, "", err
 	}
@@ -74,7 +82,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 		}
 		archive.WriteString("\n## 本轮沉淀记录（未经独立验证）\n" + redactContinuation(raw) + "\n")
 		if archive.Len() > continuationArchiveLimit {
-			err = errors.New("接续历史超过 64 MiB，请精简任务资料后重试；没有切换或丢弃历史")
+			err = errContinuationArchiveTooLarge
 			break
 		}
 	}
@@ -86,7 +94,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 		return p, "", err
 	}
 	if mode != "summary" && mode != "notes" {
-		runs, err := a.store.runs(task.ID)
+		runs, err := storedRuns(reader, task.ID)
 		if err != nil {
 			return p, "", err
 		}
@@ -120,7 +128,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 			}
 			// Keep steering messages, intermediate replies and command/tool records.
 			// Consecutive cumulative assistant chunks collapse to their latest text.
-			events, err := a.store.Query("SELECT kind,text FROM events WHERE task_id=? AND run_id=? ORDER BY seq", task.ID, run.ID)
+			events, err := reader.Query("SELECT kind,text FROM events WHERE task_id=? AND run_id=? ORDER BY seq", task.ID, run.ID)
 			if err != nil {
 				return p, "", err
 			}
@@ -150,7 +158,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 				}
 				archive.WriteString("\n### " + kind + "\n" + redactContinuation(text) + "\n")
 				if archive.Len() > continuationArchiveLimit {
-					err = errors.New("接续历史超过 64 MiB，请精简任务资料后重试；没有切换或丢弃历史")
+					err = errContinuationArchiveTooLarge
 					break
 				}
 			}
@@ -163,7 +171,7 @@ func (a *App) buildContinuation(task Task, mode string) (ContinuationPreview, st
 			}
 			flush()
 			if archive.Len() > continuationArchiveLimit {
-				return p, "", errors.New("接续历史超过 64 MiB，请精简任务资料后重试；没有切换或丢弃历史")
+				return p, "", errContinuationArchiveTooLarge
 			}
 		}
 	}

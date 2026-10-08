@@ -27,6 +27,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "显示版本")
 	validateData := flag.Bool("validate-data", false, "只读验证已有 Duo 数据目录，不初始化或迁移")
 	discover := flag.Bool("detect-environments", false, "只检测本机环境并输出 JSON，不创建数据目录")
+	openTask := flag.String("open-task", "", "在浏览器重新打开已有任务 ID，不重置会话；服务需已启动")
+	printTaskURL := flag.Bool("print-task-url", false, "配合 --open-task 仅输出任务链接，不打开浏览器")
 	updateHelper := flag.Bool("update-helper", false, "执行已准备的便携版替换并退出")
 	updateRoot := flag.String("update-root", "", "自动更新目标程序目录")
 	updateStage := flag.String("update-stage", "", "自动更新暂存目录")
@@ -38,6 +40,22 @@ func main() {
 	}
 	if *showVersion {
 		fmt.Println(version)
+		return
+	}
+	if *openTask != "" || *printTaskURL {
+		if *openTask == "" || *managed || *portableInit || *initPassword || *validateData || *discover || *updateHelper {
+			log.Fatal("--open-task 不能与服务启动、初始化或维护参数一起使用；--print-task-url 需要任务 ID")
+		}
+		address, err := taskOpenURL(*dir, *listen, *openTask)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(address)
+		if !*printTaskURL {
+			if err = openTaskBrowser(address); err != nil {
+				log.Fatal("无法打开默认浏览器，请手动打开上面的任务链接")
+			}
+		}
 		return
 	}
 	if *validateData {

@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -69,6 +69,14 @@ try{
  const switchResult=await switched.json();assert.equal(switchResult.task.id,task.id);assert.equal(switchResult.task.engine,'codex');assert.equal(switchResult.task.session,'');assert(switchResult.task.binding.history_id);
  assert.equal((await fetch(base+'/api/tasks/'+task.id+'/handoff',{method:'POST',headers,body:JSON.stringify(switchBody)})).status,200,'switch retries are idempotent');
  const unchanged=await fetch(base+'/api/tasks/'+task.id+'?recent=1',{headers}).then(r=>r.json());assert.deepEqual(unchanged.runs,[],'switching never starts a paid turn');
+ const forkResponse=await fetch(base+'/api/tasks/'+task.id+'/fork',{method:'POST',headers,body:'{}'});assert.equal(forkResponse.status,201);
+ const fork=await forkResponse.json();assert.notEqual(fork.id,task.id);assert.equal(fork.session,'');assert(fork.binding.history_id);
+ assert.equal((await fetch(base+'/api/tasks/'+task.id+'/fork',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{}'})).status,403,'fork requires CSRF');
+ const openCommand=await fetch(base+'/api/tasks/'+task.id+'/open-command',{headers}).then(r=>r.json());
+ assert(openCommand.command.includes(binary)&&openCommand.command.includes(data)&&openCommand.command.includes(task.id)&&openCommand.command.includes(':'+port),'copied command contains real binary, data, task and overridden port');
+ const cli=spawnSync(binary,['--data',data,'--listen','127.0.0.1:'+port,'--open-task',task.id,'--print-task-url'],{windowsHide:true,encoding:'utf8',timeout:10000});
+ assert.equal(cli.status,0,cli.stderr);assert.equal(cli.stdout.trim(),base+'/?task='+task.id,'open-task runs beside the data-lock owner without initializing or opening a browser');
+ const afterOpen=await fetch(base+'/api/tasks/'+task.id+'?recent=1',{headers}).then(r=>r.json());assert.deepEqual(afterOpen.task,unchanged.task);assert.deepEqual(afterOpen.runs,[]);
  const archive=await fetch(base+'/api/tasks/'+task.id+'/continuation/archive?mode=full',{headers});assert.equal(archive.status,200);assert.match(archive.headers.get('content-type'),/text\/plain/);
  const noCSRF=await fetch(base+'/api/tasks/test/approvals/test',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json','Origin':base},body:'{"decision":"accept"}'});
  assert.equal(noCSRF.status,403);
@@ -84,7 +92,7 @@ try{
  assert.ok(source.includes('automatic-organize')&&source.includes('library-layer')&&source.includes('composer-resizer'),'built assets include document layers, automatic organization and composer resizing');
  assert.ok(source.includes('conversation-older')&&!source.includes('id="conversation-all"'),'built conversation includes lazy history without the trajectory preset');
  assert.ok(source.includes('handoff-engine')&&!source.includes('id="handoff-profile"')&&source.includes('完整历史文本 + 接续摘要')&&!source.includes('id="task-link-copy"')&&!source.includes('id="session-info-open"'),'built switch UI and compact header are embedded');
- console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
+ console.log('PASS: isolated executable starts; login/CSRF, native modes, stale approvals, task fork, reopen command beside a running service, automatic knowledge defaults and opt-outs, portable directory metadata and embedded document/resizing UI verified. No model turn sent.');
 }finally{
  child.stdin.end();
  const timer=setTimeout(()=>child.kill(),5000);
