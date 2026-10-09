@@ -25,6 +25,9 @@ func codexAppServerArgs(c Config, t Task) []string {
 		"-c", "approval_policy=" + strconv.Quote(approval),
 		"-c", "approvals_reviewer=" + strconv.Quote(reviewer),
 		"-c", "sandbox_workspace_write.network_access=" + strconv.FormatBool(network)}
+	if c.codexPreferMXC && c.Distro == "" && c.SSHHost == "" {
+		args = append(args, "-c", "features.prefer_mxc=true")
+	}
 	if h := c.HardwareAI; h != nil {
 		args = append(args, "-c", "mcp_servers.jianzuo_hardware.url="+strconv.Quote(h.URL),
 			"-c", `mcp_servers.jianzuo_hardware.bearer_token_env_var="JIANZUO_HARDWARE_TOKEN"`,
@@ -226,6 +229,7 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 }
 
 func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session string, result string, runErr error) {
+	defer func() { runErr = codexSandboxInitializationError(runErr) }()
 	asyncFallback := ""
 	session = t.Session
 	control, _ := ctx.Value(codexSteerKey{}).(*codexTurnControl)
@@ -248,6 +252,10 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			s = strings.ReplaceAll(s, c.HardwareAI.Token, "[REDACTED]")
 		}
 		return s
+	}
+	c = prepareCodexWindowsSandbox(ctx, c, t)
+	if ctx.Err() != nil {
+		return session, "", ctx.Err()
 	}
 	cmd := codexAppServerCommand(c, t)
 	hideCommand(cmd)

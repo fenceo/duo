@@ -9,7 +9,8 @@ import (
 )
 
 type Config struct {
-	HardwareAI *HardwareRuntime `json:"-"`
+	codexPreferMXC bool             // Per-run capability decision, never saved or exposed.
+	HardwareAI     *HardwareRuntime `json:"-"`
 	// EngineEnv is populated for one run from the selected external profile.
 	// It is never serialized to config.json or returned by the settings API.
 	EngineEnv          map[string]string `json:"-"`

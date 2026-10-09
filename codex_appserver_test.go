@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -56,11 +57,15 @@ func runCodexAppServerFixture() {
 		}
 	}
 	scenario := os.Getenv("JIANZUO_TEST_CODEX_SCENARIO")
-	if scenario == "active-writer" {
+	if scenario == "active-writer" || scenario == "sandbox-setup-failure" {
 		if thread.Method != "thread/resume" {
 			fail("busy thread must not be replaced with thread/start")
 		}
-		write(map[string]any{"id": thread.ID, "error": map[string]any{"code": -32600, "message": "thread " + threadID + " already has an active writer"}})
+		message := "thread " + threadID + " already has an active writer"
+		if scenario == "sandbox-setup-failure" {
+			message = "windows sandbox failed: helper_unknown_error: setup refresh had errors"
+		}
+		write(map[string]any{"id": thread.ID, "error": map[string]any{"code": -32600, "message": message}})
 		var next codexRPC
 		if err := decoder.Decode(&next); err != io.EOF {
 			fail("request sent after busy thread: " + next.Method)
@@ -270,7 +275,7 @@ func codexFixtureConfig(t *testing.T, scenario string) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Config{Codex: exe}
+	return Config{Codex: exe, EngineEnv: map[string]string{"CODEX_HOME": t.TempDir()}}
 }
 
 func TestCodexAppServerOccupiedThreadPreservesSession(t *testing.T) {
@@ -414,6 +419,9 @@ func TestCodexAppServerNativeRoundTrip(t *testing.T) {
 			args := strings.Join(body.Args, "|")
 			if !strings.Contains(args, "features.default_mode_request_user_input=true") {
 				t.Fatal("ordinary Codex turns must offer native user-input questions")
+			}
+			if got, want := strings.Contains(args, "features.prefer_mxc=true"), runtime.GOOS == "windows" && tc.sandbox != "danger-full-access"; got != want {
+				t.Fatalf("MXC preference in native argv=%v, want %v: %s", got, want, args)
 			}
 			if !strings.Contains(args, "sandbox_workspace_write.network_access="+fmt.Sprint(tc.network)) || strings.Contains(args, "literal $()") || strings.Contains(args, "exec|") {
 				t.Fatal(args)

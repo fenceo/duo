@@ -15,6 +15,10 @@ import (
 // A real child process exercises stdin, cwd, streaming, resume and cancellation
 // without making a paid AI request or loading a user's CLI configuration.
 func TestMain(m *testing.M) {
+	if os.Getenv("JIANZUO_TEST_CODEX_APP_SERVER") == "1" && len(os.Args) == 3 && os.Args[1] == "features" && os.Args[2] == "list" {
+		fmt.Println("prefer_mxc under development false")
+		os.Exit(0)
+	}
 	if os.Getenv("DUO_TEST_CODEX_ACCOUNT") == "1" && len(os.Args) > 1 && os.Args[len(os.Args)-1] == "app-server" {
 		runCodexAccountFixture()
 		os.Exit(0)

@@ -17,6 +17,10 @@ Duo的 Codex 任务现在通过目标环境里的 `codex app-server`（stdio JSO
 
 知识总结强制使用只读、不联网、无任务硬件工具的权限，不继承会话的完全访问模式，也不改变下一轮对话已选的工作模式。
 
+v0.34.4 起，本机 Windows 受限任务会先检测所选 Codex CLI 是否提供 `prefer_mxc`，支持时仅为本次 app-server 设置 `features.prefer_mxc=true`。所选 `CODEX_HOME/config.toml` 或工作区 `.codex/config.toml` 中明确关闭该特性时不覆盖；配置不可读或无效时也保留原行为。WSL、SSH、旧 CLI 和完全访问模式不使用此兼容逻辑，不改写账号或全局配置。MXC 的设备适配、管理策略和旧沙箱回退由 Codex 自身处理。
+
+Windows 旧沙箱在初始化 ACL 时可能与正在使用的运行文件发生共享冲突，使命令在启动前失败。自动审批不影响该初始化步骤。Duo 遇到已知初始化错误会保留原始诊断并给出检查提示，不重放任务或更换会话；此兼容修复不代表 Codex 旧沙箱二进制已修补。
+
 ## 交互与生命周期
 
 - 保留并恢复精确的原生 thread ID；每轮使用 thread/start 或 thread/resume，再调用 turn/start。
