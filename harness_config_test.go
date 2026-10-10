@@ -79,9 +79,9 @@ func TestHarnessModelCatalogAndReasoning(t *testing.T) {
 func TestHarnessRegistryAndNativeProfile(t *testing.T) {
 	engine, ok := builtinEngine("deepseek-harness")
 	if !ok || !engine.Runnable || engine.Transport != "acp" {
-		t.Fatalf("Harness SDK not registered: %#v", engine)
+		t.Fatalf("Harness ACP not registered: %#v", engine)
 	}
-	if !reflect.DeepEqual(engine.Capabilities, []string{"stream", "resume", "model_switch", "cancel", "sandbox"}) {
+	if !reflect.DeepEqual(engine.Capabilities, []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval"}) {
 		t.Fatalf("Harness advertises unsupported capabilities: %v", engine.Capabilities)
 	}
 	if !validEngineCredentialKind(engine.ID, "dsh_home") || validEngineCredentialKind(engine.ID, "env_file") {

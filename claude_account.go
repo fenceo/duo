@@ -4,19 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
 func (a *App) performClaudeAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
-	dir := filepath.Join(a.store.directory, "engine-accounts", r.ID)
-	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
-		return errors.New("无法创建账号目录")
-	}
-	if err := os.Mkdir(dir, 0700); err != nil {
-		return errors.New("账号目录已存在或无法创建，请重新开始")
-	}
 	variables := map[string]string{}
 	for _, key := range claudeAccountEnvKeys {
 		variables[key] = ""
@@ -32,15 +23,21 @@ func (a *App) performClaudeAccount(ctx context.Context, env Environment, r Engin
 	}
 	variables["ANTHROPIC_MODEL"] = r.Model
 	data, _ := json.MarshalIndent(map[string]any{"env": variables}, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), data, 0600); err != nil {
-		return errors.New("无法保存 Claude 原生账号配置")
+	dir, err := a.engineSetup.accountHome(ctx, env, a.store.directory, r.ID, "claude", map[string][]byte{"settings.json": data})
+	if err != nil {
+		return err
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	p := EngineCredentialProfile{ID: "managed-" + r.ID, Name: strings.TrimSpace(r.Name), Engine: "claude", EnvironmentID: env.ID, Kind: "claude_home", Reference: dir, Created: now(), Updated: now()}
 	a.mu.Lock()
-	err := validateEngineProfile(p, a.config.get().Environments)
+	current, envErr := a.config.get().environment(env.ID)
+	if envErr != nil || !sameAccountEnvironment(env, current) {
+		a.mu.Unlock()
+		return errors.New("账号配置已保留，但目标连接已更改，未保存旧目标的账号引用")
+	}
+	err = validateEngineProfile(p, a.config.get().Environments)
 	if err == nil {
 		profiles := a.store.engineProfiles()
 		profiles = append(profiles, p)
@@ -53,6 +50,6 @@ func (a *App) performClaudeAccount(ctx context.Context, env Environment, r Engin
 	a.engineSetup.mu.Lock()
 	a.engineSetup.jobs[r.ID].ProfileID = p.ID
 	a.engineSetup.mu.Unlock()
-	a.engineSetup.update(r.ID, "done", "Claude API 配置已保存，可设为新任务默认或同步到其他环境。尚未调用模型验证服务。", "", "")
+	a.engineSetup.update(r.ID, "done", "Claude API 配置已保存到所选环境。在账号卡片点击“切换到环境”后生效；不绑定任务或对话。尚未调用模型验证服务。", "", "")
 	return nil
 }

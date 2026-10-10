@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,6 +45,7 @@ type EngineSetup struct {
 	jobs            map[string]*EngineSetupJob
 	active          bool
 	account         func(context.Context, Environment, string, string, string, func(string, string)) error
+	accountHome     func(context.Context, Environment, string, string, string, map[string][]byte) (string, error)
 	install         func(context.Context, string, string, func(string)) (string, error)
 	remoteInstall   func(context.Context, Environment, string, string, func(string)) (string, error)
 	harnessRead     func(context.Context, Environment, string, string) (map[string][]byte, error)
@@ -54,7 +54,7 @@ type EngineSetup struct {
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels}
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {
@@ -70,8 +70,8 @@ func validateEngineSetup(r EngineSetupRequest, env Environment) error {
 		}
 		return nil
 	}
-	if env.Type != "windows" {
-		return errors.New("Codex 账号登录向导目前需要本机 Windows；WSL/SSH 请先在目标环境登录，再添加配置目录引用")
+	if env.Type != "windows" && env.Type != "wsl" && env.Type != "ssh" {
+		return errors.New("目标环境类型不支持账号配置")
 	}
 	if r.Action != "account" || (r.Engine != "codex" && r.Engine != "claude") || strings.TrimSpace(r.Name) == "" || len([]rune(r.Name)) > 60 {
 		return errors.New("请填写 Codex 或 Claude 账号名称")
@@ -182,14 +182,6 @@ func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
 }
 
 func (a *App) performCodexAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
-	dir := filepath.Join(a.store.directory, "engine-accounts", r.ID)
-	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
-		return errors.New("无法创建账号目录")
-	}
-	// A fresh, per-account native home: never overwrite or copy the global login.
-	if err := os.Mkdir(dir, 0700); err != nil {
-		return errors.New("账号目录已存在或无法创建，请重新开始")
-	}
 	config := "cli_auth_credentials_store = \"file\"\n"
 	if r.Model != "" {
 		config += "model = " + strconv.Quote(r.Model) + "\n"
@@ -197,11 +189,12 @@ func (a *App) performCodexAccount(ctx context.Context, env Environment, r Engine
 	if r.BaseURL != "" {
 		config += "model_provider = \"duo_api\"\n[model_providers.duo_api]\nname = \"Duo API\"\nbase_url = " + strconv.Quote(strings.TrimRight(r.BaseURL, "/")) + "\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(config), 0600); err != nil {
-		return errors.New("无法保存原生账号配置")
+	dir, err := a.engineSetup.accountHome(ctx, env, a.store.directory, r.ID, "codex", map[string][]byte{"config.toml": []byte(config)})
+	if err != nil {
+		return err
 	}
 	a.engineSetup.update(r.ID, "running", "正在连接 Codex 登录服务…", "", "")
-	err := a.engineSetup.account(ctx, env, dir, r.Login, r.APIKey, func(link, code string) {
+	err = a.engineSetup.account(ctx, env, dir, r.Login, r.APIKey, func(link, code string) {
 		a.engineSetup.update(r.ID, "waiting", "打开登录页面，输入下面的设备码；完成后会自动保存账号。", link, code)
 	})
 	if err != nil {
@@ -212,6 +205,11 @@ func (a *App) performCodexAccount(ctx context.Context, env Environment, r Engine
 	}
 	profile := EngineCredentialProfile{ID: "managed-" + r.ID, Name: strings.TrimSpace(r.Name), Engine: "codex", EnvironmentID: env.ID, Kind: "codex_home", Reference: dir, Created: now(), Updated: now()}
 	a.mu.Lock()
+	current, envErr := a.config.get().environment(env.ID)
+	if envErr != nil || !sameAccountEnvironment(env, current) {
+		a.mu.Unlock()
+		return errors.New("账号配置已保留，但目标连接已更改，未保存旧目标的账号引用")
+	}
 	if err = validateEngineProfile(profile, a.config.get().Environments); err != nil {
 		a.mu.Unlock()
 		return err
@@ -226,7 +224,7 @@ func (a *App) performCodexAccount(ctx context.Context, env Environment, r Engine
 	a.engineSetup.mu.Lock()
 	a.engineSetup.jobs[r.ID].ProfileID = profile.ID
 	a.engineSetup.mu.Unlock()
-	a.engineSetup.update(r.ID, "done", "账号配置已保存。可设为新任务默认，或在现有任务中点击“切换 AI”。未发送模型请求。", "", "")
+	a.engineSetup.update(r.ID, "done", "账号已保存到所选环境的独立目录。在账号卡片点击“切换到环境”后，该环境的后续 CLI 执行使用此账号；不绑定任务或对话。未发送模型请求。", "", "")
 	return nil
 }
 

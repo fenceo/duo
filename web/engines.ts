@@ -20,7 +20,7 @@ function installEngineSettings(){
  element('codex-sync-form').addEventListener('submit',e=>{e.preventDefault();void submitCodexSync()});
  installEngineOnboarding();
  const editor=element('account-center-editor');editor.append(element('settings-engines').querySelector('.engine-profile-editor')!);
- const accountFields=document.createElement('fieldset');accountFields.id='engine-account-fields';accountFields.innerHTML='<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的 Windows 环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>';accountFields.append(element('engine-setup-fields').querySelector('details')!);editor.prepend(accountFields);
+ const accountFields=document.createElement('fieldset');accountFields.id='engine-account-fields';accountFields.innerHTML='<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>';accountFields.append(element('engine-setup-fields').querySelector('details')!);editor.prepend(accountFields);
  element('engine-account-engine').onchange=refreshAccountLogin;refreshAccountLogin();
  button('engine-account-cancel').onclick=button('engine-setup-cancel').onclick;
  const installEntry=document.createElement('button');installEntry.id='engines-open';installEntry.className='subtle';installEntry.textContent='环境与引擎';element('settings-open').before(installEntry);installEntry.onclick=async()=>{await openSettings();if(element<HTMLDialogElement>('settings-dialog').open)showSettingsSection('engines')};
@@ -121,8 +121,8 @@ async function refreshEngineStatus(){
 }
 function populateEngineOnboarding(){
  const envs=settings.config.environments;
- const accountSelect=element<HTMLSelectElement>('engine-account-environment'),previous=accountSelect.value,windows=envs.filter(e=>e.type==='windows');accountSelect.innerHTML=windows.map(e=>'<option value="'+escapeHTML(e.id)+'">'+escapeHTML(e.name)+'</option>').join('');if(windows.some(e=>e.id===previous))accountSelect.value=previous;
- element<HTMLFieldSetElement>('engine-account-fields').disabled=engineSetupBusy||!windows.length;
+ const accountSelect=element<HTMLSelectElement>('engine-account-environment'),previous=accountSelect.value,targets=envs.filter(e=>['windows','wsl','ssh'].includes(e.type));accountSelect.innerHTML=targets.map(e=>'<option value="'+escapeHTML(e.id)+'">'+escapeHTML(e.name)+' · '+escapeHTML(e.type.toUpperCase())+'</option>').join('');if(targets.some(e=>e.id===previous))accountSelect.value=previous;
+ element<HTMLFieldSetElement>('engine-account-fields').disabled=engineSetupBusy||!targets.length;
  element<HTMLFieldSetElement>('engine-setup-fields').disabled=engineSetupBusy||!envs.length;
  populateAccountImport();
  if(!envs.length)element('engine-setup-status').textContent='请先添加 Windows、WSL 或 SSH 执行环境。';

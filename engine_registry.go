@@ -72,13 +72,13 @@ const engineProfilesSetting = "engine_profiles_v1"
 func builtinEngineDefinitions() []EngineDefinition {
 	return []EngineDefinition{
 		{
-			ID: "codex", Name: "Codex", Description: "OpenAI Codex 原生 app-server",
+			ID: "codex", Name: "Codex", Description: "通过 OpenAI Codex CLI 调用 GPT 模型；支持 ChatGPT 账号或 API 配置，账号按执行环境切换",
 			Transport: "codex_app_server", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "interrupt", "image_input"},
 			CredentialKinds:    []string{"native", "codex_home"},
 			InstallDescription: "支持 Windows/WSL/SSH 安装；在账号管理中登录、配置 API 或同步到所选环境。",
-			DocumentationURL:   "https://developers.openai.com/docs/app-server",
+			DocumentationURL:   "https://learn.chatgpt.com/docs/app-server",
 		},
 		{
 			ID: "claude", Name: "Claude Code", Description: "Anthropic Claude Code CLI",
@@ -90,12 +90,12 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
-			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness 原生 ACP；支持模型切换、停止和重启后恢复会话；暂不支持交互审批、图片和硬件工具",
+			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness CLI 原生 ACP；通过 API 配置模型，支持恢复、模型切换和单次审批；暂不支持图片和硬件工具",
 			Transport: "acp", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox"},
+			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval"},
 			CredentialKinds:    []string{"native", "dsh_home"},
-			InstallDescription: "使用支持 session/resume 的 dsh --profile acp 接口；请在目标环境安装 Harness 并完成 provider 配置。Windows 默认使用 npm 的 dsh.cmd 入口。",
+			InstallDescription: "支持 Windows/WSL/SSH 一键安装 CLI；在对应环境点击“配置 API”验证地址与 Key、读取模型列表。Duo 通过 dsh --profile acp 调用，不提供订阅账号登录。",
 			DocumentationURL:   "https://github.com/deepseek-ai/deepseek-harness",
 		},
 		{

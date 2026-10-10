@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestBuiltinEngineDefinitionsAndInstallPlan(t *testing.T) {
 	if len(builtinEngineDefinitions()) != 5 {
@@ -9,6 +12,10 @@ func TestBuiltinEngineDefinitionsAndInstallPlan(t *testing.T) {
 	e, ok := builtinEngine("codex")
 	if !ok || !e.Runnable || e.Transport != "codex_app_server" {
 		t.Fatalf("unexpected Codex definition: %+v", e)
+	}
+	harness, ok := builtinEngine("deepseek-harness")
+	if !ok || !harness.Runnable || harness.Transport != "acp" || !slices.Contains(harness.Capabilities, "approval") {
+		t.Fatalf("Harness must declare its implemented ACP approval: %+v", harness)
 	}
 	env := Environment{ID: "wsl", Name: "WSL", Type: "wsl", Codex: "codex", Workspaces: []string{"/work"}}
 	plan, err := engineInstallPlan(env, "codex")

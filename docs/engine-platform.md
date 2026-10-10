@@ -28,7 +28,7 @@ Duo的长期结构分成四层：
 
 - `GET /api/engines`：查看引擎、传输协议、能力和目标环境支持情况。
 - `GET /api/engine-status`：检测已保存的 Windows/WSL/SSH 环境中的 CLI 路径和可读取的登录状态；连接失败返回未知。
-- `POST /api/engine-setup`：在选定目标安装允许列表中的 CLI，或在本机创建独立账号；通过同名 GET/DELETE 接口读取状态或取消。
+- `POST /api/engine-setup`：在选定目标安装允许列表中的 CLI，或在所选 Windows/WSL/SSH 环境创建独立 Codex/Claude 账号；通过同名 GET/DELETE 接口读取状态或取消。
 - `POST /api/account-sync`：按源账号所在环境读取 Codex/Claude 原生账号文件，将登录与 API 路由合并到勾选目标，保留备份和其他工具设置。
 - `GET /api/environments/{id}/engines/{engine}/install-plan`：提供所选目标的安装/检查指南；允许列表中的一键安装使用独立 setup API。
 - `PUT /api/engine-profiles`、`POST /api/engine-profiles/{id}/activate`：保存和切换外部账号/profile 引用。
@@ -81,8 +81,8 @@ Windows 安装版和便携版共用版本查询、来源约束、SHA-256 校验�
 - `native` 继承原生配置；`dsh_home` 指定原生账号目录。Duo 不读取、复制或返回凭据文件。
   活跃进程保持原账号；恢复时需确保原账号目录可用。
 - 每次启动使用临时策略 patch 固定只读/工作区/完全访问边界，越界审批拒绝。
-  不提供 ACP 客户端文件、终端或自动批准能力。关闭可选 telemetry 和 session-log-deepseek 上传。
-- 当前仍不支持 Duo 附件、硬件授权、交互审批、离线网络保证和独立知识总结。
+  不提供 ACP 客户端文件、终端或自动风险评审能力。v0.34.9 起官方工作区模式支持原生单次审批；旧任务保留既有权限。关闭可选 telemetry 和 session-log-deepseek 上传。
+- 当前仍不支持 Duo 附件、硬件授权、离线网络保证和独立知识总结。
   `harness:read` 是可联网只读模式，不改变 Codex 的离线 plan 模式。
 - ACP 输出正文、思考和工具更新，最终状态以对应 prompt 响应为准；不把上下文占用量冒充计费 token 用量。
 

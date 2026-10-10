@@ -23,6 +23,7 @@ __pycache__/
 !/docs/development.md
 !/docs/codex-native.md
 !/docs/engine-platform.md
+!/docs/workbench-engines.md
 !/docs/task-sessions.md
 /scripts/Check-Local-Deployment.py
 /scripts/Restore-Local-Hardware.py

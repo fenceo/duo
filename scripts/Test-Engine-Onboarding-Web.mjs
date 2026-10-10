@@ -6,13 +6,17 @@ const {ctx,document}=await createWebShellFixture(),run=code=>runInContext(code,c
 ctx.crypto=webcrypto;
 run(`settings.config.environments.push({id:'local',name:'Windows',type:'windows',codex:'fixture.exe',workspaces:['C:/fixture']});populateEngineOnboarding()`);
 assert(el('settings-environment').contains(el('settings-engines')));
-assert.equal(el('engine-account-environment').value,'local');
+assert.equal(el('engine-account-environment').value,'fixture');
 assert(el('account-center-dialog').contains(el('engine-account-name')));
 assert(!el('settings-engines').contains(el('engine-account-name')));
+run(`settings.config.environments.push({id:'linux',name:'Linux fixture',type:'wsl',distro:'fixture',user:'fixture',codex:'/fixture/codex',workspaces:['/fixture']},{id:'remote',name:'SSH fixture',type:'ssh',host:'example.invalid',workspaces:['/fixture']});populateEngineOnboarding()`);
+assert.deepEqual(Array.from(el('engine-account-environment').options,o=>o.value),['fixture','local','linux','remote']);
+el('engine-account-environment').value='linux';run('populateEngineOnboarding()');
+assert.equal(el('engine-account-environment').value,'linux');assert(!el('engine-account-fields').disabled);
 el('engine-account-name').value='Work';el('engine-account-login').value='apiKey';el('engine-account-login').onchange();assert(!el('engine-account-api').classList.contains('hidden'));
 el('engine-account-key').value='synthetic-secret';el('engine-account-url').value='https://provider.example/v1';
 let posts=0,finish,id;ctx.api=async(path,method,body)=>{
- if(method==='POST'){posts++;id=body.id;assert.equal(body.api_key,'synthetic-secret');assert.equal(body.engine,'codex');return new Promise(resolve=>finish=resolve)}
+ if(method==='POST'){posts++;id=body.id;assert.equal(body.api_key,'synthetic-secret');assert.equal(body.engine,'codex');assert.equal(body.environment_id,'linux');return new Promise(resolve=>finish=resolve)}
  if(path==='engine-setup/'+id)return {id,action:'account',engine:'codex',environment_id:'local',state:'done',message:'saved'};
  if(path==='engines')return {engines:[],profiles:[],active_profile:{}};
  if(path==='engine-setup')return [];
@@ -26,4 +30,6 @@ run(`renderEngineSetup({id:'login',action:'account',engine:'codex',environment_i
 assert.equal(el('engine-account-status').querySelector('a').getAttribute('rel'),'noopener noreferrer');assert.match(el('engine-account-status').textContent,/TEST-1234/);
 let canceled=false;ctx.api=async(path,method)=>{assert.equal(path,'engine-setup/login');assert.equal(method,'DELETE');canceled=true};await el('engine-account-cancel').onclick();assert(canceled);assert.match(el('engine-account-status').textContent,/正在取消/);
 ctx.api=async()=>{throw Error('fixture offline')};await ctx.pollEngineSetup('login',run('shellEpoch'));assert.match(el('engine-account-status').textContent,/fixture offline/);assert(!el('engine-account-fields').disabled);
-console.log('PASS: local tool setup, API inputs, duplicate lock, secret field clearing, native device login link/code and explicit cancellation. No real accounts or downloads.');
+run(`settings.config.environments=settings.config.environments.filter(e=>e.type!=='windows');populateEngineOnboarding()`);
+assert.equal(el('engine-account-environment').value,'linux');assert(!el('engine-account-fields').disabled);
+console.log('PASS: Windows/WSL/SSH account selection, WSL-only setup, API inputs, duplicate lock, secret field clearing, native device login link/code and explicit cancellation. No real accounts or downloads.');
