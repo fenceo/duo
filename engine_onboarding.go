@@ -42,18 +42,19 @@ type EngineSetupJob struct {
 	cancel        context.CancelFunc
 }
 type EngineSetup struct {
-	mu            sync.Mutex
-	jobs          map[string]*EngineSetupJob
-	active        bool
-	account       func(context.Context, Environment, string, string, string, func(string, string)) error
-	install       func(context.Context, string, string, func(string)) (string, error)
-	remoteInstall func(context.Context, Environment, string, string, func(string)) (string, error)
-	harnessRead   func(context.Context, Environment, string, string) (map[string][]byte, error)
-	harnessWrite  func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
+	mu              sync.Mutex
+	jobs            map[string]*EngineSetupJob
+	active          bool
+	account         func(context.Context, Environment, string, string, string, func(string, string)) error
+	install         func(context.Context, string, string, func(string)) (string, error)
+	remoteInstall   func(context.Context, Environment, string, string, func(string)) (string, error)
+	harnessRead     func(context.Context, Environment, string, string) (map[string][]byte, error)
+	harnessWrite    func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
+	harnessDiscover func(context.Context, Environment, HarnessAPIRequest) HarnessDiscovery
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles}
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {

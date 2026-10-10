@@ -110,6 +110,10 @@ func readLocalAccountFiles(dir, engine string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return readLocalNamedAccountFiles(dir, names)
+}
+
+func readLocalNamedAccountFiles(dir string, names []string) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	for _, name := range names {
 		path := filepath.Join(dir, name)

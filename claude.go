@@ -146,7 +146,7 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 		return modelsForEnvironment(ctx, env, profileEnv...)
 	}
 	if engine == "deepseek-harness" {
-		return configuredHarnessCatalog(env, firstProfileEnv(profileEnv))
+		return configuredHarnessCatalog(ctx, env, firstProfileEnv(profileEnv))
 	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")

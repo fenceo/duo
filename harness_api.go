@@ -18,23 +18,26 @@ const harnessAPIProvider = "duo-api"
 const harnessAPIKeyRef = "DUO_HARNESS_API_KEY"
 
 type HarnessAPIRequest struct {
-	Target  string `json:"target"`
-	API     string `json:"api"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	APIKey  string `json:"api_key"`
+	Target  string        `json:"target"`
+	API     string        `json:"api"`
+	BaseURL string        `json:"base_url"`
+	Model   string        `json:"model"`
+	APIKey  string        `json:"api_key"`
+	Models  []ModelOption `json:"-"`
 }
 
 // Only this projection crosses HTTP. Neither native files nor a masked key
 // are returned; a boolean is sufficient for editing without exposing a key.
 type HarnessAPIView struct {
-	EnvironmentID string `json:"environment_id"`
-	Target        string `json:"target"`
-	API           string `json:"api"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
-	KeyConfigured bool   `json:"key_configured"`
-	Message       string `json:"message,omitempty"`
+	EnvironmentID   string        `json:"environment_id"`
+	Target          string        `json:"target"`
+	API             string        `json:"api"`
+	BaseURL         string        `json:"base_url"`
+	Model           string        `json:"model"`
+	KeyConfigured   bool          `json:"key_configured"`
+	Message         string        `json:"message,omitempty"`
+	Models          []ModelOption `json:"models"`
+	DiscoveryStatus string        `json:"discovery_status,omitempty"`
 }
 
 func harnessAPITarget(env Environment) string {
@@ -237,6 +240,14 @@ func harnessAPIView(env Environment, files map[string][]byte) (HarnessAPIView, e
 		}
 	}
 	v.KeyConfigured = harnessValue(harnessField(harnessField(creds, "refs"), harnessAPIKeyRef)) != ""
+	v.Models = []ModelOption{}
+	if settings, e := parseHarnessModelFiles(map[string][]byte{"cordis.patch.yml": files["cordis.patch.yml"]}); e == nil {
+		for _, route := range settings.Routes {
+			if route.Provider == harnessAPIProvider {
+				v.Models = route.Models
+			}
+		}
+	}
 	return v, nil
 }
 
@@ -274,6 +285,31 @@ func mergeHarnessAPI(files map[string][]byte, v HarnessAPIRequest) (map[string][
 	provider, err := harnessMap(providers, harnessAPIProvider)
 	if err != nil {
 		return nil, err
+	}
+	// Refresh only Duo's provider. Preserve metadata for retained IDs, and never
+	// carry models from an old API endpoint into a different service.
+	oldModels := harnessField(provider, "models")
+	endpointChanged := harnessValue(harnessField(provider, "baseURL")) != strings.TrimRight(v.BaseURL, "/") || harnessValue(harnessField(provider, "api")) != v.API
+	if v.Models != nil || endpointChanged {
+		nextModels := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, m := range v.Models {
+			var node *yaml.Node
+			if !endpointChanged && oldModels != nil && oldModels.Kind == yaml.SequenceNode {
+				for _, old := range oldModels.Content {
+					if harnessValue(harnessField(old, "id")) == m.ID {
+						node = old
+						break
+					}
+				}
+			}
+			if node == nil {
+				node = &yaml.Node{Kind: yaml.MappingNode}
+				harnessSet(node, "id", harnessString(m.ID))
+			}
+			harnessSet(node, "name", harnessString(m.Name))
+			nextModels.Content = append(nextModels.Content, node)
+		}
+		harnessSet(provider, "models", nextModels)
 	}
 	harnessSet(provider, "api", harnessString(v.API))
 	harnessSet(provider, "baseURL", harnessString(strings.TrimRight(v.BaseURL, "/")))
@@ -321,6 +357,58 @@ func mergeHarnessAPI(files map[string][]byte, v HarnessAPIRequest) (map[string][
 }
 
 func (s *Server) harnessAPIRoutes(m *http.ServeMux) {
+	m.HandleFunc("POST /api/environments/{id}/harness-api/models", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		var v HarnessAPIRequest
+		if !body(w, r, &v) {
+			return
+		}
+		// Listing does not require choosing a model beforehand.
+		v.Model = "model-list-only"
+		if err := validateHarnessAPI(v); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		a := s.app
+		env, err := a.config.get().environment(r.PathValue("id"))
+		if err != nil || v.Target != harnessAPITarget(env) {
+			fail(w, 409, "环境配置已变化，请关闭窗口后重新打开")
+			return
+		}
+		if !s.admitModelCatalog(r.Context()) {
+			fail(w, 409, "已有模型读取、测试或更新正在进行，请稍后重试")
+			return
+		}
+		defer s.modelProbeMu.Unlock()
+		if a.updating.Load() {
+			fail(w, 409, errUpdateBusy.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if v.APIKey == "" {
+			files, e := a.engineSetup.harnessRead(ctx, env, "", "deepseek-harness")
+			if e != nil {
+				fail(w, 400, "无法读取目标环境已保存的 Key，请检查连接和文件权限")
+				return
+			}
+			v.APIKey, err = harnessRequestKey(v, files)
+			if err != nil {
+				fail(w, 400, err.Error())
+				return
+			}
+		}
+		if err := validateHarnessAPI(v); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		out := a.engineSetup.harnessDiscover(ctx, env, v)
+		current, e := a.config.get().environment(env.ID)
+		if e != nil || harnessAPITarget(current) != v.Target {
+			fail(w, 409, "环境配置已变化，请重新打开后读取模型")
+			return
+		}
+		jsonOut(w, 200, out)
+	}))
 	m.HandleFunc("GET /api/environments/{id}/harness-api", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		env, err := s.app.config.get().environment(r.PathValue("id"))
 		if err != nil {
@@ -379,12 +467,47 @@ func (s *Server) harnessAPIRoutes(m *http.ServeMux) {
 		defer func() { manager.mu.Lock(); manager.active = false; manager.mu.Unlock() }()
 		// Once admitted, finish independently of a browser disconnect. The
 		// maintenance gate protects the file/config transaction until completion.
-		ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(a.ctx, 50*time.Second)
 		defer cancel()
 		old, err := manager.harnessRead(ctx, env, "", "deepseek-harness")
 		if err != nil {
 			fail(w, 400, "无法读取目标环境的 Harness 配置，请检查连接、Python 3 和文件权限")
 			return
+		}
+		key, err := harnessRequestKey(v, old)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		probe := v
+		probe.APIKey = key
+		if err := validateHarnessAPI(probe); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		if !s.admitModelCatalog(ctx) {
+			fail(w, 409, "已有模型读取或测试正在进行，请稍后重试")
+			return
+		}
+		discovery := manager.harnessDiscover(ctx, env, probe)
+		s.modelProbeMu.Unlock()
+		probe.APIKey = ""
+		if discovery.Status == "failed" {
+			fail(w, 400, discovery.Message+"；配置未保存")
+			return
+		}
+		if discovery.Status == "ready" {
+			v.Models = discovery.Models
+			listed := false
+			for _, model := range discovery.Models {
+				if model.ID == v.Model {
+					listed = true
+					break
+				}
+			}
+			if !listed {
+				discovery.Message += " 所填默认模型未出现在列表中，作为手动模型保留；其可用性尚未验证。"
+			}
 		}
 		next, err := mergeHarnessAPI(old, v)
 		if err != nil {
@@ -421,7 +544,8 @@ func (s *Server) harnessAPIRoutes(m *http.ServeMux) {
 		}
 		current, _ = c.environment(env.ID)
 		out, _ := harnessAPIView(current, next)
-		out.Message = "API 配置已保存到该环境的原生 Harness 目录，原文件已备份。新启动的 Harness 使用此配置；已运行会话可能仍沿用旧服务设置，必要时重新打开。未调用模型。"
+		out.DiscoveryStatus = discovery.Status
+		out.Message = "API 配置已保存，原文件已备份。" + discovery.Message + " 新建任务可读取该环境已保存的模型；已运行的 Harness 可能需要重新打开。"
 		a.changed()
 		jsonOut(w, 200, out)
 	}))

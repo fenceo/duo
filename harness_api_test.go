@@ -90,6 +90,7 @@ func TestHarnessAPIRejectsInvalidConfiguration(t *testing.T) {
 
 func TestHarnessAPIHTTPSelectedEnvironmentAndSecretIsolation(t *testing.T) {
 	a, env := engineSetupFixture(t)
+	a.engineSetup.harnessDiscover = syntheticHarnessDiscovery
 	c := a.config.get()
 	env.Type = "wsl"
 	env.Distro = "synthetic-distro"
@@ -178,6 +179,7 @@ func TestHarnessAPIHTTPSelectedEnvironmentAndSecretIsolation(t *testing.T) {
 
 func TestHarnessAPIConfigFailureRollsBackNativeFiles(t *testing.T) {
 	a, env := engineSetupFixture(t)
+	a.engineSetup.harnessDiscover = syntheticHarnessDiscovery
 	writes := 0
 	var written map[string][]byte
 	a.engineSetup.harnessRead = func(context.Context, Environment, string, string) (map[string][]byte, error) {
@@ -238,7 +240,7 @@ func TestHarnessAPIRemoteHelperSynthetic(t *testing.T) {
 	if err != nil {
 		t.Skip("Python unavailable")
 	}
-	for _, script := range []string{nativeAccountScript, harnessLauncher} {
+	for _, script := range []string{nativeAccountScript, harnessLauncher, harnessDiscoveryScript} {
 		cmd := exec.Command(python, "-c", "import sys; compile(sys.stdin.read(), '<embedded>', 'exec')")
 		cmd.Stdin = strings.NewReader(script)
 		if out, err := cmd.CombinedOutput(); err != nil {

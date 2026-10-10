@@ -16,6 +16,8 @@ def main():
     names = {'codex': ('auth.json', 'config.toml'),
              'claude': ('.credentials.json', 'settings.json'),
              'deepseek-harness': ('.credentials.yaml', 'cordis.patch.yml')}[engine]
+    if request['operation'] == 'harness-models' and engine == 'deepseek-harness':
+        names = ('settings.yaml', 'cordis.patch.yml')
     key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME'}[engine]
     default_dir = '.dsh' if engine == 'deepseek-harness' else '.' + engine
     raw_root = request.get('directory') or os.environ.get(key)
@@ -49,7 +51,7 @@ def main():
             result[name] = base64.b64encode(raw).decode('ascii')
         return result
 
-    if request['operation'] == 'read':
+    if request['operation'] == 'read' or (request['operation'] == 'harness-models' and engine == 'deepseek-harness'):
         print(json.dumps(read()))
         return
     if request['operation'] != 'write':

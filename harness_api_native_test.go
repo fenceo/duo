@@ -47,6 +47,13 @@ func TestHarnessAPINativeWSL(t *testing.T) {
 hits=[]
 class Handler(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args): pass
+ def do_GET(self):
+  valid=self.path=='/v1/models' and self.headers.get('Authorization')=='Bearer synthetic-harness-secret'
+  hits.append({'model':'model-list','authenticated':valid})
+  if not valid:
+   self.send_error(403); return
+  self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()
+  self.wfile.write(json.dumps({'data':[{'id':'fixture-model'},{'id':'fixture-alternative'}]}).encode())
  def do_POST(self):
   request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
   valid=self.path=='/v1/chat/completions' and self.headers.get('Authorization')=='Bearer synthetic-harness-secret'
@@ -95,6 +102,11 @@ print(json.dumps(hits),flush=True)
 	}
 	req := syntheticHarnessAPI()
 	req.BaseURL = "http://127.0.0.1:" + strconv.Itoa(port) + "/v1"
+	discovered := discoverHarnessModels(ctx, env, req)
+	if discovered.Status != "ready" || len(discovered.Models) != 2 {
+		t.Fatalf("native WSL model discovery failed: %#v", discovered)
+	}
+	req.Models = discovered.Models
 	old, err := readNativeAccountFiles(ctx, env, home, "deepseek-harness")
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +124,10 @@ print(json.dumps(hits),flush=True)
 	}
 	if !bytes.Equal(actual[".credentials.yaml"], next[".credentials.yaml"]) {
 		t.Fatal("native credential save mismatch")
+	}
+	catalog, err := modelsForEngine(ctx, env, "deepseek-harness", map[string]string{"DSH_HOME": home})
+	if err != nil || catalog.Status != "ready" || len(catalog.Models) != 2 || catalog.DefaultModel != req.Model {
+		t.Fatalf("WSL task catalog did not read saved models: %#v %v", catalog, err)
 	}
 	c := runtimeConfig(Config{}, env)
 	c.EngineEnv = map[string]string{"DSH_HOME": home}
@@ -134,11 +150,11 @@ print(json.dumps(hits),flush=True)
 		Model         string `json:"model"`
 		Authenticated bool   `json:"authenticated"`
 	}
-	if json.Unmarshal([]byte(line), &hits) != nil || len(hits) != 1 || hits[0].Model != req.Model || !hits[0].Authenticated {
+	if json.Unmarshal([]byte(line), &hits) != nil || len(hits) != 2 || hits[0].Model != "model-list" || !hits[0].Authenticated || hits[1].Model != req.Model || !hits[1].Authenticated {
 		t.Fatal("native credential or route was not used")
 	}
 	if err := server.Wait(); err != nil {
 		t.Fatal("fixture server did not stop")
 	}
-	t.Log("selected WSL user saved native patch and credential files; installed dsh returned through Duo ACP; one authenticated loopback model request, zero paid calls")
+	t.Log("selected WSL user authenticated model-list request, saved two native models and read both into Duo task catalog; installed dsh returned through Duo ACP; loopback only, zero paid calls")
 }

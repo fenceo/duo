@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -52,6 +54,11 @@ func readHarnessSettings(path string) (harnessSettings, error) {
 	if err != nil || len(raw) > 4*1024*1024 {
 		return out, errors.New("DSH settings.yaml 读取失败或文件过大")
 	}
+	return parseHarnessSettings(raw)
+}
+
+func parseHarnessSettings(raw []byte) (harnessSettings, error) {
+	var out harnessSettings
 	var doc struct {
 		Default struct {
 			Provider string `yaml:"provider"`
@@ -105,6 +112,85 @@ func readHarnessSettings(path string) (harnessSettings, error) {
 	return out, nil
 }
 
+// Modern Harness uses cordis.patch.yml; retain legacy settings.yaml and apply
+// only model-related patches. Credentials never enter the catalog projection.
+func parseHarnessModelFiles(files map[string][]byte) (harnessSettings, error) {
+	root, err := harnessYAML(files["settings.yaml"], yaml.MappingNode)
+	if err != nil {
+		return harnessSettings{}, errors.New("Harness 模型配置格式无效，请在目标环境检查配置")
+	}
+	patch, err := harnessYAML(files["cordis.patch.yml"], yaml.SequenceNode)
+	if err != nil {
+		return harnessSettings{}, errors.New("Harness 模型补丁格式无效，请在目标环境检查配置")
+	}
+	for _, id := range []string{"llm-pi-ai", "agent-default-model"} {
+		row, err := harnessPatchRow(patch, id, false)
+		if err != nil {
+			return harnessSettings{}, err
+		}
+		if row == nil {
+			continue
+		}
+		if d := harnessField(row, "disabled"); d != nil && d.Value == "true" {
+			harnessSet(root, id, &yaml.Node{Kind: yaml.MappingNode})
+			continue
+		}
+		cfg := harnessField(row, "config")
+		if cfg == nil {
+			continue
+		}
+		if cfg.Kind != yaml.MappingNode {
+			return harnessSettings{}, errors.New("Harness 模型补丁结构无效")
+		}
+		old, err := harnessMap(root, id)
+		if err != nil {
+			return harnessSettings{}, err
+		}
+		var merge func(*yaml.Node, *yaml.Node)
+		merge = func(dst, src *yaml.Node) {
+			for i := 0; i+1 < len(src.Content); i += 2 {
+				key, val := src.Content[i].Value, src.Content[i+1]
+				if prior := harnessField(dst, key); prior != nil && prior.Kind == yaml.MappingNode && val.Kind == yaml.MappingNode {
+					merge(prior, val)
+				} else {
+					harnessSet(dst, key, val)
+				}
+			}
+		}
+		merge(old, cfg)
+	}
+	raw, err := yaml.Marshal(root)
+	if err != nil {
+		return harnessSettings{}, errors.New("无法读取 Harness 模型配置")
+	}
+	return parseHarnessSettings(raw)
+}
+
+func harnessModelSettings(ctx context.Context, env Environment, profileEnv map[string]string) (harnessSettings, error) {
+	if !isNativeHarnessExecutable(env.Harness) {
+		return harnessSettings{}, nil
+	}
+	var files map[string][]byte
+	var err error
+	if env.Type == "windows" {
+		dir := filepath.Dir(harnessSettingsPath(env.Type, profileEnv))
+		dir, err = localAccountDirectory(dir, "deepseek-harness")
+		if err == nil {
+			files, err = readLocalNamedAccountFiles(dir, []string{"settings.yaml", "cordis.patch.yml"})
+		}
+	} else if env.Type == "wsl" || env.Type == "ssh" {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		files, err = remoteNativeAccountFiles(ctx, env, nativeAccountRequest{Operation: "harness-models", Engine: "deepseek-harness", Directory: profileEnv["DSH_HOME"]})
+	} else {
+		return harnessSettings{}, nil
+	}
+	if err != nil {
+		return harnessSettings{}, errors.New("无法读取目标环境 Harness 模型配置，请检查连接、Python 3 和文件权限")
+	}
+	return parseHarnessModelFiles(files)
+}
+
 func harnessSettingsPath(envType string, profileEnv map[string]string) string {
 	if envType != "windows" {
 		return ""
@@ -150,7 +236,7 @@ func harnessRouteSettings(c Config) (harnessSettings, error) {
 	if c.Distro != "" || c.SSHHost != "" || !isNativeHarnessExecutable(c.Harness) {
 		return harnessSettings{}, nil
 	}
-	return readHarnessSettings(harnessSettingsPath("windows", c.EngineEnv))
+	return harnessModelSettings(context.Background(), Environment{Type: "windows", Harness: c.Harness}, c.EngineEnv)
 }
 
 // Match the selected model, not just the legacy default. Otherwise picking a
@@ -200,16 +286,12 @@ func harnessRouteForConfig(c Config, taskModel string) (provider, model string, 
 	return "", "", errors.New("未在此账号的 DSH 配置中找到所选模型，请重新读取模型列表并选择模型，或明确配置 Harness provider 和默认模型")
 }
 
-func configuredHarnessCatalog(env Environment, profileEnv map[string]string) (ModelList, error) {
+func configuredHarnessCatalog(ctx context.Context, env Environment, profileEnv map[string]string) (ModelList, error) {
 	c := runtimeConfig(Config{}, env)
 	c.EngineEnv = profileEnv
 	provider, model := harnessConfiguredDefaults(c)
 	list := ModelList{Models: []ModelOption{}, Source: "Duo 中该环境的 Harness 配置", Status: "fallback", Message: "仅列出本地配置；未调用模型，未知推理能力请使用工具默认。"}
-	var settings harnessSettings
-	var err error
-	if env.Type == "windows" {
-		settings, err = harnessRouteSettings(c)
-	}
+	settings, err := harnessModelSettings(ctx, env, profileEnv)
 	if err != nil {
 		return list, err
 	}
@@ -221,7 +303,7 @@ func configuredHarnessCatalog(env Environment, profileEnv map[string]string) (Mo
 		list.Models = append(list.Models, route.Models...)
 	}
 	if len(list.Models) > 0 {
-		list.Source = "DSH settings.yaml 模型配置"
+		list.Source = "目标环境 Harness 原生模型配置（cordis.patch.yml / settings.yaml）"
 		list.Status = "ready"
 		list.Message = "已读取此账号的 provider/model；运行时按所选模型匹配 provider。推理强度只列出配置已声明的选项，其余使用工具默认。"
 		if auto {
