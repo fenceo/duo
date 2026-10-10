@@ -1018,19 +1018,30 @@ async function forkTask(id = chosen) {
     }
 }
 function modeOptions(select, snapshot) {
-    const previous = select.value, engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine, items = workCatalog.modes.filter((m)=>m.id !== 'harness:read' || engine === 'deepseek-harness');
-    if (snapshot?.id && !items.some((m)=>m.id === snapshot.id)) items.push(snapshot);
-    select.innerHTML = items.map((m)=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m, engine) ? '' : ' disabled'}>${escapeHTML(modeLabel(m))}${modeSupportsEngine(m, engine) ? '' : '（当前引擎不支持）'}</option>`).join('');
-    const preferred = previous || snapshot?.id || 'work';
-    select.value = items.some((m)=>m.id === preferred && modeSupportsEngine(m, engine)) ? preferred : items.find((m)=>m.id === 'work' && modeSupportsEngine(m, engine))?.id || items.find((m)=>modeSupportsEngine(m, engine))?.id || '';
+    const previous = select.value, engine = select.id === 'create-mode' ? input('create-engine')?.value : detail?.task.engine, items = modesForEngine(engine);
+    if (snapshot?.id && !items.some((m)=>m.id === snapshot.id) && modeSupportsEngine(snapshot, engine)) items.push(snapshot);
+    select.innerHTML = items.map((m)=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m, engine) ? '' : ' disabled'}>${escapeHTML(modeLabel(m, engine))}${modeSupportsEngine(m, engine) ? '' : '（当前引擎不支持）'}</option>`).join('');
+    const defaultID = engine === 'deepseek-harness' ? 'harness:workspace' : 'work', preferred = previous || snapshot?.id || defaultID;
+    select.value = items.some((m)=>m.id === preferred && modeSupportsEngine(m, engine)) ? preferred : items.find((m)=>m.id === defaultID && modeSupportsEngine(m, engine))?.id || items.find((m)=>modeSupportsEngine(m, engine))?.id || '';
+}
+function modesForEngine(engine) {
+    return workCatalog.modes.filter((m)=>engine === 'deepseek-harness' ? m.id === 'harness:workspace' || m.id === 'full' || !m.builtin && m.id !== 'work' && m.id !== 'plan' && m.id !== 'codex:auto' && m.id !== 'harness:read' : m.id !== 'harness:read' && m.id !== 'harness:workspace');
 }
 function modeApproval(mode) {
     return mode.approval || (mode.permission === 'workspace' ? 'request' : 'never');
 }
 function modeSupportsEngine(mode, engine) {
-    return (mode.id !== 'harness:read' || engine === 'deepseek-harness') && (engine === 'codex' || modeApproval(mode) !== 'auto') && (engine !== 'deepseek-harness' || mode.allow_network !== false);
+    return (![
+        'harness:read',
+        'harness:workspace'
+    ].includes(mode.id) || engine === 'deepseek-harness') && (engine === 'codex' || modeApproval(mode) !== 'auto') && (engine !== 'deepseek-harness' || mode.allow_network !== false);
 }
-function modeLabel(mode) {
+function modeLabel(mode, engine) {
+    if (engine === 'deepseek-harness') {
+        if (mode.id === 'harness:workspace') return '工作区权限 · 需要提升权限时询问';
+        if (mode.id === 'full') return '完全访问 · 不询问';
+        return mode.name + ' · ' + (mode.permission === 'read' ? '只读，可联网' : mode.permission === 'full' ? '完全访问，不询问' : '工作区边界，越界拒绝');
+    }
     const access = mode.permission === 'read' ? '只读' : mode.permission === 'full' ? '完全访问' : mode.allow_network === false ? '工作区 · 离线' : '工作区 · 联网';
     const approval = modeApproval(mode), review = approval === 'auto' ? ' · Codex 自动风险评审' : approval === 'request' ? ' · 请求批准' : mode.permission === 'workspace' ? ' · 不请求批准' : '';
     return `${mode.name} · ${access}${review}`;
@@ -1317,6 +1328,7 @@ function installWorkflow() {
     button('trash-close').onclick = ()=>element('trash-dialog').close();
 }
 function modeForPermission(permission, engine = 'codex') {
+    if (engine === 'deepseek-harness' && permission === 'request') return workCatalog.modes.find((mode)=>mode.id === 'harness:workspace' && mode.permission === 'workspace' && modeApproval(mode) === 'request' && mode.allow_network === true);
     if (engine === 'deepseek-harness' && permission === 'read') return workCatalog.modes.find((mode)=>mode.id === 'harness:read' && mode.permission === 'read' && modeApproval(mode) === 'never' && mode.allow_network === true);
     const wanted = permission === 'read' ? 'read' : permission === 'full' ? 'full' : 'workspace', preferred = permission === 'read' ? 'plan' : permission === 'request' ? 'work' : permission === 'auto' ? 'codex:auto' : permission, approval = permission === 'read' || permission === 'full' ? 'never' : permission;
     const matches = (mode)=>mode.permission === wanted && modeApproval(mode) === approval && modeSupportsEngine(mode, engine);
@@ -1325,6 +1337,7 @@ function modeForPermission(permission, engine = 'codex') {
 function setCreatePermission(permission) {
     const engine = input('create-engine')?.value || 'codex', codex = engine === 'codex', harness = engine === 'deepseek-harness';
     if (permission === 'auto' && !codex) permission = 'request';
+    if (harness && permission !== 'full') permission = 'request';
     const requested = modeForPermission(permission, engine);
     if (harness && (!requested || !modeSupportsEngine(requested, engine))) permission = 'request';
     createPermission = permission;
@@ -1333,19 +1346,22 @@ function setCreatePermission(permission) {
     element('create-permission-options')?.querySelectorAll('[data-create-permission]').forEach((b)=>{
         const value = b.dataset.createPermission, candidate = modeForPermission(value, engine), on = value === permission;
         b.classList.toggle('selected', on);
+        b.classList.toggle('hidden', harness && (value === 'auto' || value === 'read'));
         b.setAttribute('aria-pressed', String(on));
         b.disabled = value === 'auto' && !codex || harness && (!candidate || !modeSupportsEngine(candidate, engine));
         if (value === 'request') {
-            b.textContent = harness ? '工作区边界' : codex ? '请求批准' : 'CLI 预授权';
-            b.title = harness ? '仅允许边界内操作；超出权限直接拒绝，不弹出审批' : codex ? '工作区内执行，需要提升权限时请求批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
+            b.textContent = harness ? '工作区权限' : codex ? '请求批准' : 'CLI 预授权';
+            b.title = harness ? candidate ? '官方 workspace-write：工作区和允许的临时目录内可写，需要提升权限时询问' : '当前服务未提供 Harness 官方工作区权限，请更新服务' : codex ? '工作区内执行，需要提升权限时请求批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
         }
         if (value === 'read') {
-            b.textContent = harness ? '只读·可联网' : '只读规划';
-            b.title = harness ? b.disabled ? '当前服务未提供 Harness 只读联网模式，请更新服务' : '不修改工作区，但不限制网络；这不是离线模式' : '只读规划，不修改工作区';
+            b.textContent = '只读规划';
+            b.title = '只读规划，不修改工作区';
         }
+        if (value === 'auto') b.title = 'Codex 原生自动风险评审，不是无条件放行';
+        if (value === 'full') b.title = harness ? '官方 danger-full-access：完全访问，不询问' : '跳过工作区边界，仅在你明确选择时使用';
     });
-    const hint = permission === 'read' ? harness ? '只读分析，不允许修改工作区；允许联网，不提供离线保证' : '只读分析规划，不允许修改工作区' : permission === 'request' ? harness ? '仅在工作区权限边界内执行，越界请求直接拒绝' : codex ? '允许工作区内执行与联网；需要提升权限时请求批准' : '允许工作区内执行，遵循 Claude CLI 预授权规则' : permission === 'full' ? '跳过工作区边界且不请求批准，请确认任务来源可信' : 'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
-    if (element('create-permission-hint')) element('create-permission-hint').textContent = hint + (harness ? '。Harness 无交互审批及独立网络开关，网络由原生策略和执行环境控制；当前离线模式不可选。' : codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+    const hint = permission === 'read' ? '只读分析规划，不允许修改工作区' : permission === 'request' ? harness ? '工作区和允许的临时目录内可写；需要提升权限时询问，可批准本次或拒绝' : codex ? '允许工作区内执行与联网；需要提升权限时请求批准' : '允许工作区内执行，遵循 Claude CLI 预授权规则' : permission === 'full' ? '跳过工作区边界且不请求批准，请确认任务来源可信' : 'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
+    if (element('create-permission-hint')) element('create-permission-hint').textContent = hint + (harness ? '。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。' : codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
     renderCreateFiles();
 }
 function renderCreateFiles() {
@@ -1480,7 +1496,7 @@ function renderWorkflow() {
         }
         control.disabled = detail.task.archived || harness;
         const hint = element('mode-engine-hint');
-        hint.textContent = harness ? 'Harness 无交互审批 · 支持原生会话恢复 · 网络由原生策略和执行环境控制' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.textContent = harness ? detail.task.mode?.id === 'harness:workspace' ? 'Harness 工作区权限 · 需要提升权限时询问' : detail.task.mode?.permission === 'full' ? 'Harness 完全访问 · 不询问' : 'Harness 原权限保留 · 越界请求拒绝' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
         hint.title = harness ? harnessSessionHint : hint.textContent;
         hint.classList.toggle('hidden', detail.task.engine === 'codex');
         control.title = harness || detail.task.engine === 'claude' ? hint.title : '本轮 Codex 工作模式与原生审批方式';
@@ -2786,6 +2802,7 @@ function codexIsQuestion(request) {
 }
 function codexApprovalKind(request) {
     return ({
+        'harness/requestPermission': 'Harness 工具权限',
         'item/commandExecution/requestApproval': '命令执行',
         'item/fileChange/requestApproval': '文件修改',
         'item/permissions/requestApproval': '临时权限',
@@ -2794,6 +2811,14 @@ function codexApprovalKind(request) {
     })[request.method] || '暂不支持的请求';
 }
 function codexApprovalDecisions(request) {
+    if (request.method === 'harness/requestPermission') {
+        const options = codexRecord(request.params).options, kinds = Array.isArray(options) ? options.map((option)=>codexText(codexRecord(option).kind)) : [];
+        return [
+            'accept',
+            'decline',
+            'cancel'
+        ].filter((value)=>value === 'cancel' || kinds.includes(value === 'accept' ? 'allow_once' : 'reject_once'));
+    }
     if (request.method === 'item/permissions/requestApproval') return [
         'accept',
         'decline'
@@ -2858,7 +2883,7 @@ function codexAnswersBody(request, read) {
     };
 }
 function codexApprovalFields(request, task) {
-    const params = codexRecord(request.params), env = task.environment;
+    const params = codexRecord(request.params), env = task.environment, tool = codexRecord(params.toolCall), reason = codexText(params.reason) || (request.method === 'harness/requestPermission' ? codexText(codexRecord(tool.rawInput).justification) : '');
     const fields = [
         {
             label: '执行环境',
@@ -2876,7 +2901,7 @@ function codexApprovalFields(request, task) {
         },
         {
             label: '原因',
-            value: codexText(params.reason) || '原生请求未提供原因'
+            value: reason || '原生请求未提供原因'
         }
     ];
     const add = (label, value)=>{
@@ -2886,6 +2911,10 @@ function codexApprovalFields(request, task) {
             value: text
         });
     };
+    if (request.method === 'harness/requestPermission') {
+        add('工具', tool.title);
+        add('操作参数', tool.rawInput);
+    }
     if (request.method === 'item/commandExecution/requestApproval') add('命令', params.command ?? '原生请求未提供命令');
     const network = codexRecord(params.networkApprovalContext);
     if (network.host) add('网络目标', [
@@ -2908,7 +2937,7 @@ function installCodexApprovals() {
     const panel = document.createElement('section');
     panel.id = 'codex-approvals';
     panel.className = 'codex-approvals hidden';
-    panel.setAttribute('aria-label', 'Codex 待处理请求');
+    panel.setAttribute('aria-label', 'AI 待处理请求');
     panel.innerHTML = '<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span><button type="button" id="codex-approvals-expand" aria-haspopup="dialog">放大</button></div><div id="codex-approval-list"></div>';
     element('composer-wrap').before(panel);
     const dialog = document.createElement('dialog');
@@ -2972,6 +3001,7 @@ function createCodexApprovalCard(request, task) {
     node.dataset.request = request.id;
     const questionRequest = codexIsQuestion(request), asyncQuestion = request.method === 'duo/asyncQuestion', background = questionRequest && codexRecord(request.params).isBlocking === false;
     node.classList.toggle('codex-question-card', questionRequest);
+    node.classList.toggle('harness-permission-card', request.method === 'harness/requestPermission');
     const scope = asyncQuestion ? '提交后立即引导当前执行；若本轮已结束，则作为新消息继续。' : questionRequest ? background ? 'AI 可以继续工作；提交后会收到你的补充。' : 'AI 正在等你回答。选择选项或填写答案后，点击提交。' : request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。';
     node.innerHTML = `<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest ? '' : `<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request, task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
     const card = {
@@ -3045,11 +3075,11 @@ function createCodexApprovalCard(request, task) {
             }));
         else appendCodexAction(actions, '停止本轮', '', ()=>void stopCodexApprovalRun(card));
     } else {
-        for (const decision of codexApprovalDecisions(request))appendCodexAction(actions, {
+        for (const decision of codexApprovalDecisions(request))appendCodexAction(actions, decision === 'cancel' && request.method === 'harness/requestPermission' ? '取消请求' : ({
             accept: '批准本次',
             decline: '拒绝本次',
             cancel: '取消本轮'
-        }[decision], decision === 'accept' ? 'primary' : '', ()=>void submitCodexApproval(card, codexDecisionBody(request, decision)));
+        })[decision], decision === 'accept' ? 'primary' : '', ()=>void submitCodexApproval(card, codexDecisionBody(request, decision)));
         if (!actions.childElementCount) {
             card.error = '暂不支持此请求，不能在此页面授权；请停止本轮。';
             appendCodexAction(actions, '停止本轮', '', ()=>void stopCodexApprovalRun(card));
@@ -3104,9 +3134,10 @@ function renderCodexApprovals(current) {
     }
     panel.classList.toggle('hidden', !pending.length);
     const questions = pending.filter(codexIsQuestion), onlyQuestions = questions.length === pending.length;
-    const heading = element('codex-approvals-title'), title = (onlyQuestions ? 'Codex 有问题需要你回答' : 'Codex 等待处理') + ' · ' + pending.length;
+    const engine = current?.task.engine === 'deepseek-harness' ? 'Harness' : current?.task.engine === 'claude' ? 'Claude Code' : 'Codex';
+    const heading = element('codex-approvals-title'), title = (onlyQuestions ? engine + ' 有问题需要你回答' : engine + ' 等待处理') + ' · ' + pending.length;
     if (heading.textContent !== title) heading.textContent = title;
-    const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 Codex 会话' : '批准只针对当前请求，不创建永久授权规则';
+    const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 ' + engine + ' 会话' : '批准只针对当前请求，不创建永久授权规则';
     if (hint.textContent !== hintText) hint.textContent = hintText;
     positionCodexApprovals();
 }
@@ -8102,9 +8133,9 @@ function updateHandoffTarget(reset) {
     const task = handoffTask;
     if (!task) return;
     const engine = input('handoff-engine').value, env = input('handoff-environment').value, same = engine === task.engine && env === task.environment.id;
-    const modes = workCatalog.modes.filter((m)=>modeSupportsEngine(m, engine));
-    input('handoff-mode').innerHTML = (same && !task.binding ? '<option value="__current__">原任务权限（保持不变）</option>' : '') + modes.map((m)=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
-    input('handoff-mode').value = same && !task.binding ? '__current__' : modes.some((m)=>m.id === task.mode?.id) ? task.mode.id : modes.find((m)=>m.id === 'work')?.id || modes[0]?.id || '';
+    const modes = modesForEngine(engine).filter((m)=>modeSupportsEngine(m, engine));
+    input('handoff-mode').innerHTML = (same && !task.binding ? '<option value="__current__">原任务权限（保持不变）</option>' : '') + modes.map((m)=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m, engine))}</option>`).join('');
+    input('handoff-mode').value = same && !task.binding ? '__current__' : modes.some((m)=>m.id === task.mode?.id) ? task.mode.id : modes.find((m)=>m.id === (engine === 'deepseek-harness' ? 'harness:workspace' : 'work'))?.id || modes[0]?.id || '';
     if (reset) input('handoff-model').value = same ? task.model : '';
     handoffModels = [];
     updateHandoffEffort();
@@ -9010,7 +9041,7 @@ function renderTask() {
         ].includes(r.status));
     const queued = detail.runs.filter((r)=>r.status === 'queued').length;
     const latest = detail.runs.at(-1);
-    element('run-status').textContent = detail.approvals?.length ? '等待你处理 ' + detail.approvals.length + ' 个 Codex 请求' : active ? '正在执行' + (queued ? ' · ' + queued + ' 条要求排队中' : '') : latest?.error || names[t.status] || t.status;
+    element('run-status').textContent = detail.approvals?.length ? '等待你处理 ' + detail.approvals.length + ' 个 ' + taskEngineName(t.engine) + ' 请求' : active ? '正在执行' + (queued ? ' · ' + queued + ' 条要求排队中' : '') : latest?.error || names[t.status] || t.status;
     element('run-status').classList.toggle('error', !active && !!latest?.error);
     button('stop').classList.toggle('hidden', !active);
     button('send').disabled = sending;

@@ -26,9 +26,9 @@ function ensureHandoffDialog(){
 function updateHandoffTarget(reset:boolean){
  const task=handoffTask;if(!task)return;
  const engine=input('handoff-engine').value,env=input('handoff-environment').value,same=engine===task.engine&&env===task.environment.id;
- const modes=workCatalog.modes.filter(m=>modeSupportsEngine(m,engine));
- input('handoff-mode').innerHTML=(same&&!task.binding?'<option value="__current__">原任务权限（保持不变）</option>':'')+modes.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m))}</option>`).join('');
- input('handoff-mode').value=same&&!task.binding?'__current__':modes.some(m=>m.id===task.mode?.id)?task.mode!.id:modes.find(m=>m.id==='work')?.id||modes[0]?.id||'';
+ const modes=modesForEngine(engine).filter(m=>modeSupportsEngine(m,engine));
+ input('handoff-mode').innerHTML=(same&&!task.binding?'<option value="__current__">原任务权限（保持不变）</option>':'')+modes.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(modeLabel(m,engine))}</option>`).join('');
+ input('handoff-mode').value=same&&!task.binding?'__current__':modes.some(m=>m.id===task.mode?.id)?task.mode!.id:modes.find(m=>m.id===(engine==='deepseek-harness'?'harness:workspace':'work'))?.id||modes[0]?.id||'';
  if(reset)input('handoff-model').value=same?task.model:'';
  handoffModels=[];updateHandoffEffort();if(same)input('handoff-effort').value=task.reasoning_effort||'';
  updateHandoffHint();void loadHandoffModels();

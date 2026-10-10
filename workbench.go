@@ -43,12 +43,13 @@ func builtinModes() []WorkMode {
 		{ID: "codex:auto", Name: "Codex 自动审批", Permission: "workspace", Approval: "auto", Builtin: true, AllowNetwork: boolPtr(true)},
 		{ID: "plan", Name: "只读分析", Permission: "read", Approval: "never", Builtin: true, AllowNetwork: boolPtr(false)},
 		{ID: "harness:read", Name: "只读·可联网", Permission: "read", Approval: "never", Builtin: true, AllowNetwork: boolPtr(true)},
+		{ID: harnessWorkspaceMode, Name: "Harness 工作区权限", Permission: "workspace", Approval: "request", Builtin: true, AllowNetwork: boolPtr(true)},
 		{ID: "full", Name: "完全访问", Permission: "full", Approval: "never", Builtin: true, AllowNetwork: boolPtr(true)},
 	}
 }
 func boolPtr(v bool) *bool { return &v }
 func isBuiltinMode(id string) bool {
-	return id == "work" || id == "codex:auto" || id == "plan" || id == "harness:read" || id == "full"
+	return id == "work" || id == "codex:auto" || id == "plan" || id == "harness:read" || id == harnessWorkspaceMode || id == "full"
 }
 func (s *Store) catalog() WorkCatalog {
 	var c WorkCatalog
@@ -63,7 +64,7 @@ func validateCatalog(c *WorkCatalog) error {
 	if len(c.Modes) > 20 || len(c.Commands) > 40 {
 		return errors.New("最多 20 个自定义模式和 40 个指令")
 	}
-	seen := map[string]bool{"work": true, "codex:auto": true, "plan": true, "harness:read": true, "full": true}
+	seen := map[string]bool{"work": true, "codex:auto": true, "plan": true, "harness:read": true, harnessWorkspaceMode: true, "full": true}
 	for i := range c.Modes {
 		m := &c.Modes[i]
 		m.Name = strings.TrimSpace(m.Name)

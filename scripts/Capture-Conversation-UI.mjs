@@ -44,6 +44,7 @@ cases.push(['questionssplit','light',1280,800],['questionstools','dark',390,844]
 cases.push(['usage','light',1280,800],['usage','dark',390,844],['usage','light',320,844],['queued','light',1280,800],['queued','dark',390,844]);
 cases.push(['desktopmanual','light',1280,800],['desktopmanual','dark',390,844],['desktopmanual','light',320,844]);
 cases.push(['harnessapi','light',1280,800],['harnessapi','dark',390,844],['harnessapi','light',320,844]);
+cases.push(['harnesscreate','light',1280,800],['harnesscreate','dark',390,844],['harnesscreate','light',320,844],['harnesspermission','light',1280,800],['harnesspermission','dark',390,844],['harnesspermission','light',320,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -51,6 +52,7 @@ for(const [view,theme,width,height] of cases){
  const name=`${view}-${theme}-${width}`;
  const webRoot=view==='before'?pathToFileURL(baseline+path.sep):new URL('../web/',import.meta.url);
  const {document,ctx}=await createWebShellFixture(webRoot);
+ if(view.startsWith('harness')&&view!=='harnessapi')runInContext("workCatalog.modes.push({id:'harness:workspace',name:'Harness 工作区权限',permission:'workspace',approval:'request',builtin:true,allow_network:true},{id:'full',name:'完全访问',permission:'full',approval:'never',builtin:true,allow_network:true});",ctx);
  runInContext(`
   chosen='layout-preview';
   detail={task:{id:chosen,title:'Duo 优化',workspace:'C:/Projects/duo',environment:{type:'windows',name:'本机 Windows'},engine:'codex',model:'gpt-6-astra',reasoning_effort:'high',session:'synthetic-session',status:'done',archived:false,updated:1},runs:[{id:'r1',kind:'chat',status:'done',input:'优化对话页面，让常用操作更直接，留出更多阅读空间。',result:'已完成对话页面优化。\\n\\n- 标题与工作目录放在同一行。\\n- 本任务知识可以直接打开。\\n- 引用历史和知识并入输入框底部。\\n\\n会话信息与低频操作集中在右上角。',created:1,finished:2}],events:[],session_started:1790310000000};
@@ -58,6 +60,15 @@ for(const [view,theme,width,height] of cases){
   for(const id of ['tabs','task-actions','composer-wrap','conversation-filter'])element(id).classList.remove('hidden');
   element('conversation').innerHTML='';appendEvents([{seq:1,task_id:chosen,run_id:'r1',kind:'user',text:detail.runs[0].input},{seq:2,task_id:chosen,run_id:'r1',kind:'assistant',text:detail.runs[0].result}]);
  `,ctx);
+ if(view==='harnesscreate'){
+  runInContext("for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');input('create-engine').value='deepseek-harness';modeOptions(input('create-mode'));setCreatePermission('request');element('task-title').textContent='新建任务';",ctx);
+  document.querySelector('[data-create-permission="request"]').id='preview-answer-submit';
+  const scroll=document.createElement('script');scroll.textContent="window.addEventListener('load',()=>document.getElementById('preview-answer-submit').scrollIntoView({block:'center'}));";document.body.append(scroll);
+ }
+ if(view==='harnesspermission'){
+  runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',permission:'workspace',approval:'request'};detail.approvals=[{id:'synthetic-permission',task_id:chosen,run_id:'r1',method:'harness/requestPermission',created:1,params:{sessionId:'synthetic',toolCall:{toolCallId:'synthetic-tool',title:'bash',rawInput:{command:'printf synthetic-marker',sandbox_permissions:'danger-full-access',justification:'需要在工作区外执行本次操作。'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}}];renderTask();",ctx);
+  document.querySelector('.codex-approval-actions button').id='preview-answer-submit';
+ }
  if(view==='desktopmanual'){
   runInContext(`desktopDialogTask=chosen;desktopHumanToken='synthetic';desktopState={active:true,task_id:chosen,target:'desktop',control:false,human_control:true};desktopFrame={id:'synthetic',bounds:{width:1280,height:720}};input('desktop-target').innerHTML='<option>合成测试窗口</option>';renderDesktopSharing();element('desktop-dialog').showModal();`,ctx);
   const img=document.getElementById('desktop-preview-image');img.classList.remove('hidden');img.src='data:image/svg+xml;base64,'+Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#dce6f0"/><rect x="160" y="90" width="960" height="520" rx="20" fill="#fff"/><text x="220" y="200" font-size="38" fill="#26323f">Synthetic desktop preview</text><rect x="220" y="280" width="220" height="64" rx="12" fill="#4269ea"/><text x="250" y="322" font-size="28" fill="#fff">Test button</text></svg>').toString('base64');
@@ -218,6 +229,7 @@ for(const [view,theme,width,height] of cases){
   if(view==='history')assert(items['conversation-older'].visible,'older history has no visible entry');
   if(view==='composerlarge'){assert(items.message.height>=270,'composer resize height was clamped to its old limit');assert(items.conversation.height>=100,'enlarged draft eliminates readable conversation');assert(items.send.y+items.send.height<=height,'resized draft pushes send action off screen')}
   assert(metrics.bodyWidth<=metrics.width+1,'page overflows horizontally');
+  if(view==='harnesscreate'||view==='harnesspermission'){const b=items['preview-answer-submit'];assert(b.visible&&b.width>=44&&b.height>=32&&b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,'Harness permission action inaccessible');if(view==='harnesspermission'){const p=items['codex-approvals'];assert(p.visible&&p.scrollWidth<=p.clientWidth+1&&p.y>=0&&p.y+p.height<=height+1,'Harness approval panel exceeds viewport');assert(b.y>=p.y&&b.y+b.height<=p.y+p.height,'Harness approve button clipped by its own panel')}}
   if(view==='live'||view.startsWith('questions')){
    const controls=view==='questionstools'?[]:view==='questionsasync'?['send']:['live-steer','live-interrupt','send','stop'];
    for(const id of controls){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width&&b.y+b.height<=height,id+' is clipped');if(width<=760)assert(b.height>=44,id+' is too short for touch')}

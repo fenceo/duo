@@ -74,8 +74,14 @@ func (c *CodexRequests) list(taskID string) []CodexPendingRequest {
 }
 
 func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method string, params json.RawMessage) (json.RawMessage, error) {
+	engine := "Codex"
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput":
+	case harnessPermissionMethod:
+		engine = "Harness"
+		if _, err := parseHarnessPermission(params); err != nil {
+			return nil, err
+		}
 	case "mcpServer/elicitation/request":
 		_ = a.store.event(taskID, runID, "progress", "此 MCP 表单尚未支持，已拒绝；未授予权限。")
 		a.changed()
@@ -91,7 +97,7 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 		TurnID   string `json:"turnId"`
 		ItemID   string `json:"itemId"`
 	}
-	if json.Unmarshal(params, &envelope) != nil || envelope.ThreadID == "" || envelope.TurnID == "" || envelope.ItemID == "" {
+	if method != harnessPermissionMethod && (json.Unmarshal(params, &envelope) != nil || envelope.ThreadID == "" || envelope.TurnID == "" || envelope.ItemID == "") {
 		return nil, errors.New("Codex 审批请求缺少会话、轮次或操作标识")
 	}
 	p := &codexPending{CodexPendingRequest: CodexPendingRequest{ID: uid(), TaskID: taskID, RunID: runID, Method: method, Params: append(json.RawMessage(nil), params...), Created: now()}, ctx: ctx, answer: make(chan json.RawMessage, 1)}
@@ -113,7 +119,7 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 		c.mu.Unlock()
 		a.changed()
 	}()
-	_ = a.store.event(taskID, runID, "progress", "Codex 等待用户确认 · "+method+" · "+p.ID)
+	_ = a.store.event(taskID, runID, "progress", engine+" 等待用户确认 · "+method+" · "+p.ID)
 	a.changed()
 	select {
 	case answer := <-p.answer:
@@ -122,7 +128,7 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 		}
 		return answer, nil
 	case <-ctx.Done():
-		_ = a.store.event(taskID, runID, "progress", "Codex 请求已失效 · "+p.ID)
+		_ = a.store.event(taskID, runID, "progress", engine+" 请求已失效 · "+p.ID)
 		return nil, ctx.Err()
 	}
 }
@@ -142,6 +148,8 @@ var errCodexRequestExpired = errors.New("此请求已处理或已失效，请刷
 func codexAnswerPayload(p CodexPendingRequest, answer CodexAnswer) (json.RawMessage, error) {
 	var result any
 	switch p.Method {
+	case harnessPermissionMethod:
+		return harnessAnswerPayload(p.Params, answer)
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
 		if len(answer.Answers) != 0 || (answer.Decision != "accept" && answer.Decision != "decline" && answer.Decision != "cancel") {
 			return nil, errors.New("审批决定无效")
@@ -234,7 +242,11 @@ func (a *App) answerCodexInteraction(taskID, id string, answer CodexAnswer) erro
 	if p.Method == "item/tool/requestUserInput" {
 		label = "已回答"
 	}
-	if err = a.store.event(taskID, p.RunID, "progress", "已处理 Codex 请求 · "+p.ID+" · "+label); err != nil {
+	engine := "Codex"
+	if p.Method == harnessPermissionMethod {
+		engine = "Harness"
+	}
+	if err = a.store.event(taskID, p.RunID, "progress", "已处理 "+engine+" 请求 · "+p.ID+" · "+label); err != nil {
 		return err
 	}
 	if p.ctx.Err() != nil {

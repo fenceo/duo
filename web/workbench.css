@@ -695,7 +695,7 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 .codex-question-card .codex-answer-option{border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer}
 .codex-question-card .codex-answer-option:has(input:checked){border-color:var(--accent);background:var(--tint)}
 .codex-question-card .codex-answer-option:focus-within{outline:2px solid var(--accent);outline-offset:1px}
-.codex-question-card .codex-approval-actions{position:sticky;bottom:0;padding:8px 0;background:var(--canvas);box-shadow:0 -6px 12px var(--canvas)}
+.codex-question-card .codex-approval-actions,.harness-permission-card .codex-approval-actions{position:sticky;bottom:0;padding:8px 0;background:var(--canvas);box-shadow:0 -6px 12px var(--canvas)}
 .codex-approvals-heading #codex-approvals-expand{margin-left:auto;min-height:44px;padding:5px 10px;font-size:12px}
 .codex-requests-dialog{padding:0;width:min(820px,calc(100vw - 24px));max-height:calc(100dvh - 24px)}
 .codex-requests-dialog .codex-approvals{min-height:0;max-height:calc(100dvh - 48px);border:0}

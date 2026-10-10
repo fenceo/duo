@@ -110,7 +110,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 		}
 		mode = &selected
 	}
-	if mode != nil && (v.Engine != "codex" && mode.Approval == "auto" || v.Engine != "deepseek-harness" && mode.ID == "harness:read") {
+	if mode != nil && (v.Engine != "codex" && mode.Approval == "auto" || v.Engine != "deepseek-harness" && (mode.ID == "harness:read" || mode.ID == harnessWorkspaceMode)) {
 		return handoffResult{}, errors.New("权限模式不适用于目标引擎")
 	}
 	if v.Engine == "deepseek-harness" {

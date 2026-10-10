@@ -54,12 +54,13 @@ type harnessWorker struct {
 	session      string
 	selection    string
 	retiring     bool
+	interactive  bool
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
 // escalation, not approves everything. Presets must not override this boundary.
 func harnessPolicy(t Task) ([]byte, error) {
-	mode := "workspace-write"
+	mode, approval := "workspace-write", "never"
 	if t.Mode != nil {
 		if t.Mode.Approval == "auto" {
 			return nil, errors.New("Harness ACP 不支持原生自动风险评审")
@@ -76,10 +77,13 @@ func harnessPolicy(t Task) ([]byte, error) {
 		default:
 			return nil, errors.New("Harness 权限模式无效")
 		}
+		if harnessInteractiveMode(t.Mode) {
+			approval = "ask"
+		}
 	}
 	return json.Marshal([]any{
 		map[string]any{"id": "sandbox-policy", "config": map[string]any{"mode": mode, "workspaceRoot": t.Workspace}},
-		map[string]any{"id": "approval", "config": map[string]any{"policy": "never"}},
+		map[string]any{"id": "approval", "config": map[string]any{"policy": approval}},
 		map[string]any{"id": "permission", "disabled": true},
 		map[string]any{"id": "session-log-deepseek", "config": map[string]any{"enabled": false}},
 	})
@@ -239,7 +243,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		cleanup()
 		return nil, err
 	}
-	w := &harnessWorker{c: c, cmd: cmd, in: in, frames: make(chan codexRPC, 128), fault: make(chan error, 1), done: make(chan struct{}), halt: make(chan struct{}), fingerprint: harnessFingerprint(c, t)}
+	w := &harnessWorker{c: c, cmd: cmd, in: in, frames: make(chan codexRPC, 128), fault: make(chan error, 1), done: make(chan struct{}), halt: make(chan struct{}), fingerprint: harnessFingerprint(c, t), interactive: harnessInteractiveMode(t.Mode)}
 	var scans sync.WaitGroup
 	scans.Add(2)
 	go func() {

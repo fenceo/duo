@@ -99,8 +99,8 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 	if engine != "codex" && mode != nil && mode.Approval == "auto" {
 		return Task{}, errors.New("原生自动风险评审目前仅支持 Codex，请为当前引擎选择其它工作模式")
 	}
-	if mode != nil && mode.ID == "harness:read" && engine != "deepseek-harness" {
-		return Task{}, errors.New("只读·可联网模式仅适用于 Harness")
+	if mode != nil && (mode.ID == "harness:read" || mode.ID == harnessWorkspaceMode) && engine != "deepseek-harness" {
+		return Task{}, errors.New("Harness 权限模式仅适用于 Harness")
 	}
 	if engine == "deepseek-harness" {
 		if _, err := harnessPolicy(Task{Mode: mode, Workspace: workspace}); err != nil {
@@ -248,8 +248,8 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if task.Engine != "codex" && mode.Approval == "auto" {
 		return Run{}, errors.New("原生自动风险评审目前仅支持 Codex，请为当前引擎选择其它工作模式")
 	}
-	if mode.ID == "harness:read" && task.Engine != "deepseek-harness" {
-		return Run{}, errors.New("只读·可联网模式仅适用于 Harness")
+	if (mode.ID == "harness:read" || mode.ID == harnessWorkspaceMode) && task.Engine != "deepseek-harness" {
+		return Run{}, errors.New("Harness 权限模式仅适用于 Harness")
 	}
 	if task.Engine == "deepseek-harness" {
 		if kind == "knowledge" {

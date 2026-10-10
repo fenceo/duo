@@ -65,13 +65,15 @@ async function forkTask(id=chosen){
  }catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{forkingTasks.delete(id)}
 }
 function modeOptions(select:HTMLSelectElement,snapshot?:WorkMode){
- const previous=select.value,engine=select.id==='create-mode'?input('create-engine')?.value:detail?.task.engine,items=workCatalog.modes.filter(m=>m.id!=='harness:read'||engine==='deepseek-harness');if(snapshot?.id&&!items.some(m=>m.id===snapshot.id))items.push(snapshot);
- select.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m,engine)?'':' disabled'}>${escapeHTML(modeLabel(m))}${modeSupportsEngine(m,engine)?'':'（当前引擎不支持）'}</option>`).join('');
- const preferred=previous||snapshot?.id||'work';select.value=items.some(m=>m.id===preferred&&modeSupportsEngine(m,engine))?preferred:items.find(m=>m.id==='work'&&modeSupportsEngine(m,engine))?.id||items.find(m=>modeSupportsEngine(m,engine))?.id||'';
+ const previous=select.value,engine=select.id==='create-mode'?input('create-engine')?.value:detail?.task.engine,items=modesForEngine(engine);if(snapshot?.id&&!items.some(m=>m.id===snapshot.id)&&modeSupportsEngine(snapshot,engine))items.push(snapshot);
+ select.innerHTML=items.map(m=>`<option value="${escapeHTML(m.id)}"${modeSupportsEngine(m,engine)?'':' disabled'}>${escapeHTML(modeLabel(m,engine))}${modeSupportsEngine(m,engine)?'':'（当前引擎不支持）'}</option>`).join('');
+ const defaultID=engine==='deepseek-harness'?'harness:workspace':'work',preferred=previous||snapshot?.id||defaultID;select.value=items.some(m=>m.id===preferred&&modeSupportsEngine(m,engine))?preferred:items.find(m=>m.id===defaultID&&modeSupportsEngine(m,engine))?.id||items.find(m=>modeSupportsEngine(m,engine))?.id||'';
 }
+function modesForEngine(engine?:string){return workCatalog.modes.filter(m=>engine==='deepseek-harness'?m.id==='harness:workspace'||m.id==='full'||!m.builtin&&m.id!=='work'&&m.id!=='plan'&&m.id!=='codex:auto'&&m.id!=='harness:read':m.id!=='harness:read'&&m.id!=='harness:workspace')}
 function modeApproval(mode:WorkMode){return mode.approval||(mode.permission==='workspace'?'request':'never')}
-function modeSupportsEngine(mode:WorkMode,engine?:string){return (mode.id!=='harness:read'||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(engine!=='deepseek-harness'||mode.allow_network!==false)}
-function modeLabel(mode:WorkMode){
+function modeSupportsEngine(mode:WorkMode,engine?:string){return (!['harness:read','harness:workspace'].includes(mode.id)||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(engine!=='deepseek-harness'||mode.allow_network!==false)}
+function modeLabel(mode:WorkMode,engine?:string){
+ if(engine==='deepseek-harness'){if(mode.id==='harness:workspace')return '工作区权限 · 需要提升权限时询问';if(mode.id==='full')return '完全访问 · 不询问';return mode.name+' · '+(mode.permission==='read'?'只读，可联网':mode.permission==='full'?'完全访问，不询问':'工作区边界，越界拒绝')}
  const access=mode.permission==='read'?'只读':mode.permission==='full'?'完全访问':mode.allow_network===false?'工作区 · 离线':'工作区 · 联网';
  const approval=modeApproval(mode),review=approval==='auto'?' · Codex 自动风险评审':approval==='request'?' · 请求批准':mode.permission==='workspace'?' · 不请求批准':'';
  return `${mode.name} · ${access}${review}`;
@@ -172,6 +174,7 @@ function installWorkflow(){
  button('mode-manage').onclick=()=>{element<HTMLDialogElement>('commands-dialog').close();openPresetEditor('modes')};button('commands-close').onclick=()=>element<HTMLDialogElement>('commands-dialog').close();button('commands-manage').onclick=()=>{element<HTMLDialogElement>('commands-dialog').close();openPresetEditor('commands')};button('trash-close').onclick=()=>element<HTMLDialogElement>('trash-dialog').close();
 }
 function modeForPermission(permission:'request'|'auto'|'full'|'read',engine='codex'){
+ if(engine==='deepseek-harness'&&permission==='request')return workCatalog.modes.find(mode=>mode.id==='harness:workspace'&&mode.permission==='workspace'&&modeApproval(mode)==='request'&&mode.allow_network===true);
  if(engine==='deepseek-harness'&&permission==='read')return workCatalog.modes.find(mode=>mode.id==='harness:read'&&mode.permission==='read'&&modeApproval(mode)==='never'&&mode.allow_network===true);
  const wanted=permission==='read'?'read':permission==='full'?'full':'workspace',preferred=permission==='read'?'plan':permission==='request'?'work':permission==='auto'?'codex:auto':permission,approval=permission==='read'||permission==='full'?'never':permission;
  const matches=(mode:WorkMode)=>mode.permission===wanted&&modeApproval(mode)===approval&&modeSupportsEngine(mode,engine);
@@ -179,12 +182,13 @@ function modeForPermission(permission:'request'|'auto'|'full'|'read',engine='cod
 }
 function setCreatePermission(permission:'request'|'auto'|'full'|'read'){
  const engine=input('create-engine')?.value||'codex',codex=engine==='codex',harness=engine==='deepseek-harness';if(permission==='auto'&&!codex)permission='request';
+ if(harness&&permission!=='full')permission='request';
  const requested=modeForPermission(permission,engine);if(harness&&(!requested||!modeSupportsEngine(requested,engine)))permission='request';
  createPermission=permission;const selected=modeForPermission(permission,engine),mode=input('create-mode');
  if(mode)mode.value=selected?.id||'';
- element('create-permission-options')?.querySelectorAll<HTMLButtonElement>('[data-create-permission]').forEach(b=>{const value=b.dataset.createPermission as 'request'|'auto'|'full'|'read',candidate=modeForPermission(value,engine),on=value===permission;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));b.disabled=(value==='auto'&&!codex)||(harness&&(!candidate||!modeSupportsEngine(candidate,engine)));if(value==='request'){b.textContent=harness?'工作区边界':codex?'请求批准':'CLI 预授权';b.title=harness?'仅允许边界内操作；超出权限直接拒绝，不弹出审批':codex?'工作区内执行，需要提升权限时请求批准':'遵循 Claude CLI 预授权规则；不支持此页交互审批'}if(value==='read'){b.textContent=harness?'只读·可联网':'只读规划';b.title=harness?(b.disabled?'当前服务未提供 Harness 只读联网模式，请更新服务':'不修改工作区，但不限制网络；这不是离线模式'):'只读规划，不修改工作区'}});
- const hint=permission==='read'?(harness?'只读分析，不允许修改工作区；允许联网，不提供离线保证':'只读分析规划，不允许修改工作区'):permission==='request'?(harness?'仅在工作区权限边界内执行，越界请求直接拒绝':codex?'允许工作区内执行与联网；需要提升权限时请求批准':'允许工作区内执行，遵循 Claude CLI 预授权规则'):permission==='full'?'跳过工作区边界且不请求批准，请确认任务来源可信':'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
- if(element('create-permission-hint'))element('create-permission-hint').textContent=hint+(harness?'。Harness 无交互审批及独立网络开关，网络由原生策略和执行环境控制；当前离线模式不可选。':codex?'':'。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+ element('create-permission-options')?.querySelectorAll<HTMLButtonElement>('[data-create-permission]').forEach(b=>{const value=b.dataset.createPermission as 'request'|'auto'|'full'|'read',candidate=modeForPermission(value,engine),on=value===permission;b.classList.toggle('selected',on);b.classList.toggle('hidden',harness&&(value==='auto'||value==='read'));b.setAttribute('aria-pressed',String(on));b.disabled=(value==='auto'&&!codex)||(harness&&(!candidate||!modeSupportsEngine(candidate,engine)));if(value==='request'){b.textContent=harness?'工作区权限':codex?'请求批准':'CLI 预授权';b.title=harness?(candidate?'官方 workspace-write：工作区和允许的临时目录内可写，需要提升权限时询问':'当前服务未提供 Harness 官方工作区权限，请更新服务') :codex?'工作区内执行，需要提升权限时请求批准':'遵循 Claude CLI 预授权规则；不支持此页交互审批'}if(value==='read'){b.textContent='只读规划';b.title='只读规划，不修改工作区'}if(value==='auto')b.title='Codex 原生自动风险评审，不是无条件放行';if(value==='full')b.title=harness?'官方 danger-full-access：完全访问，不询问':'跳过工作区边界，仅在你明确选择时使用'});
+ const hint=permission==='read'?'只读分析规划，不允许修改工作区':permission==='request'?(harness?'工作区和允许的临时目录内可写；需要提升权限时询问，可批准本次或拒绝':codex?'允许工作区内执行与联网；需要提升权限时请求批准':'允许工作区内执行，遵循 Claude CLI 预授权规则'):permission==='full'?'跳过工作区边界且不请求批准，请确认任务来源可信':'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
+ if(element('create-permission-hint'))element('create-permission-hint').textContent=hint+(harness?'。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。':codex?'':'。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
  renderCreateFiles();
 }
 function renderCreateFiles(){
@@ -234,7 +238,7 @@ function updateComposerSendState(){
 }
 function renderWorkflow(){
  if(!element('message-mode'))return;
- if(detail){const control=element<HTMLSelectElement>('message-mode'),key=chosen+'|'+detail.task.engine,harness=detail.task.engine==='deepseek-harness';if(control.dataset.task!==key){control.dataset.task=key;control.value='';modeOptions(control,detail.task.mode)}control.disabled=detail.task.archived||harness;const hint=element('mode-engine-hint');hint.textContent=harness?'Harness 无交互审批 · 支持原生会话恢复 · 网络由原生策略和执行环境控制':'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';hint.title=harness?harnessSessionHint:hint.textContent;hint.classList.toggle('hidden',detail.task.engine==='codex');control.title=harness||detail.task.engine==='claude'?hint.title:'本轮 Codex 工作模式与原生审批方式';button('task-model-button').title=harness?harnessSessionHint:'本任务使用的 AI 工具、模型和推理强度';const footnote=element('composer-wrap').querySelector('.footnote');if(footnote)footnote.textContent=harness?'Harness 原生会话 · 支持停止和重启后续聊':'在服务所在电脑执行 · 保留所选工具的原生会话';}
+ if(detail){const control=element<HTMLSelectElement>('message-mode'),key=chosen+'|'+detail.task.engine,harness=detail.task.engine==='deepseek-harness';if(control.dataset.task!==key){control.dataset.task=key;control.value='';modeOptions(control,detail.task.mode)}control.disabled=detail.task.archived||harness;const hint=element('mode-engine-hint');hint.textContent=harness?(detail.task.mode?.id==='harness:workspace'?'Harness 工作区权限 · 需要提升权限时询问':detail.task.mode?.permission==='full'?'Harness 完全访问 · 不询问':'Harness 原权限保留 · 越界请求拒绝'):'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';hint.title=harness?harnessSessionHint:hint.textContent;hint.classList.toggle('hidden',detail.task.engine==='codex');control.title=harness||detail.task.engine==='claude'?hint.title:'本轮 Codex 工作模式与原生审批方式';button('task-model-button').title=harness?harnessSessionHint:'本任务使用的 AI 工具、模型和推理强度';const footnote=element('composer-wrap').querySelector('.footnote');if(footnote)footnote.textContent=harness?'Harness 原生会话 · 支持停止和重启后续聊':'在服务所在电脑执行 · 保留所选工具的原生会话';}
  const active=detail?.runs.some(r=>['queued','running'].includes(r.status));if(!active&&stoppingTask===chosen)stoppingTask='';button('stop').disabled=stoppingTask===chosen;button('stop').textContent=stoppingTask===chosen?'…':'■';button('stop').title=stoppingTask===chosen?'正在停止':'停止当前执行并取消所有排队消息';button('stop').setAttribute('aria-label',button('stop').title);
  const live=detail?.interaction;button('live-steer').classList.toggle('hidden',!active||detail?.task.engine!=='codex');button('live-interrupt').classList.toggle('hidden',!active);
  button('live-steer').title=live?.steering?'正在等待 Codex 确认引导':(attachmentDrafts.get(chosen)?.length?'立即引导支持文字；附件请用排队或中断后发送':'追加文字到当前执行，不切换当前模型或权限；连接就绪后可用');

@@ -9,8 +9,9 @@ function codexText(value:unknown):string{return typeof value==='string'?value:''
 function codexPretty(value:unknown):string{return value===undefined||value===null?'':typeof value==='string'?value:JSON.stringify(value,null,2)}
 function codexApprovalKey(request:CodexPendingRequest){return JSON.stringify([request.task_id,request.run_id,request.id])}
 function codexIsQuestion(request:CodexPendingRequest){return request.method==='item/tool/requestUserInput'||request.method==='duo/asyncQuestion'}
-function codexApprovalKind(request:CodexPendingRequest){return ({'item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'请你选择或补充','duo/asyncQuestion':'请你选择或补充'} as Record<string,string>)[request.method]||'暂不支持的请求'}
+function codexApprovalKind(request:CodexPendingRequest){return ({'harness/requestPermission':'Harness 工具权限','item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'请你选择或补充','duo/asyncQuestion':'请你选择或补充'} as Record<string,string>)[request.method]||'暂不支持的请求'}
 function codexApprovalDecisions(request:CodexPendingRequest):CodexApprovalDecision[]{
+ if(request.method==='harness/requestPermission'){const options=codexRecord(request.params).options,kinds=Array.isArray(options)?options.map(option=>codexText(codexRecord(option).kind)):[];return (['accept','decline','cancel'] as const).filter(value=>value==='cancel'||kinds.includes(value==='accept'?'allow_once':'reject_once'))}
  if(request.method==='item/permissions/requestApproval')return ['accept','decline'];
  if(!['item/commandExecution/requestApproval','item/fileChange/requestApproval'].includes(request.method))return [];
  const offered=codexRecord(request.params).availableDecisions;
@@ -33,9 +34,10 @@ function codexAnswersBody(request:CodexPendingRequest,read:(question:CodexQuesti
  return {answers};
 }
 function codexApprovalFields(request:CodexPendingRequest,task:Task):{label:string;value:string}[]{
- const params=codexRecord(request.params),env=task.environment;
- const fields=[{label:'执行环境',value:[env?.name,env?.type?.toUpperCase(),env?.distro,env?.host,env?.user].filter(Boolean).join(' · ')||'未提供'},{label:'工作目录',value:codexText(params.cwd)||task.workspace||'未提供'},{label:'原因',value:codexText(params.reason)||'原生请求未提供原因'}];
+ const params=codexRecord(request.params),env=task.environment,tool=codexRecord(params.toolCall),reason=codexText(params.reason)||(request.method==='harness/requestPermission'?codexText(codexRecord(tool.rawInput).justification):'');
+ const fields=[{label:'执行环境',value:[env?.name,env?.type?.toUpperCase(),env?.distro,env?.host,env?.user].filter(Boolean).join(' · ')||'未提供'},{label:'工作目录',value:codexText(params.cwd)||task.workspace||'未提供'},{label:'原因',value:reason||'原生请求未提供原因'}];
  const add=(label:string,value:unknown)=>{const text=codexPretty(value);if(text)fields.push({label,value:text})};
+ if(request.method==='harness/requestPermission'){add('工具',tool.title);add('操作参数',tool.rawInput)}
  if(request.method==='item/commandExecution/requestApproval')add('命令',params.command??'原生请求未提供命令');
  const network=codexRecord(params.networkApprovalContext);if(network.host)add('网络目标',[codexText(network.protocol),codexText(network.host)].filter(Boolean).join(' · '));
  if(params.grantRoot)add('申请授权路径',params.grantRoot);
@@ -49,7 +51,7 @@ function codexApprovalFields(request:CodexPendingRequest,task:Task):{label:strin
 function codexApprovalFieldsHTML(request:CodexPendingRequest,task:Task){return codexApprovalFields(request,task).map(field=>`<div class="codex-approval-field"><dt>${escapeHTML(field.label)}</dt><dd><pre>${escapeHTML(field.value)}</pre></dd></div>`).join('')}
 function installCodexApprovals(){
  const workspace=element('workspace');
- const panel=document.createElement('section');panel.id='codex-approvals';panel.className='codex-approvals hidden';panel.setAttribute('aria-label','Codex 待处理请求');
+ const panel=document.createElement('section');panel.id='codex-approvals';panel.className='codex-approvals hidden';panel.setAttribute('aria-label','AI 待处理请求');
  panel.innerHTML='<div class="codex-approvals-heading"><strong id="codex-approvals-title" role="status"></strong><span id="codex-approvals-hint"></span><button type="button" id="codex-approvals-expand" aria-haspopup="dialog">放大</button></div><div id="codex-approval-list"></div>';
  element('composer-wrap').before(panel);
  const dialog=document.createElement('dialog');dialog.id='codex-requests-dialog';dialog.className='codex-requests-dialog';dialog.setAttribute('aria-labelledby','codex-approvals-title');workspace.before(dialog);
@@ -76,6 +78,7 @@ function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApp
  const node=document.createElement('article');node.className='codex-approval-card';node.dataset.request=request.id;
  const questionRequest=codexIsQuestion(request),asyncQuestion=request.method==='duo/asyncQuestion',background=questionRequest&&codexRecord(request.params).isBlocking===false;
  node.classList.toggle('codex-question-card',questionRequest);
+ node.classList.toggle('harness-permission-card',request.method==='harness/requestPermission');
  const scope=asyncQuestion?'提交后立即引导当前执行；若本轮已结束，则作为新消息继续。':questionRequest?(background?'AI 可以继续工作；提交后会收到你的补充。':'AI 正在等你回答。选择选项或填写答案后，点击提交。'):request.method==='item/permissions/requestApproval'?'仅授予本次请求列出的权限，有效范围为当前轮次。':'批准仅针对当前请求；不会改写会话的审批模式。';
  node.innerHTML=`<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest?'':`<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request,task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
  const card:CodexApprovalCard={request,node,busy:false,settled:false,error:''},actions=node.querySelector<HTMLElement>('.codex-approval-actions')!;
@@ -95,7 +98,7 @@ function createCodexApprovalCard(request:CodexPendingRequest,task:Task):CodexApp
   if(asyncQuestion)appendCodexAction(actions,'暂不回答','',()=>void submitCodexApproval(card,{dismiss:true}));
   else appendCodexAction(actions,'停止本轮','',()=>void stopCodexApprovalRun(card));
  }else{
-  for(const decision of codexApprovalDecisions(request))appendCodexAction(actions,({accept:'批准本次',decline:'拒绝本次',cancel:'取消本轮'} as const)[decision],decision==='accept'?'primary':'',()=>void submitCodexApproval(card,codexDecisionBody(request,decision)));
+  for(const decision of codexApprovalDecisions(request))appendCodexAction(actions,decision==='cancel'&&request.method==='harness/requestPermission'?'取消请求':({accept:'批准本次',decline:'拒绝本次',cancel:'取消本轮'} as const)[decision],decision==='accept'?'primary':'',()=>void submitCodexApproval(card,codexDecisionBody(request,decision)));
   if(!actions.childElementCount){card.error='暂不支持此请求，不能在此页面授权；请停止本轮。';appendCodexAction(actions,'停止本轮','',()=>void stopCodexApprovalRun(card))}
  }
  const refresh=document.createElement('button');refresh.type='button';refresh.className='codex-approval-refresh subtle';refresh.textContent='刷新请求';refresh.onclick=()=>void refreshCodexApprovals(request.task_id).catch(error=>{card.error=(error as Error).message;updateCodexApprovalCard(card)});node.append(refresh);
@@ -115,8 +118,9 @@ function renderCodexApprovals(current:Detail|null){
  for(const [key,card] of codexApprovalCards)if(!keys.has(key)){card.node.remove();codexApprovalCards.delete(key)}
  for(const request of pending){const key=codexApprovalKey(request);let card=codexApprovalCards.get(key);if(!card){card=createCodexApprovalCard(request,current!.task);codexApprovalCards.set(key,card);list.append(card.node)}updateCodexApprovalCard(card)}
  panel.classList.toggle('hidden',!pending.length);const questions=pending.filter(codexIsQuestion),onlyQuestions=questions.length===pending.length;
- const heading=element('codex-approvals-title'),title=(onlyQuestions?'Codex 有问题需要你回答':'Codex 等待处理')+' · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
- const hint=element('codex-approvals-hint'),hintText=onlyQuestions?'答案会直接交回当前 Codex 会话':'批准只针对当前请求，不创建永久授权规则';if(hint.textContent!==hintText)hint.textContent=hintText;
+ const engine=current?.task.engine==='deepseek-harness'?'Harness':current?.task.engine==='claude'?'Claude Code':'Codex';
+ const heading=element('codex-approvals-title'),title=(onlyQuestions?engine+' 有问题需要你回答':engine+' 等待处理')+' · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
+ const hint=element('codex-approvals-hint'),hintText=onlyQuestions?'答案会直接交回当前 '+engine+' 会话':'批准只针对当前请求，不创建永久授权规则';if(hint.textContent!==hintText)hint.textContent=hintText;
  positionCodexApprovals();
 }
 async function refreshCodexApprovals(taskID:string){

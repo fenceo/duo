@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -61,6 +62,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
   if not valid:
    self.send_error(403); return
   self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+  if any(m.get('role')=='user' and 'DUO_PERMISSION_PROBE' in str(m.get('content')) for m in request.get('messages',[])):
+   tools=[m for m in request['messages'] if m.get('role')=='tool']
+   if not tools:
+    args=json.dumps({'command':'printf DUO_PERMISSION_TOOL_EXECUTED','description':'Print one harmless synthetic permission marker','sandbox_permissions':'danger-full-access','justification':'Isolated loopback approval fixture; no user files are touched.'})
+    delta={'role':'assistant','tool_calls':[{'index':0,'id':'permission-probe','type':'function','function':{'name':'bash','arguments':args}}]}
+    finish='tool_calls'
+   else:
+    delta={'role':'assistant','content':'DUO_PERMISSION_RESULT:'+str(tools[-1].get('content'))}
+    finish='stop'
+   first={'id':'permission-fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':delta,'finish_reason':None}]}
+   last={'id':'permission-fixture','object':'chat.completion.chunk','created':1,'choices':[{'index':0,'delta':{},'finish_reason':finish}],'usage':{'prompt_tokens':20,'completion_tokens':5,'total_tokens':25}}
+   self.wfile.write(('data: '+json.dumps(first)+'\n\ndata: '+json.dumps(last)+'\n\ndata: [DONE]\n\n').encode()); self.wfile.flush(); return
   first={'id':'fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':{'role':'assistant','content':'DUO_HARNESS_API_OK'},'finish_reason':None}]}
   last={'id':'fixture','object':'chat.completion.chunk','created':1,'choices':[{'index':0,'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':20,'completion_tokens':5,'total_tokens':25}}
   self.wfile.write(('data: '+json.dumps(first)+'\n\ndata: '+json.dumps(last)+'\n\ndata: [DONE]\n\n').encode()); self.wfile.flush()
@@ -141,6 +154,37 @@ print(json.dumps(hits),flush=True)
 		t.Fatal("native ACP response missing")
 	}
 	closeHarnessRuntimes()
+	expectedHits := 2
+	if os.Getenv("DUO_HARNESS_PERMISSION_NATIVE_FIXTURE") == "1" {
+		for _, decision := range []string{"accept", "decline"} {
+			approvalCount := 0
+			permissionCtx := withCodexInteraction(ctx, func(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+				approvalCount++
+				if method != harnessPermissionMethod {
+					return nil, errors.New("unexpected native interaction")
+				}
+				request, err := parseHarnessPermission(params)
+				if err != nil || request.ToolCall.Title != "bash" || !strings.Contains(string(request.ToolCall.RawInput), "DUO_PERMISSION_TOOL_EXECUTED") {
+					return nil, errors.New("missing native command correlation")
+				}
+				return harnessAnswerPayload(params, CodexAnswer{Decision: decision})
+			})
+			permissionTask := Task{ID: "native-permission-" + decision, Engine: "deepseek-harness", Workspace: home, Model: req.Model, Mode: &WorkMode{ID: harnessWorkspaceMode, Permission: "workspace", Approval: "request", AllowNetwork: boolPtr(true)}}
+			_, result, err := runHarnessACP(permissionCtx, c, permissionTask, "DUO_PERMISSION_PROBE "+decision, func(string, string) {})
+			if err != nil || approvalCount != 1 || !strings.Contains(result, "DUO_PERMISSION_RESULT:") {
+				t.Fatalf("native approval %s failed: requests=%d result=%s error=%v", decision, approvalCount, result, err)
+			}
+			if decision == "accept" && !strings.Contains(result, "DUO_PERMISSION_TOOL_EXECUTED") {
+				t.Fatal("approved native command did not execute", result)
+			}
+			if decision == "decline" && !strings.Contains(strings.ToLower(result), "reject") {
+				t.Fatal("native reject did not prevent execution", result)
+			}
+			closeHarnessRuntimes()
+			expectedHits += 2
+		}
+		t.Log("official installed WSL Harness requested one-time approval with live tool details; accept executed the harmless marker and decline rejected it; loopback only")
+	}
 	io.WriteString(in, "done\n")
 	line, err = reader.ReadString('\n')
 	if err != nil {
@@ -150,8 +194,13 @@ print(json.dumps(hits),flush=True)
 		Model         string `json:"model"`
 		Authenticated bool   `json:"authenticated"`
 	}
-	if json.Unmarshal([]byte(line), &hits) != nil || len(hits) != 2 || hits[0].Model != "model-list" || !hits[0].Authenticated || hits[1].Model != req.Model || !hits[1].Authenticated {
+	if json.Unmarshal([]byte(line), &hits) != nil || len(hits) != expectedHits || hits[0].Model != "model-list" || !hits[0].Authenticated || hits[1].Model != req.Model || !hits[1].Authenticated {
 		t.Fatal("native credential or route was not used")
+	}
+	for _, hit := range hits {
+		if !hit.Authenticated {
+			t.Fatal("synthetic API authentication was lost")
+		}
 	}
 	if err := server.Wait(); err != nil {
 		t.Fatal("fixture server did not stop")

@@ -38,6 +38,8 @@ try{
  assert.equal(catalog.modes.find(m=>m.id==='codex:auto').approval,'auto');
  assert.equal(catalog.modes.find(m=>m.id==='plan').permission,'read');
  assert.equal(catalog.modes.find(m=>m.id==='harness:read').allow_network,true);
+ assert.equal(catalog.modes.find(m=>m.id==='harness:workspace').approval,'request');
+ assert.equal(catalog.modes.find(m=>m.id==='harness:workspace').permission,'workspace');
  const headers={Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json','Origin':base};
  const automatic=await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json());
  assert.deepEqual(automatic,{capture:true,recall:true,organize:true},'automatic recording, organization and recall work without setup');
@@ -54,6 +56,8 @@ try{
  assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'acp');
  const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
  assert.equal((await createHarness('plan')).status,400,'Harness must not promise network isolation');
+ const officialCreated=await createHarness('harness:workspace');assert.equal(officialCreated.status,201);
+ assert.equal((await officialCreated.json()).task.mode.id,'harness:workspace');
  const created=await createHarness('harness:read');assert.equal(created.status,201);
  const {task}=await created.json();assert.equal(task.engine,'deepseek-harness');
  const recent=await fetch(base+'/api/tasks/'+task.id+'?recent=1',{headers}).then(r=>r.json());

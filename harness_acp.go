@@ -10,7 +10,8 @@ import (
 )
 
 // Only native Harness may run tools, under the invocation policy. Duo does not
-// advertise client filesystem/terminal capabilities or approve ACP requests.
+// advertise client filesystem/terminal capabilities. Permission requests outside
+// an explicitly interactive prompt are always cancelled.
 func (w *harnessWorker) rejectClientRequest(ctx context.Context, msg codexRPC) error {
 	response := map[string]any{"jsonrpc": "2.0", "id": msg.ID}
 	if msg.Method == "session/request_permission" {
@@ -287,11 +288,24 @@ retryWorker:
 }
 
 func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(string, string)) (string, string, error) {
+	ctx, cancelTurn := context.WithCancel(ctx)
+	defer cancelTurn()
 	id, err := w.send(ctx, "session/prompt", map[string]any{"sessionId": w.session, "prompt": []any{map[string]any{"type": "text", "text": input}}})
 	if err != nil {
 		return w.session, "", err
 	}
 	state := harnessACPTurn{session: w.session}
+	type pendingPermission struct {
+		callID string
+		cancel context.CancelFunc
+	}
+	pending := map[string]pendingPermission{}
+	replies := make(chan harnessPermissionReply, 8)
+	defer func() {
+		for _, request := range pending {
+			request.cancel()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -299,11 +313,51 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 			return w.session, state.result, ctx.Err()
 		case err := <-w.fault:
 			return w.session, state.result, err
+		case reply := <-replies:
+			key := string(reply.id)
+			request, ok := pending[key]
+			if !ok {
+				continue
+			}
+			request.cancel()
+			delete(pending, key)
+			if _, live := state.tools[reply.callID]; !live {
+				reply.result = json.RawMessage(`{"outcome":{"outcome":"cancelled"}}`)
+			}
+			data, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": reply.id, "result": reply.result})
+			if err := w.write(ctx, append(data, '\n')); err != nil {
+				return w.session, state.result, err
+			}
 		case msg, ok := <-w.frames:
 			if !ok {
 				return w.session, state.result, w.failure()
 			}
 			if msg.Method != "" && len(msg.ID) > 0 {
+				if w.interactive && msg.Method == "session/request_permission" {
+					params, callID, err := state.permissionParams(msg.Params)
+					key := string(msg.ID)
+					_, duplicate := pending[key]
+					if duplicate {
+						return w.session, state.result, errors.New("Harness 重复发送了待处理审批标识")
+					}
+					busyCall := false
+					for _, request := range pending {
+						busyCall = busyCall || request.callID == callID
+					}
+					if err == nil && len(pending) < 8 && !busyCall {
+						requestCtx, cancel := context.WithCancel(ctx)
+						pending[key] = pendingPermission{callID, cancel}
+						go func(msg codexRPC, callID string, params json.RawMessage) {
+							reply := requestHarnessPermission(requestCtx, msg.ID, callID, params)
+							select {
+							case replies <- reply:
+							case <-ctx.Done():
+							}
+						}(msg, callID, params)
+						continue
+					}
+					emit("progress", "Harness 审批请求缺少有效的本轮操作详情或请求过多，已取消；未授予权限。")
+				}
 				if err := w.rejectClientRequest(ctx, msg); err != nil {
 					return w.session, state.result, err
 				}
@@ -311,6 +365,11 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 			}
 			if msg.Method != "" {
 				state.consume(msg, emit)
+				for _, request := range pending {
+					if _, live := state.tools[request.callID]; !live {
+						request.cancel()
+					}
+				}
 				continue
 			}
 			if string(msg.ID) != fmt.Sprint(id) {
@@ -374,6 +433,7 @@ func harnessACPError(message string) error {
 type harnessACPTurn struct {
 	session, result string
 	afterTool       bool
+	tools           map[string]harnessToolCall
 }
 
 func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
@@ -388,6 +448,7 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 			Title    string          `json:"title"`
 			RawInput json.RawMessage `json:"rawInput"`
 			Status   string          `json:"status"`
+			CallID   string          `json:"toolCallId"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(msg.Params, &p) != nil || p.SessionID != s.session {
@@ -411,9 +472,21 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 		s.result += block.Text
 		emit("assistant", s.result)
 	case "tool_call":
+		if u.CallID != "" && u.Title != "" && len(u.RawInput) > 0 && len(u.RawInput) < 240*1024 && len(s.tools) < 128 {
+			if s.tools == nil {
+				s.tools = map[string]harnessToolCall{}
+			}
+			// A duplicate ID cannot replace the operation awaiting user consent.
+			if _, exists := s.tools[u.CallID]; !exists {
+				s.tools[u.CallID] = harnessToolCall{ID: u.CallID, Title: u.Title, RawInput: append(json.RawMessage(nil), u.RawInput...)}
+			}
+		}
 		s.afterTool = true
 		emit("tool", u.Title+"\n"+string(u.RawInput))
 	case "tool_call_update":
+		if u.Status == "completed" || u.Status == "failed" {
+			delete(s.tools, u.CallID)
+		}
 		text := string(u.Content)
 		if len(text) > 24000 {
 			text = text[:24000] + "…"
