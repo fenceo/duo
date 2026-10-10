@@ -97,6 +97,12 @@ Remove-Item Env:DUO_HARNESS_NATIVE_FIXTURE
 
 测试创建临时 DSH_HOME 和工作目录，覆盖模型切换、闲置回收、重建进程及取消后续聊；须在正常 Windows 用户环境执行，受限工具沙箱可能阻止 Harness 的目录探测。
 
+WSL 附件原生验收复用 `TestHarnessAPINativeWSL` 的隔离回环服务：设置
+`DUO_HARNESS_API_WSL_FIXTURE=1`、`DUO_HARNESS_ATTACHMENT_NATIVE_FIXTURE=1`，并通过
+`DUO_HARNESS_API_WSL_DISTRO`、`DUO_HARNESS_API_WSL_USER`、`DUO_HARNESS_API_WSL_BINARY`
+指定已安装 Harness 的准确发行版、用户和 CLI 路径。测试仅为临时模型声明 `input: [text, image]`，
+验证远程暂存、ACP 图片能力重连、同一会话的文本/图片持久化以及文本模型拒绝图片，不更改原配置。
+
 - 调用 `wsl.exe` 时只传递 `SystemRoot` 和 `WINDIR`。不要把 Windows 的完整 `PATH`、代理变量或受限沙箱变量传给 WSL；Linux 命令必须使用所选用户的登录环境。
 - 从 `command` 或 `environmentProbeCommand` 创建带超时的子进程时，统一使用 `commandWithContext`，以保留最小宿主环境和 `Dir`。
 - Windows 自启使用当前用户的 `Jianzuo User` 计划任务。配置一致时应复用现有任务，不从受限进程强制重注册。

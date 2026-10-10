@@ -163,8 +163,8 @@ func runHarnessACP(ctx context.Context, c Config, t Task, input string, emit fun
 	if _, err := harnessPolicy(t); err != nil {
 		return session, "", err
 	}
-	if len(t.Files) > 0 || c.HardwareAI != nil {
-		return session, "", errors.New("Harness 暂不支持Duo附件或硬件授权，请使用文字任务或其它引擎")
+	if c.HardwareAI != nil {
+		return session, "", errors.New("Harness 暂不支持Duo硬件授权，请使用其它引擎")
 	}
 	reserved := false
 retryWorker:
@@ -201,6 +201,28 @@ retryWorker:
 			w.lease.Unlock()
 			w = nil
 			harnessRuntimes.Lock()
+		}
+		// Image admission is fixed by initialize against the startup route. A
+		// text-only connection must be reopened after selecting a vision model
+		// or editing its native capability declaration (even with the same ID);
+		// retain the old profile and durable ID, and close before resuming.
+		if w != nil && harnessHasImages(t.Files) && !w.imageInput {
+			w.retiring = true
+			if w.idle != nil {
+				w.idle.Stop()
+			}
+			harnessRuntimes.Unlock()
+			err := w.close()
+			harnessRuntimes.Lock()
+			if harnessRuntimes.workers[session] == w {
+				delete(harnessRuntimes.workers, session)
+			}
+			w.lease.Unlock()
+			if err != nil {
+				harnessRuntimes.Unlock()
+				return session, "", err
+			}
+			w = nil
 		}
 	}
 	if w == nil {
@@ -266,6 +288,9 @@ retryWorker:
 		})
 		harnessRuntimes.Unlock()
 	}()
+	if _, err := harnessPromptContent(input, t.Files, w.imageInput); err != nil {
+		return session, "", err
+	}
 	setup, cancel := context.WithTimeout(ctx, 60*time.Second)
 	if w.session == "" {
 		session, runErr = w.prepareSession(setup, c, t, emit)
@@ -284,13 +309,17 @@ retryWorker:
 	harnessRuntimes.workers[session] = w
 	harnessRuntimes.Unlock()
 	emit("session", session)
-	return w.prompt(ctx, input, emit)
+	return w.prompt(ctx, input, emit, t.Files...)
 }
 
-func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(string, string)) (string, string, error) {
+func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(string, string), files ...RuntimeAttachment) (string, string, error) {
 	ctx, cancelTurn := context.WithCancel(ctx)
 	defer cancelTurn()
-	id, err := w.send(ctx, "session/prompt", map[string]any{"sessionId": w.session, "prompt": []any{map[string]any{"type": "text", "text": input}}})
+	content, err := harnessPromptContent(input, files, w.imageInput)
+	if err != nil {
+		return w.session, "", err
+	}
+	id, err := w.send(ctx, "session/prompt", map[string]any{"sessionId": w.session, "prompt": content})
 	if err != nil {
 		return w.session, "", err
 	}
@@ -376,7 +405,7 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 				continue
 			}
 			if msg.Error != nil {
-				return w.session, state.result, harnessACPError(msg.Error.Message)
+				return w.session, state.result, harnessACPError(harnessRPCMessage(msg.Error.Message, msg.Error.Data))
 			}
 			var response struct {
 				StopReason string `json:"stopReason"`
@@ -420,12 +449,30 @@ func (w *harnessWorker) cancelPrompt(id int) {
 	}
 }
 
+func harnessRPCMessage(message string, data json.RawMessage) string {
+	var detail struct {
+		Message string `json:"message"`
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(data, &detail) == nil {
+		if detail.Message != "" {
+			message += ": " + detail.Message
+		} else if detail.Details != "" {
+			message += ": " + detail.Details
+		}
+	}
+	return message
+}
+
 func harnessACPError(message string) error {
 	if strings.Contains(message, "MISSING_CREDENTIAL") || strings.Contains(strings.ToLower(message), "missing credential") {
 		return errors.New("Harness 缺少凭据 [MISSING_CREDENTIAL]：请在此任务对应的执行环境中配置 Harness 原生凭据，再重试")
 	}
 	if isHarnessUnsupportedReasoning(message) {
 		return errors.New(harnessUnsupportedReasoningMessage)
+	}
+	if strings.Contains(message, "does not declare image input") || strings.Contains(message, "inline image prompts were not advertised") {
+		return errors.New(harnessUnsupportedImageMessage)
 	}
 	return errors.New("Harness 本轮失败：" + message)
 }

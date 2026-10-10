@@ -255,9 +255,6 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		if kind == "knowledge" {
 			return Run{}, errors.New("Harness 暂不支持独立的只读知识总结，请使用 Codex；仍可手动编辑笔记")
 		}
-		if len(options.AttachmentIDs) > 0 {
-			return Run{}, errors.New("Harness 当前暂不支持附件，请发送文字或选择其它引擎")
-		}
 		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {
 			return Run{}, err
 		}

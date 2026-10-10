@@ -75,11 +75,11 @@ func runHarnessACPFixture() {
 			return
 		}
 		var p struct {
-			SessionID string                        `json:"sessionId"`
-			Cwd       string                        `json:"cwd"`
-			ConfigID  string                        `json:"configId"`
-			Value     string                        `json:"value"`
-			Prompt    []struct{ Type, Text string } `json:"prompt"`
+			SessionID string                `json:"sessionId"`
+			Cwd       string                `json:"cwd"`
+			ConfigID  string                `json:"configId"`
+			Value     string                `json:"value"`
+			Prompt    []harnessFixtureBlock `json:"prompt"`
 		}
 		_ = json.Unmarshal(req.Params, &p)
 		switch req.Method {
@@ -92,7 +92,7 @@ func runHarnessACPFixture() {
 			if scenario == "bad-handshake" {
 				name = "unrelated-program"
 			}
-			reply(req.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": name}, "agentCapabilities": map[string]any{"sessionCapabilities": map[string]any{"resume": map[string]any{}, "close": map[string]any{}}}})
+			reply(req.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": name}, "agentCapabilities": map[string]any{"promptCapabilities": map[string]bool{"image": scenario == "attachments" && route["model"] == "fixture-vision"}, "sessionCapabilities": map[string]any{"resume": map[string]any{}, "close": map[string]any{}}}})
 		case "session/new", "session/resume":
 			if coldProvider {
 				coldProvider = false
@@ -136,11 +136,24 @@ func runHarnessACPFixture() {
 			}
 			reply(req.ID, options())
 		case "session/prompt":
-			if session == "" || p.SessionID != session || len(p.Prompt) != 1 || p.Prompt[0].Type != "text" {
+			if session == "" || p.SessionID != session || len(p.Prompt) == 0 || p.Prompt[0].Type != "text" {
 				reject(req.ID, "bad prompt")
 				continue
 			}
 			input := p.Prompt[0].Text
+			for _, block := range p.Prompt[1:] {
+				switch block.Type {
+				case "text":
+					input += block.Text
+				case "image":
+					if scenario != "attachments" || route["model"] != "fixture-vision" || block.MimeType != "image/png" || block.Data == "" {
+						os.Exit(23)
+					}
+					input += "[fixture native image]"
+				default:
+					os.Exit(23)
+				}
+			}
 			history = append(history, input)
 			save()
 			notify("foreign-session", "agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": "FOREIGN RESULT"}})
@@ -154,7 +167,7 @@ func runHarnessACPFixture() {
 			}
 			notify(session, "tool_call", map[string]any{"title": "read_file", "rawInput": map[string]string{"path": "example.txt"}})
 			notify(session, "tool_call_update", map[string]any{"status": "completed", "content": []any{map[string]string{"text": "fixture tool result"}}})
-			result, _ := json.Marshal(map[string]any{"input": input, "history": history, "cwd": cwd, "args": os.Args[1:], "initialize": route, "patches": patches, "pid": os.Getpid(), "turn": len(history)})
+			result, _ := json.Marshal(map[string]any{"input": input, "prompt": p.Prompt, "history": history, "cwd": cwd, "args": os.Args[1:], "initialize": route, "patches": patches, "pid": os.Getpid(), "turn": len(history)})
 			notify(session, "agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": string(result)}})
 			if scenario == "error" {
 				reject(req.ID, "fixture provider failure")
@@ -189,6 +202,14 @@ type harnessFixtureResult struct {
 	Patches    []map[string]any
 	PID, Turn  int
 	History    []string
+	Prompt     []harnessFixtureBlock
+}
+
+type harnessFixtureBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Data     string `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
 }
 
 func harnessFixtureSetup(t *testing.T, scenario string) (Config, Task) {

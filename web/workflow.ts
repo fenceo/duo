@@ -24,8 +24,8 @@ function restoreQueuedDraft(id:string,quiet=false):boolean{
  if(run.mode&&modeSupportsEngine(run.mode,detail?.task.engine)){modeOptions(element<HTMLSelectElement>('message-mode'),run.mode);input('message-mode').value=run.mode.id}
  switchTab('chat');renderWorkflow();input('message').focus();notify('已放回输入框，可编辑后重新发送。');return true;
 }
-const harnessAttachmentHint='Harness 当前不支持附件。请切换到 Codex / Claude Code，或手动移除附件后继续；已选附件不会自动删除。';
-function validateEngineAttachments(engine:string|undefined,count:number){if(engine==='deepseek-harness'&&count>0)throw new Error(harnessAttachmentHint)}
+const harnessAttachmentHint='支持文件附件；图片需要所选 Harness 模型声明图片输入能力。';
+function validateEngineAttachments(_engine:string|undefined,count:number){if(count>5)throw new Error('每条消息最多 5 个附件')}
 let workCatalog:WorkCatalog={modes:[],commands:[]};
 const attachmentDrafts=new Map<string,Attachment[]>(),uploadingTasks=new Set<string>();
 const pendingUploadFiles=new Map<string,File[]>();
@@ -193,8 +193,8 @@ function setCreatePermission(permission:'request'|'auto'|'full'|'read'){
 }
 function renderCreateFiles(){
  const target=element('create-attachment-drafts');if(!target)return;
- const harness=input('create-engine').value==='deepseek-harness';button('create-attach').disabled=harness;button('create-attach').title=harness?harnessAttachmentHint:'添加附件';input('create-files').disabled=harness;
- target.innerHTML=createFiles.map((file,index)=>`<span class="attachment-chip" title="${escapeHTML(file.name)}">${escapeHTML(file.name)} <button type="button" data-remove-create-file="${index}" aria-label="移除附件 ${escapeHTML(file.name)}">×</button></span>`).join('')+(harness&&createFiles.length?`<p class="error" role="alert">${escapeHTML(harnessAttachmentHint)}</p>`:'');
+ const harness=input('create-engine').value==='deepseek-harness';button('create-attach').disabled=false;button('create-attach').title=harness?harnessAttachmentHint:'添加附件';input('create-files').disabled=false;
+ target.innerHTML=createFiles.map((file,index)=>`<span class="attachment-chip" title="${escapeHTML(file.name)}">${escapeHTML(file.name)} <button type="button" data-remove-create-file="${index}" aria-label="移除附件 ${escapeHTML(file.name)}">×</button></span>`).join('');
  target.querySelectorAll<HTMLButtonElement>('[data-remove-create-file]').forEach(b=>b.onclick=()=>{createFiles.splice(Number(b.dataset.removeCreateFile),1);renderCreateFiles()});
  if(element('create-status')&&!button('create-submit').dataset.starting)element('create-status').textContent=createFiles.length?'已选择 '+createFiles.length+'/5 个附件':'准备开始';
 }
@@ -245,7 +245,7 @@ function renderWorkflow(){
  button('live-interrupt').title=live?.interrupting?'正在等待当前执行停止':'先保存新要求，再停止当前执行并优先发送；其他排队消息保留';
  element('composer').classList.toggle('live-turn',!!active);
  const files=attachmentDrafts.get(chosen)||[],pending=pendingUploadFiles.get(chosen)||[];button('send').textContent=sending?'…':active?'排队发送':'↑';button('send').title=sending?'正在发送':active?'当前执行结束后发送（Enter）':'开始执行';button('send').setAttribute('aria-label',button('send').title);updateComposerSendState();
- const attachmentsBlocked=detail?.task.engine==='deepseek-harness';button('attach-open').disabled=attachmentsBlocked||!!detail?.task.archived||uploadingTasks.has(chosen);button('attach-open').title=attachmentsBlocked?harnessAttachmentHint:'添加文件或图片，也可以拖放、粘贴图片';input('attachment-input').disabled=attachmentsBlocked;button('command-open').disabled=!!detail?.task.archived;
+ const harness=detail?.task.engine==='deepseek-harness';button('attach-open').disabled=!!detail?.task.archived||uploadingTasks.has(chosen);button('attach-open').title=harness?harnessAttachmentHint:'添加文件或图片，也可以拖放、粘贴图片';input('attachment-input').disabled=!!detail?.task.archived||uploadingTasks.has(chosen);button('command-open').disabled=!!detail?.task.archived;
  const html=files.map(f=>`<span class="attachment-chip" title="${escapeHTML(f.name)}">${escapeHTML(f.name)} <button type="button" data-remove-attachment="${f.id}" aria-label="移除附件 ${escapeHTML(f.name)}">×</button></span>`).join('')+pending.map((f,i)=>`<span class="attachment-chip pending-upload">待上传：${escapeHTML(f.name)} <button type="button" data-remove-pending="${i}" aria-label="移除待上传附件 ${escapeHTML(f.name)}">×</button></span>`).join('')+(pending.length&&!uploadingTasks.has(chosen)?'<button type="button" id="retry-uploads">重试未完成的上传</button><small>文件仅保留在当前页面，刷新后需重新选择。</small>':'')+(uploadingTasks.has(chosen)?'<small>正在上传…</small>':'');const target=element('attachment-drafts');if(target.innerHTML!==html){target.innerHTML=html;target.querySelectorAll<HTMLElement>('[data-remove-attachment]').forEach(b=>b.onclick=()=>{attachmentDrafts.set(chosen,(attachmentDrafts.get(chosen)||[]).filter(f=>f.id!==b.dataset.removeAttachment));renderWorkflow()});target.querySelectorAll<HTMLElement>('[data-remove-pending]').forEach(b=>b.onclick=()=>{pendingUploadFiles.set(chosen,(pendingUploadFiles.get(chosen)||[]).filter((_,i)=>i!==Number(b.dataset.removePending)));renderWorkflow()});if(button('retry-uploads'))button('retry-uploads').onclick=()=>void retryPendingUploads(chosen)}
  renderCodexApprovals(detail);
 }

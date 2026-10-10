@@ -15,6 +15,13 @@ func harnessTestTurnFailure(t *testing.T, code, message string) string {
 	return harnessACPError(code + ": " + message).Error()
 }
 
+func TestHarnessNativeImageRejectionKeepsActionableDetails(t *testing.T) {
+	message := harnessRPCMessage("Invalid params", json.RawMessage(`{"details":"model fixture-text does not declare image input"}`))
+	if err := harnessACPError(message); err.Error() != harnessUnsupportedImageMessage {
+		t.Fatal("native capability rejection lost its actionable detail", err)
+	}
+}
+
 func TestHarnessMissingCredentialCodeOverridesSensitiveMessage(t *testing.T) {
 	failure := harnessTestTurnFailure(t, "MISSING_CREDENTIAL", "invalid model configuration: bearer-secret-do-not-print")
 	for _, want := range []string{"MISSING_CREDENTIAL", "执行环境", "原生凭据", "重试"} {

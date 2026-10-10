@@ -6,12 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Opt-in native validation in the selected WSL user, isolated from ~/.dsh.
@@ -74,7 +78,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
    first={'id':'permission-fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':delta,'finish_reason':None}]}
    last={'id':'permission-fixture','object':'chat.completion.chunk','created':1,'choices':[{'index':0,'delta':{},'finish_reason':finish}],'usage':{'prompt_tokens':20,'completion_tokens':5,'total_tokens':25}}
    self.wfile.write(('data: '+json.dumps(first)+'\n\ndata: '+json.dumps(last)+'\n\ndata: [DONE]\n\n').encode()); self.wfile.flush(); return
-  first={'id':'fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':{'role':'assistant','content':'DUO_HARNESS_API_OK'},'finish_reason':None}]}
+  user_content=[m.get('content') for m in request.get('messages',[]) if m.get('role')=='user']
+  text_seen='DUO_NATIVE_ATTACHMENT_TEXT' in str(user_content)
+  image_seen=any(isinstance(m,list) and any(b.get('type')=='image_url' and b.get('image_url',{}).get('url','').startswith('data:image/png;base64,') for b in m) for m in user_content)
+  answer='DUO_ATTACHMENT_RESULT:text='+str(text_seen)+',image='+str(image_seen) if text_seen else 'DUO_HARNESS_API_OK'
+  first={'id':'fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':{'role':'assistant','content':answer},'finish_reason':None}]}
   last={'id':'fixture','object':'chat.completion.chunk','created':1,'choices':[{'index':0,'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':20,'completion_tokens':5,'total_tokens':25}}
   self.wfile.write(('data: '+json.dumps(first)+'\n\ndata: '+json.dumps(last)+'\n\ndata: [DONE]\n\n').encode()); self.wfile.flush()
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
@@ -128,6 +136,28 @@ print(json.dumps(hits),flush=True)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("DUO_HARNESS_ATTACHMENT_NATIVE_FIXTURE") == "1" {
+		// Only the isolated loopback model is declared to accept images. Never
+		// grant that capability to the user's configured service or model IDs.
+		patch, err := harnessYAML(next["cordis.patch.yml"], yaml.SequenceNode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := harnessPatchRow(patch, "llm-pi-ai", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := harnessField(harnessField(harnessField(row, "config"), "providers"), harnessAPIProvider)
+		for _, model := range harnessField(provider, "models").Content {
+			if harnessValue(harnessField(model, "id")) == "fixture-alternative" {
+				harnessSet(model, "input", &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{harnessString("text"), harnessString("image")}})
+			}
+		}
+		next["cordis.patch.yml"], err = yaml.Marshal(patch)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := writeNativeAccountFiles(ctx, env, home, "deepseek-harness", old, next); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +185,53 @@ print(json.dumps(hits),flush=True)
 	}
 	closeHarnessRuntimes()
 	expectedHits := 2
+	if os.Getenv("DUO_HARNESS_ATTACHMENT_NATIVE_FIXTURE") == "1" {
+		task.Session, task.Environment = session, &env
+		textFiles := []RuntimeAttachment{{Attachment: Attachment{ID: "synthetic-text", Name: "history.md", Mime: "text/plain"}, Data: []byte("DUO_NATIVE_ATTACHMENT_TEXT\nUTF-8 中文记录")}}
+		staged, cleanup, err := (&App{}).stageRuntimeFiles(ctx, task, textFiles)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.Files = staged
+		continued, result, err := runHarnessACP(ctx, c, task, executionInput(task, "Read the attached text."), func(string, string) {})
+		cleanup()
+		if err != nil || continued != session || !strings.Contains(result, "text=True,image=False") {
+			t.Fatalf("native text attachment admission failed: %v %s", err, result)
+		}
+		var picture bytes.Buffer
+		if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+			t.Fatal(err)
+		}
+		task.Model = "fixture-alternative"
+		imageFiles := []RuntimeAttachment{{Attachment: Attachment{ID: "synthetic-image", Name: "image.png", Mime: "image/png"}, Data: picture.Bytes()}}
+		staged, cleanup, err = (&App{}).stageRuntimeFiles(ctx, task, imageFiles)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.Files = staged
+		continued, result, err = runHarnessACP(ctx, c, task, executionInput(task, "Read the attached image."), func(string, string) {})
+		cleanup()
+		if err != nil || continued != session || !strings.Contains(result, "text=True,image=True") {
+			t.Fatalf("native vision switch/image blocks/history failed: %v %s", err, result)
+		}
+		closeHarnessRuntimes()
+		task.Files = nil
+		continued, result, err = runHarnessACP(ctx, c, task, "Retain the previous attachments after closing.", func(string, string) {})
+		if err != nil || continued != session || !strings.Contains(result, "text=True,image=True") {
+			t.Fatalf("native image persistence after staging cleanup failed: %v %s", err, result)
+		}
+		textOnly := task
+		textOnly.Model, textOnly.Files = req.Model, imageFiles
+		if kept, _, err := runHarnessACP(ctx, c, textOnly, "Must reject after switching back to a text model.", func(string, string) {}); err == nil || kept != session || !strings.Contains(err.Error(), "未声明图片") {
+			t.Fatal("native route validation lost image rejection guidance/session", err)
+		}
+		textOnly.Session = ""
+		if _, _, err := runHarnessACP(ctx, c, textOnly, "Must reject before model invocation.", func(string, string) {}); err == nil || !strings.Contains(err.Error(), "未声明图片") {
+			t.Fatal("native text-only model admitted image content", err)
+		}
+		expectedHits += 3
+		t.Log("installed WSL Harness accepted staged UTF-8 text, reopened a text-only connection for a vision model with the same native session, sent real PNG image blocks, retained text/images after staging cleanup and cold resume, and rejected a text-only model without a provider request; isolated loopback only")
+	}
 	if os.Getenv("DUO_HARNESS_PERMISSION_NATIVE_FIXTURE") == "1" {
 		for _, decision := range []string{"accept", "decline"} {
 			approvalCount := 0

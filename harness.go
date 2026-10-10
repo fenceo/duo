@@ -55,6 +55,7 @@ type harnessWorker struct {
 	selection    string
 	retiring     bool
 	interactive  bool
+	imageInput   bool
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
@@ -175,9 +176,6 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 	if c.HardwareAI != nil {
 		return nil, errors.New("Harness 暂未接入Duo硬件工具，请取消硬件授权或选择 Codex/Claude Code")
 	}
-	if len(t.Files) > 0 {
-		return nil, errors.New("Harness 当前接入暂不支持附件，请使用文字任务或其它引擎")
-	}
 	env := map[string]string{}
 	for k, v := range c.EngineEnv {
 		env[k] = v
@@ -283,6 +281,9 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 				Name string `json:"name"`
 			} `json:"agentInfo"`
 			AgentCapabilities struct {
+				PromptCapabilities struct {
+					Image bool `json:"image"`
+				} `json:"promptCapabilities"`
 				SessionCapabilities struct {
 					Resume *json.RawMessage `json:"resume"`
 					Close  *json.RawMessage `json:"close"`
@@ -292,6 +293,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		if json.Unmarshal(res, &info) != nil || info.ProtocolVersion != 1 || info.AgentInfo.Name != "deepseek-harness-acp" || info.AgentCapabilities.SessionCapabilities.Resume == nil || info.AgentCapabilities.SessionCapabilities.Close == nil {
 			err = errors.New("Harness ACP 接口缺少会话恢复能力，请升级目标环境的 dsh")
 		}
+		w.imageInput = info.AgentCapabilities.PromptCapabilities.Image
 	}
 	if err != nil {
 		w.mu.Lock()
@@ -436,19 +438,7 @@ func (w *harnessWorker) request(ctx context.Context, method string, params any) 
 				continue
 			}
 			if msg.Error != nil {
-				if msg.Error.Message == "Internal error" {
-					var detail struct {
-						Message string `json:"message"`
-						Details string `json:"details"`
-					}
-					if json.Unmarshal(msg.Error.Data, &detail) == nil {
-						if detail.Message != "" {
-							msg.Error.Message += ": " + detail.Message
-						} else if detail.Details != "" {
-							msg.Error.Message += ": " + detail.Details
-						}
-					}
-				}
+				msg.Error.Message = harnessRPCMessage(msg.Error.Message, msg.Error.Data)
 				if isHarnessUnsupportedReasoning(msg.Error.Message) {
 					return nil, fmt.Errorf("Harness %s [UNSUPPORTED_REASONING_EFFORT]：%s", method, harnessUnsupportedReasoningMessage)
 				}
