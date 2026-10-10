@@ -88,6 +88,11 @@
 @media(max-width:560px){.model-manager-head{display:block}.model-manager-badge{display:inline-block;margin-top:10px}.model-add-row{grid-template-columns:1fr}.model-add-row button{width:100%}}
 .handoff-preview{max-height:34vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;line-height:1.55}
 #handoff-dialog{width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto}
+#harness-api-dialog{width:min(620px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto}
+#harness-api-dialog fieldset{min-width:0;border:0;padding:0;margin:0}
+#harness-api-dialog p{overflow-wrap:anywhere;font-size:12px;line-height:1.6}
+#harness-api-dialog .dialog-footer{position:sticky;bottom:-24px;background:var(--canvas);border-top:1px solid var(--line);padding:12px 0;z-index:1}
+@media(max-width:560px){#harness-api-dialog{padding:16px}#harness-api-dialog .dialog-footer{bottom:-16px}#harness-api-dialog button,#harness-api-dialog input,#harness-api-dialog select{min-height:44px}}
 #handoff-fields{border:0;padding:0;margin:0;min-width:0}
 .handoff-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 14px}
 #handoff-dialog input,#handoff-dialog select{width:100%;min-width:0}

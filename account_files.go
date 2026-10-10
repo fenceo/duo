@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,6 +45,8 @@ func nativeAccountNames(engine string) ([]string, error) {
 		return []string{"auth.json", "config.toml"}, nil
 	case "claude":
 		return []string{".credentials.json", "settings.json"}, nil
+	case "deepseek-harness":
+		return []string{".credentials.yaml", "cordis.patch.yml"}, nil
 	default:
 		return nil, errors.New("此引擎不支持账号文件同步")
 	}
@@ -57,15 +60,31 @@ func localAccountDirectory(dir, engine string) (string, error) {
 		key := "CODEX_HOME"
 		if engine == "claude" {
 			key = "CLAUDE_CONFIG_DIR"
+		} else if engine == "deepseek-harness" {
+			key = "DSH_HOME"
 		}
 		dir = os.Getenv(key)
+		if engine == "deepseek-harness" && strings.TrimSpace(dir) == "" {
+			dir = ""
+		}
 		if dir == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return "", errors.New("无法确定用户配置目录")
 			}
-			dir = filepath.Join(home, "."+engine)
+			name := engine
+			if engine == "deepseek-harness" {
+				name = "dsh"
+			}
+			dir = filepath.Join(home, "."+name)
 		}
+	}
+	if engine == "deepseek-harness" && (dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`)) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", errors.New("无法确定 Harness 用户目录")
+		}
+		dir = filepath.Join(home, strings.TrimLeft(dir[1:], `/\`))
 	}
 	if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "\x00\r\n") {
 		return "", errors.New("账号配置目录必须为绝对路径")
@@ -131,6 +150,23 @@ func writeLocalAccountFiles(dir, engine string, expected, next map[string][]byte
 	}
 	f.Close()
 	defer os.Remove(lock)
+	if engine == "deepseek-harness" {
+		// Participate in Harness's native writer protocol as well as Duo's
+		// transaction lock. Never remove a lock owned by another writer.
+		for _, name := range names {
+			path := filepath.Join(dir, name+".lock")
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if err != nil {
+				return errors.New("Harness 配置正在被其他程序修改，请稍后重试")
+			}
+			defer os.Remove(path)
+			_, err = f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+			f.Close()
+			if err != nil {
+				return errors.New("无法锁定 Harness 配置")
+			}
+		}
+	}
 	old, err := readLocalAccountFiles(dir, engine)
 	if err != nil {
 		return err

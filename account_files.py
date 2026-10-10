@@ -14,9 +14,17 @@ def main():
     request = json.loads(sys.stdin.buffer.read(24 * 1024 * 1024))
     engine = request['engine']
     names = {'codex': ('auth.json', 'config.toml'),
-             'claude': ('.credentials.json', 'settings.json')}[engine]
-    key = 'CODEX_HOME' if engine == 'codex' else 'CLAUDE_CONFIG_DIR'
-    root = pathlib.Path(request.get('directory') or os.environ.get(key) or str(pathlib.Path.home() / ('.' + engine)))
+             'claude': ('.credentials.json', 'settings.json'),
+             'deepseek-harness': ('.credentials.yaml', 'cordis.patch.yml')}[engine]
+    key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME'}[engine]
+    default_dir = '.dsh' if engine == 'deepseek-harness' else '.' + engine
+    raw_root = request.get('directory') or os.environ.get(key)
+    if engine == 'deepseek-harness' and raw_root and not raw_root.strip():
+        raw_root = None
+    raw_root = raw_root or str(pathlib.Path.home() / default_dir)
+    if engine == 'deepseek-harness' and (raw_root == '~' or raw_root.startswith('~/')):
+        raw_root = str(pathlib.Path.home()) + raw_root[1:]
+    root = pathlib.Path(raw_root)
     if not root.is_absolute():
         raise ValueError('absolute directory required')
     for parent in (root, *root.parents):
@@ -51,7 +59,14 @@ def main():
     lock = root / '.duo-account-sync.lock'
     with lock.open('xb'):
         pass
+    native_locks = []
     try:
+        if engine == 'deepseek-harness':
+            for name in names:
+                native_lock = root / (name + '.lock')
+                with native_lock.open('xb') as stream:
+                    native_locks.append(native_lock)
+                    stream.write((str(os.getpid()) + '\n').encode('ascii'))
         old = read()
         if old != request['expected']:
             raise ValueError('concurrent account change')
@@ -88,6 +103,8 @@ def main():
             raise
         print('{}')
     finally:
+        for native_lock in reversed(native_locks):
+            native_lock.unlink()
         lock.unlink()
 
 try:

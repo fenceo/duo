@@ -1,0 +1,23 @@
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {runInContext} from 'node:vm';
+import assert from 'node:assert/strict';
+const {ctx,document}=await createWebShellFixture(),run=code=>runInContext(code,ctx),el=id=>document.getElementById(id);
+const view={environment_id:'fixture',target:'fixture-target',api:'openai-completions',base_url:'https://api.example/v1',model:'fixture-model',key_configured:false};
+run(`engineCatalog={engines:[{id:'deepseek-harness',name:'Harness',targets:['wsl'],runnable:true}],profiles:[],active_profile:{}};renderEngineCatalog()`);
+assert(el('engine-catalog').querySelector('[data-harness-api="fixture"]'));
+let resolveGet;ctx.api=async()=>new Promise(resolve=>resolveGet=resolve);
+const first=ctx.openHarnessAPI('fixture');assert(el('harness-api-save').disabled);el('harness-api-dialog').close();resolveGet(view);await first;assert.equal(run('harnessAPIView'),null);
+ctx.api=async()=>view;await ctx.openHarnessAPI('fixture');assert(el('harness-api-key').required);assert(!el('harness-api-save').disabled);
+el('harness-api-key').value='synthetic-secret';let posts=0,resolveSave;
+ctx.api=async(path,method,body)=>{assert.equal(path,'environments/fixture/harness-api');assert.equal(method,'PUT');assert.equal(body.api_key,'synthetic-secret');posts++;return new Promise(resolve=>resolveSave=resolve)};
+const save=ctx.saveHarnessAPI();await ctx.saveHarnessAPI();assert.equal(posts,1);assert(el('harness-api-fields').disabled);assert(el('harness-api-close').disabled);
+resolveSave({...view,key_configured:true,message:'保存成功'});await save;
+assert.equal(el('harness-api-key').value,'');assert(!el('harness-api-key').required);assert.match(el('harness-api-status').textContent,/保存成功/);
+assert.equal(run('settings.config.environments[0].harness_provider'),'duo-api');assert.equal(run('chosen'),'');
+// Retry after a failed save retains the draft only in the password field;
+// close and shell disposal clear it, and a stale request cannot refill it.
+el('harness-api-key').value='synthetic-replacement';el('harness-api-model').value='draft-model';ctx.api=async()=>{throw Error('fixture offline')};await ctx.saveHarnessAPI();
+assert.match(el('harness-api-status').textContent,/fixture offline/);assert.equal(el('harness-api-model').value,'draft-model');assert.equal(el('harness-api-key').value,'synthetic-replacement');assert(!el('harness-api-save').disabled);
+el('harness-api-dialog').close();assert.equal(el('harness-api-key').value,'');assert.equal(run('harnessAPIView'),null);
+ctx.api=async()=>view;await ctx.openHarnessAPI('fixture');el('harness-api-key').value='synthetic-dispose';run('renewShellScope()');assert.equal(el('harness-api-key').value,'');assert.equal(run('harnessAPIView'),null);
+console.log('PASS: environment Harness API entry, stale loading isolation, duplicate save lock, route metadata, failure draft, key clearing and logout disposal. No real credentials or model calls.');

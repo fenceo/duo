@@ -48,10 +48,12 @@ type EngineSetup struct {
 	account       func(context.Context, Environment, string, string, string, func(string, string)) error
 	install       func(context.Context, string, string, func(string)) (string, error)
 	remoteInstall func(context.Context, Environment, string, string, func(string)) (string, error)
+	harnessRead   func(context.Context, Environment, string, string) (map[string][]byte, error)
+	harnessWrite  func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine}
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {
@@ -378,11 +380,16 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 	if err = a.config.save(c); err != nil {
 		return errors.New("安装完成，但保存工具路径失败，请重新检测工具")
 	}
-	a.engineSetup.update(r.ID, "done", fmt.Sprintf("%s 已安装并配置到该环境。接下来登录或配置 API，再选择云端模型。", r.Engine), "", "")
+	message := fmt.Sprintf("%s 已安装并配置到该环境。接下来登录或配置 API，再选择云端模型。", r.Engine)
+	if r.Engine == "deepseek-harness" {
+		message = "Harness CLI 已安装到该环境。点击 Harness 行的“配置 API”填写地址、Key 和模型；Duo 通过 ACP 调用。"
+	}
+	a.engineSetup.update(r.ID, "done", message, "", "")
 	return nil
 }
 
 func (s *Server) engineSetupRoutes(m *http.ServeMux) {
+	s.harnessAPIRoutes(m)
 	m.HandleFunc("GET /api/engine-setup", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		manager := s.app.engineSetup
 		manager.mu.Lock()

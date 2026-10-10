@@ -105,7 +105,7 @@ if os.path.isabs(cfg['binary']):
 fd,path=tempfile.mkstemp(prefix='jianzuo-harness-',suffix='.json')
 try:
  with os.fdopen(fd,'w') as f: json.dump(cfg['patch'],f)
-p=subprocess.Popen([cfg['binary'],'--profile','acp','--patch',path],start_new_session=True)
+ p=subprocess.Popen([cfg['binary'],'--profile','acp','--patch',path],start_new_session=True)
  print(json.dumps({'type':'jianzuo.process','pid':p.pid}),flush=True)
  sys.exit(p.wait())
 finally:

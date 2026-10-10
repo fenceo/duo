@@ -7437,6 +7437,7 @@ function installEngineSettings() {
     engineStatusSignature = '';
     engineStatusRequest = 0;
     engineStatusBusy = false;
+    installHarnessAPI();
 }
 function engineTargetName(id) {
     return settings.config.environments.find((e)=>e.id === id)?.name || id;
@@ -7531,7 +7532,7 @@ function renderEngineCatalog() {
             const tool = status?.[toolKey];
             const state = tool?.state || 'unknown', installed = !!tool?.path && state !== 'missing', missing = state === 'missing';
             const label = installed ? '已安装' : missing ? '未安装' : engineStatusBusy ? '检测中…' : '未完成检测';
-            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + label + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
+            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + label + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
         }).join('');
         return '<article class="engine-environment"><header><div><h4>' + escapeHTML(env.name) + '</h4><small>' + escapeHTML([
             env.type,
@@ -7574,6 +7575,7 @@ function renderEngineCatalog() {
                 engine: b.dataset.installEngine,
                 environment_id: b.dataset.installEnvironment
             }));
+    element('engine-catalog').querySelectorAll('[data-harness-api]').forEach((b)=>b.onclick = ()=>void openHarnessAPI(b.dataset.harnessApi));
     element('engine-catalog').querySelectorAll('[data-edit-engine-environment]').forEach((b)=>b.onclick = ()=>{
             storeEnvironmentEditor();
             editingID = b.dataset.editEngineEnvironment;
@@ -7761,7 +7763,7 @@ function renderEngineSetup(job) {
     }
 }
 async function startEngineOnboarding(action, target) {
-    if (engineSetupBusy || accountImportBusy || action === 'install' && !target) return;
+    if (engineSetupBusy || accountImportBusy || harnessAPIBusy || action === 'install' && !target) return;
     if (action === 'install' && (engineStatusBusy || engineStatusSignature !== engineEnvironmentSignature())) {
         element('engine-setup-status').textContent = '请等待当前环境检测完成，再安装。';
         return;
@@ -7861,6 +7863,129 @@ function refreshAccountLogin() {
     select.innerHTML = claude ? '<option value="apiKey">API key / 中转站</option>' : '<option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key / 中转站</option>';
     element('engine-account-api').classList.toggle('hidden', select.value !== 'apiKey');
     input('engine-account-url').placeholder = claude ? '留空使用 Anthropic 官方 API' : '留空使用 OpenAI 官方 API';
+}
+let harnessAPIView = null, harnessAPIRequest = 0, harnessAPIBusy = false;
+function installHarnessAPI() {
+    harnessAPIView = null;
+    harnessAPIRequest = 0;
+    harnessAPIBusy = false;
+    element('settings-engines').querySelector('p').textContent = '统一检测 Windows / WSL / SSH 环境与引擎。Harness 可在对应环境配置 API；Codex / Claude 账号在“账号管理”中配置。';
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="harness-api-dialog"><form id="harness-api-form"><h2>Harness API 配置</h2><p id="harness-api-target" class="muted"></p><fieldset id="harness-api-fields"><label for="harness-api-protocol">API 协议</label><select id="harness-api-protocol"><option value="openai-completions">OpenAI Chat Completions（DeepSeek / 兼容 API）</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select><label for="harness-api-url">API 根地址</label><input id="harness-api-url" type="url" maxlength="2000" required placeholder="https://api.deepseek.com"><p class="muted">填写服务商提供的根地址，例如 https://api.deepseek.com 或 https://api.openai.com/v1，不要填写 /chat/completions。</p><label for="harness-api-model">模型 ID</label><input id="harness-api-model" maxlength="120" required placeholder="例如 deepseek-chat"><label for="harness-api-key">API key</label><input id="harness-api-key" type="password" maxlength="16000" autocomplete="off"><p id="harness-api-key-note" class="muted"></p></fieldset><p class="muted">配置保存到所选用户的默认 Harness 原生目录；Key 单独保存，不回显。Duo 通过 ACP 调用 dsh CLI，由 Harness 访问模型 API。新启动的 Harness 读取此配置；独立账号目录仍使用各自配置。</p><p id="harness-api-status" role="status"></p><div class="dialog-footer"><button type="button" id="harness-api-close">关闭</button><button type="submit" id="harness-api-save" class="primary">保存配置</button></div></form></dialog>`);
+    button('harness-api-close').onclick = ()=>{
+        if (!harnessAPIBusy) element('harness-api-dialog').close();
+    };
+    element('harness-api-dialog').addEventListener('cancel', (e)=>{
+        if (harnessAPIBusy) e.preventDefault();
+    });
+    element('harness-api-dialog').addEventListener('close', ()=>{
+        harnessAPIRequest++;
+        harnessAPIView = null;
+        input('harness-api-key').value = '';
+    });
+    element('harness-api-form').addEventListener('submit', (e)=>{
+        e.preventDefault();
+        void saveHarnessAPI();
+    });
+    disposeWithShell(()=>{
+        input('harness-api-key').value = '';
+        harnessAPIView = null;
+        harnessAPIRequest++;
+        harnessAPIBusy = false;
+    });
+}
+function renderHarnessAPI(view) {
+    harnessAPIView = view;
+    element('harness-api-protocol').value = view.api;
+    input('harness-api-url').value = view.base_url;
+    input('harness-api-model').value = view.model;
+    input('harness-api-key').value = '';
+    input('harness-api-key').required = !view.key_configured;
+    input('harness-api-key').placeholder = view.key_configured ? '留空保留已保存的 Key' : '填写服务商 API key';
+    element('harness-api-key-note').textContent = view.key_configured ? '已配置 Key；留空保留，填写新 Key 则替换。' : '尚未配置 Key；首次保存需要填写。';
+    element('harness-api-fields').disabled = false;
+    button('harness-api-save').disabled = false;
+}
+async function openHarnessAPI(environmentID) {
+    if (harnessAPIBusy || engineSetupBusy || accountImportBusy || accountSyncBusy) return;
+    const env = settings.config.environments.find((e)=>e.id === environmentID);
+    if (!env) return;
+    storeEnvironmentEditor();
+    const epoch = shellEpoch, request = ++harnessAPIRequest;
+    harnessAPIView = null;
+    const dialog = element('harness-api-dialog');
+    element('harness-api-target').textContent = '目标环境：' + env.name + '（' + [
+        env.type,
+        env.distro,
+        env.user,
+        env.host
+    ].filter(Boolean).join(' / ') + '）';
+    input('harness-api-key').value = '';
+    input('harness-api-url').value = '';
+    input('harness-api-model').value = '';
+    element('harness-api-key-note').textContent = '';
+    element('harness-api-fields').disabled = true;
+    button('harness-api-save').disabled = true;
+    button('harness-api-close').disabled = false;
+    element('harness-api-status').textContent = '正在读取目标环境配置…';
+    if (!dialog.open) dialog.showModal();
+    try {
+        const view = await api('environments/' + encodeURIComponent(environmentID) + '/harness-api', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== harnessAPIRequest || !dialog.open) return;
+        renderHarnessAPI(view);
+        element('harness-api-status').textContent = '保存仅写入配置，不调用模型、不消耗额度。';
+    } catch (e) {
+        if (shellCurrent(epoch) && request === harnessAPIRequest && dialog.open) element('harness-api-status').textContent = e.message;
+    }
+}
+async function saveHarnessAPI() {
+    const view = harnessAPIView;
+    if (!view || harnessAPIBusy || engineSetupBusy) return;
+    const epoch = shellEpoch, request = harnessAPIRequest, dialog = element('harness-api-dialog');
+    const payload = {
+        target: view.target,
+        api: element('harness-api-protocol').value,
+        base_url: input('harness-api-url').value.trim(),
+        model: input('harness-api-model').value.trim(),
+        api_key: input('harness-api-key').value
+    };
+    harnessAPIBusy = true;
+    element('harness-api-fields').disabled = true;
+    button('harness-api-save').disabled = true;
+    button('harness-api-close').disabled = true;
+    element('harness-api-status').textContent = '正在保存到目标环境…';
+    try {
+        const result = await api('environments/' + encodeURIComponent(view.environment_id) + '/harness-api', 'PUT', payload, shellController.signal);
+        if (!shellCurrent(epoch) || request !== harnessAPIRequest || !dialog.open) return;
+        renderHarnessAPI(result);
+        element('harness-api-status').textContent = result.message || 'API 配置已保存。';
+        const saved = settings.config.environments.find((e)=>e.id === view.environment_id), draft = editingEnvironments.find((e)=>e.id === view.environment_id);
+        if (saved) {
+            for (const key of [
+                'harness_provider',
+                'harness_model'
+            ]){
+                const value = key === 'harness_provider' ? 'duo-api' : result.model;
+                if (draft && draft[key] === saved[key]) draft[key] = value;
+                saved[key] = value;
+            }
+            if (editingID === saved.id) loadEnvironmentEditor();
+        }
+        invalidateModelCatalogs();
+        renderEngineCatalog();
+    } catch (e) {
+        if (shellCurrent(epoch) && request === harnessAPIRequest && dialog.open) element('harness-api-status').textContent = e.message;
+    } finally{
+        payload.api_key = '';
+        if (shellCurrent(epoch)) {
+            harnessAPIBusy = false;
+            if (request === harnessAPIRequest && dialog.open) {
+                element('harness-api-fields').disabled = false;
+                button('harness-api-save').disabled = false;
+                button('harness-api-close').disabled = false;
+            }
+            renderEngineCatalog();
+        }
+    }
 }
 let handoffTask = null, handoffPreview = null;
 let handoffGeneration = 0, handoffPreviewRequest = 0, handoffModelRequest = 0, handoffBusy = false;
