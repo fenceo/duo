@@ -72,10 +72,10 @@ func TestRemoteEngineInstallerRuntimeAndFailures(t *testing.T) {
 			}
 			write("uname", "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo \"$DUO_FIXTURE_ARCH\";; esac\n")
 			write("curl", "#!/bin/sh\nprintf called >> \"$DUO_FIXTURE_DIR/downloads\"\n[ \"$DUO_FIXTURE_FAILURE\" != download ] || exit 1\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = -o ]; then cp \"$DUO_FIXTURE_DIR/runtime.tar.gz\" \"$2\"; exit; fi; shift; done\nexit 1\n")
-			if tc.native != "" {
-				write("node", remoteInstallFixtureNode)
-				write("npm", "synthetic npm entry\n")
-			}
+			// Shadow both executables even when simulating a missing runtime.
+			// Otherwise a Linux test host could accidentally run its real npm.
+			write("node", remoteInstallFixtureNode)
+			write("npm", "synthetic npm entry\n")
 			arch := "x64"
 			if tc.arch == "aarch64" {
 				arch = "arm64"
@@ -112,7 +112,9 @@ func TestRemoteEngineInstallerRuntimeAndFailures(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, shell, "-s")
 			cmd.Dir = dir
-			cmd.Stdin = strings.NewReader(script)
+			// Git's bin/sh launcher can prepend /usr/bin ahead of the imported
+			// Windows PATH. Set fixture priority after shell startup as well.
+			cmd.Stdin = strings.NewReader("PATH=" + posixQuote(posixDir+"/fixture-bin") + ":$PATH\nexport PATH\n" + script)
 			cmd.Env = append(os.Environ(), "HOME="+posixDir+"/home with spaces", "PATH="+filepath.ToSlash(bin)+string(os.PathListSeparator)+filepath.ToSlash(filepath.Dir(shell))+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"DUO_FIXTURE_DIR="+posixDir, "DUO_FIXTURE_ARCH="+tc.arch, "DUO_FIXTURE_NATIVE="+tc.native, "DUO_FIXTURE_FAILURE="+tc.failure)
 			// npm fixtures never write outside this synthetic home.
