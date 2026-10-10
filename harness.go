@@ -174,8 +174,13 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		return nil, errors.New("Harness 推理强度无效")
 	}
 	if c.HardwareAI != nil {
-		return nil, errors.New("Harness 暂未接入Duo硬件工具，请取消硬件授权或选择 Codex/Claude Code")
+		emit("progress", "正在从执行环境连接 Duo 桌面/硬件工具…")
 	}
+	hardware, err := resolveHarnessHardware(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	c.HardwareAI = hardware
 	env := map[string]string{}
 	for k, v := range c.EngineEnv {
 		env[k] = v
@@ -281,6 +286,9 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 				Name string `json:"name"`
 			} `json:"agentInfo"`
 			AgentCapabilities struct {
+				MCPCapabilities struct {
+					HTTP bool `json:"http"`
+				} `json:"mcpCapabilities"`
 				PromptCapabilities struct {
 					Image bool `json:"image"`
 				} `json:"promptCapabilities"`
@@ -294,6 +302,9 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			err = errors.New("Harness ACP 接口缺少会话恢复能力，请升级目标环境的 dsh")
 		}
 		w.imageInput = info.AgentCapabilities.PromptCapabilities.Image
+		if err == nil && c.HardwareAI != nil && !info.AgentCapabilities.MCPCapabilities.HTTP {
+			err = errors.New("Harness ACP 不支持 HTTP MCP，请升级此环境的 dsh 后再使用桌面/硬件工具（未发送模型请求）")
+		}
 	}
 	if err != nil {
 		w.mu.Lock()

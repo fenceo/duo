@@ -90,10 +90,10 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://code.claude.com/docs/en/cli-usage",
 		},
 		{
-			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness CLI 原生 ACP；支持 API 配置、恢复、模型切换、单次审批和附件；图片取决于原生模型能力，暂不支持硬件工具",
+			ID: "deepseek-harness", Name: "DeepSeek Harness", Description: "DeepSeek Harness CLI 原生 ACP；支持 API 配置、恢复、模型切换、单次审批、附件及 Duo 桌面/硬件工具；图片取决于原生模型能力",
 			Transport: "acp", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval", "attachments", "image_input"},
+			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval", "attachments", "image_input", "mcp"},
 			CredentialKinds:    []string{"native", "dsh_home"},
 			InstallDescription: "支持 Windows/WSL/SSH 一键安装 CLI；在对应环境点击“配置 API”验证地址与 Key、读取模型列表。Duo 通过 dsh --profile acp 调用，不提供订阅账号登录。",
 			DocumentationURL:   "https://github.com/deepseek-ai/deepseek-harness",

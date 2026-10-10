@@ -17,6 +17,45 @@ func syntheticHarnessAPI() HarnessAPIRequest {
 	return HarnessAPIRequest{API: "openai-completions", BaseURL: "https://api.example/v1", Model: "fixture-model", APIKey: "synthetic-harness-secret"}
 }
 
+func TestHarnessAPIModelInputDeclarations(t *testing.T) {
+	v := syntheticHarnessAPI()
+	v.Models = []ModelOption{{ID: v.Model}, {ID: "other-model"}}
+	v.Input = []string{"text", "image"}
+	files, err := mergeHarnessAPI(nil, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := harnessAPIView(Environment{}, files)
+	if err != nil || strings.Join(view.ModelInputs[v.Model], ",") != "text,image" || len(view.ModelInputs) != 1 {
+		t.Fatal("safe model capability projection failed", err)
+	}
+	// Refreshing a list/using an older client preserves the native declaration.
+	v.Input, v.APIKey = nil, ""
+	files, err = mergeHarnessAPI(files, v)
+	view, _ = harnessAPIView(Environment{}, files)
+	if err != nil || strings.Join(view.ModelInputs[v.Model], ",") != "text,image" {
+		t.Fatal("omitted input erased model capabilities", err)
+	}
+	v.Model, v.Input = "other-model", []string{"text"}
+	files, err = mergeHarnessAPI(files, v)
+	view, _ = harnessAPIView(Environment{}, files)
+	if err != nil || strings.Join(view.ModelInputs["fixture-model"], ",") != "text,image" || strings.Join(view.ModelInputs[v.Model], ",") != "text" {
+		t.Fatal("editing one model changed another declaration", err)
+	}
+	v.BaseURL, v.Input = "https://another.example/v1", nil
+	files, err = mergeHarnessAPI(files, v)
+	view, _ = harnessAPIView(Environment{}, files)
+	if err != nil || len(view.ModelInputs) != 0 {
+		t.Fatal("old endpoint capabilities carried into a new service", err)
+	}
+	for _, values := range [][]string{{}, {"image"}, {"text", "video"}, {"text", "text"}, {"text", "image", "audio"}} {
+		v.Input = values
+		if _, err := mergeHarnessAPI(files, v); err == nil {
+			t.Fatal("unsupported model input accepted")
+		}
+	}
+}
+
 func TestHarnessAPIMergePreservesNativeFiles(t *testing.T) {
 	old := map[string][]byte{
 		"cordis.patch.yml":  []byte("# existing tools\n- id: sandbox-policy\n  config: {mode: read-only}\n- id: llm-pi-ai\n  config:\n    providers:\n      existing:\n        api: openai-responses\n        baseURL: https://existing.example/v1\n        models: [{id: existing-model}]\n"),

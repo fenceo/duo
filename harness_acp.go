@@ -61,7 +61,7 @@ type harnessConfigOption struct {
 }
 
 func (w *harnessWorker) prepareSession(ctx context.Context, c Config, t Task, emit func(string, string)) (string, error) {
-	params := map[string]any{"cwd": t.Workspace, "mcpServers": []any{}}
+	params := map[string]any{"cwd": t.Workspace, "mcpServers": harnessMCPServers(w.c.HardwareAI)}
 	method := "session/new"
 	if t.Session != "" {
 		method = "session/resume"
@@ -163,9 +163,6 @@ func runHarnessACP(ctx context.Context, c Config, t Task, input string, emit fun
 	if _, err := harnessPolicy(t); err != nil {
 		return session, "", err
 	}
-	if c.HardwareAI != nil {
-		return session, "", errors.New("Harness 暂不支持Duo硬件授权，请使用其它引擎")
-	}
 	reserved := false
 retryWorker:
 	harnessRuntimes.Lock()
@@ -206,7 +203,9 @@ retryWorker:
 		// text-only connection must be reopened after selecting a vision model
 		// or editing its native capability declaration (even with the same ID);
 		// retain the old profile and durable ID, and close before resuming.
-		if w != nil && harnessHasImages(t.Files) && !w.imageInput {
+		// MCP credentials are scoped to a single run. An idle worker without
+		// tools must also reopen to attach newly granted tools on cold resume.
+		if w != nil && (c.HardwareAI != nil || w.c.HardwareAI != nil || (harnessHasImages(t.Files) && !w.imageInput)) {
 			w.retiring = true
 			if w.idle != nil {
 				w.idle.Stop()
@@ -256,7 +255,10 @@ retryWorker:
 			harnessRuntimes.starting--
 			harnessRuntimes.Unlock()
 		}
-		if runErr != nil || t.ID == "" {
+		if runErr != nil || t.ID == "" || w.c.HardwareAI != nil {
+			harnessRuntimes.Lock()
+			w.retiring = true
+			harnessRuntimes.Unlock()
 			if err := w.close(); err != nil {
 				runErr = errors.Join(runErr, err)
 			}

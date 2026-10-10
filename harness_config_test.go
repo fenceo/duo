@@ -81,7 +81,7 @@ func TestHarnessRegistryAndNativeProfile(t *testing.T) {
 	if !ok || !engine.Runnable || engine.Transport != "acp" {
 		t.Fatalf("Harness ACP not registered: %#v", engine)
 	}
-	if !reflect.DeepEqual(engine.Capabilities, []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval", "attachments", "image_input"}) {
+	if !reflect.DeepEqual(engine.Capabilities, []string{"stream", "resume", "model_switch", "cancel", "sandbox", "approval", "attachments", "image_input", "mcp"}) {
 		t.Fatalf("Harness advertises unsupported capabilities: %v", engine.Capabilities)
 	}
 	if !validEngineCredentialKind(engine.ID, "dsh_home") || validEngineCredentialKind(engine.ID, "env_file") {

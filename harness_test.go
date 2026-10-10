@@ -55,6 +55,7 @@ func runHarnessACPFixture() {
 	var session string
 	var history []string
 	var pending json.RawMessage
+	var mcpServers []harnessFixtureMCP
 	coldProvider := scenario == "cold-provider"
 	path := func() string { return filepath.Join(cwd, "fixture-"+session+".json") }
 	save := func() {
@@ -75,11 +76,12 @@ func runHarnessACPFixture() {
 			return
 		}
 		var p struct {
-			SessionID string                `json:"sessionId"`
-			Cwd       string                `json:"cwd"`
-			ConfigID  string                `json:"configId"`
-			Value     string                `json:"value"`
-			Prompt    []harnessFixtureBlock `json:"prompt"`
+			SessionID  string                `json:"sessionId"`
+			Cwd        string                `json:"cwd"`
+			ConfigID   string                `json:"configId"`
+			Value      string                `json:"value"`
+			Prompt     []harnessFixtureBlock `json:"prompt"`
+			MCPServers []harnessFixtureMCP   `json:"mcpServers"`
 		}
 		_ = json.Unmarshal(req.Params, &p)
 		switch req.Method {
@@ -92,8 +94,13 @@ func runHarnessACPFixture() {
 			if scenario == "bad-handshake" {
 				name = "unrelated-program"
 			}
-			reply(req.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": name}, "agentCapabilities": map[string]any{"promptCapabilities": map[string]bool{"image": scenario == "attachments" && route["model"] == "fixture-vision"}, "sessionCapabilities": map[string]any{"resume": map[string]any{}, "close": map[string]any{}}}})
+			reply(req.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": name}, "agentCapabilities": map[string]any{"mcpCapabilities": map[string]bool{"http": scenario != "no-http-mcp"}, "promptCapabilities": map[string]bool{"image": scenario == "attachments" && route["model"] == "fixture-vision"}, "sessionCapabilities": map[string]any{"resume": map[string]any{}, "close": map[string]any{}}}})
 		case "session/new", "session/resume":
+			mcpServers = p.MCPServers
+			if scenario == "mcp-mount-failure" && len(mcpServers) > 0 {
+				reject(req.ID, "fixture MCP mount failed")
+				continue
+			}
 			if coldProvider {
 				coldProvider = false
 				reject(req.ID, "no adapter registered for provider")
@@ -167,7 +174,7 @@ func runHarnessACPFixture() {
 			}
 			notify(session, "tool_call", map[string]any{"title": "read_file", "rawInput": map[string]string{"path": "example.txt"}})
 			notify(session, "tool_call_update", map[string]any{"status": "completed", "content": []any{map[string]string{"text": "fixture tool result"}}})
-			result, _ := json.Marshal(map[string]any{"input": input, "prompt": p.Prompt, "history": history, "cwd": cwd, "args": os.Args[1:], "initialize": route, "patches": patches, "pid": os.Getpid(), "turn": len(history)})
+			result, _ := json.Marshal(map[string]any{"input": input, "prompt": p.Prompt, "history": history, "cwd": cwd, "args": os.Args[1:], "initialize": route, "patches": patches, "pid": os.Getpid(), "turn": len(history), "mcpServers": mcpServers})
 			notify(session, "agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": string(result)}})
 			if scenario == "error" {
 				reject(req.ID, "fixture provider failure")
@@ -203,6 +210,12 @@ type harnessFixtureResult struct {
 	PID, Turn  int
 	History    []string
 	Prompt     []harnessFixtureBlock
+	MCPServers []harnessFixtureMCP
+}
+
+type harnessFixtureMCP struct {
+	Type, Name, URL string
+	Headers         []struct{ Name, Value string }
 }
 
 type harnessFixtureBlock struct {

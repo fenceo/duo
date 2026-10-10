@@ -23,21 +23,23 @@ type HarnessAPIRequest struct {
 	BaseURL string        `json:"base_url"`
 	Model   string        `json:"model"`
 	APIKey  string        `json:"api_key"`
+	Input   []string      `json:"input,omitempty"`
 	Models  []ModelOption `json:"-"`
 }
 
 // Only this projection crosses HTTP. Neither native files nor a masked key
 // are returned; a boolean is sufficient for editing without exposing a key.
 type HarnessAPIView struct {
-	EnvironmentID   string        `json:"environment_id"`
-	Target          string        `json:"target"`
-	API             string        `json:"api"`
-	BaseURL         string        `json:"base_url"`
-	Model           string        `json:"model"`
-	KeyConfigured   bool          `json:"key_configured"`
-	Message         string        `json:"message,omitempty"`
-	Models          []ModelOption `json:"models"`
-	DiscoveryStatus string        `json:"discovery_status,omitempty"`
+	EnvironmentID   string              `json:"environment_id"`
+	Target          string              `json:"target"`
+	API             string              `json:"api"`
+	BaseURL         string              `json:"base_url"`
+	Model           string              `json:"model"`
+	KeyConfigured   bool                `json:"key_configured"`
+	Message         string              `json:"message,omitempty"`
+	Models          []ModelOption       `json:"models"`
+	ModelInputs     map[string][]string `json:"model_inputs,omitempty"`
+	DiscoveryStatus string              `json:"discovery_status,omitempty"`
 }
 
 func harnessAPITarget(env Environment) string {
@@ -45,7 +47,24 @@ func harnessAPITarget(env Environment) string {
 	return hash(string(raw))
 }
 
+func validateHarnessAPIInput(input []string) bool {
+	if len(input) < 1 || len(input) > 2 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, value := range input {
+		if seen[value] || value != "text" && value != "image" {
+			return false
+		}
+		seen[value] = true
+	}
+	return seen["text"]
+}
+
 func validateHarnessAPI(v HarnessAPIRequest) error {
+	if v.Input != nil && !validateHarnessAPIInput(v.Input) {
+		return errors.New("模型输入能力仅支持文字或文字和图片")
+	}
 	if v.API != "openai-completions" && v.API != "openai-responses" && v.API != "anthropic-messages" {
 		return errors.New("请选择支持的 API 协议")
 	}
@@ -230,6 +249,17 @@ func harnessAPIView(env Environment, files map[string][]byte) (HarnessAPIView, e
 		v.BaseURL = harnessValue(harnessField(provider, "baseURL"))
 		if models := harnessField(provider, "models"); models != nil && models.Kind == yaml.SequenceNode && len(models.Content) > 0 {
 			v.Model = harnessValue(harnessField(models.Content[0], "id"))
+			v.ModelInputs = map[string][]string{}
+			for _, model := range models.Content {
+				input := harnessField(model, "input")
+				if input == nil || input.Kind != yaml.SequenceNode {
+					continue
+				}
+				var values []string
+				if input.Decode(&values) == nil && validateHarnessAPIInput(values) {
+					v.ModelInputs[harnessValue(harnessField(model, "id"))] = values
+				}
+			}
 		}
 		def, _ := harnessPatchRow(patch, "agent-default-model", false)
 		if cfg := harnessField(def, "config"); harnessValue(harnessField(cfg, "provider")) == harnessAPIProvider {
@@ -323,16 +353,26 @@ func mergeHarnessAPI(files map[string][]byte, v HarnessAPIRequest) (map[string][
 	if models.Kind != yaml.SequenceNode {
 		return nil, errors.New("Harness 模型列表结构无效，未覆盖原文件")
 	}
-	found := false
+	var selected *yaml.Node
 	for _, m := range models.Content {
 		if harnessValue(harnessField(m, "id")) == v.Model {
-			found = true
+			selected = m
 		}
 	}
-	if !found {
+	if selected == nil {
 		m := &yaml.Node{Kind: yaml.MappingNode}
 		harnessSet(m, "id", harnessString(v.Model))
 		models.Content = append(models.Content, m)
+		selected = m
+	}
+	// Apply only to the selected model. Older clients omit this field, retaining
+	// native declarations and other model metadata at the same endpoint.
+	if v.Input != nil {
+		input := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, value := range v.Input {
+			input.Content = append(input.Content, harnessString(value))
+		}
+		harnessSet(selected, "input", input)
 	}
 	harnessSet(row, "disabled", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
 	def, err := harnessPatchRow(patch, "agent-default-model", true)

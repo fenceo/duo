@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Opt-in native validation in the selected WSL user, isolated from ~/.dsh.
@@ -53,6 +51,8 @@ hits=[]
 class Handler(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args): pass
  def do_GET(self):
+  if self.path=='/mcp/hardware':
+   self.send_error(405); return
   valid=self.path=='/v1/models' and self.headers.get('Authorization')=='Bearer synthetic-harness-secret'
   hits.append({'model':'model-list','authenticated':valid})
   if not valid:
@@ -61,11 +61,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
   self.wfile.write(json.dumps({'data':[{'id':'fixture-model'},{'id':'fixture-alternative'}]}).encode())
  def do_POST(self):
   request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if self.path=='/mcp/hardware':
+   auth=self.headers.get('Authorization')
+   if auth not in ['Bearer synthetic-mcp-first','Bearer synthetic-mcp-second']:
+    self.send_error(403); return
+   method=request.get('method')
+   if 'id' not in request:
+    self.send_response(202); self.end_headers(); return
+   if method=='initialize':
+    result={'protocolVersion':request['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'jianzuo-hardware','version':'fixture'}}
+   elif method=='tools/list':
+    result={'tools':[{'name':'duo_probe','description':'Return a harmless synthetic authorization marker','inputSchema':{'type':'object','properties':{},'additionalProperties':False},'annotations':{'readOnlyHint':True,'destructiveHint':False}}]}
+   elif method=='tools/call' and request['params']['name']=='duo_probe':
+    hits.append({'model':'mcp-call','authenticated':True})
+    result={'content':[{'type':'text','text':'DUO_MCP_AUTH:'+auth}],'isError':False}
+   elif method=='ping': result={}
+   else:
+    self.send_error(400); return
+   self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()
+   self.wfile.write(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}).encode()); return
   valid=self.path=='/v1/chat/completions' and self.headers.get('Authorization')=='Bearer synthetic-harness-secret'
   hits.append({'model':request.get('model'),'authenticated':valid})
   if not valid:
    self.send_error(403); return
   self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+  mcp_users=[i for i,m in enumerate(request['messages']) if m.get('role')=='user' and 'DUO_MCP_PROBE' in str(m.get('content'))]
+  if mcp_users:
+   last_user=mcp_users[-1]
+   available=[x['function']['name'] for x in request.get('tools',[]) if 'duo_probe' in x.get('function',{}).get('name','')]
+   tools=[m for m in request['messages'][last_user+1:] if m.get('role')=='tool']
+   if available and not tools:
+    delta={'role':'assistant','tool_calls':[{'index':0,'id':'mcp-probe-'+str(last_user),'type':'function','function':{'name':available[0],'arguments':'{}'}}]}; finish='tool_calls'
+   else:
+    delta={'role':'assistant','content':'DUO_MCP_RESULT:'+str(tools[-1].get('content')) if tools else 'DUO_MCP_UNMOUNTED'}; finish='stop'
+   first={'id':'mcp-fixture','object':'chat.completion.chunk','created':1,'model':request['model'],'choices':[{'index':0,'delta':delta,'finish_reason':None}]}
+   last={'id':'mcp-fixture','object':'chat.completion.chunk','created':1,'choices':[{'index':0,'delta':{},'finish_reason':finish}]}
+   self.wfile.write(('data: '+json.dumps(first)+'\n\ndata: '+json.dumps(last)+'\n\ndata: [DONE]\n\n').encode()); self.wfile.flush(); return
   if any(m.get('role')=='user' and 'DUO_PERMISSION_PROBE' in str(m.get('content')) for m in request.get('messages',[])):
    tools=[m for m in request['messages'] if m.get('role')=='tool']
    if not tools:
@@ -137,23 +168,13 @@ print(json.dumps(hits),flush=True)
 		t.Fatal(err)
 	}
 	if os.Getenv("DUO_HARNESS_ATTACHMENT_NATIVE_FIXTURE") == "1" {
-		// Only the isolated loopback model is declared to accept images. Never
-		// grant that capability to the user's configured service or model IDs.
-		patch, err := harnessYAML(next["cordis.patch.yml"], yaml.SequenceNode)
+		vision := req
+		vision.Model, vision.Input = "fixture-alternative", []string{"text", "image"}
+		next, err = mergeHarnessAPI(next, vision)
 		if err != nil {
 			t.Fatal(err)
 		}
-		row, err := harnessPatchRow(patch, "llm-pi-ai", false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		provider := harnessField(harnessField(harnessField(row, "config"), "providers"), harnessAPIProvider)
-		for _, model := range harnessField(provider, "models").Content {
-			if harnessValue(harnessField(model, "id")) == "fixture-alternative" {
-				harnessSet(model, "input", &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{harnessString("text"), harnessString("image")}})
-			}
-		}
-		next["cordis.patch.yml"], err = yaml.Marshal(patch)
+		next, err = mergeHarnessAPI(next, req) // Restore the text default, retaining image metadata.
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,6 +282,28 @@ print(json.dumps(hits),flush=True)
 			expectedHits += 2
 		}
 		t.Log("official installed WSL Harness requested one-time approval with live tool details; accept executed the harmless marker and decline rejected it; loopback only")
+	}
+	if os.Getenv("DUO_HARNESS_MCP_NATIVE_FIXTURE") == "1" {
+		task.Session, task.Files, task.Model = session, nil, req.Model
+		for _, token := range []string{"synthetic-mcp-first", "synthetic-mcp-second"} {
+			c.HardwareAI = &HardwareRuntime{URL: "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp/hardware", Token: token}
+			if token == "synthetic-mcp-first" {
+				c.HardwareAI.FallbackURLs = []string{c.HardwareAI.URL}
+				c.HardwareAI.URL = "http://127.0.0.1:1/mcp/hardware"
+			}
+			continued, result, err := runHarnessACP(ctx, c, task, "DUO_MCP_PROBE", func(string, string) {})
+			if err != nil || continued != session || !strings.Contains(result, "DUO_MCP_AUTH:Bearer "+token) {
+				t.Fatalf("native MCP did not use fresh authorization on the same session: %v %s", err, result)
+			}
+			expectedHits += 3 // Two provider requests and one synthetic MCP call.
+		}
+		c.HardwareAI = nil
+		continued, result, err := runHarnessACP(ctx, c, task, "DUO_MCP_PROBE", func(string, string) {})
+		if err != nil || continued != session || !strings.Contains(result, "DUO_MCP_UNMOUNTED") {
+			t.Fatalf("native MCP remained mounted after removing grants: %v %s", err, result)
+		}
+		expectedHits++
+		t.Log("official installed WSL Harness mounted HTTP MCP through ACP, executed only a synthetic read tool, renewed its token on the same durable session and removed tools after grants were cleared; isolated loopback only")
 	}
 	io.WriteString(in, "done\n")
 	line, err = reader.ReadString('\n')

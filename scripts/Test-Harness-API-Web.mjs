@@ -28,5 +28,16 @@ el('harness-api-model-list').value='fixture-b';el('harness-api-model-list').onch
 el('harness-api-url').dispatchEvent(new ctx.Event('input'));assert.equal(el('harness-api-model-list').querySelectorAll('option').length,1);
 ctx.api=async()=>({status:'failed',models:[],message:'认证被拒绝'});await ctx.readHarnessAPIModels();assert.equal(el('harness-api-model-list').querySelectorAll('option').length,1);assert.match(el('harness-api-status').textContent,/认证被拒绝/);assert.equal(el('harness-api-key').value,'synthetic-new');
 el('harness-api-dialog').close();ctx.api=async()=>view;await ctx.openHarnessAPI('fixture');
+// A capability declaration belongs only to the selected model/endpoint.
+const capable={...view,models:[{id:'fixture-model'},{id:'text-model'}],model_inputs:{'fixture-model':['text','image'],'text-model':['text']}};
+ctx.api=async()=>capable;await ctx.openHarnessAPI('fixture');assert.equal(el('harness-api-input').value,'image');
+el('harness-api-model-list').value='text-model';el('harness-api-model-list').onchange();assert.equal(el('harness-api-input').value,'text');
+el('harness-api-model').value='toString';el('harness-api-model').dispatchEvent(new ctx.Event('input'));assert.equal(el('harness-api-input').value,'');
+el('harness-api-model').value='fixture-model';el('harness-api-model').dispatchEvent(new ctx.Event('input'));assert.equal(el('harness-api-input').value,'image');
+el('harness-api-url').value='https://changed.example/v1';el('harness-api-url').dispatchEvent(new ctx.Event('input'));assert.equal(el('harness-api-input').value,'');
+el('harness-api-key').value='synthetic-capability-key';el('harness-api-input').value='image';let capabilityPayload;
+ctx.api=async(path,method,body)=>{capabilityPayload=body;assert.deepEqual(Array.from(body.input),['text','image']);return {...capable,base_url:body.base_url,key_configured:true}};
+await ctx.saveHarnessAPI();assert.equal(capabilityPayload.api_key,'');assert.equal(el('harness-api-key').value,'');
+el('harness-api-input').value='';ctx.api=async(path,method,body)=>{assert.equal(body.input,undefined);return view};await ctx.saveHarnessAPI();
 ctx.api=async()=>new Promise(resolve=>resolveRead=resolve);const stale=ctx.readHarnessAPIModels();run('renewShellScope()');resolveRead({status:'ready',models:[{id:'stale-model'}],message:'stale result'});await stale;assert.equal(run('harnessAPIView'),null);assert.equal(el('harness-api-key').value,'');assert(!el('harness-api-model-list').textContent.includes('stale-model'));
-console.log('PASS: environment Harness API entry, stale loading isolation, duplicate save lock, route metadata, failure draft, key clearing and logout disposal. No real credentials or model calls.');
+console.log('PASS: environment Harness API entry, model/endpoint image declarations, stale loading isolation, duplicate save lock, route metadata, failure draft, key clearing and logout disposal. No real credentials or model calls.');

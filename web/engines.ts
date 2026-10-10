@@ -180,7 +180,7 @@ function refreshAccountLogin(){
  element('engine-account-api').classList.toggle('hidden',select.value!=='apiKey');input('engine-account-url').placeholder=claude?'留空使用 Anthropic 官方 API':'留空使用 OpenAI 官方 API';
 }
 
-type HarnessAPIView={environment_id:string;target:string;api:string;base_url:string;model:string;key_configured:boolean;models?:{id:string;name?:string}[];discovery_status?:string;message?:string};
+type HarnessAPIView={environment_id:string;target:string;api:string;base_url:string;model:string;key_configured:boolean;models?:{id:string;name?:string}[];model_inputs?:Record<string,string[]>;discovery_status?:string;message?:string};
 type HarnessDiscovery={status:string;models:{id:string;name?:string}[];message:string};
 let harnessAPIView:HarnessAPIView|null=null,harnessAPIRequest=0,harnessAPIBusy=false;
 function installHarnessAPI(){
@@ -194,9 +194,11 @@ function installHarnessAPI(){
  input('harness-api-model').insertAdjacentHTML('afterend','<select id="harness-api-model-list" aria-label="已读取的模型"><option value="">先验证并读取模型，或手动填写 ID</option></select>');
  element('harness-api-key-note').insertAdjacentHTML('afterend','<button type="button" id="harness-api-discover">验证并读取模型</button><p class="muted">只请求模型列表，不发送推理请求。接口认证成功不代表每个模型均可调用；保存时也会自动读取。</p>');
  button('harness-api-save').textContent='保存并读取模型';
- element<HTMLSelectElement>('harness-api-model-list').onchange=()=>{const value=element<HTMLSelectElement>('harness-api-model-list').value;if(value)input('harness-api-model').value=value};
+ element('harness-api-model-list').insertAdjacentHTML('afterend','<label for="harness-api-input">所选模型输入能力</label><select id="harness-api-input"><option value="">原生默认 / 保留已有设置</option><option value="text">仅文字</option><option value="image">文字和图片</option></select><p class="muted">仅为上方模型保存能力声明。请按服务商说明选择；声明支持图片不能让文字模型识图，读取模型列表也不会验证图片能力。</p>');
+ element<HTMLSelectElement>('harness-api-model-list').onchange=()=>{const value=element<HTMLSelectElement>('harness-api-model-list').value;if(value){input('harness-api-model').value=value;renderHarnessAPIInput()}};
+ input('harness-api-model').addEventListener('input',()=>renderHarnessAPIInput());
  button('harness-api-discover').onclick=()=>void readHarnessAPIModels();
- for(const id of ['harness-api-protocol','harness-api-url','harness-api-key'])element(id).addEventListener('input',()=>renderHarnessAPIModels([]));
+ for(const id of ['harness-api-protocol','harness-api-url','harness-api-key'])element(id).addEventListener('input',()=>{renderHarnessAPIModels([]);if(id!=='harness-api-key')renderHarnessAPIInput()});
  disposeWithShell(()=>{input('harness-api-key').value='';harnessAPIView=null;harnessAPIRequest++;harnessAPIBusy=false});
 }
 function renderHarnessAPI(view:HarnessAPIView){
@@ -205,6 +207,12 @@ function renderHarnessAPI(view:HarnessAPIView){
  element('harness-api-key-note').textContent=view.key_configured?'已配置 Key；留空保留，填写新 Key 则替换。':'尚未配置 Key；首次保存需要填写。';
  element<HTMLFieldSetElement>('harness-api-fields').disabled=false;button('harness-api-save').disabled=false;
  renderHarnessAPIModels(view.models||[]);
+ renderHarnessAPIInput();
+}
+function renderHarnessAPIInput(){
+ const view=harnessAPIView,sameEndpoint=view&&element<HTMLSelectElement>('harness-api-protocol').value===view.api&&input('harness-api-url').value.trim().replace(/\/+$/,'')===view.base_url.replace(/\/+$/,'');
+ const values=sameEndpoint?view.model_inputs?.[input('harness-api-model').value.trim()]:undefined;
+ element<HTMLSelectElement>('harness-api-input').value=Array.isArray(values)?(values.includes('image')?'image':values.includes('text')?'text':''):'';
 }
 function renderHarnessAPIModels(models:{id:string;name?:string}[]){
  const select=element<HTMLSelectElement>('harness-api-model-list');
@@ -221,7 +229,7 @@ async function readHarnessAPIModels(){
   const result=await api<HarnessDiscovery>('environments/'+encodeURIComponent(view.environment_id)+'/harness-api/models','POST',payload,shellController.signal);
   if(!shellCurrent(epoch)||request!==harnessAPIRequest||!dialog.open)return;
   if(result.status==='ready'){
-   if(!result.models.some(m=>m.id===input('harness-api-model').value)&&result.models.length)input('harness-api-model').value=result.models[0].id;
+   if(!result.models.some(m=>m.id===input('harness-api-model').value)&&result.models.length){input('harness-api-model').value=result.models[0].id;renderHarnessAPIInput()}
    renderHarnessAPIModels(result.models);
   }
   element('harness-api-status').textContent=result.message+(result.status==='ready'?' 尚未保存，确认模型后点击“保存并读取模型”。':'');
@@ -239,6 +247,7 @@ async function openHarnessAPI(environmentID:string){
  const dialog=element<HTMLDialogElement>('harness-api-dialog');
  element('harness-api-target').textContent='目标环境：'+env.name+'（'+[env.type,env.distro,env.user,env.host].filter(Boolean).join(' / ')+ '）';
  input('harness-api-key').value='';input('harness-api-url').value='';input('harness-api-model').value='';element('harness-api-key-note').textContent='';
+ element<HTMLSelectElement>('harness-api-input').value='';
  renderHarnessAPIModels([]);
  element<HTMLFieldSetElement>('harness-api-fields').disabled=true;button('harness-api-save').disabled=true;button('harness-api-close').disabled=false;element('harness-api-status').textContent='正在读取目标环境配置…';
  if(!dialog.open)dialog.showModal();
@@ -252,9 +261,11 @@ async function saveHarnessAPI(){
  const view=harnessAPIView;if(!view||harnessAPIBusy||engineSetupBusy)return;
  const epoch=shellEpoch,request=harnessAPIRequest,dialog=element<HTMLDialogElement>('harness-api-dialog');
  const payload={target:view.target,api:element<HTMLSelectElement>('harness-api-protocol').value,base_url:input('harness-api-url').value.trim(),model:input('harness-api-model').value.trim(),api_key:input('harness-api-key').value};
+ const capability=element<HTMLSelectElement>('harness-api-input').value;
+ const configured=capability?{...payload,input:capability==='image'?['text','image']:['text']}:payload;
  harnessAPIBusy=true;element<HTMLFieldSetElement>('harness-api-fields').disabled=true;button('harness-api-save').disabled=true;button('harness-api-close').disabled=true;element('harness-api-status').textContent='正在验证、读取模型并保存到目标环境…';
  try{
-  const result=await api<HarnessAPIView>('environments/'+encodeURIComponent(view.environment_id)+'/harness-api','PUT',payload,shellController.signal);
+  const result=await api<HarnessAPIView>('environments/'+encodeURIComponent(view.environment_id)+'/harness-api','PUT',configured,shellController.signal);
   if(!shellCurrent(epoch)||request!==harnessAPIRequest||!dialog.open)return;
   renderHarnessAPI(result);element('harness-api-status').textContent=result.message||'API 配置已保存。';
   // Merge only saved route metadata into the settings draft. Keep unrelated
@@ -266,6 +277,7 @@ async function saveHarnessAPI(){
  finally{
   // A key is never retained in an application-level retry object.
   payload.api_key='';
+  configured.api_key='';
   if(shellCurrent(epoch)){harnessAPIBusy=false;if(request===harnessAPIRequest&&dialog.open){element<HTMLFieldSetElement>('harness-api-fields').disabled=false;button('harness-api-save').disabled=false;button('harness-api-close').disabled=false}renderEngineCatalog()}
  }
 }
