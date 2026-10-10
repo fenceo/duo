@@ -4,7 +4,9 @@
 
 “引擎安装”中可检测全部已保存的 Windows、WSL、SSH 环境。检测区分未安装、已有登录配置、需要登录及未完成检测，不调用模型。连接失败不会报告成“未安装”；Harness/Kimi/MiMo 只检测 CLI 文件存在，不宣称账号可用。
 
-自动安装支持 Codex、Claude Code、DeepSeek Harness。Windows 下载固定版本并校验 SHA-256 的 Node.js，再从官方 npm 仓库安装工具，放在 Duo 数据目录的独立目录中。WSL/SSH 在指定用户下使用已有 Node.js/npm，执行允许列表中的 `npm install --global --prefix "$HOME/.local/share/duo/engine-tools/<操作标识>" --registry=https://registry.npmjs.org <官方包>@latest`；不使用 sudo、不覆盖全局 CLI、不修改 PATH。目标需能联网；Node.js/npm 缺失时明确失败。成功运行 `--version` 后才保存路径；已有任务通过“切换 AI”选用新路径。当前不自动安装 Kimi/MiMo，也不安装桌面版或本地模型权重。
+自动安装支持 Codex、Claude Code、DeepSeek Harness。Windows 下载固定版本并校验 SHA-256 的 Node.js，再从官方 npm 仓库安装工具，放在 Duo 数据目录的独立目录中。WSL/SSH 在指定用户下执行允许列表中的 `npm install --global --prefix "$HOME/.local/share/duo/engine-tools/<操作标识>" --registry=https://registry.npmjs.org <官方包>@latest`；不使用 sudo、不覆盖全局 CLI、不修改 shell 的全局 PATH。成功运行 `--version` 后才保存路径；已有任务通过“切换 AI”选用新路径。当前不自动安装 Kimi/MiMo，也不安装桌面版或本地模型权重。
+
+v0.34.5 起，WSL/SSH 优先使用能运行 npm 的原生 Node.js 22 或更新版本。缺失、版本过旧或只找到 Windows npm 时，在该用户的安装目录下载 Node.js 24.19.0 Linux x64/arm64 运行时，使用内置 SHA-256 校验后才解压执行。下载需要目标环境具有 curl、tar 和 sha256sum，且能访问 nodejs.org 和 registry.npmjs.org。其他系统/架构需先安装可用的原生 Node/npm。保存的 CLI 入口会带上对应运行时路径，因此后续任务不依赖交互 shell 加载 nvm。连接、运行时下载/校验、npm 网络/权限/空间及版本检查分别返回固定错误提示；原始 npm/代理诊断不回传，临时输出在结束时清理。
 
 账号管理中的“切换到环境”将所选账号的登录和 API 服务配置写入勾选环境的原生目录，不改任务或会话。源目录和目标均可以位于 Windows、WSL 或 SSH；WSL/SSH 需有 Python 3 和已配置的连接。不在网页、命令行或日志回传密钥。
 

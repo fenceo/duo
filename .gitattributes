@@ -1,3 +1,5 @@
 # Node emits this generated bundle with LF on every platform. Keeping the
 # checkout in the same format prevents a false dirty tree under autocrlf=true.
 web/app.optimized.js text eol=lf
+# Embedded POSIX scripts must keep LF when built on Windows.
+remote_engine_install.sh text eol=lf

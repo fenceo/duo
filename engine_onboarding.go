@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -255,21 +256,25 @@ func installRemoteEngine(ctx context.Context, env Environment, engine, installID
 	if env.Type != "wsl" && env.Type != "ssh" {
 		return "", errors.New("远程安装只适用于 WSL 或 SSH")
 	}
-	progress("正在连接目标环境并检查 npm…")
+	progress("正在连接目标环境并检查 Node.js/npm；缺失时安装独立运行时…")
 	if !safeWorkbenchID(installID) {
 		return "", errors.New("安装目录标识无效")
 	}
 	script := remoteEngineInstallScript(pkg, binary, installID)
 	// Install on the exact selected user: never retry writes as WSL's default user.
-	cmd := commandWithContext(ctx, environmentProbeCommand(env, "sh", "-lc", script))
+	cmd := commandWithContext(ctx, environmentProbeCommand(env, "sh", "-ls"))
+	cmd.Stdin = strings.NewReader(script)
 	stdout := &limitedBuffer{limit: 64 * 1024}
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = 2 * time.Second
 	hideCommand(cmd)
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	if err != nil {
-		return "", errors.New("目标环境安装失败，请检查连接、npm 和权限")
+		return "", remoteEngineInstallError(stdout.String())
 	}
 	lines := strings.Split(strings.ReplaceAll(stdout.String(), "\r\n", "\n"), "\n")
 	path := ""
@@ -286,14 +291,50 @@ func installRemoteEngine(ctx context.Context, env Environment, engine, installID
 	return path, nil
 }
 
+// Official nodejs.org v24.19.0 SHASUMS256.txt. Never execute an unchecked archive.
+const managedNodeLinuxX64SHA256 = "f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4"
+const managedNodeLinuxARM64SHA256 = "d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f"
+
+//go:embed remote_engine_install.sh
+var remoteEngineInstaller string
+
 func remoteEngineInstallScript(pkg, binary, id string) string {
-	return "set -eu\ncommand -v node >/dev/null 2>&1\ncommand -v npm >/dev/null 2>&1\n" +
-		"prefix=\"$HOME/.local/share/duo/engine-tools/" + id + "\"\n" +
-		"mkdir -p -- \"$prefix\"\n" +
-		"npm install --global --prefix \"$prefix\" --registry=https://registry.npmjs.org --no-audit --no-fund " + posixQuote(pkg+"@latest") + " >/dev/null 2>&1\n" +
-		"test -x \"$prefix/bin/" + binary + "\"\n" +
-		"\"$prefix/bin/" + binary + "\" --version >/dev/null 2>&1\n" +
-		"printf '__DUO_ENGINE_PATH__\\n%s\\n' \"$prefix/bin/" + binary + "\"\n"
+	return strings.NewReplacer("{{ID}}", id, "{{PACKAGE}}", pkg, "{{BINARY}}", binary,
+		"{{VERSION}}", managedNodeVersion, "{{X64_SHA}}", managedNodeLinuxX64SHA256,
+		"{{ARM64_SHA}}", managedNodeLinuxARM64SHA256).Replace(remoteEngineInstaller)
+}
+
+func remoteEngineInstallError(output string) error {
+	// Only fixed allowlisted codes are public. npm/SSH output can contain proxy
+	// URLs or registry credentials, so never return their raw diagnostics.
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	code := ""
+	for i, line := range lines {
+		if line == "__DUO_ENGINE_ERROR__" && i+1 < len(lines) {
+			code = lines[i+1]
+			break
+		}
+	}
+	messages := map[string]string{
+		"directory":          "目标用户安装目录不可写，请检查该用户的主目录权限；不会使用 sudo 或切换用户安装",
+		"runtime_platform":   "缺少可用的原生 Node.js/npm；自动下载运行时目前支持 Linux，请先在该目标环境安装 Node.js 22 或更新版本",
+		"runtime_arch":       "目标 Linux 架构暂不支持自动下载 Node.js，请先安装该架构的 Node.js 22 或更新版本",
+		"runtime_tools":      "目标环境缺少 curl、tar 或 sha256sum，请先安装这些基础工具后重试",
+		"runtime_download":   "无法下载 Linux Node.js 运行时，请检查目标环境能否访问 nodejs.org，以及 DNS、代理和网络设置",
+		"runtime_checksum":   "Linux Node.js 下载校验失败，未执行下载文件，请检查网络后重新安装",
+		"runtime_unpack":     "Linux Node.js 运行时解压失败，请检查安装目录和磁盘空间",
+		"runtime_version":    "目标环境的 Node.js 运行检查失败，需要可用的原生 Node.js 22 或更新版本",
+		"package_permission": "npm 没有写入权限，请检查目标用户的主目录及 npm 缓存目录权限；不会使用 sudo 安装",
+		"package_network":    "npm 无法连接官方仓库，请检查目标环境的 DNS、代理及 registry.npmjs.org 网络连接",
+		"package_space":      "npm 安装时磁盘空间不足，请清理目标环境磁盘后重试",
+		"package_install":    "官方 npm 包安装失败，尚未修改环境的工具配置；请检查目标环境网络、npm 和磁盘权限",
+		"entry_missing":      "npm 安装完成，但安装包缺少可执行的 CLI 入口，尚未修改环境配置",
+		"entry_start":        "CLI 已下载但版本检查失败，尚未修改环境配置，请检查目标系统兼容性",
+	}
+	if message, ok := messages[code]; ok {
+		return errors.New(message)
+	}
+	return errors.New("无法完成目标环境安装，请检查 WSL 发行版/用户或 SSH 连接；安装输出未包含可确认的失败阶段")
 }
 
 func (a *App) performEngineInstall(ctx context.Context, env Environment, r EngineSetupRequest) error {
