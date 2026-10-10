@@ -56,7 +56,22 @@ func (f *Feishu) pendingQuestions(taskID string) ([]CodexPendingRequest, error) 
 	if err != nil {
 		return nil, err
 	}
-	if task.Archived || task.Deleted || task.Engine != "codex" {
+	if task.Archived || task.Deleted {
+		return nil, nil
+	}
+	if task.Engine == "deepseek-harness" {
+		// Harness shares the pending-request store for native permissions, not
+		// Codex question schemas. Notify only its live, validated approvals;
+		// questionCard keeps permission details and decisions in the web UI.
+		requests := []CodexPendingRequest{}
+		for _, p := range f.app.codexRequests.list(taskID) {
+			if p.Method == harnessPermissionMethod {
+				requests = append(requests, p)
+			}
+		}
+		return requests, nil
+	}
+	if task.Engine != "codex" {
 		return nil, nil
 	}
 	async, err := f.app.store.pendingAsyncQuestions(task)

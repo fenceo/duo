@@ -54,7 +54,7 @@ function taskModelProbeMismatch(){
 }
 function modelListProbeContext(target:ModelPickerTarget){
  if(target==='create'){if(!creatingTask)return null;return currentCreateCatalogContext()}
- if(creatingTask||!detail||detail.task.engine==='deepseek-harness'||taskModelProbeMismatch())return null;
+ if(creatingTask||!detail||taskModelProbeMismatch())return null;
  const task=detail.task,environment=settings.config.environments.find(env=>env.id===task.environment.id)||task.environment;
  return {environment,engine:task.engine||'codex',workspace:task.workspace,key:taskCatalogContextKey(task)};
 }

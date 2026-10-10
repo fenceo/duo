@@ -5809,7 +5809,7 @@ function modelListProbeContext(target) {
         if (!creatingTask) return null;
         return currentCreateCatalogContext();
     }
-    if (creatingTask || !detail || detail.task.engine === 'deepseek-harness' || taskModelProbeMismatch()) return null;
+    if (creatingTask || !detail || taskModelProbeMismatch()) return null;
     const task = detail.task, environment = settings.config.environments.find((env)=>env.id === task.environment.id) || task.environment;
     return {
         environment,

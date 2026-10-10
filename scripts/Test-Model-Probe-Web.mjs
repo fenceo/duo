@@ -112,7 +112,24 @@ for(const changed of ['environment','engine','workspace','profile','shell','clos
  f.value("taskPickerModels=[{id:'claude-one',name:'Claude one'},{id:'claude-two',name:'Claude two'}];modelCatalogState.task.key=taskCatalogContextKey(detail.task)");
  await f.ctx.testModelList('task');assert.deepEqual(f.requests[0].body,{engine:'claude',workspace:'/task',models:['claude-one','claude-two'],expected_profile_id:''});
  assert.match(f.node('task-model-list').innerHTML,/model-probe-available/);assert.equal(f.ctx.detail.task.model,'old-selection','testing does not change task model');assert(f.requests.every(request=>!request.path.includes('/tasks/')),'no conversation pollution');
- f.ctx.detail.task.engine='deepseek-harness';await f.ctx.testModelList('task');assert.equal(f.requests.length,1,'Harness live-session boundaries preserved');
+}
+{
+ const f=fixture();f.ctx.creatingTask=false;
+ f.profiles.active_profile['wsl:deepseek-harness']='harness-account';
+ f.profiles.profiles.push({id:'harness-account',name:'Harness API',engine:'deepseek-harness',environment_id:'wsl',kind:'dsh_home'});
+ f.ctx.detail={task:{id:'harness-task',environment:{...f.environment},engine:'deepseek-harness',workspace:'/task',model:'selected-model',session:'original-native-session',mode:{id:'harness:workspace',approval:'request'},binding:{revision:'harness-revision'}}};
+ const before=JSON.stringify(f.ctx.detail.task);
+ f.value("taskPickerModels=[{id:'harness-one',name:'One'},{id:'harness-two',name:'Two'}];modelCatalogState.task.key=taskCatalogContextKey(detail.task)");
+ f.ctx.renderModelMenu('task');assert.equal(f.node('task-test-models').disabled,false);
+ await f.ctx.testModelList('task');
+ assert.equal(f.requests.length,1,'Harness task testing must issue a request');
+ assert.deepEqual(f.requests[0].body,{engine:'deepseek-harness',workspace:'/task',models:['harness-one','harness-two'],expected_profile_id:'harness-account',task_id:'harness-task',binding_revision:'harness-revision'});
+ for(const expected of ['DeepSeek Harness','Harness API','fixture-gateway','/task','可能消耗模型额度'])assert(f.confirmations[0].includes(expected));
+ assert.match(f.node('task-model-list').innerHTML,/model-probe-available/);
+ assert.equal(JSON.stringify(f.ctx.detail.task),before,'model probe must preserve the conversation, route, permission and binding');
+ assert(f.requests.every(request=>!request.path.includes('/tasks/')),'no new task turn or native-session edit');
+ f.ctx.settings.config.environments[0].harness_provider='different-provider';f.ctx.renderModelMenu('task');
+ assert.equal(f.node('task-test-models').disabled,true);await f.ctx.testModelList('task');assert.equal(f.requests.length,1,'changed Harness provider cannot silently test another environment');
 }
 for(const accountMode of ['environment','pinned']){
  const f=fixture();f.ctx.creatingTask=false;
