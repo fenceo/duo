@@ -29,7 +29,9 @@ type conversationWindow struct {
 
 const conversationRunSelect = `SELECT r.id,r.task_id,r.input,r.kind,r.source,r.status,r.result,r.error,r.created,r.finished,
 COALESCE(m.started,0),COALESCE(m.usage,''),COALESCE(o.mode,''),COALESCE(o.attachments,''),
-COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
+COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),''),
+COALESCE((SELECT value FROM run_context WHERE run_id=r.id),'null'),
+(SELECT json_group_array(json_object('id',id,'mime',mime,'size',length(data),'source',source,'width',width,'height',height)) FROM (SELECT * FROM output_images WHERE run_id=r.id AND task_id=r.task_id ORDER BY created,id))
 FROM runs r LEFT JOIN run_metrics m ON m.run_id=r.id LEFT JOIN run_options o ON o.run_id=r.id LEFT JOIN run_execution x ON x.run_id=r.id `
 
 // Tool output is fetched in full only when its disclosure is opened. Neither

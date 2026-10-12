@@ -5,7 +5,7 @@
 type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
 type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
 type Task={binding?:{revision:string;account_mode?:'environment'|'pinned';profile?:EngineProfile;history_id?:string};mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
-type Run={engine?:string;model?:string;input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
+type Run={context?:{used:number;size:number};images?:{id:string;mime:string;size:number;source:'assistant'|'tool'|'process';width:number;height:number}[];engine?:string;model?:string;input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number;truncated?:boolean};
 type EngineRuntime={state:'new'|'live'|'busy'|'resumable'|'closed';can_continue:boolean;reason:string};
 type LiveInteraction={run_id:string;can_steer:boolean;can_interrupt:boolean;steering:boolean;interrupting:boolean};
@@ -142,7 +142,7 @@ function renderShell(){
 
   button('knowledge-new').onclick=()=>editKnowledge(null);button('export-note').onclick=()=>{location.href='/api/tasks/'+chosen+'/knowledge?download=1'};
  button('save-draft').onclick=()=>void saveRunKnowledge();
- button('summarize').onclick=async()=>{if(detail?.task.engine==='deepseek-harness'){notify(harnessKnowledgeHint);return}switchTab('note');button('summarize').disabled=true;try{await api('tasks/'+chosen+'/summarize','POST',{});notify('正在整理，完成后会显示草稿');await poll()}catch(e){notify((e as Error).message)}finally{if(button('summarize'))button('summarize').disabled=detail?.task.engine==='deepseek-harness'}};
+ button('summarize').onclick=async()=>{switchTab('note');button('summarize').disabled=true;try{await api('tasks/'+chosen+'/summarize','POST',{});notify('正在整理，完成后会显示草稿');await poll()}catch(e){notify((e as Error).message)}finally{if(button('summarize'))button('summarize').disabled=!!detail?.task.archived||!!detail?.runs.some(r=>r.status==='running'||r.status==='queued')}};
  button('adopt-draft').onclick=()=>editKnowledgeFromRun();
  element('knowledge-filter').querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.onclick=()=>{knowledgeFilter=b.dataset.knowledgeFilter!;renderKnowledgeList()});
  element('knowledge-form').onsubmit=saveKnowledge;button('knowledge-cancel').onclick=()=>element<HTMLDialogElement>('knowledge-dialog').close();element('knowledge-dialog').addEventListener('cancel',e=>{e.preventDefault();element<HTMLDialogElement>('knowledge-dialog').close()});
@@ -270,7 +270,7 @@ function renderTask(){
  input('message').disabled=t.archived;button('send').disabled=sending||t.archived;button('summarize').disabled=active||t.archived;if(t.archived)element('run-status').textContent='任务已归档，记录保留；恢复后可以继续执行。';
  if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建会话后再发送…'}
  element('run-status').classList.toggle('hidden',!active&&!latest?.error&&!detail.approvals?.length&&!t.archived&&!harnessSessionClosed());
- const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived||harness;button('summarize').title=harness?harnessKnowledgeHint:'根据任务记录生成知识草稿';
+ const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived;button('summarize').title=harness?harnessKnowledgeHint:'根据任务记录生成知识草稿';
  let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('notebook').querySelector('.note-head')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
  renderWorkflow();renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
 }

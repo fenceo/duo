@@ -27,6 +27,7 @@ type Task struct {
 	Mode            *WorkMode           `json:"mode,omitempty"`
 	Deleted         bool                `json:"deleted"`
 	Files           []RuntimeAttachment `json:"-"`
+	NoTools         bool                `json:"-"`
 	Pinned          bool                `json:"pinned"`
 	Archived        bool                `json:"archived"`
 	Environment     *Environment        `json:"environment"`
@@ -42,22 +43,24 @@ type Task struct {
 	Updated         int64               `json:"updated"`
 }
 type Run struct {
-	Engine      string       `json:"engine,omitempty"`
-	Model       string       `json:"model,omitempty"`
-	Started     int64        `json:"started"`
-	Usage       *RunUsage    `json:"usage"`
-	Mode        *WorkMode    `json:"mode,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-	ID          string       `json:"id"`
-	TaskID      string       `json:"task_id"`
-	Input       string       `json:"input"`
-	Kind        string       `json:"kind"`
-	Source      string       `json:"source"`
-	Status      string       `json:"status"`
-	Result      string       `json:"result"`
-	Error       string       `json:"error"`
-	Created     int64        `json:"created"`
-	Finished    int64        `json:"finished"`
+	Context     *RunContext   `json:"context,omitempty"`
+	Images      []OutputImage `json:"images,omitempty"`
+	Engine      string        `json:"engine,omitempty"`
+	Model       string        `json:"model,omitempty"`
+	Started     int64         `json:"started"`
+	Usage       *RunUsage     `json:"usage"`
+	Mode        *WorkMode     `json:"mode,omitempty"`
+	Attachments []Attachment  `json:"attachments,omitempty"`
+	ID          string        `json:"id"`
+	TaskID      string        `json:"task_id"`
+	Input       string        `json:"input"`
+	Kind        string        `json:"kind"`
+	Source      string        `json:"source"`
+	Status      string        `json:"status"`
+	Result      string        `json:"result"`
+	Error       string        `json:"error"`
+	Created     int64         `json:"created"`
+	Finished    int64         `json:"finished"`
 }
 type Event struct {
 	Truncated bool   `json:"truncated,omitempty"`
@@ -147,7 +150,7 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
 		db.Close()
 		return nil, err
 	}
-	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema + engineBindingSchema); err != nil {
+	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema + engineBindingSchema + runOutputSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -266,15 +269,7 @@ type storeQueryer interface {
 }
 
 func storedRuns(reader storeQueryer, id string) ([]Run, error) {
-	rows, e := reader.Query(`SELECT runs.id,runs.task_id,runs.input,runs.kind,runs.source,runs.status,runs.result,runs.error,runs.created,runs.finished,
-COALESCE(run_metrics.started,0),COALESCE(run_metrics.usage,''),COALESCE(run_options.mode,''),COALESCE(run_options.attachments,''),
-COALESCE(json_extract(x.snapshot,'$.engine'),''),COALESCE(json_extract(x.snapshot,'$.model'),'')
-FROM runs
-LEFT JOIN run_metrics ON run_metrics.run_id=runs.id
-LEFT JOIN run_options ON run_options.run_id=runs.id
-LEFT JOIN run_execution x ON x.run_id=runs.id
-WHERE runs.task_id=?
-ORDER BY runs.created,runs.id`, id)
+	rows, e := reader.Query(conversationRunSelect+"WHERE r.task_id=? ORDER BY r.created,r.id", id)
 	if e != nil {
 		return nil, e
 	}
@@ -286,8 +281,8 @@ func readRuns(rows *sql.Rows) ([]Run, error) {
 	out := []Run{}
 	for rows.Next() {
 		var r Run
-		var usageJSON, modeJSON, filesJSON string
-		if e := rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON, &r.Engine, &r.Model); e != nil {
+		var usageJSON, modeJSON, filesJSON, contextJSON, imagesJSON string
+		if e := rows.Scan(&r.ID, &r.TaskID, &r.Input, &r.Kind, &r.Source, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &r.Started, &usageJSON, &modeJSON, &filesJSON, &r.Engine, &r.Model, &contextJSON, &imagesJSON); e != nil {
 			return nil, e
 		}
 		if usageJSON != "" {
@@ -299,6 +294,8 @@ func readRuns(rows *sql.Rows) ([]Run, error) {
 		if filesJSON != "" {
 			_ = json.Unmarshal([]byte(filesJSON), &r.Attachments)
 		}
+		_ = json.Unmarshal([]byte(contextJSON), &r.Context)
+		_ = json.Unmarshal([]byte(imagesJSON), &r.Images)
 		out = append(out, r)
 	}
 	return out, rows.Err()

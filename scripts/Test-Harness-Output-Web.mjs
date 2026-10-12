@@ -1,0 +1,32 @@
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+import {conversationStressDetail} from './Conversation-Performance-Fixture.mjs';
+import {runInContext} from 'node:vm';
+import assert from 'node:assert/strict';
+
+const {ctx,document}=await createWebShellFixture();
+ctx.fixtureDetail=conversationStressDetail(3);
+const run=code=>runInContext(code,ctx);
+run(`chosen=fixtureDetail.task.id;detail=fixtureDetail;tasks=[detail.task];detail.task.engine='deepseek-harness';
+const latest=detail.runs[detail.runs.length-1];latest.context={used:250,size:1000};latest.usage=undefined;
+latest.images=[{id:'assistant-image',source:'assistant',mime:'image/png',size:50,width:2,height:3},{id:'tool-image',source:'tool',mime:'image/png',size:50,width:2,height:3},{id:'thought-image',source:'process',mime:'image/png',size:50,width:2,height:3}];
+resetConversation();element('conversation').replaceChildren();appendEvents(detail.events);renderTask();`);
+const gallery=document.querySelector('.turn-images:not(:empty)');
+assert.equal(gallery.querySelectorAll('img').length,2,'default process filter shows reply and thought, hides tool');
+assert(gallery.textContent.includes('回复图片'));
+assert(gallery.textContent.includes('过程图片'));
+assert.equal(document.getElementById('summarize').disabled,false,'idle Harness can summarize');
+assert.match(document.getElementById('harness-knowledge-hint').textContent,/独立会话/);
+const footer=gallery.parentElement.querySelector('.turn-footer');
+assert.match(footer.textContent,/上下文 250 \/ 1K · 25.0%/);
+assert.match(footer.textContent,/用量 未提供/);
+assert(gallery.querySelector('img').getAttribute('src').startsWith('/api/tasks/'));
+assert.equal(gallery.querySelector('img').getAttribute('loading'),'lazy');
+// Same native metadata on an idle poll must preserve the image node.
+const first=gallery.querySelector('img');run('appendEvents([]);renderTask()');
+assert.equal(gallery.querySelector('img'),first);
+run('conversationFilter={tools:true,process:false};applyConversationFilter()');
+assert.match(gallery.textContent,/工具图片/);assert.doesNotMatch(gallery.textContent,/过程图片/);
+assert(gallery.querySelector('a[download]').getAttribute('href').endsWith('?download=1'));
+run(`detail.runs[detail.runs.length-1].status='interrupted';detail.runs[detail.runs.length-1].error='执行已停止';applyConversationFilter()`);
+assert.equal(gallery.querySelectorAll('img').length,2,'partial images survive cancellation');
+console.log('PASS: Harness summary enabled; independent context gauge, authenticated output images, display filters and idle DOM stability.');

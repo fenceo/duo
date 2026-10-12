@@ -52,6 +52,7 @@ func (s *Store) messageAttachments(task string, ids []string) ([]Attachment, err
 	return out, nil
 }
 func (s *Server) attachmentRoutes(m *http.ServeMux) {
+	s.outputImageRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/attachments", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		task, err := s.app.store.task(r.PathValue("id"))
 		if err != nil || task.Archived || task.Deleted {

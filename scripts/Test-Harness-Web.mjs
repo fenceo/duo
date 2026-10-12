@@ -104,9 +104,9 @@ assert.match(workflowSource,/control\.disabled=detail\.task\.archived\|\|harness
 assert.match(workflowSource,/按 Harness 官方默认权限档位提供选项/);
 assert.match(workflowSource,/harness:workspace/);
 assert.match(app,/modeForPermission\(createPermission,input\('create-engine'\)\.value\)/);
-assert.match(app,/button\('summarize'\)\.disabled=active\|\|t\.archived\|\|harness/);
+assert.match(app,/button\('summarize'\)\.disabled=active\|\|t\.archived;button\('summarize'\)\.title=harness/);
 assert.match(app,/id='harness-knowledge-hint'/);
-assert.match(executionSource,/仍可手动新增、编辑和导出笔记/);
+assert.match(executionSource,/独立会话整理已有知识/);
 assert.match(workflowSource,/button\('create-attach'\)\.disabled=false/);
 assert.match(workflowSource,/button\('attach-open'\)\.disabled=!!detail\?\.task\.archived/);
 assert.match(app,/validateEngineAttachments\(detail\.task\.engine,files\.length\)/);

@@ -164,6 +164,13 @@ func runHarnessACPFixture() {
 			history = append(history, input)
 			save()
 			notify("foreign-session", "agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": "FOREIGN RESULT"}})
+			if scenario == "output-image" {
+				// Valid minimal raster, final response deliberately contains no text.
+				notify(session, "usage_update", map[string]any{"used": 10, "size": 100})
+				notify(session, "agent_message_chunk", map[string]any{"content": map[string]string{"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9JkAAAAASUVORK5CYII="}})
+				reply(req.ID, map[string]string{"stopReason": "end_turn"})
+				continue
+			}
 			if scenario == "wait" && input == "wait" {
 				pending = req.ID
 				notify(session, "tool_call", map[string]any{"title": "wait"})
@@ -173,7 +180,7 @@ func runHarnessACPFixture() {
 				return
 			}
 			notify(session, "tool_call", map[string]any{"title": "read_file", "rawInput": map[string]string{"path": "example.txt"}})
-			notify(session, "tool_call_update", map[string]any{"status": "completed", "content": []any{map[string]string{"text": "fixture tool result"}}})
+			notify(session, "tool_call_update", map[string]any{"status": "completed", "content": []any{map[string]any{"type": "content", "content": map[string]string{"type": "text", "text": "fixture tool result"}}}})
 			result, _ := json.Marshal(map[string]any{"input": input, "prompt": p.Prompt, "history": history, "cwd": cwd, "args": os.Args[1:], "initialize": route, "patches": patches, "pid": os.Getpid(), "turn": len(history), "mcpServers": mcpServers})
 			notify(session, "agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": string(result)}})
 			if scenario == "error" {

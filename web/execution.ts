@@ -24,7 +24,7 @@ const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:str
 function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
 function engineDefaultModel(env:Environment,engine:string){return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
 const harnessSessionHint='Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
-const harnessKnowledgeHint='Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
+const harnessKnowledgeHint='Harness 用独立会话整理已有知识和最近最多 8 轮已完成对话的文本摘录，全部工具操作被拒绝，不改变当前聊天和权限；长文本可能截断，图片及工具记录不纳入。整理会调用当前模型，完成后可审阅并保存草稿。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
  if(engine==='deepseek-harness')return (model?.reasoning_levels||[]).filter(level=>['off','low','high','max'].includes(level));
  if(model&&Array.isArray(model.reasoning_levels))return model.reasoning_levels;

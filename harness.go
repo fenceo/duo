@@ -56,6 +56,7 @@ type harnessWorker struct {
 	retiring     bool
 	interactive  bool
 	imageInput   bool
+	guardReady   atomic.Bool
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
@@ -108,14 +109,26 @@ if cfg['binary']=='dsh' and shutil.which('dsh') is None:
 if os.path.isabs(cfg['binary']):
  os.environ['PATH']=os.path.dirname(cfg['binary'])+os.pathsep+os.environ.get('PATH','')
 fd,path=tempfile.mkstemp(prefix='jianzuo-harness-',suffix='.json')
+guard_path=None
 try:
+ if cfg.get('guard'):
+  guard_fd,guard_path=tempfile.mkstemp(prefix='duo-knowledge-',suffix='.mjs')
+  with os.fdopen(guard_fd,'w') as f: f.write(cfg['guard'])
+  cfg['patch'].append({'insert':[{'id':'duo-knowledge-guard','name':guard_path}]})
  with os.fdopen(fd,'w') as f: json.dump(cfg['patch'],f)
  p=subprocess.Popen([cfg['binary'],'--profile','acp','--patch',path],start_new_session=True)
  print(json.dumps({'type':'jianzuo.process','pid':p.pid}),flush=True)
  sys.exit(p.wait())
 finally:
  os.unlink(path)
+ if guard_path: os.unlink(guard_path)
 `
+
+// The official tools.guard extension denies even custom scoped tools. This
+// temporary plugin belongs only to the independent summary worker.
+const harnessKnowledgeGuard = `export const name='duo-knowledge-guard';
+export const inject=['tools'];
+export function apply(ctx){ctx.tools.guard(()=> 'Duo knowledge summary forbids every tool operation');process.stdout.write(JSON.stringify({type:'duo.knowledge.guard.ready'})+'\n');}`
 
 // Resolve npm's Windows shim without shell-evaluating any user-controlled text.
 func harnessExecutable(binary string) ([]string, error) {
@@ -148,11 +161,14 @@ func harnessExecutable(binary string) ([]string, error) {
 
 func harnessFingerprint(c Config, t Task) string {
 	policy, _ := harnessPolicy(t)
-	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.EngineEnv, t.Workspace, json.RawMessage(policy)})
+	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.EngineEnv, t.Workspace, json.RawMessage(policy), t.NoTools})
 	return string(b)
 }
 
 func startHarness(ctx context.Context, c Config, t Task, emit func(string, string)) (*harnessWorker, error) {
+	if t.NoTools {
+		c.HardwareAI = nil
+	}
 	provider, model, err := harnessRouteForConfig(c, t.Model)
 	if err != nil {
 		return nil, err
@@ -196,7 +212,11 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			binary = "dsh"
 		}
 		cmd = command(c, withEngineEnv([]string{"python3", "-u", "-c", harnessLauncher}, env)...)
-		bootstrap, _ = json.Marshal(map[string]any{"binary": binary, "cwd": t.Workspace, "patch": json.RawMessage(patch)})
+		guard := ""
+		if t.NoTools {
+			guard = harnessKnowledgeGuard
+		}
+		bootstrap, _ = json.Marshal(map[string]any{"binary": binary, "cwd": t.Workspace, "patch": json.RawMessage(patch), "guard": guard})
 	} else {
 		args, err := harnessExecutable(c.Harness)
 		if err != nil {
@@ -207,6 +227,30 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			return nil, err
 		}
 		cleanup = func() { _ = os.Remove(f.Name()) }
+		if t.NoTools {
+			guard, guardErr := os.CreateTemp("", "duo-knowledge-*.mjs")
+			if guardErr != nil {
+				f.Close()
+				cleanup()
+				return nil, guardErr
+			}
+			_, guardErr = guard.WriteString(harnessKnowledgeGuard)
+			closeErr := guard.Close()
+			policyCleanup := cleanup
+			cleanup = func() { policyCleanup(); _ = os.Remove(guard.Name()) }
+			if guardErr != nil || closeErr != nil {
+				f.Close()
+				cleanup()
+				return nil, errors.Join(guardErr, closeErr)
+			}
+			rows = append(rows, map[string]any{"insert": []any{map[string]any{"id": "duo-knowledge-guard", "name": "file:///" + filepath.ToSlash(guard.Name())}}})
+			patch, err = json.Marshal(rows)
+			if err != nil {
+				f.Close()
+				cleanup()
+				return nil, err
+			}
+		}
 		if _, err = f.Write(patch); err != nil {
 			f.Close()
 			cleanup()
@@ -306,6 +350,21 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			err = errors.New("Harness ACP 不支持 HTTP MCP，请升级此环境的 dsh 后再使用桌面/硬件工具（未发送模型请求）")
 		}
 	}
+	if err == nil && t.NoTools {
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		for !w.guardReady.Load() && err == nil {
+			select {
+			case <-initctx.Done():
+				err = initctx.Err()
+			case <-w.done:
+				err = w.failure()
+			case <-deadline.C:
+				err = errors.New("Harness 未确认知识整理工具禁用策略已生效，请升级目标环境的 dsh（未发送模型请求）")
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
 	if err != nil {
 		w.mu.Lock()
 		diagnostic := w.diagnostic
@@ -346,6 +405,10 @@ func (w *harnessWorker) scan(r io.Reader, stdout bool) {
 			}
 			if json.Unmarshal([]byte(line), &h) == nil && h.Type == "jianzuo.process" {
 				w.pid.Store(int64(h.PID))
+				continue
+			}
+			if h.Type == "duo.knowledge.guard.ready" {
+				w.guardReady.Store(true)
 				continue
 			}
 			var frame codexRPC

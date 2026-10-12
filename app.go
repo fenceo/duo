@@ -243,7 +243,7 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		return Run{}, e
 	}
 	if kind == "knowledge" {
-		mode = WorkMode{ID: "plan", Name: "只读总结", Permission: "read", Approval: "never", AllowNetwork: boolPtr(false)}
+		mode = knowledgeMode(task.Engine)
 	}
 	if task.Engine != "codex" && mode.Approval == "auto" {
 		return Run{}, errors.New("原生自动风险评审目前仅支持 Codex，请为当前引擎选择其它工作模式")
@@ -252,13 +252,10 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		return Run{}, errors.New("Harness 权限模式仅适用于 Harness")
 	}
 	if task.Engine == "deepseek-harness" {
-		if kind == "knowledge" {
-			return Run{}, errors.New("Harness 暂不支持独立的只读知识总结，请使用 Codex；仍可手动编辑笔记")
-		}
 		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {
 			return Run{}, err
 		}
-		if task.Session != "" && task.Mode != nil {
+		if kind != "knowledge" && task.Session != "" && task.Mode != nil {
 			previous, _ := harnessPolicy(Task{Mode: task.Mode, Workspace: task.Workspace})
 			next, _ := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace})
 			if string(previous) != string(next) {
@@ -400,7 +397,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			task.Mode = r.Mode
 			// Summaries must not inherit a full-access or hardware-enabled mode.
 			if r.Kind == "knowledge" {
-				task.Mode = &WorkMode{ID: "plan", Name: "只读总结", Permission: "read", Approval: "never", AllowNetwork: boolPtr(false)}
+				task.Mode = modePtr(knowledgeMode(task.Engine))
 			}
 		}
 		var session, result string
@@ -433,6 +430,12 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			}
 			if err == nil {
 				input := r.Input
+				if r.Kind == "knowledge" && task.Engine == "deepseek-harness" {
+					input, err = a.store.harnessKnowledgeInput(id, input)
+					// Never resume or persist the source task's durable session.
+					task.ID, task.Session, task.Files, task.NoTools = "", "", nil, true
+					cfg.HardwareAI = nil
+				}
 				if handoffInput != "" {
 					input = handoffInput + "\n\n本轮用户要求：\n" + input
 				}
@@ -463,34 +466,61 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					return a.requestCodexInteraction(requestCtx, id, r.ID, method, params)
 				})
 				lastVisibleAssistant := ""
-				session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
-					if kind == "async_question" {
-						if saveErr := a.store.saveAsyncQuestion(id, r.ID, text); saveErr != nil {
-							_ = a.store.event(id, r.ID, "error", "问题卡片保存失败："+saveErr.Error())
-						}
-						a.changed()
-						return
-					}
-					if kind == "usage" {
-						_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
-						a.changed()
-						return
-					}
-					if kind == "session" {
-						_, _ = a.store.Exec("UPDATE tasks SET session=? WHERE id=?", text, id)
-						return
-					}
-					if kind == "assistant" && r.Kind == "chat" {
-						visible, hidden := visibleMemoryStream(text, r.ID)
-						if hidden && (visible == "" || visible == lastVisibleAssistant) {
+				if err == nil {
+					session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
+						if kind == "context" {
+							var value RunContext
+							if json.Unmarshal([]byte(text), &value) == nil && value.valid() {
+								_, _ = a.store.Exec("INSERT INTO run_context VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET value=excluded.value", r.ID, text)
+								a.changed()
+							}
 							return
 						}
-						text = visible
-						lastVisibleAssistant = text
-					}
-					_ = a.store.event(id, r.ID, kind, text)
-					a.changed()
-				})
+						if kind == "output_image_reset" {
+							_, _ = a.store.Exec("UPDATE output_images SET source='process' WHERE run_id=? AND task_id=? AND source='assistant'", r.ID, id)
+							a.changed()
+							return
+						}
+						if kind == "output_image" {
+							if imageErr := a.store.saveOutputImage(id, r.ID, text); imageErr != nil {
+								_ = a.store.event(id, r.ID, "progress", "输出图片未保存："+imageErr.Error())
+							}
+							a.changed()
+							return
+						}
+						if kind == "async_question" {
+							if saveErr := a.store.saveAsyncQuestion(id, r.ID, text); saveErr != nil {
+								_ = a.store.event(id, r.ID, "error", "问题卡片保存失败："+saveErr.Error())
+							}
+							a.changed()
+							return
+						}
+						if kind == "usage" {
+							_, _ = a.store.Exec("UPDATE run_metrics SET usage=? WHERE run_id=?", text, r.ID)
+							a.changed()
+							return
+						}
+						if kind == "session" {
+							if !task.NoTools {
+								_, _ = a.store.Exec("UPDATE tasks SET session=? WHERE id=?", text, id)
+							}
+							return
+						}
+						if kind == "assistant" && r.Kind == "chat" {
+							visible, hidden := visibleMemoryStream(text, r.ID)
+							if hidden && (visible == "" || visible == lastVisibleAssistant) {
+								return
+							}
+							text = visible
+							lastVisibleAssistant = text
+						}
+						_ = a.store.event(id, r.ID, kind, text)
+						a.changed()
+					})
+				}
+				if task.NoTools {
+					session = ""
+				}
 			}
 			release()
 		}

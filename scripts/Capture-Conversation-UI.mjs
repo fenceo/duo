@@ -46,6 +46,7 @@ cases.push(['usage','light',1280,800],['usage','dark',390,844],['usage','light',
 cases.push(['desktopmanual','light',1280,800],['desktopmanual','dark',390,844],['desktopmanual','light',320,844]);
 cases.push(['harnessapi','light',1280,800],['harnessapi','dark',390,844],['harnessapi','light',320,844]);
 cases.push(['harnesscreate','light',1280,800],['harnesscreate','dark',390,844],['harnesscreate','light',320,844],['harnesspermission','light',1280,800],['harnesspermission','dark',390,844],['harnesspermission','light',320,844]);
+cases.push(['harnessoutput','light',1280,800],['harnessoutput','dark',390,844],['harnessoutput','light',320,844],['harnessknowledge','light',1280,800],['harnessknowledge','dark',390,844]);
 const measurements=[],failures=[];
 const renderer=await startFixtureBrowser(browser,output);
 try{
@@ -69,6 +70,19 @@ for(const [view,theme,width,height] of cases){
  if(view==='harnesspermission'){
   runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',permission:'workspace',approval:'request'};detail.approvals=[{id:'synthetic-permission',task_id:chosen,run_id:'r1',method:'harness/requestPermission',created:1,params:{sessionId:'synthetic',toolCall:{toolCallId:'synthetic-tool',title:'bash',rawInput:{command:'printf synthetic-marker',sandbox_permissions:'danger-full-access',justification:'需要在工作区外执行本次操作。'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}}];renderTask();",ctx);
   document.querySelector('.codex-approval-actions button').id='preview-answer-submit';
+ }
+ if(view==='harnessoutput'){
+  runInContext("detail.task.engine=detail.runs[0].engine='deepseek-harness';detail.runs[0].context={used:34560,size:128000};detail.runs[0].images=[{id:'synthetic',mime:'image/png',size:512,source:'assistant',width:480,height:300}];resetConversation();sequence=0;element('conversation').replaceChildren();appendEvents([{seq:1,run_id:'r1',kind:'user',text:detail.runs[0].input},{seq:2,run_id:'r1',kind:'assistant',text:detail.runs[0].result}]);renderTask();",ctx);
+  const preview=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300"><rect width="480" height="300" fill="#dce6f0"/><rect x="36" y="42" width="408" height="216" rx="18" fill="#fff"/><text x="64" y="112" font-size="24" fill="#26323f">Synthetic output image</text><path d="M64 212 L140 170 L240 194 L350 140" fill="none" stroke="#4269ea" stroke-width="6"/></svg>').toString('base64');
+  document.querySelector('.turn-images img').src='data:image/svg+xml;base64,'+preview;
+  const scroll=document.createElement('script');scroll.textContent="window.addEventListener('load',()=>{const c=document.getElementById('conversation');c.scrollTop=c.scrollHeight;});";document.body.append(scroll);
+ }
+ if(view==='harnessknowledge'){
+  const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?[]:baseAPI(route,...args);
+  runInContext("detail.task.engine='deepseek-harness';renderTask();switchTab('note');syncDocks();",ctx);
+  for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert(!document.getElementById('summarize').disabled);
+  assert(document.getElementById('notice').textContent.indexOf('Unexpected fixture request')===-1);
  }
  if(view==='desktopmanual'){
   runInContext(`desktopDialogTask=chosen;desktopHumanToken='synthetic';desktopState={active:true,task_id:chosen,target:'desktop',control:false,human_control:true};desktopFrame={id:'synthetic',bounds:{width:1280,height:720}};input('desktop-target').innerHTML='<option>合成测试窗口</option>';renderDesktopSharing();element('desktop-dialog').showModal();`,ctx);

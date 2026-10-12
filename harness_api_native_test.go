@@ -101,6 +101,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
    tools=[m for m in request['messages'] if m.get('role')=='tool']
    if not tools:
     args=json.dumps({'command':'printf DUO_PERMISSION_TOOL_EXECUTED','description':'Print one harmless synthetic permission marker','sandbox_permissions':'danger-full-access','justification':'Isolated loopback approval fixture; no user files are touched.'})
+    if any('DUO_KNOWLEDGE_GUARD_PROBE' in str(m.get('content')) for m in request['messages'] if m.get('role')=='user'):
+     args=json.dumps({'command':'printf DUO_PERMISSION_TOOL_EXECUTED','description':'Harmless marker that would be permitted by read-only mode without the global guard'})
     delta={'role':'assistant','tool_calls':[{'index':0,'id':'permission-probe','type':'function','function':{'name':'bash','arguments':args}}]}
     finish='tool_calls'
    else:
@@ -197,15 +199,50 @@ print(json.dumps(hits),flush=True)
 	c.EngineEnv = map[string]string{"DSH_HOME": home}
 	task := Task{ID: "native-harness-api", Engine: "deepseek-harness", Workspace: home, Model: req.Model, Mode: &WorkMode{Permission: "read", Approval: "never", AllowNetwork: boolPtr(true)}}
 	closeHarnessRuntimes()
-	session, result, err := runHarnessACP(ctx, c, task, "Reply with the local fixture marker.", func(string, string) {})
+	var occupancy *RunContext
+	session, result, err := runHarnessACP(ctx, c, task, "Reply with the local fixture marker.", func(kind, text string) {
+		if kind == "context" {
+			_ = json.Unmarshal([]byte(text), &occupancy)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if session == "" || !strings.Contains(result, "DUO_HARNESS_API_OK") {
 		t.Fatal("native ACP response missing")
 	}
+	if occupancy == nil || !occupancy.valid() {
+		t.Fatal("official ACP context occupancy missing")
+	}
 	closeHarnessRuntimes()
 	expectedHits := 2
+	if os.Getenv("DUO_HARNESS_KNOWLEDGE_NATIVE_FIXTURE") == "1" {
+		isolated := task
+		isolated.ID, isolated.Session, isolated.NoTools = "", "", true
+		var toolText strings.Builder
+		summarySession, summary, summaryErr := runHarnessACP(ctx, c, isolated, "DUO_PERMISSION_PROBE DUO_KNOWLEDGE_GUARD_PROBE summary must not execute tools", func(kind, text string) {
+			if kind == "tool" {
+				toolText.WriteString(text)
+			}
+		})
+		if summaryErr != nil || summarySession == session || !strings.Contains(summary, "Duo knowledge summary forbids every tool operation") || strings.Contains(summary, "DUO_PERMISSION_TOOL_EXECUTED") {
+			t.Fatalf("official summary guard failed: %v %s %s", summaryErr, summary, toolText.String())
+		}
+		harnessRuntimes.Lock()
+		cached := harnessRuntimes.workers[summarySession] != nil
+		harnessRuntimes.Unlock()
+		if cached {
+			t.Fatal("summary worker was cached")
+		}
+		task.Session = session
+		kept, continued, continueErr := runHarnessACP(ctx, c, task, "Continue original after independent summary", func(string, string) {})
+		if continueErr != nil || kept != session || !strings.Contains(continued, "DUO_HARNESS_API_OK") {
+			t.Fatalf("summary damaged original history: %v %s", continueErr, continued)
+		}
+		closeHarnessRuntimes()
+		expectedHits += 3
+		t.Log("official Harness reported context occupancy, blocked a deliberate tool call through the independent summary guard, closed that worker, and resumed the unchanged original session; isolated loopback only")
+	}
 	if os.Getenv("DUO_HARNESS_ATTACHMENT_NATIVE_FIXTURE") == "1" {
 		task.Session, task.Environment = session, &env
 		textFiles := []RuntimeAttachment{{Attachment: Attachment{ID: "synthetic-text", Name: "history.md", Mime: "text/plain"}, Data: []byte("DUO_NATIVE_ATTACHMENT_TEXT\nUTF-8 中文记录")}}

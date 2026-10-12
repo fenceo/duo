@@ -2453,7 +2453,7 @@ function conversationTurn(id) {
     const root = document.createElement('section');
     root.className = 'conversation-turn';
     root.dataset.run = id;
-    root.innerHTML = '<div class="turn-input"></div><div class="turn-attachments"></div><details class="turn-process"><summary></summary><div class="turn-records"></div></details><div class="turn-output"></div><footer class="turn-footer"></footer>';
+    root.innerHTML = '<div class="turn-input"></div><div class="turn-attachments"></div><details class="turn-process"><summary></summary><div class="turn-records"></div></details><div class="turn-output"></div><div class="turn-images"></div><footer class="turn-footer"></footer>';
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'conversation-more';
@@ -2464,6 +2464,7 @@ function conversationTurn(id) {
         summary: root.querySelector('summary'),
         body: root.querySelector('.turn-records'),
         output: root.querySelector('.turn-output'),
+        images: root.querySelector('.turn-images'),
         files: root.querySelector('.turn-attachments'),
         footer: root.querySelector('.turn-footer'),
         items: [],
@@ -2647,6 +2648,8 @@ function applyConversationFilter(followBottom = true) {
             run?.started,
             run?.finished,
             run?.usage,
+            run?.context,
+            run?.images,
             run?.attachments,
             knowledge?.id,
             knowledge?.revision,
@@ -2739,6 +2742,8 @@ function applyConversationFilter(followBottom = true) {
         if (turn.footer.innerHTML !== footer) turn.footer.innerHTML = footer;
         const files = (run?.attachments || []).map((f)=>`<a href="/api/tasks/${encodeURIComponent(chosen)}/attachments/${encodeURIComponent(f.id)}" class="attachment-chip" download="${escapeHTML(f.name)}">↧ ${escapeHTML(f.name)}</a>`).join('');
         if (turn.files.innerHTML !== files) turn.files.innerHTML = files;
+        const gallery = run ? runImageGallery(run) : '';
+        if (turn.images.innerHTML !== gallery) turn.images.innerHTML = gallery;
         turn.dirty = false;
         turn.state = state;
         turn.result = run?.result || '';
@@ -2766,18 +2771,26 @@ function formatDuration(ms) {
 function runFooter(run) {
     if (run.status === 'queued') return '<span>排队中</span><button type="button" data-cancel-run="' + escapeHTML(run.id) + '">撤销</button>';
     if (run.status === 'interrupted' && run.error === '已撤销排队') return '<span>已撤销排队 · 未执行</span><button type="button" data-restore-run="' + escapeHTML(run.id) + '">放回输入框</button>';
-    if (!run.finished || run.status === 'running') return '';
+    const context = run.context ? `<span title="当前上下文占用，非计费用量；模型切换或压缩后可能改变">上下文 ${formatTokens(run.context.used)} / ${formatTokens(run.context.size)} · ${(run.context.used / run.context.size * 100).toFixed(1)}%</span>` : '';
+    if (!run.finished || run.status === 'running') return context;
     const usage = run.usage, usageTip = usage ? `输入 ${usage.input} · 输出 ${usage.output} · 缓存读取 ${usage.cached || 0} · 缓存写入 ${usage.cache_write || 0}` : '此轮引擎未返回用量，历史记录不作估算';
     const durationTip = run.started ? '从本轮实际开始执行计算' : '旧记录未保存开始时间，包含排队时间';
     const runId = typeof run.id === 'string' ? run.id : '';
     const settled = runId && typeof knowledgeForRun === 'function' ? knowledgeForRun(runId) : null;
     const automatic = settled?.source === 'auto';
     const knowledge = runId && run.status === 'done' && run.result ? `<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled ? 'disabled' : ''} title="${settled ? '这轮结果已经沉淀到任务知识' : '把这轮结果存成一条任务知识'}">${automatic ? '已自动记录' : settled ? '已沉淀' : '沉淀为知识'}</button>` : '';
-    return `<span title="${escapeHTML(usageTip)}">用量 ${usage ? formatTokens(usage.total) + ' tok' : '未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished - (run.started || run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN', {
+    return `${context}<span title="${escapeHTML(usageTip)}">用量 ${usage ? formatTokens(usage.total) + ' tok' : '未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished - (run.started || run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
     })}</time>${knowledge}`;
+}
+function runImageGallery(run) {
+    return (run.images || []).filter((f)=>f.source === 'assistant' || f.source === 'tool' && conversationFilter.tools || f.source === 'process' && conversationFilter.process).map((f, i)=>{
+        const url = `/api/tasks/${encodeURIComponent(chosen)}/runs/${encodeURIComponent(run.id)}/images/${encodeURIComponent(f.id)}`;
+        const label = (f.source === 'assistant' ? '回复图片' : f.source === 'tool' ? '工具图片' : '过程图片') + ' ' + (i + 1);
+        return `<figure class="output-image"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" loading="lazy" decoding="async" width="${f.width}" height="${f.height}" alt="${label}"></a><figcaption>${label} · ${f.width}×${f.height} <a href="${url}?download=1" download>下载</a></figcaption></figure>`;
+    }).join('');
 }
 const codexApprovalCards = new Map();
 let codexApprovalRevision = 0;
@@ -5705,7 +5718,7 @@ function engineDefaultModel(env, engine) {
     return engine === 'claude' ? env.claude_model || '' : engine === 'deepseek-harness' ? env.harness_model || 'deepseek-flash' : env.model;
 }
 const harnessSessionHint = 'Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
-const harnessKnowledgeHint = 'Harness 暂不支持自动整理任务知识，请使用 Codex 任务整理；仍可手动新增、编辑和导出笔记。';
+const harnessKnowledgeHint = 'Harness 用独立会话整理已有知识和最近最多 8 轮已完成对话的文本摘录，全部工具操作被拒绝，不改变当前聊天和权限；长文本可能截断，图片及工具记录不纳入。整理会调用当前模型，完成后可审阅并保存草稿。';
 function effortLevels(engine, model) {
     if (engine === 'deepseek-harness') return (model?.reasoning_levels || []).filter((level)=>[
             'off',
@@ -8645,10 +8658,6 @@ function renderShell() {
     };
     button('save-draft').onclick = ()=>void saveRunKnowledge();
     button('summarize').onclick = async ()=>{
-        if (detail?.task.engine === 'deepseek-harness') {
-            notify(harnessKnowledgeHint);
-            return;
-        }
         switchTab('note');
         button('summarize').disabled = true;
         try {
@@ -8658,7 +8667,7 @@ function renderShell() {
         } catch (e) {
             notify(e.message);
         } finally{
-            if (button('summarize')) button('summarize').disabled = detail?.task.engine === 'deepseek-harness';
+            if (button('summarize')) button('summarize').disabled = !!detail?.task.archived || !!detail?.runs.some((r)=>r.status === 'running' || r.status === 'queued');
         }
     };
     button('adopt-draft').onclick = ()=>editKnowledgeFromRun();
@@ -9104,7 +9113,7 @@ function renderTask() {
     }
     element('run-status').classList.toggle('hidden', !active && !latest?.error && !detail.approvals?.length && !t.archived && !harnessSessionClosed());
     const harness = t.engine === 'deepseek-harness';
-    button('summarize').disabled = active || t.archived || harness;
+    button('summarize').disabled = active || t.archived;
     button('summarize').title = harness ? harnessKnowledgeHint : '根据任务记录生成知识草稿';
     let knowledgeHint = element('harness-knowledge-hint');
     if (!knowledgeHint) {

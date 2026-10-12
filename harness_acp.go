@@ -415,7 +415,7 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 			if json.Unmarshal(msg.Result, &response) != nil || response.StopReason != "end_turn" {
 				return w.session, state.result, fmt.Errorf("Harness 本轮未正常完成：%s", response.StopReason)
 			}
-			if strings.TrimSpace(state.result) == "" {
+			if strings.TrimSpace(state.result) == "" && (state.finalImages == 0 || state.afterTool) {
 				return w.session, "", errors.New("Harness 未返回最终回复")
 			}
 			return w.session, state.result, nil
@@ -480,9 +480,10 @@ func harnessACPError(message string) error {
 }
 
 type harnessACPTurn struct {
-	session, result string
-	afterTool       bool
-	tools           map[string]harnessToolCall
+	session, result         string
+	afterTool               bool
+	tools                   map[string]harnessToolCall
+	finalImages, imageCount int
 }
 
 func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
@@ -498,6 +499,8 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 			RawInput json.RawMessage `json:"rawInput"`
 			Status   string          `json:"status"`
 			CallID   string          `json:"toolCallId"`
+			Used     *int64          `json:"used"`
+			Size     *int64          `json:"size"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(msg.Params, &p) != nil || p.SessionID != s.session {
@@ -505,18 +508,43 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 	}
 	u := p.Update
 	switch u.Kind {
+	case "usage_update":
+		if u.Used != nil && u.Size != nil {
+			value := RunContext{Used: *u.Used, Size: *u.Size}
+			if value.valid() {
+				raw, _ := json.Marshal(value)
+				emit("context", string(raw))
+			}
+		}
 	case "agent_message_chunk", "agent_thought_chunk":
 		var block struct{ Type, Text string }
-		if json.Unmarshal(u.Content, &block) != nil || block.Type != "text" || block.Text == "" {
+		if json.Unmarshal(u.Content, &block) != nil || (block.Type != "text" && block.Type != "image") {
 			return
 		}
 		if u.Kind == "agent_thought_chunk" {
-			emit("progress", block.Text)
+			if block.Type == "image" {
+				s.image(u.Content, "process", emit)
+			} else if block.Text != "" {
+				emit("progress", block.Text)
+			}
 			return
 		}
 		if s.afterTool {
 			s.result = ""
+			if s.finalImages > 0 {
+				emit("output_image_reset", "")
+			}
+			s.finalImages = 0
 			s.afterTool = false
+		}
+		if block.Type == "image" {
+			if s.image(u.Content, "assistant", emit) {
+				s.finalImages++
+			}
+			return
+		}
+		if block.Text == "" {
+			return
 		}
 		s.result += block.Text
 		emit("assistant", s.result)
@@ -536,10 +564,7 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 		if u.Status == "completed" || u.Status == "failed" {
 			delete(s.tools, u.CallID)
 		}
-		text := string(u.Content)
-		if len(text) > 24000 {
-			text = text[:24000] + "…"
-		}
+		text := s.toolContent(u.Content, emit)
 		if u.Status == "failed" {
 			text = "工具执行失败：" + text
 		}
@@ -547,4 +572,59 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 			emit("tool", text)
 		}
 	}
+}
+
+func (s *harnessACPTurn) image(raw json.RawMessage, source string, emit func(string, string)) bool {
+	var v harnessImage
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	v.Source = source
+	if s.imageCount >= outputImageCount {
+		emit("progress", "本轮输出图片已达 12 张，其余图片未保存。")
+		return false
+	}
+	if _, _, err := decodeOutputImage(v); err != nil {
+		emit("progress", "输出图片未保存："+err.Error())
+		return false
+	}
+	s.imageCount++
+	encoded, _ := json.Marshal(v)
+	emit("output_image", string(encoded))
+	return true
+}
+
+// Project only recognized ACP text/image content. Unknown embedded resource
+// or image fields must never leak inline bytes into persistent text or Feishu.
+func (s *harnessACPTurn) toolContent(raw json.RawMessage, emit func(string, string)) string {
+	var blocks []struct {
+		Type    string          `json:"type"`
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, block := range blocks {
+		if block.Type != "content" {
+			continue
+		}
+		var content struct{ Type, Text string }
+		if json.Unmarshal(block.Content, &content) != nil {
+			continue
+		}
+		if content.Type == "image" {
+			s.image(block.Content, "tool", emit)
+			continue
+		}
+		if content.Type == "text" && content.Text != "" && b.Len() < 24000 {
+			text := content.Text
+			if len(text) > 24000-b.Len() {
+				text = text[:24000-b.Len()] + "…"
+			}
+			b.WriteString(text)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
