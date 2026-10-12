@@ -21,6 +21,9 @@ func TestConfiguredRemoteEngineDetection(t *testing.T) {
 					}
 					return "__DUO_TOOLS__\n/custom/codex\n\n/home/user/dsh\n/home/user/kimi\n\n", nil
 				}
+				if len(args) == 2 && args[1] == "--version" {
+					return "1.2.3", nil
+				}
 				if args[0] != "/custom/codex" {
 					t.Errorf("unexpected executable %s", args[0])
 				}

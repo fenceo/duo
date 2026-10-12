@@ -622,8 +622,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		if v.Feishu.AppID != c.Feishu.AppID {
 			v.Feishu.Owner = ""
 		}
-		if e := s.app.config.save(v); e != nil {
-			fail(w, 400, e.Error())
+		if e := s.app.saveSettingsConfig(v); e != nil {
+			status := http.StatusBadRequest
+			if errors.Is(e, errEngineUpdateSettingsBusy) || errors.Is(e, errEngineUpdateSettingsStale) {
+				status = http.StatusConflict
+			}
+			fail(w, status, e.Error())
 			return
 		}
 		if v.Feishu.AppID != c.Feishu.AppID {

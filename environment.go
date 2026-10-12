@@ -14,23 +14,24 @@ import (
 )
 
 type Environment struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Type            string `json:"type"`
-	Distro          string `json:"distro"`
-	User            string `json:"user"`
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	Identity        string `json:"identity"`
-	Codex           string `json:"codex"`
-	Claude          string `json:"claude"`
-	Harness         string `json:"harness"`
-	HarnessModel    string `json:"harness_model"`
-	HarnessProvider string `json:"harness_provider"`
-	ClaudeModel     string `json:"claude_model"`
-	DefaultEngine   string `json:"default_engine"`
-	Model           string `json:"model"`
-	ModelCache      string `json:"model_cache"`
+	ManagedTools    map[string]ManagedEngineTool `json:"managed_tools,omitempty"`
+	ID              string                       `json:"id"`
+	Name            string                       `json:"name"`
+	Type            string                       `json:"type"`
+	Distro          string                       `json:"distro"`
+	User            string                       `json:"user"`
+	Host            string                       `json:"host"`
+	Port            int                          `json:"port"`
+	Identity        string                       `json:"identity"`
+	Codex           string                       `json:"codex"`
+	Claude          string                       `json:"claude"`
+	Harness         string                       `json:"harness"`
+	HarnessModel    string                       `json:"harness_model"`
+	HarnessProvider string                       `json:"harness_provider"`
+	ClaudeModel     string                       `json:"claude_model"`
+	DefaultEngine   string                       `json:"default_engine"`
+	Model           string                       `json:"model"`
+	ModelCache      string                       `json:"model_cache"`
 	// Models contains user-defined model IDs for this environment. They are
 	// merged with the CLI's discovered catalog and are intentionally just
 	// aliases/labels; credentials remain owned by the target CLI.
@@ -201,9 +202,9 @@ func (c Config) environment(id string) (Environment, error) {
 func runtimeConfig(c Config, e Environment) Config {
 	c.Distro = e.Distro
 	c.User = e.User
-	c.Codex = e.Codex
-	c.Claude = e.Claude
-	c.Harness = e.Harness
+	c.Codex = managedEnginePath(c, e, "codex")
+	c.Claude = managedEnginePath(c, e, "claude")
+	c.Harness = managedEnginePath(c, e, "deepseek-harness")
 	c.HarnessModel = e.HarnessModel
 	c.HarnessProvider = e.HarnessProvider
 	if c.Claude == "" {

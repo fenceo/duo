@@ -205,5 +205,16 @@ func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env E
 	result.Harness = detectedInstalledTool(paths[2])
 	result.Kimi = detectedInstalledTool(paths[3])
 	result.Mimo = detectedInstalledTool(paths[4])
+	for _, tool := range []*detectedTool{&result.Codex, &result.Claude, &result.Harness} {
+		if tool.Path == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(tool *detectedTool) {
+			defer wg.Done()
+			tool.Version, _ = readEngineVersion(ctx, probe, env, tool.Path)
+		}(tool)
+	}
+	wg.Wait()
 	return result
 }

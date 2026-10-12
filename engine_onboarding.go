@@ -17,6 +17,7 @@ import (
 )
 
 type EngineSetupRequest struct {
+	ExpectedPath  string `json:"expected_path,omitempty"`
 	ID            string `json:"id"`
 	Action        string `json:"action"`
 	EnvironmentID string `json:"environment_id"`
@@ -28,6 +29,7 @@ type EngineSetupRequest struct {
 	Model         string `json:"model"`
 }
 type EngineSetupJob struct {
+	Version       string `json:"version,omitempty"`
 	Action        string `json:"action"`
 	Engine        string `json:"engine"`
 	EnvironmentID string `json:"environment_id"`
@@ -41,6 +43,9 @@ type EngineSetupJob struct {
 	cancel        context.CancelFunc
 }
 type EngineSetup struct {
+	updatingTarget  *Environment
+	updatingEngine  string
+	verifyVersion   func(context.Context, Environment, string) (string, error)
 	mu              sync.Mutex
 	jobs            map[string]*EngineSetupJob
 	active          bool
@@ -54,19 +59,24 @@ type EngineSetup struct {
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels}
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels, verifyVersion: func(ctx context.Context, env Environment, path string) (string, error) {
+		return readEngineVersion(ctx, exactEngineProbe, env, path)
+	}}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {
 	if !safeWorkbenchID(r.ID) || len(r.ID) > 48 {
 		return errors.New("请求标识无效")
 	}
-	if r.Action == "install" {
+	if r.Action == "install" || r.Action == "update" {
 		if _, ok := managedEnginePackages[r.Engine]; !ok {
 			return errors.New("此引擎暂不支持自动安装")
 		}
 		if env.Type != "windows" && env.Type != "wsl" && env.Type != "ssh" {
 			return errors.New("目标环境类型不支持引擎安装")
+		}
+		if r.Action == "update" && (r.ExpectedPath == "" || r.ExpectedPath != environmentEnginePath(env, r.Engine)) {
+			return errors.New("CLI 配置已变化或尚未安装，请重新检测后更新")
 		}
 		return nil
 	}
@@ -118,13 +128,6 @@ func (m *EngineSetup) update(id, state, message, link, code string) {
 	j.State, j.Message, j.URL, j.Code = state, message, link, code
 }
 func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
-	env, err := a.config.get().environment(r.EnvironmentID)
-	if err != nil {
-		return EngineSetupJob{}, err
-	}
-	if err = validateEngineSetup(r, env); err != nil {
-		return EngineSetupJob{}, err
-	}
 	raw, _ := json.Marshal(r)
 	digest := hash(string(raw))
 	m := a.engineSetup
@@ -141,8 +144,20 @@ func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
 		}
 		return *old, nil
 	}
+	env, err := a.config.get().environment(r.EnvironmentID)
+	if err != nil {
+		return EngineSetupJob{}, err
+	}
+	if err = validateEngineSetup(r, env); err != nil {
+		return EngineSetupJob{}, err
+	}
 	if m.active {
 		return EngineSetupJob{}, errors.New("另一项安装或登录正在进行，请等待完成或取消")
+	}
+	if r.Action == "update" {
+		if err := a.engineTargetBusy(env, r.Engine); err != nil {
+			return EngineSetupJob{}, err
+		}
 	}
 	if len(a.store.engineProfiles()) >= 50 && r.Action == "account" {
 		return EngineSetupJob{}, errors.New("账号配置已达 50 个")
@@ -156,13 +171,17 @@ func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
 	job := &EngineSetupJob{ID: r.ID, Action: r.Action, Engine: r.Engine, EnvironmentID: r.EnvironmentID, State: "running", Message: "正在准备…", requestHash: digest, cancel: cancel}
 	m.jobs[r.ID] = job
 	m.active = true
+	if r.Action == "update" {
+		m.updatingTarget = &env
+		m.updatingEngine = r.Engine
+	}
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 		defer cancel()
-		defer func() { m.mu.Lock(); m.active = false; m.mu.Unlock() }()
+		defer func() { m.mu.Lock(); m.active = false; m.updatingTarget = nil; m.updatingEngine = ""; m.mu.Unlock() }()
 		var err error
-		if r.Action == "install" {
+		if r.Action == "install" || r.Action == "update" {
 			err = a.performEngineInstall(ctx, env, r)
 		} else if r.Engine == "claude" {
 			err = a.performClaudeAccount(ctx, env, r)
@@ -353,16 +372,41 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	version := ""
+	if r.Action == "update" {
+		progress("正在验证新版 CLI；验证成功后才切换路径…")
+		version, err = a.engineSetup.verifyVersion(ctx, env, path)
+		if err != nil {
+			return err
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	c := a.config.get()
+	var expected []byte
+	if r.Action == "update" {
+		expected, _ = json.Marshal(c)
+	}
 	found := false
 	for i := range c.Environments {
 		if c.Environments[i].ID == env.ID {
-			if c.Environments[i].Type != env.Type || c.Environments[i].Distro != env.Distro || c.Environments[i].User != env.User || c.Environments[i].Host != env.Host || c.Environments[i].Port != env.Port || c.Environments[i].Identity != env.Identity {
+			if !sameEngineTarget(c.Environments[i], env) || environmentEnginePath(c.Environments[i], r.Engine) != environmentEnginePath(env, r.Engine) {
 				return errors.New("安装完成，但目标连接已修改，未保存旧目标的工具路径")
 			}
 			found = true
+			if r.Action == "update" {
+				previous := []string{r.ExpectedPath}
+				if old, ok := c.Environments[i].ManagedTools[r.Engine]; ok && old.Path == r.ExpectedPath {
+					previous = append(previous, old.PreviousPaths...)
+				}
+				if c.Environments[i].ManagedTools == nil {
+					c.Environments[i].ManagedTools = map[string]ManagedEngineTool{}
+				}
+				c.Environments[i].ManagedTools[r.Engine] = ManagedEngineTool{Path: path, Version: version, PreviousPaths: previous}
+			}
 			switch r.Engine {
 			case "codex":
 				c.Environments[i].Codex = path
@@ -376,8 +420,15 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 	if !found {
 		return errors.New("安装完成，但执行环境已更改，请重新检测工具")
 	}
-	if err = a.config.save(c); err != nil {
+	if err = a.config.saveChecked(c, expected); err != nil {
 		return errors.New("安装完成，但保存工具路径失败，请重新检测工具")
+	}
+	if r.Action == "update" {
+		a.engineSetup.mu.Lock()
+		a.engineSetup.jobs[r.ID].Version = version
+		a.engineSetup.mu.Unlock()
+		a.engineSetup.update(r.ID, "done", fmt.Sprintf("%s CLI 已更新到 %s。该环境中使用原路径的任务下次执行会使用新版；账号、会话与原安装保留。", r.Engine, version), "", "")
+		return nil
 	}
 	message := fmt.Sprintf("%s 已安装并配置到该环境。接下来登录或配置 API，再选择云端模型。", r.Engine)
 	if r.Engine == "deepseek-harness" {

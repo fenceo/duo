@@ -7575,8 +7575,8 @@ function renderEngineCatalog() {
             }[engine.id];
             const tool = status?.[toolKey];
             const state = tool?.state || 'unknown', installed = !!tool?.path && state !== 'missing', missing = state === 'missing';
-            const label = installed ? '已安装' : missing ? '未安装' : engineStatusBusy ? '检测中…' : '未完成检测';
-            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + label + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
+            const label = installed ? '已安装' + (tool?.version ? ' · v' + tool.version : '') : missing ? '未安装' : engineStatusBusy ? '检测中…' : '未完成检测';
+            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + escapeHTML(label) + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (installed && engine.auto_install ? '<button type="button" data-update-engine="' + escapeHTML(engine.id) + '" data-update-environment="' + escapeHTML(env.id) + '" title="安装官方 npm latest 版本，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
         }).join('');
         return '<article class="engine-environment"><header><div><h4>' + escapeHTML(env.name) + '</h4><small>' + escapeHTML([
             env.type,
@@ -7620,6 +7620,10 @@ function renderEngineCatalog() {
                 environment_id: b.dataset.installEnvironment
             }));
     element('engine-catalog').querySelectorAll('[data-harness-api]').forEach((b)=>b.onclick = ()=>void openHarnessAPI(b.dataset.harnessApi));
+    element('engine-catalog').querySelectorAll('[data-update-engine]').forEach((b)=>b.onclick = ()=>void startEngineOnboarding('update', {
+                engine: b.dataset.updateEngine,
+                environment_id: b.dataset.updateEnvironment
+            }));
     element('engine-catalog').querySelectorAll('[data-edit-engine-environment]').forEach((b)=>b.onclick = ()=>{
             storeEnvironmentEditor();
             editingID = b.dataset.editEngineEnvironment;
@@ -7789,7 +7793,10 @@ function renderEngineSetup(job) {
     element('engine-setup-fields').disabled = engineSetupBusy;
     element('engine-account-fields').disabled = engineSetupBusy || !element('engine-account-environment').value;
     element('account-import-fields').disabled = engineSetupBusy || accountImportBusy || !input('account-import-destination').value;
-    button('engine-setup-cancel').classList.toggle('hidden', !engineSetupBusy || job.action !== 'install');
+    button('engine-setup-cancel').classList.toggle('hidden', !engineSetupBusy || ![
+        'install',
+        'update'
+    ].includes(job.action));
     button('engine-account-cancel').classList.toggle('hidden', !engineSetupBusy || job.action !== 'account');
     const status = element(job.action === 'account' ? 'engine-account-status' : 'engine-setup-status');
     status.replaceChildren();
@@ -7811,9 +7818,9 @@ function renderEngineSetup(job) {
     }
 }
 async function startEngineOnboarding(action, target) {
-    if (engineSetupBusy || accountImportBusy || harnessAPIBusy || action === 'install' && !target) return;
-    if (action === 'install' && (engineStatusBusy || engineStatusSignature !== engineEnvironmentSignature())) {
-        element('engine-setup-status').textContent = '请等待当前环境检测完成，再安装。';
+    if (engineSetupBusy || accountImportBusy || accountSyncBusy || harnessAPIBusy || action !== 'account' && !target) return;
+    if (action !== 'account' && (engineStatusBusy || engineStatusSignature !== engineEnvironmentSignature())) {
+        element('engine-setup-status').textContent = '请等待当前环境检测完成，再安装或更新。';
         return;
     }
     const login = element('engine-account-login').value;
@@ -7829,6 +7836,9 @@ async function startEngineOnboarding(action, target) {
             model: input('engine-account-model').value.trim()
         } : {}
     };
+    if (action === 'update') Object.assign(body, {
+        expected_path: settings.config.environments.find((e)=>e.id === target.environment_id)?.[target.engine === 'codex' ? 'codex' : target.engine === 'claude' ? 'claude' : 'harness'] || ''
+    });
     const signature = JSON.stringify(body);
     if (!engineSetupAttempt || engineSetupAttempt.signature !== signature) engineSetupAttempt = {
         signature,
@@ -7878,19 +7888,28 @@ async function pollEngineSetup(id, epoch) {
             if (job.state !== 'running' && job.state !== 'waiting') {
                 if (job.state === 'done') {
                     invalidateModelCatalogs();
-                    if (job.action === 'install') {
+                    if (job.action === 'install' || job.action === 'update') {
+                        engineSetupBusy = true;
+                        element('engine-setup-fields').disabled = true;
+                        element('engine-account-fields').disabled = true;
                         const fresh = await api('settings', 'GET', undefined, shellController.signal);
                         if (!shellCurrent(epoch)) return;
+                        storeEnvironmentEditor();
                         const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : 'harness';
                         const before = settings.config.environments.find((e)=>e.id === job.environment_id), updated = fresh.config.environments.find((e)=>e.id === job.environment_id), editing = editingEnvironments.find((e)=>e.id === job.environment_id);
                         if (updated && before) {
-                            if (editing && editing[key] === before[key]) editing[key] = updated[key] || '';
+                            if (editing) {
+                                if (editing[key] === before[key]) editing[key] = updated[key] || '';
+                                editing.managed_tools = updated.managed_tools;
+                            }
                             before[key] = updated[key] || '';
+                            before.managed_tools = updated.managed_tools;
                             if (editingID === job.environment_id) loadEnvironmentEditor();
                         }
+                        renderEngineSetup(job);
                     }
                     await loadEngineSettings();
-                    if (job.action === 'install') void refreshEngineStatus();
+                    if (job.action === 'install' || job.action === 'update') void refreshEngineStatus();
                 }
                 return;
             }
@@ -9939,6 +9958,10 @@ function updateFeishuStatus() {
 }
 async function saveSettings(e) {
     e.preventDefault();
+    if (engineSetupBusy) {
+        element('settings-error').textContent = '引擎安装、更新或账号操作尚未完成，请稍后保存设置。';
+        return;
+    }
     const epoch = shellEpoch;
     button('settings-save').disabled = true;
     element('settings-saved').textContent = '';

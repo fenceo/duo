@@ -34,7 +34,7 @@ function fixture(){
   polling:false,settingsPolling:false,createSubmitting:false,sending:false,sessionResetTask:'',csrf:'synthetic-token',
   authenticated:true,chosen:'',detail:null,refreshList:0,refreshTask:0,refreshKnowledge:0,polledTask:'',pollRequested:false,sequence:0,codexApprovalRevision:0,
   settings:{config:configuration,secret_configured:false,feishu_status:'before',chat:''},tasks:[],workCatalog:{},editingEnvironments:[],editingID:'',
-  engineCatalog:null,engineSettingsRequest:0,document:{hidden:false,querySelector(){return null}},location:{search:''},
+  engineCatalog:null,engineSettingsRequest:0,engineSetupBusy:false,document:{hidden:false,querySelector(){return null}},location:{search:''},
   element:node,button:node,input:node,notify:message=>notices.push(message),escapeHTML:value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),
   renderList(){counts.render++},renderTask(){counts.render++},renderShell(){counts.render++;ctx.renewShellScope()},
   showLogin(){counts.login++;ctx.renewShellScope()},choose:async()=>{},
@@ -101,6 +101,12 @@ for(const status of [401,403,409]){
  await pending;
  assert.equal(f.ctx.settings,fresh);assert.equal(f.node('settings-dialog').shown,0);
  assert.equal(f.notices.length,0,'discarded settings response must not notify the new login');
+}
+{
+ const f=fixture();let writes=0;f.ctx.engineSetupBusy=true;f.ctx.api=async()=>{writes++;throw Error('must not save during setup')};
+ await f.ctx.saveSettings({preventDefault(){}});
+ assert.equal(writes,0);assert.match(f.node('settings-error').textContent,/稍后保存/);
+ assert.equal(f.node('settings-save').disabled,false,'blocked setup must leave the settings save button usable after setup');
 }
 {
  const f=fixture(),gate=deferred();f.ctx.api=()=>gate.promise;

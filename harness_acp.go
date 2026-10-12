@@ -184,6 +184,33 @@ retryWorker:
 	if w != nil {
 		c.EngineEnv = w.c.EngineEnv
 		if w.fingerprint != harnessFingerprint(c, t) {
+			if managedHarnessReplacement(c, t, w.c, w.fingerprint) {
+				if !w.lease.TryLock() {
+					harnessRuntimes.Unlock()
+					return session, "", errors.New("Harness 当前轮仍在结束，请稍后重试")
+				}
+				w.retiring = true
+				if w.idle != nil {
+					w.idle.Stop()
+				}
+				harnessRuntimes.Unlock()
+				err := w.close()
+				harnessRuntimes.Lock()
+				select {
+				case <-w.done:
+					if harnessRuntimes.workers[session] == w {
+						delete(harnessRuntimes.workers, session)
+					}
+				default:
+					// Keep ownership until exit is confirmed; never open a second writer.
+				}
+				harnessRuntimes.Unlock()
+				w.lease.Unlock()
+				if err != nil {
+					return session, "", fmt.Errorf("更新后的 Harness 会话重启失败：%w", err)
+				}
+				goto retryWorker
+			}
 			harnessRuntimes.Unlock()
 			return session, "", errors.New("Harness 运行会话不能更换工作目录、可执行程序或权限，请新建任务")
 		}

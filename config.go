@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -71,6 +72,11 @@ func (c *ConfigFile) get() Config {
 	return v
 }
 func (c *ConfigFile) save(v Config) error {
+	return c.saveChecked(v, nil)
+}
+
+// expected is the pre-update snapshot. Check and persist under the same lock.
+func (c *ConfigFile) saveChecked(v Config, expected []byte) error {
 	if err := normalizeAccess(&v.Access); err != nil {
 		return err
 	}
@@ -85,6 +91,14 @@ func (c *ConfigFile) save(v Config) error {
 	}
 	c.Lock()
 	defer c.Unlock()
+	if expected != nil {
+		current, _ := json.Marshal(c.value)
+		if !bytes.Equal(current, expected) {
+			return errEngineUpdateSettingsStale
+		}
+	} else if !sameManagedEngineTools(c.value, v) {
+		return errEngineUpdateSettingsStale
+	}
 	b, _ := json.MarshalIndent(v, "", "  ")
 	tmp := c.path + ".tmp"
 	f, e := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)

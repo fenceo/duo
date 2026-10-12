@@ -229,6 +229,9 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	if e != nil {
 		return Run{}, errors.New("任务不存在")
 	}
+	if a.engineUpdateBlocks(task) {
+		return Run{}, errors.New("该环境正在更新 CLI，请等待完成或取消后再提交任务")
+	}
 	if task.Archived || task.Deleted {
 		return Run{}, errors.New("任务已归档，请先在网页恢复任务")
 	}

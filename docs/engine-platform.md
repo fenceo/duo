@@ -17,6 +17,7 @@ Duo的长期结构分成四层：
 | 执行环境 | `environment.go`、`runner.go`、`process_*.go` | 不管理知识库或飞书业务，不把 Windows 环境变量直接灌入 WSL |
 | 引擎适配 | `codex_appserver.go`、`claude.go`、`harness.go`、`engine_registry.go` | 不承诺未实现的恢复、审批或工具能力 |
 | 安装与维护 | `update_*.go`、`updates.go`、`installer/windows/` | 不更新 AI CLI、不搬动工作区、不在忙时强停服务 |
+| CLI 安装与更新 | `engine_onboarding.go`、`engine_update.go`、`engine_install.go` | 不更新桌面版、不覆盖原生登录、不替换任务会话 |
 
 本轮优先收敛状态边界，而非全项目改写：引擎账号选择与模型目录保持一致；删除非当前账号不得清空当前绑定；模型测试与更新互斥；网页重新登录时清理旧监听并隔离旧请求；原生安装成功与后续清理分开判定，不把完整安装回滚成半安装。
 
@@ -27,8 +28,8 @@ Duo的长期结构分成四层：
 `engine_registry.go` 提供不依赖具体 CLI 的目录和配置 API：
 
 - `GET /api/engines`：查看引擎、传输协议、能力和目标环境支持情况。
-- `GET /api/engine-status`：检测已保存的 Windows/WSL/SSH 环境中的 CLI 路径和可读取的登录状态；连接失败返回未知。
-- `POST /api/engine-setup`：在选定目标安装允许列表中的 CLI，或在所选 Windows/WSL/SSH 环境创建独立 Codex/Claude 账号；通过同名 GET/DELETE 接口读取状态或取消。
+- `GET /api/engine-status`：检测已保存的 Windows/WSL/SSH 环境中的 CLI 路径、可读取的版本和登录状态；连接失败返回未知。
+- `POST /api/engine-setup`：在选定目标安装或更新允许列表中的 CLI，或在所选 Windows/WSL/SSH 环境创建独立 Codex/Claude 账号；通过同名 GET/DELETE 接口读取状态或取消。
 - `POST /api/account-sync`：按源账号所在环境读取 Codex/Claude 原生账号文件，将登录与 API 路由合并到勾选目标，保留备份和其他工具设置。
 - `GET /api/environments/{id}/engines/{engine}/install-plan`：提供所选目标的安装/检查指南；允许列表中的一键安装使用独立 setup API。
 - `PUT /api/engine-profiles`、`POST /api/engine-profiles/{id}/activate`：保存和切换外部账号/profile 引用。
@@ -48,6 +49,10 @@ v0.31.1 起，账号管理通过原生文件切换 Windows、WSL 或 SSH 的账�
 4. Kimi / MiMo：优先 ACP/CLI，桌面端仅作为人工兜底。适配器具备可验证的启动、发送和停止链路后才开放运行；恢复与审批按真实能力分别声明，不使用统一接口掩盖缺失能力。
 
 ## 升级流程
+
+CLI 更新使用 `POST /api/engine-setup`，传入 `action: "update"`、`engine`、`environment_id`、幂等请求 `id` 和当前已保存的 `expected_path`。更新前检查同一环境/引擎没有运行或排队任务；操作期间拦截该目标的新提交。新版本安装到独立目录，版本验证通过且环境连接身份、原路径未变后才切换配置；失败保留旧配置和安装。账号和原生会话目录不随 CLI 安装目录迁移。
+
+环境的 `managed_tools` 记录已验证路径、版本及前序路径。任务运行时仅在环境身份一致、当前路径等于已验证路径、任务路径属于前序链时使用新 CLI，不改写任务快照或原生会话。此元数据必须随设置草稿保存；手动修改当前路径会使映射失效。Harness 空闲连接正常关闭后使用新 CLI 恢复相同会话，仍遵守原有独占写入和恢复错误处理。使用步骤见 [工具安装、账号与云端模型](engine-onboarding.md#更新已安装的-cli)。
 
 Windows 安装版和便携版共用版本查询、来源约束、SHA-256 校验和维护门禁；安装版交给 Inno Setup 管理程序与安装信息，便携版仅更新白名单内四个文件。任务、模型测试、终端或硬件忙时不得更新，进入维护后不得再启动新工作。
 

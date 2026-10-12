@@ -17,9 +17,10 @@ import (
 )
 
 type detectedTool struct {
-	Path  string `json:"path"`
-	State string `json:"state"`
-	Label string `json:"label"`
+	Version string `json:"version,omitempty"`
+	Path    string `json:"path"`
+	State   string `json:"state"`
+	Label   string `json:"label"`
 }
 type detectedEnvironment struct {
 	Environment Environment  `json:"environment"`

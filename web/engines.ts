@@ -3,7 +3,7 @@ type EngineProfile={id:string;name:string;engine:string;environment_id:string;ki
 type EngineCatalog={engines:EngineDefinition[];profiles:EngineProfile[];active_profile:Record<string,string>;accounts?:Record<string,CodexAccountInfo>;organization?:Record<string,AccountOrganization>};
 type CodexSyncResult={environment_id:string;state:string;message:string};
 type CodexSyncResponse={source_profile_id:string;results:CodexSyncResult[]};
-type DetectedEngineTool={path:string;state:string;label:string};
+type DetectedEngineTool={path:string;state:string;label:string;version?:string};
 type EngineEnvironmentStatus={environment_id:string;name:string;type:string;distro?:string;user?:string;host?:string;codex:DetectedEngineTool;claude:DetectedEngineTool;harness:DetectedEngineTool;kimi:DetectedEngineTool;mimo:DetectedEngineTool;message?:string};
 type EngineStatusResponse={items:EngineEnvironmentStatus[];discovered?:DetectedEnvironment[];message?:string};
 let engineCatalog:EngineCatalog|null=null;
@@ -63,8 +63,8 @@ function renderEngineCatalog(){
    const toolKey=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo'} as Record<string,'codex'|'claude'|'harness'|'kimi'|'mimo'>)[engine.id];
    const tool=status?.[toolKey];
    const state=tool?.state||'unknown',installed=!!tool?.path&&state!=='missing',missing=state==='missing';
-   const label=installed?'已安装':missing?'未安装':engineStatusBusy?'检测中…':'未完成检测';
-   return '<div class="engine-environment-row"><div><strong>'+escapeHTML(engine.name)+'</strong><span class="detected-tool detected-tool-'+escapeHTML(state)+'">'+label+'</span><small>'+escapeHTML((installed?tool!.label:engine.runnable?'可用于 Duo 任务':'')+(!engine.runnable?' · Duo 适配器尚未接入':''))+'</small>'+(tool?.path?'<code>'+escapeHTML(tool.path)+'</code>':'')+'</div><div class="engine-actions">'+(engine.id==='deepseek-harness'?'<button type="button" data-harness-api="'+escapeHTML(env.id)+'" '+(engineSetupBusy||harnessAPIBusy?'disabled':'')+'>配置 API</button>':'')+(missing&&engine.auto_install?'<button type="button" data-install-engine="'+escapeHTML(engine.id)+'" data-install-environment="'+escapeHTML(env.id)+'">一键安装</button>':'')+(engine.documentation_url?'<a href="'+escapeHTML(engine.documentation_url)+'" target="_blank" rel="noopener noreferrer">文档 ↗</a>':'')+'</div></div>';
+   const label=installed?'已安装'+(tool?.version?' · v'+tool.version:''):missing?'未安装':engineStatusBusy?'检测中…':'未完成检测';
+   return '<div class="engine-environment-row"><div><strong>'+escapeHTML(engine.name)+'</strong><span class="detected-tool detected-tool-'+escapeHTML(state)+'">'+escapeHTML(label)+'</span><small>'+escapeHTML((installed?tool!.label:engine.runnable?'可用于 Duo 任务':'')+(!engine.runnable?' · Duo 适配器尚未接入':''))+'</small>'+(tool?.path?'<code>'+escapeHTML(tool.path)+'</code>':'')+'</div><div class="engine-actions">'+(engine.id==='deepseek-harness'?'<button type="button" data-harness-api="'+escapeHTML(env.id)+'" '+(engineSetupBusy||harnessAPIBusy?'disabled':'')+'>配置 API</button>':'')+(missing&&engine.auto_install?'<button type="button" data-install-engine="'+escapeHTML(engine.id)+'" data-install-environment="'+escapeHTML(env.id)+'">一键安装</button>':'')+(installed&&engine.auto_install?'<button type="button" data-update-engine="'+escapeHTML(engine.id)+'" data-update-environment="'+escapeHTML(env.id)+'" title="安装官方 npm latest 版本，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>':'')+(engine.documentation_url?'<a href="'+escapeHTML(engine.documentation_url)+'" target="_blank" rel="noopener noreferrer">文档 ↗</a>':'')+'</div></div>';
   }).join('');
   return '<article class="engine-environment"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user,env.host].filter(Boolean).join(' / '))+'</small></div><button type="button" data-edit-engine-environment="'+escapeHTML(env.id)+'">环境配置</button></header>'+rows+(status?.message?'<p class="muted">'+escapeHTML(status.message)+'</p>':'')+'</article>';
  }).join('')||'<p>点击检测发现本机环境，或在下方手动添加环境。</p>';
@@ -75,6 +75,7 @@ function renderEngineCatalog(){
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-add-engine-environment]').forEach(b=>b.onclick=()=>addScannedEnvironment(Number(b.dataset.addEngineEnvironment)));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-install-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('install',{engine:b.dataset.installEngine!,environment_id:b.dataset.installEnvironment!}));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-harness-api]').forEach(b=>b.onclick=()=>void openHarnessAPI(b.dataset.harnessApi!));
+ element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-update-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('update',{engine:b.dataset.updateEngine!,environment_id:b.dataset.updateEnvironment!}));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-edit-engine-environment]').forEach(b=>b.onclick=()=>{storeEnvironmentEditor();editingID=b.dataset.editEngineEnvironment!;environmentPickers();loadEnvironmentEditor();const editor=element<HTMLDetailsElement>('engine-environment-editor');editor.open=true;editor.scrollIntoView({block:'start'})});
 }
 async function openEngineCenter(){const epoch=shellEpoch;await loadEngineSettings();if(shellCurrent(epoch)&&element<HTMLDialogElement>('settings-dialog').open)void refreshEngineStatus()}
@@ -100,7 +101,7 @@ async function activateEngineProfile(id:string){
  finally{if(shellCurrent(epoch))setAccountMutationBusy(false)}
 }
 
-type EngineSetupJob={id:string;action:string;engine:string;environment_id:string;state:string;message:string;url?:string;code?:string;profile_id?:string};
+type EngineSetupJob={id:string;action:string;engine:string;environment_id:string;state:string;message:string;version?:string;url?:string;code?:string;profile_id?:string};
 let engineSetupBusy=false,engineSetupJob:EngineSetupJob|null=null,engineSetupPolling=false;
 let engineSetupAttempt:{signature:string;id:string}|null=null;
 function installEngineOnboarding(){
@@ -132,16 +133,17 @@ function renderEngineSetup(job:EngineSetupJob){
  element<HTMLFieldSetElement>('engine-setup-fields').disabled=engineSetupBusy;
  element<HTMLFieldSetElement>('engine-account-fields').disabled=engineSetupBusy||!element<HTMLSelectElement>('engine-account-environment').value;
  element<HTMLFieldSetElement>('account-import-fields').disabled=engineSetupBusy||accountImportBusy||!input('account-import-destination').value;
- button('engine-setup-cancel').classList.toggle('hidden',!engineSetupBusy||job.action!=='install');button('engine-account-cancel').classList.toggle('hidden',!engineSetupBusy||job.action!=='account');
+ button('engine-setup-cancel').classList.toggle('hidden',!engineSetupBusy||!['install','update'].includes(job.action));button('engine-account-cancel').classList.toggle('hidden',!engineSetupBusy||job.action!=='account');
  const status=element(job.action==='account'?'engine-account-status':'engine-setup-status');status.replaceChildren();const message=document.createElement('p');message.textContent=job.message;status.append(message);
  if(job.url){const link=document.createElement('a');link.href=job.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='打开登录页面 ↗';status.append(link)}
  if(job.code){const code=document.createElement('pre');code.textContent=job.code;status.append(code)}
 }
-async function startEngineOnboarding(action:'install'|'account',target?:{engine:string;environment_id:string}){
- if(engineSetupBusy||accountImportBusy||harnessAPIBusy||action==='install'&&!target)return;
- if(action==='install'&&(engineStatusBusy||engineStatusSignature!==engineEnvironmentSignature())){element('engine-setup-status').textContent='请等待当前环境检测完成，再安装。';return}
+async function startEngineOnboarding(action:'install'|'update'|'account',target?:{engine:string;environment_id:string}){
+ if(engineSetupBusy||accountImportBusy||accountSyncBusy||harnessAPIBusy||action!=='account'&&!target)return;
+ if(action!=='account'&&(engineStatusBusy||engineStatusSignature!==engineEnvironmentSignature())){element('engine-setup-status').textContent='请等待当前环境检测完成，再安装或更新。';return}
  const login=element<HTMLSelectElement>('engine-account-login').value;
  const body={action,engine:action==='account'?element<HTMLSelectElement>('engine-account-engine').value:target!.engine,environment_id:action==='account'?element<HTMLSelectElement>('engine-account-environment').value:target!.environment_id,...(action==='account'?{name:input('engine-account-name').value.trim(),login,api_key:login==='apiKey'?input('engine-account-key').value:'',base_url:login==='apiKey'?input('engine-account-url').value.trim():'',model:input('engine-account-model').value.trim()}:{})};
+ if(action==='update')Object.assign(body,{expected_path:settings.config.environments.find(e=>e.id===target!.environment_id)?.[target!.engine==='codex'?'codex':target!.engine==='claude'?'claude':'harness']||''});
  const signature=JSON.stringify(body);if(!engineSetupAttempt||engineSetupAttempt.signature!==signature)engineSetupAttempt={signature,id:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};
  const epoch=shellEpoch,status=element(action==='account'?'engine-account-status':'engine-setup-status');engineSetupBusy=true;element<HTMLFieldSetElement>('engine-setup-fields').disabled=true;element<HTMLFieldSetElement>('engine-account-fields').disabled=true;status.textContent='正在开始…';
  try{const job=await api<EngineSetupJob>('engine-setup','POST',{...body,id:engineSetupAttempt.id});if(!shellCurrent(epoch))return;input('engine-account-key').value='';engineSetupAttempt=null;renderEngineSetup(job);void pollEngineSetup(job.id,epoch)}catch(e){if(shellCurrent(epoch)){engineSetupBusy=false;populateEngineOnboarding();status.textContent=(e as Error).message}}
@@ -158,13 +160,18 @@ async function pollEngineSetup(id:string,epoch:number){
    if(job.state!=='running'&&job.state!=='waiting'){
     if(job.state==='done'){
      invalidateModelCatalogs();
-     if(job.action==='install'){
+     if(job.action==='install'||job.action==='update'){
+      // Keep setup and settings writes locked until the new path and its
+      // predecessor chain have reached the editable settings snapshot.
+      engineSetupBusy=true;element<HTMLFieldSetElement>('engine-setup-fields').disabled=true;element<HTMLFieldSetElement>('engine-account-fields').disabled=true;
       const fresh=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;
+      storeEnvironmentEditor();
       const key=job.engine==='codex'?'codex':job.engine==='claude'?'claude':'harness';
       const before=settings.config.environments.find(e=>e.id===job.environment_id),updated=fresh.config.environments.find(e=>e.id===job.environment_id),editing=editingEnvironments.find(e=>e.id===job.environment_id);
-      if(updated&&before){if(editing&&editing[key]===before[key])editing[key]=updated[key]||'';before[key]=updated[key]||'';if(editingID===job.environment_id)loadEnvironmentEditor()}
+      if(updated&&before){if(editing){if(editing[key]===before[key])editing[key]=updated[key]||'';editing.managed_tools=updated.managed_tools}before[key]=updated[key]||'';before.managed_tools=updated.managed_tools;if(editingID===job.environment_id)loadEnvironmentEditor()}
+      renderEngineSetup(job);
      }
-     await loadEngineSettings();if(job.action==='install')void refreshEngineStatus();
+     await loadEngineSettings();if(job.action==='install'||job.action==='update')void refreshEngineStatus();
     }
     return;
    }

@@ -3,7 +3,7 @@
 /// <reference path="./desktop.ts" />
 /// <reference path="./usage.ts" />
 type EnvironmentModel={id:string;name:string;engine?:string;reasoning_levels?:string[];default_reasoning?:string};
-type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[]};
+type Environment={id:string;name:string;type:"windows"|"wsl"|"ssh";distro:string;user:string;host:string;port:number;identity:string;codex:string;claude?:string;harness?:string;harness_model?:string;harness_provider?:string;claude_model?:string;default_engine?:string;model:string;model_cache:string;models?:EnvironmentModel[];workspaces:string[];managed_tools?:Record<string,{path:string;version:string;previous_paths:string[]}>};
 type Task={binding?:{revision:string;account_mode?:'environment'|'pinned';profile?:EngineProfile;history_id?:string};mode?:WorkMode;deleted?:boolean;engine:string;reasoning_effort:string;pinned:boolean;archived:boolean;environment:Environment;id:string;title:string;workspace:string;model:string;session:string;status:string;updated:number};
 type Run={context?:{used:number;size:number};images?:{id:string;mime:string;size:number;source:'assistant'|'tool'|'process';width:number;height:number}[];engine?:string;model?:string;input?:string;started?:number;usage?:{input:number;output:number;cached:number;cache_write:number;total:number};mode?:WorkMode;attachments?:Attachment[];id:string;kind:string;status:string;result:string;error:string;source:string;created:number;finished?:number};
 type EventRecord={seq:number;run_id:string;kind:string;text:string;created:number;truncated?:boolean};
@@ -505,7 +505,7 @@ function removeEnvironment(){
 }
 function updateFeishuStatus(){element('feishu-state').textContent='状态：'+settings.feishu_status;element('feishu-owner').textContent=settings.config.feishu.owner?'已配对你的飞书账号':'尚未配对';button('pair-code').disabled=!!settings.config.feishu.owner;button('setup-feishu').disabled=!!settings.config.feishu.app_id||settings.secret_configured}
 async function saveSettings(e:Event){
- e.preventDefault();const epoch=shellEpoch;button('settings-save').disabled=true;element('settings-saved').textContent='';
+ e.preventDefault();if(engineSetupBusy){element('settings-error').textContent='引擎安装、更新或账号操作尚未完成，请稍后保存设置。';return}const epoch=shellEpoch;button('settings-save').disabled=true;element('settings-saved').textContent='';
  storeEnvironmentEditor();
  const c:Configuration={...settings.config,access:{lan:input("access-lan").value.trim(),tailscale:input("access-tailscale").value.trim()},environments:editingEnvironments,default_environment:input('default-environment').value,feishu:{enabled:input('feishu-enabled').checked,app_id:input('feishu-id').value.trim(),secret:input('feishu-secret').value.trim()}};
  try{const saved=await api<Settings>('settings','PUT',c);if(!shellCurrent(epoch))return;settings=saved;invalidateModelCatalogs();void openEngineCenter();input('feishu-secret').value='';updateFeishuStatus();element('settings-error').textContent='';element('settings-saved').textContent='设置已保存';notify('设置已保存')}catch(e){if(shellCurrent(epoch))element('settings-error').textContent=(e as Error).message}finally{if(shellCurrent(epoch))button('settings-save').disabled=false}

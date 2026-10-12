@@ -4,9 +4,24 @@
 
 v0.34.10 起，新增 Codex/Claude 账号可选择 Windows、WSL 或 SSH，不再要求必须有 Windows 环境。Codex 通过所选环境的 CLI 进行 ChatGPT 设备码登录或 API 登录；Claude 向导仅配置 API。账号保存在独立目录，新增完成后仍需在卡片点击“切换到环境”应用，不绑定任务。WSL/SSH 需要 Python 3，目录位于所选用户的 `~/.local/share/duo/engine-accounts/<请求标识>`；不覆盖当前原生登录。
 
-“引擎安装”中可检测全部已保存的 Windows、WSL、SSH 环境。检测区分未安装、已有登录配置、需要登录及未完成检测，不调用模型。连接失败不会报告成“未安装”；Harness/Kimi/MiMo 只检测 CLI 文件存在，不宣称账号可用。
+“环境与引擎”中可检测全部已保存的 Windows、WSL、SSH 环境。检测区分未安装、已有登录配置、需要登录及未完成检测，不调用模型。已安装的 Codex、Claude Code、Harness 会尝试读取 CLI 版本；版本读取失败不等于未安装。连接失败不会报告成“未安装”；Harness/Kimi/MiMo 的安装检测不宣称账号可用。
 
 自动安装支持 Codex、Claude Code、DeepSeek Harness。Windows 下载固定版本并校验 SHA-256 的 Node.js，再从官方 npm 仓库安装工具，放在 Duo 数据目录的独立目录中。WSL/SSH 在指定用户下执行允许列表中的 `npm install --global --prefix "$HOME/.local/share/duo/engine-tools/<操作标识>" --registry=https://registry.npmjs.org <官方包>@latest`；不使用 sudo、不覆盖全局 CLI、不修改 shell 的全局 PATH。成功运行 `--version` 后才保存路径；已有任务通过“切换 AI”选用新路径。当前不自动安装 Kimi/MiMo，也不安装桌面版或本地模型权重。
+
+## 更新已安装的 CLI
+
+1. 打开“环境与引擎”，点击“检测环境与引擎”。先保存新添加或改过连接配置的环境，再检测。
+2. 在需要更新的 Windows、WSL 或 SSH 环境中，找到 Codex、Claude Code 或 Harness，点击“更新 CLI”。该环境中使用同一引擎的执行中或排队任务须先结束；其他环境和引擎的任务可继续。
+3. 页面显示进度，支持取消。Duo 在新独立目录安装官方 npm `latest` 标签对应的版本，运行 `--version` 验证成功后才切换保存的路径；`latest` 由工具发布者指定，也可能包含预发布版本。
+4. 更新成功后页面重新显示版本。更新和状态同步期间暂不能保存设置，也不能在该环境为同一引擎提交新任务。
+
+失败、取消或更新过程中环境/原路径已改变时，保留原配置和安装；新建目录也会留下供检查，不自动删除旧目录。更新不改原生登录、API key、模型配置或会话文件，不要求重新导入账号。新 CLI 自身对原生配置与会话的兼容性仍由工具提供。
+
+通过“更新 CLI”升级后，同一执行目标、使用旧路径的已有任务会在下一轮使用验证后的新路径，保留原生会话标识；连续升级也能跟随。已改到其他目标、独立自定义路径的任务不会跟随，手动修改当前 CLI 路径也会停用该更新映射。Harness 的空闲原生连接会先正常关闭，再用新 CLI 恢复同一个会话；更新安装过程本身不调用模型。
+
+这与 Duo 自身的软件更新分开，也不更新 Codex 桌面版内置的运行时。
+
+## 安装环境与账号
 
 v0.34.6 起，WSL/SSH 优先使用能运行 npm 的原生 Node.js 22 或更新版本。缺失、版本过旧或只找到 Windows npm 时，在该用户的安装目录下载 Node.js 24.19.0 Linux x64/arm64 运行时，使用内置 SHA-256 校验后才解压执行。下载需要目标环境具有 curl、tar 和 sha256sum，且能访问 nodejs.org 和 registry.npmjs.org。其他系统/架构需先安装可用的原生 Node/npm。保存的 CLI 入口会带上对应运行时路径，因此后续任务不依赖交互 shell 加载 nvm。连接、运行时下载/校验、npm 网络/权限/空间及版本检查分别返回固定错误提示；原始 npm/代理诊断不回传，临时输出在结束时清理。
 
