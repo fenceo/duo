@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// Keep this synchronized with package.json; packaging verifies the built version.
 const version = "0.34.19"
 
 // Only the native launcher's first-run wizard uses this stdin-only operation.

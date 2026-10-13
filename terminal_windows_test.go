@@ -24,6 +24,9 @@ func TestWindowsTerminalInputResizeInterruptAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
+	// Process creation precedes PowerShell's interactive input loop on hosted
+	// Windows runners. Wait for the real prompt before sending the first command.
+	waitTerminalText(t, p, "PS ")
 	p.Write([]byte("Write-Output ('PTY_'+'READY'); [Console]::WriteLine((Get-Location).Path)\r"))
 	waitTerminalText(t, p, "PTY_READY")
 	if err = p.Resize(83, 27); err != nil {
