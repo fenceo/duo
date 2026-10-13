@@ -258,13 +258,6 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {
 			return Run{}, err
 		}
-		if kind != "knowledge" && task.Session != "" && task.Mode != nil {
-			previous, _ := harnessPolicy(Task{Mode: task.Mode, Workspace: task.Workspace})
-			next, _ := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace})
-			if string(previous) != string(next) {
-				return Run{}, errors.New("Harness 运行会话不能切换权限，请新建任务")
-			}
-		}
 	}
 	attachments, e := a.store.messageAttachments(id, options.AttachmentIDs)
 	if e != nil {

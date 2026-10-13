@@ -184,7 +184,8 @@ retryWorker:
 	if w != nil {
 		c.EngineEnv = w.c.EngineEnv
 		if w.fingerprint != harnessFingerprint(c, t) {
-			if managedHarnessReplacement(c, t, w.c, w.fingerprint) {
+			policyChange := w.identity == harnessIdentity(c, t)
+			if policyChange || managedHarnessReplacement(c, t, w.c, w.fingerprint) {
 				if !w.lease.TryLock() {
 					harnessRuntimes.Unlock()
 					return session, "", errors.New("Harness 当前轮仍在结束，请稍后重试")
@@ -194,6 +195,9 @@ retryWorker:
 					w.idle.Stop()
 				}
 				harnessRuntimes.Unlock()
+				if policyChange {
+					emit("progress", "正在切换 Harness 权限并恢复原生会话…")
+				}
 				err := w.close()
 				harnessRuntimes.Lock()
 				select {
@@ -207,12 +211,12 @@ retryWorker:
 				harnessRuntimes.Unlock()
 				w.lease.Unlock()
 				if err != nil {
-					return session, "", fmt.Errorf("更新后的 Harness 会话重启失败：%w", err)
+					return session, "", fmt.Errorf("Harness 原生会话重启失败：%w", err)
 				}
 				goto retryWorker
 			}
 			harnessRuntimes.Unlock()
-			return session, "", errors.New("Harness 运行会话不能更换工作目录、可执行程序或权限，请新建任务")
+			return session, "", errors.New("Harness 运行会话不能更换执行环境、工作目录、可执行程序或知识整理边界，请新建任务")
 		}
 		if !w.lease.TryLock() {
 			harnessRuntimes.Unlock()

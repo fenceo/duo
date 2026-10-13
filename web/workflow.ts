@@ -151,6 +151,7 @@ function installWorkflow(){
  const bar=document.createElement('div');bar.className='composer-tools';bar.innerHTML='<button type="button" id="attach-open" title="添加文件或图片，也可以拖放、粘贴图片">＋ 附件</button><button type="button" id="command-open">/ 指令</button><select id="message-mode" aria-label="本轮工作模式"></select><input id="attachment-input" type="file" multiple hidden><small id="mode-engine-hint" class="mode-engine-hint hidden"></small>';
  element('composer').querySelector('.composer-bottom')!.prepend(bar);element('message').after(Object.assign(document.createElement('div'),{id:'attachment-drafts',className:'attachment-drafts'}));
  modeOptions(element<HTMLSelectElement>('message-mode'));modeOptions(element<HTMLSelectElement>('create-mode'));setCreatePermission(createPermission);
+ input('message-mode').onchange=()=>renderWorkflow();
  button('attach-open').onclick=()=>input('attachment-input').click();input('attachment-input').onchange=()=>{const files=Array.from(input('attachment-input').files||[]);input('attachment-input').value='';void addAttachments(files)};
  const composer=element('composer');composer.ondragover=e=>{if(e.dataTransfer?.types.includes('Files')){e.preventDefault();composer.classList.add('dragover')}};composer.ondragleave=()=>composer.classList.remove('dragover');composer.ondrop=e=>{composer.classList.remove('dragover');if(e.dataTransfer?.files.length){e.preventDefault();void addAttachments(Array.from(e.dataTransfer.files))}};
  input('message').addEventListener('paste',e=>{const files=clipboardFiles(e);if(files.length){e.preventDefault();void addAttachments(files)}});
@@ -238,7 +239,17 @@ function updateComposerSendState(){
 }
 function renderWorkflow(){
  if(!element('message-mode'))return;
- if(detail){const control=element<HTMLSelectElement>('message-mode'),key=chosen+'|'+detail.task.engine,harness=detail.task.engine==='deepseek-harness';if(control.dataset.task!==key){control.dataset.task=key;control.value='';modeOptions(control,detail.task.mode)}control.disabled=detail.task.archived||harness;const hint=element('mode-engine-hint');hint.textContent=harness?(detail.task.mode?.id==='harness:workspace'?'Harness 工作区权限 · 需要提升权限时询问':detail.task.mode?.permission==='full'?'Harness 完全访问 · 不询问':'Harness 原权限保留 · 越界请求拒绝'):'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';hint.title=harness?harnessSessionHint:hint.textContent;hint.classList.toggle('hidden',detail.task.engine==='codex');control.title=harness||detail.task.engine==='claude'?hint.title:'本轮 Codex 工作模式与原生审批方式';button('task-model-button').title=harness?harnessSessionHint:'本任务使用的 AI 工具、模型和推理强度';const footnote=element('composer-wrap').querySelector('.footnote');if(footnote)footnote.textContent=harness?'Harness 原生会话 · 支持停止和重启后续聊':'在服务所在电脑执行 · 保留所选工具的原生会话';}
+ if(detail){
+  const control=element<HTMLSelectElement>('message-mode'),key=chosen+'|'+detail.task.engine,harness=detail.task.engine==='deepseek-harness';
+  if(control.dataset.task!==key){control.dataset.task=key;control.replaceChildren();modeOptions(control,detail.task.mode)}
+  control.disabled=detail.task.archived||sending;
+  const mode=workCatalog.modes.find(m=>m.id===control.value)||detail.task.mode,hint=element('mode-engine-hint');
+  hint.textContent=harness?(mode?.id==='harness:workspace'?'Harness 工作区权限 · 需要提升权限时询问':mode?.permission==='full'?'Harness 完全访问 · 不询问':'Harness 原权限保留 · 越界请求拒绝'):'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+  hint.title=harness?'所选权限在下次发送时生效；当前执行不变，会话历史保留。':hint.textContent;hint.classList.toggle('hidden',detail.task.engine==='codex');
+  control.title=harness||detail.task.engine==='claude'?hint.title:'本轮 Codex 工作模式与原生审批方式';
+  button('task-model-button').title=harness?harnessSessionHint:'本任务使用的 AI 工具、模型和推理强度';
+  const footnote=element('composer-wrap').querySelector('.footnote');if(footnote)footnote.textContent=harness?'Harness 原生会话 · 权限在下次发送时生效':'在服务所在电脑执行 · 保留所选工具的原生会话';
+ }
  const active=detail?.runs.some(r=>['queued','running'].includes(r.status));if(!active&&stoppingTask===chosen)stoppingTask='';button('stop').disabled=stoppingTask===chosen;button('stop').textContent=stoppingTask===chosen?'…':'■';button('stop').title=stoppingTask===chosen?'正在停止':'停止当前执行并取消所有排队消息';button('stop').setAttribute('aria-label',button('stop').title);
  const live=detail?.interaction;button('live-steer').classList.toggle('hidden',!active||detail?.task.engine!=='codex');button('live-interrupt').classList.toggle('hidden',!active);
  button('live-steer').title=live?.steering?'正在等待 Codex 确认引导':(attachmentDrafts.get(chosen)?.length?'立即引导支持文字；附件请用排队或中断后发送':'追加文字到当前执行，不切换当前模型或权限；连接就绪后可用');

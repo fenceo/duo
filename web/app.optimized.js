@@ -1220,6 +1220,7 @@ function installWorkflow() {
     modeOptions(element('message-mode'));
     modeOptions(element('create-mode'));
     setCreatePermission(createPermission);
+    input('message-mode').onchange = ()=>renderWorkflow();
     button('attach-open').onclick = ()=>input('attachment-input').click();
     input('attachment-input').onchange = ()=>{
         const files = Array.from(input('attachment-input').files || []);
@@ -1491,18 +1492,18 @@ function renderWorkflow() {
         const control = element('message-mode'), key = chosen + '|' + detail.task.engine, harness = detail.task.engine === 'deepseek-harness';
         if (control.dataset.task !== key) {
             control.dataset.task = key;
-            control.value = '';
+            control.replaceChildren();
             modeOptions(control, detail.task.mode);
         }
-        control.disabled = detail.task.archived || harness;
-        const hint = element('mode-engine-hint');
-        hint.textContent = harness ? detail.task.mode?.id === 'harness:workspace' ? 'Harness 工作区权限 · 需要提升权限时询问' : detail.task.mode?.permission === 'full' ? 'Harness 完全访问 · 不询问' : 'Harness 原权限保留 · 越界请求拒绝' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
-        hint.title = harness ? harnessSessionHint : hint.textContent;
+        control.disabled = detail.task.archived || sending;
+        const mode = workCatalog.modes.find((m)=>m.id === control.value) || detail.task.mode, hint = element('mode-engine-hint');
+        hint.textContent = harness ? mode?.id === 'harness:workspace' ? 'Harness 工作区权限 · 需要提升权限时询问' : mode?.permission === 'full' ? 'Harness 完全访问 · 不询问' : 'Harness 原权限保留 · 越界请求拒绝' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
+        hint.title = harness ? '所选权限在下次发送时生效；当前执行不变，会话历史保留。' : hint.textContent;
         hint.classList.toggle('hidden', detail.task.engine === 'codex');
         control.title = harness || detail.task.engine === 'claude' ? hint.title : '本轮 Codex 工作模式与原生审批方式';
         button('task-model-button').title = harness ? harnessSessionHint : '本任务使用的 AI 工具、模型和推理强度';
         const footnote = element('composer-wrap').querySelector('.footnote');
-        if (footnote) footnote.textContent = harness ? 'Harness 原生会话 · 支持停止和重启后续聊' : '在服务所在电脑执行 · 保留所选工具的原生会话';
+        if (footnote) footnote.textContent = harness ? 'Harness 原生会话 · 权限在下次发送时生效' : '在服务所在电脑执行 · 保留所选工具的原生会话';
     }
     const active = detail?.runs.some((r)=>[
             'queued',

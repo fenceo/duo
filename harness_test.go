@@ -201,7 +201,11 @@ func runHarnessACPFixture() {
 			if session != "" {
 				save()
 			}
-			reply(req.ID, map[string]any{})
+			if scenario == "close-error" {
+				reject(req.ID, "fixture close failed")
+			} else {
+				reply(req.ID, map[string]any{})
+			}
 			session = ""
 		default:
 			reject(req.ID, "unsupported fixture ACP method")
@@ -403,9 +407,18 @@ func TestHarnessACPLiveSessionCannotChangeExecutionIdentity(t *testing.T) {
 		t.Fatalf("model switch failed: %s %v", result, err)
 	}
 	task.Model = "deepseek-flash"
-	task.Mode.Permission = "full"
-	if _, _, err = harnessFixtureRun(t, c, task, "new permissions", func(string, string) {}); err == nil {
-		t.Fatal("changing permissions silently reused the previous policy")
+	for _, change := range []func(*Config, *Task){
+		func(_ *Config, t *Task) { t.Workspace += "-other" },
+		func(c *Config, _ *Task) { c.Harness += "-other" },
+		func(_ *Config, t *Task) { t.NoTools = true },
+		func(c *Config, _ *Task) { c.User = "another-user" },
+	} {
+		next, changed := c, task
+		change(&next, &changed)
+		changed.Mode = &WorkMode{Permission: "full", Approval: "never"}
+		if _, _, err = harnessFixtureRun(t, next, changed, "must not change identity", func(string, string) {}); err == nil {
+			t.Fatal("permission change allowed changing native execution identity")
+		}
 	}
 }
 

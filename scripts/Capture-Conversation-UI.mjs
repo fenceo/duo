@@ -46,6 +46,7 @@ cases.push(['usage','light',1280,800],['usage','dark',390,844],['usage','light',
 cases.push(['desktopmanual','light',1280,800],['desktopmanual','dark',390,844],['desktopmanual','light',320,844]);
 cases.push(['harnessapi','light',1280,800],['harnessapi','dark',390,844],['harnessapi','light',320,844]);
 cases.push(['harnesscreate','light',1280,800],['harnesscreate','dark',390,844],['harnesscreate','light',320,844],['harnesspermission','light',1280,800],['harnesspermission','dark',390,844],['harnesspermission','light',320,844]);
+cases.push(['harnessmode','light',1280,800],['harnessmode','dark',390,844],['harnessmode','light',320,844],['harnessmodelive','dark',390,844]);
 cases.push(['harnessoutput','light',1280,800],['harnessoutput','dark',390,844],['harnessoutput','light',320,844],['harnessknowledge','light',1280,800],['harnessknowledge','dark',390,844]);
 const measurements=[],failures=[];
 for(const view of ['editorwindows','editorwsl','editorssh'])cases.push([view,'light',1280,800],[view,'dark',320,844]);
@@ -82,6 +83,12 @@ for(const [view,theme,width,height] of cases){
  if(view==='harnesspermission'){
   runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',permission:'workspace',approval:'request'};detail.approvals=[{id:'synthetic-permission',task_id:chosen,run_id:'r1',method:'harness/requestPermission',created:1,params:{sessionId:'synthetic',toolCall:{toolCallId:'synthetic-tool',title:'bash',rawInput:{command:'printf synthetic-marker',sandbox_permissions:'danger-full-access',justification:'需要在工作区外执行本次操作。'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}}];renderTask();",ctx);
   document.querySelector('.codex-approval-actions button').id='preview-answer-submit';
+ }
+ if(view==='harnessmode'||view==='harnessmodelive'){
+  runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',name:'Harness 工作区权限',permission:'workspace',approval:'request'};if(!workCatalog.modes.some(m=>m.id==='harness:workspace'))workCatalog.modes.push(detail.task.mode);renderTask();input('message-mode').value='full';input('message-mode').onchange();",ctx);
+  if(view==='harnessmodelive')runInContext("detail.runs[0].status='running';renderTask();",ctx);
+  assert.equal(document.getElementById('message-mode').disabled,false,'Harness next-turn permission selector disabled');
+  assert.match(document.getElementById('mode-engine-hint').textContent,/完全访问/);
  }
  if(view==='harnessoutput'){
   runInContext("detail.task.engine=detail.runs[0].engine='deepseek-harness';detail.runs[0].context={used:34560,size:128000};detail.runs[0].images=[{id:'synthetic',mime:'image/png',size:512,source:'assistant',width:480,height:300}];resetConversation();sequence=0;element('conversation').replaceChildren();appendEvents([{seq:1,run_id:'r1',kind:'user',text:detail.runs[0].input},{seq:2,run_id:'r1',kind:'assistant',text:detail.runs[0].result}]);renderTask();",ctx);

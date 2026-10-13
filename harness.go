@@ -48,6 +48,7 @@ type harnessWorker struct {
 	readErr      error
 	stdoutClosed atomic.Bool
 	fingerprint  string
+	identity     string
 	idle         *time.Timer
 	nextID       int
 	generation   int
@@ -162,6 +163,13 @@ func harnessExecutable(binary string) ([]string, error) {
 func harnessFingerprint(c Config, t Task) string {
 	policy, _ := harnessPolicy(t)
 	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.EngineEnv, t.Workspace, json.RawMessage(policy), t.NoTools})
+	return string(b)
+}
+
+// Policy is a per-turn choice. Everything identifying the native log and its
+// execution boundary, including the independent knowledge guard, stays pinned.
+func harnessIdentity(c Config, t Task) string {
+	b, _ := json.Marshal([]any{c.Distro, c.User, c.SSHHost, c.SSHPort, c.SSHKey, c.Harness, c.EngineEnv, t.Workspace, t.NoTools})
 	return string(b)
 }
 
@@ -290,7 +298,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		cleanup()
 		return nil, err
 	}
-	w := &harnessWorker{c: c, cmd: cmd, in: in, frames: make(chan codexRPC, 128), fault: make(chan error, 1), done: make(chan struct{}), halt: make(chan struct{}), fingerprint: harnessFingerprint(c, t), interactive: harnessInteractiveMode(t.Mode)}
+	w := &harnessWorker{c: c, cmd: cmd, in: in, frames: make(chan codexRPC, 128), fault: make(chan error, 1), done: make(chan struct{}), halt: make(chan struct{}), fingerprint: harnessFingerprint(c, t), identity: harnessIdentity(c, t), interactive: harnessInteractiveMode(t.Mode)}
 	var scans sync.WaitGroup
 	scans.Add(2)
 	go func() {

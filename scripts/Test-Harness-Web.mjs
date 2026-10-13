@@ -100,7 +100,6 @@ assert.match(app,/harness:type==='windows'\?'dsh\.cmd':'dsh'/);
 assert.match(executionSource,/id="check-harness"/);
 assert.match(executionSource,/engine:'deepseek-harness'/);
 assert.doesNotMatch(executionSource,/headless JSON|DSH_MODEL/);
-assert.match(workflowSource,/control\.disabled=detail\.task\.archived\|\|harness/);
 assert.match(workflowSource,/按 Harness 官方默认权限档位提供选项/);
 assert.match(workflowSource,/harness:workspace/);
 assert.match(app,/modeForPermission\(createPermission,input\('create-engine'\)\.value\)/);

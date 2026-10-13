@@ -29,6 +29,30 @@ assert.equal(ctx.modeSupportsEngine({id:'harness:workspace',permission:'workspac
 
 const task={id:'harness-task',engine:'deepseek-harness',workspace:'/fixture',environment:{name:'Synthetic WSL',type:'wsl',distro:'Synthetic',user:'fixture'},mode:{id:'harness:workspace',permission:'workspace',approval:'request'}},params={sessionId:'native',toolCall:{toolCallId:'call',title:'bash <unsafe>',rawInput:{command:'printf <test>',justification:'fixture'}},options:[{optionId:'native-allow',kind:'allow_once'},{optionId:'native-reject',kind:'reject_once'},{optionId:'permanent',kind:'allow_always'}]},request={id:'permission',task_id:task.id,run_id:'run',method:'harness/requestPermission',params,created:1};
 ctx.synthetic={task,runs:[],events:[],approvals:[request]};runInContext("chosen=synthetic.task.id;creatingTask=false;detail=synthetic;renderCodexApprovals(detail)",ctx);
+ctx.renderWorkflow();
+const modeSelect=node('message-mode');
+assert.equal(modeSelect.disabled,false,'idle Harness tasks must allow permission selection');
+assert.equal(modeSelect.value,'harness:workspace');
+assert.deepEqual(Array.from(modeSelect.options,m=>m.value),['harness:workspace','full']);
+modeSelect.value='full';modeSelect.onchange();
+assert.equal(ctx.selectedMessageMode(),'full');
+assert.match(node('mode-engine-hint').textContent,/完全访问/);
+assert.match(modeSelect.title,/下次发送时生效/);
+runInContext("detail.runs=[{id:'running',status:'running'}];renderWorkflow()",ctx);
+assert.equal(modeSelect.disabled,false,'next queued round can choose a different policy');
+assert.equal(modeSelect.value,'full','polling must preserve unsent permission selection');
+let sends=0;ctx.poll=async()=>{};
+ctx.api=async(path,method,body)=>{assert.equal(path,'tasks/harness-task/messages');assert.equal(method,'POST');assert.equal(body.mode_id,'full');sends++;return {}};
+node('message').value='synthetic queue';await ctx.send('synthetic queue');
+assert.equal(sends,1,'selected Harness policy must reach message API');
+runInContext("detail.task.archived=true;renderWorkflow()",ctx);
+assert.equal(modeSelect.disabled,true,'archived tasks remain locked');
+runInContext("detail.task.archived=false;detail.runs=[];renderWorkflow()",ctx);
+modeSelect.value='harness:workspace';modeSelect.onchange();
+assert.match(node('mode-engine-hint').textContent,/需要提升权限时询问/);
+runInContext("chosen='another-harness-task';detail.task={...detail.task,id:chosen,mode:{id:'full',permission:'full',approval:'never'}};renderWorkflow()",ctx);
+assert.equal(modeSelect.value,'full','task switches load the destination mode');
+ctx.synthetic={task,runs:[],events:[],approvals:[request]};runInContext("chosen=synthetic.task.id;detail=synthetic;renderWorkflow()",ctx);
 assert.match(node('codex-approvals-title').textContent,/Harness 等待处理/);
 assert.equal(node('codex-approval-list').querySelector('unsafe'),null);
 assert.match(node('codex-approval-list').textContent,/printf <test>/);
@@ -40,4 +64,4 @@ assert.deepEqual(Array.from(ctx.codexApprovalDecisions({...request,params:{...pa
 let posts=0;ctx.api=async(path,method,body)=>{if(method==='POST'){posts++;assert.equal(path,'tasks/harness-task/approvals/permission');assert.equal(body.decision,'accept');return {ok:true}}return {task,runs:[],events:[],approvals:[]}};
 const card=runInContext('Array.from(codexApprovalCards.values())[0]',ctx);await ctx.submitCodexApproval(card,{decision:'accept'});await ctx.submitCodexApproval(card,{decision:'accept'});assert.equal(posts,1);assert.equal(node('codex-approvals').classList.contains('hidden'),true);
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: official Harness presets, hidden Codex-only controls, engine switching, exact tool details, one-time actions and duplicate-submit isolation. Synthetic only.');
+console.log('PASS: Harness permission selection and message payload, queued policy choices, archived lock, official presets, exact tool details, one-time actions and duplicate-submit isolation. Synthetic only.');
