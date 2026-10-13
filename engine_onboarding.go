@@ -58,10 +58,11 @@ type EngineSetup struct {
 	harnessRead     func(context.Context, Environment, string, string) (map[string][]byte, error)
 	harnessWrite    func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
 	harnessDiscover func(context.Context, Environment, HarnessAPIRequest) HarnessDiscovery
+	apiDirectory    func(context.Context, Environment) (string, error)
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels, verifyVersion: func(ctx context.Context, env Environment, path string) (string, error) {
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels, apiDirectory: mimoAPIDirectory, verifyVersion: func(ctx context.Context, env Environment, path string) (string, error) {
 		return readEngineVersion(ctx, exactEngineProbe, env, path)
 	}}
 }
@@ -458,6 +459,7 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 
 func (s *Server) engineSetupRoutes(m *http.ServeMux) {
 	s.engineAPIModelsRoutes(m)
+	s.engineAPIRoutes(m)
 	s.harnessAPIRoutes(m)
 	m.HandleFunc("GET /api/engine-setup", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		manager := s.app.engineSetup

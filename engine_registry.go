@@ -113,7 +113,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "cancel", "attachments", "model_switch"},
 			CredentialKinds:    []string{"native", "mimo_config", "env_file"},
-			InstallDescription: "安装官方 MiMo Code 二进制；配置 API、地址和模型后在账号卡片选择“用于此环境”。原生会话保存在目标用户目录。",
+			InstallDescription: "安装官方 MiMo Code 二进制；在所选环境的独立 API 窗口保存地址、Key 和模型后生效。原生会话保存在目标用户目录。",
 			DocumentationURL:   "https://github.com/XiaomiMiMo/MiMo-Code",
 		},
 	}
@@ -303,6 +303,15 @@ func (a *App) activeEngineEnvironment(task Task) map[string]string {
 	}
 	if task.Environment == nil {
 		return nil
+	}
+	if task.Engine == "mimo" {
+		env := *task.Environment
+		if current, err := a.config.get().environment(env.ID); err == nil && sameEngineTarget(current, env) {
+			env = current
+		}
+		if env.MimoConfig != "" {
+			return map[string]string{"MIMOCODE_CONFIG": env.MimoConfig}
+		}
 	}
 	id := a.store.activeEngineProfile(task.Environment.ID, task.Engine)
 	if id == "" {

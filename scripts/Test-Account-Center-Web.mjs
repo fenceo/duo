@@ -20,5 +20,5 @@ const pending=ctx.submitCodexSync();await ctx.submitCodexSync();assert.equal(wri
 finish({results:[{environment_id:'fixture',state:'done',message:'fixture saved'}]});await pending;
 assert.match(el('codex-sync-status').textContent,/fixture saved/);assert(!el('codex-sync-targets').disabled);
 await ctx.refreshEngineStatus();assert.match(el('engine-status-result').textContent,/检测完成/);
-el('engine-account-engine').value='claude';ctx.refreshAccountLogin();assert.equal(el('engine-account-login').value,'apiKey');assert(!el('engine-account-api').classList.contains('hidden'));
+assert.deepEqual(Array.from(el('engine-account-engine').options,o=>o.value),['codex']);assert(el('environment-api-dialog'));assert(!el('environment-api-dialog').open);
 console.log('PASS: independent accounts and installer entries, Claude sync, explicit target selection, duplicate lock, environment status and relay form. Synthetic only.');

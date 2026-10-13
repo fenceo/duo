@@ -28,6 +28,7 @@ type Environment struct {
 	Harness         string                       `json:"harness"`
 	Mimo            string                       `json:"mimo,omitempty"`
 	MimoModel       string                       `json:"mimo_model,omitempty"`
+	MimoConfig      string                       `json:"mimo_config,omitempty"`
 	HarnessModel    string                       `json:"harness_model"`
 	HarnessProvider string                       `json:"harness_provider"`
 	ClaudeModel     string                       `json:"claude_model"`
@@ -165,6 +166,12 @@ func normalizeEnvironments(c *Config) error {
 			}
 		default:
 			return errors.New("环境类型必须是 windows、wsl 或 ssh")
+		}
+		if len(e.MimoConfig) > 4096 || strings.ContainsAny(e.MimoConfig, "\r\n\x00") {
+			return errors.New("MiMo 配置路径无效")
+		}
+		if e.MimoConfig != "" && (e.Type == "windows" && !filepath.IsAbs(e.MimoConfig) || e.Type != "windows" && !strings.HasPrefix(e.MimoConfig, "/")) {
+			return errors.New("MiMo 配置需要目标环境的绝对路径")
 		}
 		if len(e.Workspaces) == 0 {
 			e.Workspaces = []string{defaultEnvironmentWorkspace(e.Type, e.User)}

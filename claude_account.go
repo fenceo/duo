@@ -19,7 +19,7 @@ func claudeUsesToken(r EngineSetupRequest) bool {
 	return r.BaseURL != "" && (u == nil || !strings.EqualFold(u.Hostname(), "api.anthropic.com"))
 }
 
-func (a *App) performClaudeAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
+func claudeAPISettings(r EngineSetupRequest) []byte {
 	variables := map[string]string{}
 	for _, key := range claudeAccountEnvKeys {
 		variables[key] = ""
@@ -42,6 +42,11 @@ func (a *App) performClaudeAccount(ctx context.Context, env Environment, r Engin
 		variables["CLAUDE_CODE_SUBAGENT_MODEL"] = r.Model
 	}
 	data, _ := json.MarshalIndent(map[string]any{"env": variables}, "", "  ")
+	return data
+}
+
+func (a *App) performClaudeAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
+	data := claudeAPISettings(r)
 	dir, err := a.engineSetup.accountHome(ctx, env, a.store.directory, r.ID, "claude", map[string][]byte{"settings.json": data})
 	if err != nil {
 		return err

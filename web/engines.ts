@@ -20,12 +20,12 @@ function installEngineSettings(){
  element('codex-sync-form').addEventListener('submit',e=>{e.preventDefault();void submitCodexSync()});
  installEngineOnboarding();
  const editor=element('account-center-editor');editor.append(element('settings-engines').querySelector('.engine-profile-editor')!);
- const accountFields=document.createElement('fieldset');accountFields.id='engine-account-fields';accountFields.innerHTML='<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="mimo">MiMo Code</option></select>';accountFields.append(element('engine-setup-fields').querySelector('details')!);editor.prepend(accountFields);
- element('engine-account-engine').onchange=()=>{input('engine-account-key').value='';refreshAccountLogin();refreshEngineAPIOptions()};installEngineAPIOptions();refreshAccountLogin();
+ const accountFields=document.createElement('fieldset');accountFields.id='engine-account-fields';accountFields.innerHTML='<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option></select>';accountFields.append(element('engine-setup-fields').querySelector('details')!);editor.prepend(accountFields);
+ element('engine-account-engine').onchange=()=>{input('engine-account-key').value='';refreshAccountLogin()};refreshAccountLogin();
  button('engine-account-cancel').onclick=button('engine-setup-cancel').onclick;
  const installEntry=document.createElement('button');installEntry.id='engines-open';installEntry.className='subtle';installEntry.textContent='环境与引擎';element('settings-open').before(installEntry);installEntry.onclick=async()=>{await openSettings();if(element<HTMLDialogElement>('settings-dialog').open)showSettingsSection('engines')};
  installAccountImport();engineCatalog=null;accountSyncBusy=false;engineEnvironmentStatuses=[];engineDiscoveredEnvironments=[];engineStatusSignature='';engineStatusRequest=0;engineStatusBusy=false;
- installHarnessAPI();
+ installHarnessAPI();installEnvironmentAPI();
 }
 function engineTargetName(id:string){return settings.config.environments.find(e=>e.id===id)?.name||id}
 let codexSyncProfileID='',accountSyncBusy=false;
@@ -64,7 +64,7 @@ function renderEngineCatalog(){
    const tool=status?.[toolKey];
    const state=tool?.state||'unknown',installed=!!tool?.path&&state!=='missing',missing=state==='missing';
    const label=installed?'已安装'+(tool?.version?' · v'+tool.version:''):missing?'未安装':engineStatusBusy?'检测中…':'未完成检测';
-   return '<div class="engine-environment-row"><div><strong>'+escapeHTML(engine.name)+'</strong><span class="detected-tool detected-tool-'+escapeHTML(state)+'">'+escapeHTML(label)+'</span><small>'+escapeHTML((installed?tool!.label:engine.runnable?'可用于 Duo 任务':'')+(!engine.runnable?' · Duo 适配器尚未接入':''))+'</small>'+(tool?.path?'<code>'+escapeHTML(tool.path)+'</code>':'')+'</div><div class="engine-actions">'+(engine.id==='deepseek-harness'?'<button type="button" data-harness-api="'+escapeHTML(env.id)+'" '+(engineSetupBusy||harnessAPIBusy?'disabled':'')+'>配置 API</button>':'')+(['claude','mimo'].includes(engine.id)?'<button type="button" data-engine-api="'+escapeHTML(engine.id)+'" data-engine-api-environment="'+escapeHTML(env.id)+'" '+(engineSetupBusy?'disabled':'')+'>配置 API</button>':'')+(missing&&engine.auto_install?'<button type="button" data-install-engine="'+escapeHTML(engine.id)+'" data-install-environment="'+escapeHTML(env.id)+'">一键安装</button>':'')+(installed&&engine.auto_install?'<button type="button" data-update-engine="'+escapeHTML(engine.id)+'" data-update-environment="'+escapeHTML(env.id)+'" title="安装官方最新 CLI，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>':'')+(engine.documentation_url?'<a href="'+escapeHTML(engine.documentation_url)+'" target="_blank" rel="noopener noreferrer">文档 ↗</a>':'')+'</div></div>';
+   return '<div class="engine-environment-row"><div><strong>'+escapeHTML(engine.name)+'</strong><span class="detected-tool detected-tool-'+escapeHTML(state)+'">'+escapeHTML(label)+'</span><small>'+escapeHTML((installed?tool!.label:engine.runnable?'可用于 Duo 任务':'')+(!engine.runnable?' · Duo 适配器尚未接入':''))+'</small>'+(tool?.path?'<code>'+escapeHTML(tool.path)+'</code>':'')+'</div><div class="engine-actions">'+(engine.id==='deepseek-harness'?'<button type="button" data-harness-api="'+escapeHTML(env.id)+'" '+(engineSetupBusy||harnessAPIBusy?'disabled':'')+'>配置 API</button>':'')+(['claude','mimo'].includes(engine.id)?'<button type="button" data-engine-api="'+escapeHTML(engine.id)+'" data-engine-api-environment="'+escapeHTML(env.id)+'" '+(engineSetupBusy||environmentAPIBusy?'disabled':'')+'>配置 API</button>':'')+(missing&&engine.auto_install?'<button type="button" data-install-engine="'+escapeHTML(engine.id)+'" data-install-environment="'+escapeHTML(env.id)+'">一键安装</button>':'')+(installed&&engine.auto_install?'<button type="button" data-update-engine="'+escapeHTML(engine.id)+'" data-update-environment="'+escapeHTML(env.id)+'" title="安装官方最新 CLI，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>':'')+(engine.documentation_url?'<a href="'+escapeHTML(engine.documentation_url)+'" target="_blank" rel="noopener noreferrer">文档 ↗</a>':'')+'</div></div>';
   }).join('');
   return '<article class="engine-environment"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user,env.host].filter(Boolean).join(' / '))+'</small></div><button type="button" data-edit-engine-environment="'+escapeHTML(env.id)+'">环境配置</button></header>'+rows+(status?.message?'<p class="muted">'+escapeHTML(status.message)+'</p>':'')+'</article>';
  }).join('')||'<p>点击检测发现本机环境，或在下方手动添加环境。</p>';
@@ -74,7 +74,7 @@ function renderEngineCatalog(){
  }).join(''));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-add-engine-environment]').forEach(b=>b.onclick=()=>addScannedEnvironment(Number(b.dataset.addEngineEnvironment)));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-install-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('install',{engine:b.dataset.installEngine!,environment_id:b.dataset.installEnvironment!}));
- element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-api]').forEach(b=>b.onclick=()=>void openEngineAPIAccount(b.dataset.engineApi!,b.dataset.engineApiEnvironment!));
+ element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-engine-api]').forEach(b=>b.onclick=()=>void openEnvironmentAPI(b.dataset.engineApi!,b.dataset.engineApiEnvironment!));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-harness-api]').forEach(b=>b.onclick=()=>void openHarnessAPI(b.dataset.harnessApi!));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-update-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('update',{engine:b.dataset.updateEngine!,environment_id:b.dataset.updateEnvironment!}));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-edit-engine-environment]').forEach(b=>b.onclick=()=>{storeEnvironmentEditor();editingID=b.dataset.editEngineEnvironment!;environmentPickers();loadEnvironmentEditor();const editor=element<HTMLDetailsElement>('engine-environment-editor');editor.open=true;editor.scrollIntoView({block:'start'})});
@@ -140,7 +140,7 @@ function renderEngineSetup(job:EngineSetupJob){
  if(job.code){const code=document.createElement('pre');code.textContent=job.code;status.append(code)}
 }
 async function startEngineOnboarding(action:'install'|'update'|'account',target?:{engine:string;environment_id:string}){
- if(engineSetupBusy||engineAPIProbeBusy||accountImportBusy||accountSyncBusy||harnessAPIBusy||action!=='account'&&!target)return;
+ if(engineSetupBusy||environmentAPIBusy||accountImportBusy||accountSyncBusy||harnessAPIBusy||action!=='account'&&!target)return;
  if(action!=='account'&&(engineStatusBusy||engineStatusSignature!==engineEnvironmentSignature())){element('engine-setup-status').textContent='请等待当前环境检测完成，再安装或更新。';return}
  const login=element<HTMLSelectElement>('engine-account-login').value;
  const body={action,engine:action==='account'?element<HTMLSelectElement>('engine-account-engine').value:target!.engine,environment_id:action==='account'?element<HTMLSelectElement>('engine-account-environment').value:target!.environment_id,...(action==='account'?{name:input('engine-account-name').value.trim(),login,api_key:login==='apiKey'?input('engine-account-key').value:'',base_url:login==='apiKey'?input('engine-account-url').value.trim():'',model:input('engine-account-model').value.trim(),...(['claude','mimo'].includes(element<HTMLSelectElement>('engine-account-engine').value)?{api_protocol:input('engine-account-protocol').value,...(element<HTMLSelectElement>('engine-account-engine').value==='claude'?{auth_mode:input('engine-account-auth').value}:{})}:{})}:{})};
@@ -182,79 +182,83 @@ async function pollEngineSetup(id:string,epoch:number){
  finally{if(shellCurrent(epoch))engineSetupPolling=false}
 }
 
-let engineAPIProbeRequest=0,engineAPIProbeBusy=false,engineAPIProbeController:AbortController|undefined;
-function installEngineAPIOptions(){
- element('engine-account-api').insertAdjacentHTML('beforeend',`<div id="engine-api-options"><label for="engine-account-provider">服务预设</label><select id="engine-account-provider"><option value="custom">自定义 API</option><option value="anthropic">Anthropic 官方 API</option><option value="mimo">MiMo 官方 API（按量付费）</option><option value="mimo-cn">MiMo Token Plan · 中国</option><option value="mimo-sgp">MiMo Token Plan · 新加坡</option><option value="mimo-ams">MiMo Token Plan · 欧洲</option></select><label for="engine-account-protocol">接口协议</label><select id="engine-account-protocol"><option value="anthropic-messages">Anthropic Messages 兼容</option><option value="openai-chat">OpenAI Chat Completions 兼容</option></select><div id="engine-account-auth-wrap"><label for="engine-account-auth">Claude 认证请求头</label><select id="engine-account-auth"><option value="auto">自动（官方 API Key / 第三方 Bearer）</option><option value="api-key">API Key · x-api-key</option><option value="auth-token">Bearer Token · Authorization</option></select></div><p id="engine-account-protocol-hint" class="muted"></p><button type="button" id="engine-api-models-read">验证认证并读取模型</button><p id="engine-api-models-status" role="status"></p><datalist id="engine-api-models"></datalist></div>`);
- input('engine-account-model').setAttribute('list','engine-api-models');
- const summary=document.createElement('p');summary.id='engine-account-target-summary';summary.className='muted';element('engine-api-options').prepend(summary);
- const note=element('engine-account-api').querySelector<HTMLParagraphElement>(':scope > p');if(note)note.id='engine-account-api-note';
- input('engine-account-provider').onchange=()=>applyEngineAPIProvider();
- input('engine-account-protocol').onchange=()=>{resetEngineAPIProbe();if(input('engine-account-provider').value!=='custom')applyEngineAPIProvider();else refreshEngineAPIOptions()};
- input('engine-account-auth').onchange=resetEngineAPIProbe;button('engine-api-models-read').onclick=()=>void probeEngineAPIModels();
- for(const id of ['engine-account-key','engine-account-url'])input(id).addEventListener('input',resetEngineAPIProbe);
- input('engine-account-environment').addEventListener('change',refreshEngineAPIOptions);
- disposeWithShell(()=>{engineAPIProbeController?.abort();engineAPIProbeRequest++;engineAPIProbeBusy=false;input('engine-account-key').value=''});
- refreshEngineAPIOptions();
-}
-function resetEngineAPIProbe(){
- engineAPIProbeController?.abort();engineAPIProbeRequest++;engineAPIProbeBusy=false;
- element('engine-api-models').replaceChildren();element('engine-api-models-status').textContent='';button('engine-api-models-read').disabled=engineSetupBusy;button('engine-account-add').disabled=engineSetupBusy;
-}
-function refreshEngineAPIOptions(){
- const engine=input('engine-account-engine').value,claude=engine==='claude',mimo=engine==='mimo';resetEngineAPIProbe();
- element('engine-api-options').classList.toggle('hidden',!claude&&!mimo);
- element('engine-account-auth-wrap').classList.toggle('hidden',!claude);const protocol=element<HTMLSelectElement>('engine-account-protocol');protocol.disabled=claude;if(claude)protocol.value='anthropic-messages';else if(mimo&&protocol.value!=='openai-chat'&&protocol.value!=='anthropic-messages')protocol.value='openai-chat';
- const env=settings.config.environments.find(e=>e.id===input('engine-account-environment').value);element('engine-account-target-summary').textContent='配置对象：'+taskEngineName(engine)+' · '+(env?.name||'请选择环境');
- const urlLabel=element('engine-account-api').querySelector('label[for="engine-account-url"]');if(urlLabel)urlLabel.textContent=mimo?'API 地址（必填）':'API 地址（官方可留空）';
- const modelLabel=element('engine-account-fields').querySelector('label[for="engine-account-model"]');if(modelLabel)modelLabel.textContent=mimo?'默认云端模型 ID（必填）':'默认云端模型（可选）';
- element('engine-account-api-note').textContent=claude?'官方或第三方 Anthropic Messages 兼容 API；密钥保存到独立账号配置。':mimo?'官方或第三方兼容 API；配置文件决定模型路由，原生会话目录保留。':'Codex 需要 Responses 兼容 API；密钥保存到独立原生账号目录。';
- element('engine-account-protocol-hint').textContent=claude?'Claude Code 使用 Anthropic Messages 协议。官方 API 可留空地址，第三方服务需提供兼容地址；配置不会自动授予工具权限。':'MiMo Code 支持官方和自定义兼容 API。OpenAI 地址通常包含 /v1；Anthropic 地址填写完整版本根路径。Token Plan 的地址和 Key 请以订阅后台为准。';
- input('engine-account-url').placeholder=claude?'留空使用 Anthropic；或填写第三方 Messages 兼容地址':'例如 https://api.xiaomimimo.com/v1 或第三方兼容地址';
-}
-function applyEngineAPIProvider(){
- resetEngineAPIProbe();const preset=input('engine-account-provider').value,engine=input('engine-account-engine').value,protocol=input('engine-account-protocol').value;
- if(preset==='custom'){refreshEngineAPIOptions();return}
- if(engine==='claude'&&preset!=='custom')input('engine-account-auth').value=preset==='anthropic'?'api-key':'auth-token';
- if(preset==='anthropic'){input('engine-account-protocol').value='anthropic-messages';input('engine-account-url').value=engine==='claude'?'':'https://api.anthropic.com/v1'}
- else {const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';input('engine-account-url').value=base+(engine==='claude'?'/anthropic':protocol==='anthropic-messages'?'/anthropic/v1':'/v1')}
- refreshEngineAPIOptions();
-}
-async function openEngineAPIAccount(engine:string,environmentID:string){
- if(engineSetupBusy||accountImportBusy||accountSyncBusy)return;
- const epoch=shellEpoch;await openAccountCenter();if(!shellCurrent(epoch))return;
- if(!settings.config.environments.some(e=>e.id===environmentID)){notify('环境已变化，请重新检测。');return}
- input('engine-account-environment').value=environmentID;input('engine-account-engine').value=engine;input('engine-account-key').value='';
- input('engine-account-name').value=taskEngineName(engine)+' API';input('engine-account-model').value='';input('engine-account-url').value='';
- refreshAccountLogin();input('engine-account-provider').value=engine==='mimo'?'mimo':'anthropic';input('engine-account-protocol').value=engine==='mimo'?'openai-chat':'anthropic-messages';applyEngineAPIProvider();openAccountEditor(false);
-}
-async function probeEngineAPIModels(){
- if(engineAPIProbeBusy||engineSetupBusy)return;
- const engine=input('engine-account-engine').value,env=settings.config.environments.find(e=>e.id===input('engine-account-environment').value);
- if(!env||!['claude','mimo'].includes(engine))return;
- if(!input('engine-account-key').value.trim()){element('engine-api-models-status').textContent='请先填写 API key。';return}
- const epoch=shellEpoch,request=++engineAPIProbeRequest,signature=JSON.stringify(env);engineAPIProbeController?.abort();const controller=new AbortController();engineAPIProbeController=controller;engineAPIProbeBusy=true;
- const target={engine,...(engine==='claude'?{auth_mode:input('engine-account-auth').value}:{}),api_protocol:input('engine-account-protocol').value,base_url:input('engine-account-url').value.trim(),api_key:input('engine-account-key').value,target:env};
- button('engine-api-models-read').disabled=true;button('engine-account-add').disabled=true;element('engine-api-models-status').textContent='正在目标环境验证认证并读取模型；不发送推理请求…';
- try{const result=await api<{status:string;message:string;models:EngineModel[]}>('environments/'+encodeURIComponent(env.id)+'/engine-api-models','POST',target,controller.signal);
-  if(!shellCurrent(epoch)||request!==engineAPIProbeRequest||signature!==JSON.stringify(settings.config.environments.find(e=>e.id===env.id)))return;
-  element('engine-api-models').innerHTML=result.models.map(m=>'<option value="'+escapeHTML(m.id)+'">'+escapeHTML(m.name||m.id)+'</option>').join('');
-  element('engine-api-models-status').textContent=result.message+(result.status==='ready'?' 模型列表认证已通过；具体模型调用尚未验证。':'');
- }catch(e){if(shellCurrent(epoch)&&request===engineAPIProbeRequest&&!controller.signal.aborted)element('engine-api-models-status').textContent=(e as Error).message}
- finally{if(shellCurrent(epoch)&&request===engineAPIProbeRequest){engineAPIProbeBusy=false;button('engine-api-models-read').disabled=engineSetupBusy;button('engine-account-add').disabled=engineSetupBusy}}
-}
 function refreshAccountLogin(){
  const claude=['claude','mimo'].includes(element<HTMLSelectElement>('engine-account-engine').value),select=element<HTMLSelectElement>('engine-account-login');
  select.innerHTML=claude?'<option value="apiKey">API key / 中转站</option>':'<option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key / 中转站</option>';
  element('engine-account-api').classList.toggle('hidden',select.value!=='apiKey');input('engine-account-url').placeholder=claude?'留空使用 Anthropic 官方 API':'留空使用 OpenAI 官方 API';
- if(element('engine-api-options'))refreshEngineAPIOptions();
+
 }
 
 type HarnessAPIView={environment_id:string;target:string;api:string;base_url:string;model:string;key_configured:boolean;models?:{id:string;name?:string}[];model_inputs?:Record<string,string[]>;discovery_status?:string;message?:string};
+type EnvironmentAPIView={environment_id:string;target:string;engine:string;api_protocol:string;base_url:string;model:string;auth_mode:string;key_configured:boolean;models:EngineModel[];message?:string;mimo_config?:string};
+let environmentAPIView:EnvironmentAPIView|null=null,environmentAPIRequest=0,environmentAPIBusy=false;
+function installEnvironmentAPI(){
+ element('root').insertAdjacentHTML('beforeend',`<dialog id="environment-api-dialog"><form id="environment-api-form"><h2 id="environment-api-title">API 配置</h2><p id="environment-api-target" class="muted"></p><fieldset id="environment-api-fields"><label for="environment-api-provider">服务预设</label><select id="environment-api-provider"><option value="custom">自定义 API</option><option value="anthropic">Anthropic 官方 API</option><option value="mimo">MiMo 官方 API（按量付费）</option><option value="mimo-cn">MiMo Token Plan · 中国</option><option value="mimo-sgp">MiMo Token Plan · 新加坡</option><option value="mimo-ams">MiMo Token Plan · 欧洲</option></select><label for="environment-api-protocol">接口协议</label><select id="environment-api-protocol"><option value="anthropic-messages">Anthropic Messages 兼容</option><option value="openai-chat">OpenAI Chat Completions 兼容</option></select><label for="environment-api-url">API 根地址</label><input id="environment-api-url" type="url" maxlength="2000"><div id="environment-api-auth-wrap"><label for="environment-api-auth">认证请求头</label><select id="environment-api-auth"><option value="api-key">API Key · x-api-key</option><option value="auth-token">Bearer Token · Authorization</option></select></div><label for="environment-api-model">默认模型 ID</label><input id="environment-api-model" maxlength="120" list="environment-api-models"><datalist id="environment-api-models"></datalist><label for="environment-api-key">API key</label><input id="environment-api-key" type="password" maxlength="16000" autocomplete="off"><p id="environment-api-key-note" class="muted"></p><button type="button" id="environment-api-discover">验证并读取模型</button></fieldset><p id="environment-api-hint" class="muted"></p><p id="environment-api-status" role="status"></p><div class="dialog-footer"><button type="button" id="environment-api-close">关闭</button><button type="submit" id="environment-api-save" class="primary">保存并读取模型</button></div></form></dialog>`);
+ button('environment-api-close').onclick=()=>{if(!environmentAPIBusy)element<HTMLDialogElement>('environment-api-dialog').close()};
+ element('environment-api-dialog').addEventListener('cancel',e=>{if(environmentAPIBusy)e.preventDefault()});
+ element('environment-api-dialog').addEventListener('close',()=>{environmentAPIRequest++;environmentAPIView=null;input('environment-api-key').value='';element('environment-api-models').replaceChildren()});
+ element('environment-api-form').onsubmit=e=>{e.preventDefault();void submitEnvironmentAPI(true)};
+ button('environment-api-discover').onclick=()=>void submitEnvironmentAPI(false);
+ input('environment-api-provider').onchange=applyEnvironmentAPIPreset;
+ input('environment-api-protocol').onchange=()=>{if(input('environment-api-provider').value!=='custom')applyEnvironmentAPIPreset();else clearEnvironmentAPIModels()};
+ for(const id of ['environment-api-url','environment-api-key','environment-api-auth'])input(id).addEventListener('input',clearEnvironmentAPIModels);
+ disposeWithShell(()=>{environmentAPIRequest++;environmentAPIView=null;environmentAPIBusy=false;input('environment-api-key').value=''});
+}
+function clearEnvironmentAPIModels(){element('environment-api-models').replaceChildren();element('environment-api-status').textContent=''}
+function applyEnvironmentAPIPreset(){
+ const view=environmentAPIView;if(!view)return;
+ clearEnvironmentAPIModels();const preset=input('environment-api-provider').value,claude=view.engine==='claude';if(preset==='custom')return;
+ if(preset==='anthropic'){input('environment-api-protocol').value='anthropic-messages';input('environment-api-url').value=claude?'':'https://api.anthropic.com/v1';input('environment-api-auth').value='api-key'}
+ else {const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';input('environment-api-url').value=base+(claude?'/anthropic':input('environment-api-protocol').value==='anthropic-messages'?'/anthropic/v1':'/v1');input('environment-api-auth').value='auth-token'}
+}
+function renderEnvironmentAPI(view:EnvironmentAPIView){
+ environmentAPIView=view;const claude=view.engine==='claude';
+ element('environment-api-title').textContent=taskEngineName(view.engine)+' API 配置';
+ input('environment-api-protocol').value=view.api_protocol;input('environment-api-auth').value=view.auth_mode==='auth-token'?'auth-token':'api-key';
+ element<HTMLSelectElement>('environment-api-protocol').disabled=claude;element('environment-api-auth-wrap').classList.toggle('hidden',!claude);
+ input('environment-api-url').value=view.base_url;input('environment-api-url').required=!claude;input('environment-api-model').value=view.model;input('environment-api-model').required=!claude;
+ input('environment-api-key').value='';input('environment-api-key').required=!view.key_configured;input('environment-api-key').placeholder=view.key_configured?'留空保留已保存的 Key':'填写服务商 API key';
+ element('environment-api-key-note').textContent=view.key_configured?'Key 已配置，不回显；留空保留，填写新 Key 替换。改变服务地址或协议时需要重新填写 Key。':'首次保存需要填写 Key。';
+ input('environment-api-provider').value='custom';
+ renderEnvironmentAPIModels(view.models||[]);
+ element('environment-api-hint').textContent=claude?'保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。':'保存后直接用于所选环境的 MiMo CLI；保留权限、其他原生配置和会话目录。OpenAI 地址通常包含 /v1，Messages 地址需填写完整版本根路径。';
+ element<HTMLFieldSetElement>('environment-api-fields').disabled=false;
+ // The protocol remains fixed for Claude even after the enclosing fieldset enables.
+ element<HTMLSelectElement>('environment-api-protocol').disabled=claude;
+ button('environment-api-save').disabled=false;
+}
+function renderEnvironmentAPIModels(models:{id:string;name?:string}[]){element('environment-api-models').innerHTML=models.map(m=>'<option value="'+escapeHTML(m.id)+'">'+escapeHTML(m.name||m.id)+'</option>').join('')}
+async function openEnvironmentAPI(engine:string,environmentID:string){
+ if(environmentAPIBusy||engineSetupBusy||harnessAPIBusy||accountImportBusy||accountSyncBusy)return;
+ const env=settings.config.environments.find(e=>e.id===environmentID);if(!env)return;storeEnvironmentEditor();
+ const epoch=shellEpoch,request=++environmentAPIRequest;environmentAPIView=null;
+ const dialog=element<HTMLDialogElement>('environment-api-dialog');
+ element('environment-api-title').textContent=taskEngineName(engine)+' API 配置';element('environment-api-target').textContent='目标环境：'+env.name+'（'+[env.type,env.distro,env.user,env.host].filter(Boolean).join(' / ')+ '）';
+ input('environment-api-key').value='';input('environment-api-url').value='';input('environment-api-model').value='';clearEnvironmentAPIModels();
+ element<HTMLFieldSetElement>('environment-api-fields').disabled=true;button('environment-api-save').disabled=true;button('environment-api-close').disabled=false;element('environment-api-status').textContent='正在读取目标环境配置…';
+ if(!dialog.open)dialog.showModal();
+ try{const view=await api<EnvironmentAPIView>('environments/'+encodeURIComponent(environmentID)+'/engines/'+engine+'/api','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==environmentAPIRequest||!dialog.open)return;renderEnvironmentAPI(view);element('environment-api-status').textContent='可验证并读取模型；保存时自动读取。不发送推理请求。'}
+ catch(e){if(shellCurrent(epoch)&&request===environmentAPIRequest&&dialog.open)element('environment-api-status').textContent=(e as Error).message}
+}
+async function submitEnvironmentAPI(save:boolean){
+ const view=environmentAPIView;if(!view||environmentAPIBusy||engineSetupBusy)return;
+ const epoch=shellEpoch,request=environmentAPIRequest,dialog=element<HTMLDialogElement>('environment-api-dialog');
+ const body={target:view.target,api_protocol:input('environment-api-protocol').value,base_url:input('environment-api-url').value.trim(),model:input('environment-api-model').value.trim(),api_key:input('environment-api-key').value,...(view.engine==='claude'?{auth_mode:input('environment-api-auth').value}:{})};
+ environmentAPIBusy=true;element<HTMLFieldSetElement>('environment-api-fields').disabled=true;button('environment-api-save').disabled=true;button('environment-api-close').disabled=true;clearEnvironmentAPIModels();element('environment-api-status').textContent=save?'正在验证并保存到目标环境…':'正在从目标环境验证认证并读取模型…';renderEngineCatalog();
+ try{
+  const result=await api<EnvironmentAPIView|HarnessDiscovery>('environments/'+encodeURIComponent(view.environment_id)+'/engines/'+view.engine+'/api'+(save?'':'/models'),save?'PUT':'POST',body,shellController.signal);
+  if(!shellCurrent(epoch)||request!==environmentAPIRequest||!dialog.open)return;
+  if(save){const out=result as EnvironmentAPIView;renderEnvironmentAPI(out);const saved=settings.config.environments.find(e=>e.id===view.environment_id),draft=editingEnvironments.find(e=>e.id===view.environment_id);if(saved){const values:Partial<Environment>=view.engine==='mimo'?{mimo_config:out.mimo_config,mimo_model:'duo-mimo/'+out.model}:{claude_model:out.model};for(const key of Object.keys(values) as ('mimo_config'|'mimo_model'|'claude_model')[]){if(draft&&draft[key]===saved[key])draft[key]=values[key];saved[key]=values[key]}if(editingID===saved.id)loadEnvironmentEditor()}invalidateModelCatalogs()}
+  else {renderEnvironmentAPIModels(result.models);if(!input('environment-api-model').value&&result.models.length)input('environment-api-model').value=result.models[0].id}
+  element('environment-api-status').textContent=result.message||'配置已保存并生效。';
+ }catch(e){if(shellCurrent(epoch)&&request===environmentAPIRequest&&dialog.open)element('environment-api-status').textContent=(e as Error).message}
+ finally{body.api_key='';if(shellCurrent(epoch)){environmentAPIBusy=false;if(request===environmentAPIRequest&&dialog.open){element<HTMLFieldSetElement>('environment-api-fields').disabled=false;element<HTMLSelectElement>('environment-api-protocol').disabled=view.engine==='claude';button('environment-api-save').disabled=false;button('environment-api-close').disabled=false}renderEngineCatalog()}}
+}
 type HarnessDiscovery={status:string;models:{id:string;name?:string}[];message:string};
 let harnessAPIView:HarnessAPIView|null=null,harnessAPIRequest=0,harnessAPIBusy=false;
 function installHarnessAPI(){
  harnessAPIView=null;harnessAPIRequest=0;harnessAPIBusy=false;
- element('settings-engines').querySelector('p')!.textContent='统一检测 Windows / WSL / SSH 环境与引擎。Harness 可在对应环境配置 API；Codex / Claude 账号在“账号管理”中配置。';
+ element('settings-engines').querySelector('p')!.textContent='统一检测 Windows / WSL / SSH 环境与引擎。Harness、Claude Code 和 MiMo Code 可在对应环境单独配置 API；Codex 账号在“账号管理”中配置。';
  element('root').insertAdjacentHTML('beforeend',`<dialog id="harness-api-dialog"><form id="harness-api-form"><h2>Harness API 配置</h2><p id="harness-api-target" class="muted"></p><fieldset id="harness-api-fields"><label for="harness-api-protocol">API 协议</label><select id="harness-api-protocol"><option value="openai-completions">OpenAI Chat Completions（DeepSeek / 兼容 API）</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select><label for="harness-api-url">API 根地址</label><input id="harness-api-url" type="url" maxlength="2000" required placeholder="https://api.deepseek.com"><p class="muted">填写服务商提供的根地址，例如 https://api.deepseek.com 或 https://api.openai.com/v1，不要填写 /chat/completions。</p><label for="harness-api-model">模型 ID</label><input id="harness-api-model" maxlength="120" required placeholder="例如 deepseek-chat"><label for="harness-api-key">API key</label><input id="harness-api-key" type="password" maxlength="16000" autocomplete="off"><p id="harness-api-key-note" class="muted"></p></fieldset><p class="muted">配置保存到所选用户的默认 Harness 原生目录；Key 单独保存，不回显。Duo 通过 ACP 调用 dsh CLI，由 Harness 访问模型 API。新启动的 Harness 读取此配置；独立账号目录仍使用各自配置。</p><p id="harness-api-status" role="status"></p><div class="dialog-footer"><button type="button" id="harness-api-close">关闭</button><button type="submit" id="harness-api-save" class="primary">保存配置</button></div></form></dialog>`);
  button('harness-api-close').onclick=()=>{if(!harnessAPIBusy)element<HTMLDialogElement>('harness-api-dialog').close()};
  element('harness-api-dialog').addEventListener('cancel',e=>{if(harnessAPIBusy)e.preventDefault()});
@@ -309,7 +313,7 @@ async function readHarnessAPIModels(){
  }
 }
 async function openHarnessAPI(environmentID:string){
- if(harnessAPIBusy||engineSetupBusy||accountImportBusy||accountSyncBusy)return;
+ if(harnessAPIBusy||environmentAPIBusy||engineSetupBusy||accountImportBusy||accountSyncBusy)return;
  const env=settings.config.environments.find(e=>e.id===environmentID);if(!env)return;
  storeEnvironmentEditor();
  const epoch=shellEpoch,request=++harnessAPIRequest;harnessAPIView=null;

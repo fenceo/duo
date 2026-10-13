@@ -15,12 +15,16 @@ def main():
     engine = request['engine']
     names = {'codex': ('auth.json', 'config.toml'),
              'claude': ('.credentials.json', 'settings.json'),
-             'deepseek-harness': ('.credentials.yaml', 'cordis.patch.yml')}[engine]
+             'deepseek-harness': ('.credentials.yaml', 'cordis.patch.yml'),
+             'mimo': ('mimocode.json',), 'mimo-api': ('duo-api.json',)}[engine]
     if request['operation'] == 'harness-models' and engine == 'deepseek-harness':
         names = ('settings.yaml', 'cordis.patch.yml')
-    key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME'}[engine]
+    key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME', 'mimo': 'MIMOCODE_CONFIG_DIR', 'mimo-api': 'MIMOCODE_CONFIG_DIR'}[engine]
     default_dir = '.dsh' if engine == 'deepseek-harness' else '.' + engine
     raw_root = request.get('directory') or os.environ.get(key)
+    if engine == 'mimo-api' and not request.get('directory'):
+        mimo_home = os.environ.get('MIMOCODE_HOME')
+        raw_root = str(pathlib.Path(mimo_home) / 'config') if mimo_home else str(pathlib.Path(os.environ.get('XDG_CONFIG_HOME') or pathlib.Path.home() / '.config') / 'mimocode')
     if engine == 'deepseek-harness' and raw_root and not raw_root.strip():
         raw_root = None
     raw_root = raw_root or str(pathlib.Path.home() / default_dir)
@@ -32,6 +36,10 @@ def main():
     for parent in (root, *root.parents):
         if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
             raise ValueError('redirecting directory')
+
+    if request['operation'] == 'directory' and engine == 'mimo-api':
+        print(json.dumps({'directory': base64.b64encode(str(root).encode('utf-8')).decode('ascii')}))
+        return
 
     def read():
         result = {}

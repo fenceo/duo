@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func (a *App) performMimoAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
+func mimoAPIConfig(r EngineSetupRequest) []byte {
 	// The official OpenAI-compatible adapter expects exact baseURL and apiKey.
 	// A separate config file changes routing without changing native session data.
 	model := "duo-mimo/" + strings.TrimSpace(r.Model)
@@ -17,6 +17,11 @@ func (a *App) performMimoAccount(ctx context.Context, env Environment, r EngineS
 	}
 	provider := map[string]any{"name": strings.TrimSpace(r.Name), "npm": sdk, "only_configured_models": true, "models": map[string]any{r.Model: map[string]string{"name": r.Model}}, "options": map[string]string{"baseURL": strings.TrimRight(r.BaseURL, "/"), "apiKey": r.APIKey}}
 	data, _ := json.MarshalIndent(map[string]any{"$schema": "https://mimo.xiaomi.com/mimocode/config.json", "model": model, "provider": map[string]any{"duo-mimo": provider}}, "", "  ")
+	return data
+}
+
+func (a *App) performMimoAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
+	data := mimoAPIConfig(r)
 	dir, err := a.engineSetup.accountHome(ctx, env, a.store.directory, r.ID, "mimo", map[string][]byte{"mimocode.json": data})
 	if err != nil {
 		return err

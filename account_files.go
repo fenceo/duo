@@ -49,6 +49,8 @@ func nativeAccountNames(engine string) ([]string, error) {
 		return []string{".credentials.yaml", "cordis.patch.yml"}, nil
 	case "mimo":
 		return []string{"mimocode.json"}, nil
+	case "mimo-api":
+		return []string{"duo-api.json"}, nil
 	default:
 		return nil, errors.New("此引擎不支持账号文件同步")
 	}
@@ -57,6 +59,21 @@ func nativeAccountNames(engine string) ([]string, error) {
 func localAccountDirectory(dir, engine string) (string, error) {
 	if _, err := nativeAccountNames(engine); err != nil {
 		return "", err
+	}
+	if dir == "" {
+		if engine == "mimo-api" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			if root := os.Getenv("MIMOCODE_HOME"); root != "" {
+				dir = filepath.Join(root, "config")
+			} else if root := os.Getenv("XDG_CONFIG_HOME"); root != "" {
+				dir = filepath.Join(root, "mimocode")
+			} else {
+				dir = filepath.Join(home, ".config", "mimocode")
+			}
+		}
 	}
 	if dir == "" {
 		key := "CODEX_HOME"

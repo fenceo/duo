@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -122,44 +123,8 @@ func installManagedMimo(ctx context.Context, directory string, progress func(str
 	return path, nil
 }
 
-const remoteMimoInstall = `import sys,os,json,pathlib,urllib.request,zipfile,tarfile,platform,re,subprocess
-identifier=sys.argv[1]
-if not re.fullmatch(r'[A-Za-z0-9_-]{1,48}',identifier): raise ValueError('invalid id')
-base='https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode/releases/'
-class NoRedirect(urllib.request.HTTPRedirectHandler):
- def redirect_request(self,*args,**kwargs): raise ValueError('redirect denied')
-opener=urllib.request.build_opener(NoRedirect)
-version=opener.open(base+'latest',timeout=25).read(100).decode().strip()
-if not re.fullmatch(r'\d+\.\d+\.\d+',version): raise ValueError('invalid version')
-machine=platform.machine().lower()
-arch='x64-baseline' if machine in ['x86_64','amd64'] else 'arm64' if machine in ['aarch64','arm64'] else None
-if not arch: raise ValueError('unsupported architecture')
-if platform.libc_ver()[0]=='musl' or any(pathlib.Path('/lib').glob('ld-musl-*.so.1')): arch+='-musl'
-root=pathlib.Path.home()/'.local'/'share'/'duo'/'engine-tools'/identifier
-for parent in [root,*root.parents]:
- if parent.is_symlink() or (parent.exists() and not parent.is_dir()): raise ValueError('redirecting directory')
-os.umask(0o077);root.parent.mkdir(parents=True,exist_ok=True,mode=0o700);root.mkdir(mode=0o700)
-archive=root/'mimo.tar.gz'
-with opener.open(base+'v'+version+'/mimocode-linux-'+arch+'.tar.gz',timeout=60) as response,archive.open('xb') as target:
- count=0
- while True:
-  part=response.read(1024*1024)
-  if not part: break
-  count+=len(part)
-  if count>419430400: raise ValueError('oversized archive')
-  target.write(part)
-binary=root/'mimo'
-with tarfile.open(archive,'r:gz') as package:
- files=[f for f in package.getmembers() if not f.isdir()]
- if len(files)!=1 or files[0].name not in ['mimo','./mimo'] or not files[0].isfile() or files[0].size>419430400: raise ValueError('unexpected payload')
- with package.extractfile(files[0]) as source,binary.open('xb') as target:
-  import shutil
-  shutil.copyfileobj(source,target)
-binary.chmod(0o700)
-got=subprocess.check_output([str(binary),'--version'],timeout=20,stderr=subprocess.DEVNULL).decode().strip()
-if got!=version: raise ValueError('version mismatch')
-print(json.dumps({'path':str(binary)}))
-`
+//go:embed mimo_install.py
+var remoteMimoInstall string
 
 func installRemoteMimo(ctx context.Context, env Environment, id string, progress func(string)) (string, error) {
 	if (env.Type != "wsl" && env.Type != "ssh") || !safeWorkbenchID(id) {
@@ -170,11 +135,19 @@ func installRemoteMimo(ctx context.Context, env Environment, id string, progress
 	cmd.Stderr = io.Discard
 	hideCommand(cmd)
 	out, err := cmd.Output()
+	var result struct{ Path, Error string }
+	_ = json.Unmarshal(out, &result)
 	if err != nil {
+		stages := map[string]string{"version-download": "读取官方版本失败，请检查目标网络与证书", "directory": "安装目录创建失败，请检查目录权限或残留目录", "binary-download": "官方程序下载失败，请检查目标网络和下载站", "extract": "官方安装包解压校验失败，请更新 Duo 后重试", "verify": "程序启动或版本验证失败，请检查 Linux 运行库和架构"}
+		if message := stages[result.Error]; message != "" {
+			return "", errors.New("MiMo " + message + "；原有 CLI 未更改")
+		}
+		if strings.Contains(commandDiagnosticText(env, out), "E_ACCESSDENIED") {
+			return "", errors.New("Windows 当前启动进程无法访问 WSL 服务，请从正常桌面入口打开 Duo；原有 CLI 未更改")
+		}
 		return "", errors.New("MiMo 目标环境安装失败，请检查连接、Python 3、官方下载站和权限；原有 CLI 未更改")
 	}
-	var result struct{ Path string }
-	if json.Unmarshal(out, &result) != nil || !strings.HasPrefix(result.Path, "/") || !strings.HasSuffix(result.Path, "/duo/engine-tools/"+id+"/mimo") {
+	if result.Error != "" || !strings.HasPrefix(result.Path, "/") || !strings.HasSuffix(result.Path, "/duo/engine-tools/"+id+"/mimo") {
 		return "", errors.New("MiMo 目标环境返回无效的安装路径")
 	}
 	return result.Path, nil
