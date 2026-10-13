@@ -18,6 +18,10 @@ function installProductivity(){
  button('files-refresh').onclick=()=>void loadFiles();button('files-changes').onclick=()=>{fileMode=fileMode==='changes'?'list':'changes';void loadFiles()};input('file-filter').oninput=renderFiles;
  button('file-read').onclick=()=>void previewFile(filePath,'read');button('file-diff').onclick=()=>void previewFile(filePath,'diff');
  button('file-reference').onclick=()=>{if(fileTask!==chosen||!filePath)return;bringToChat('请查看当前工作目录中的文件：'+filePath)};
+ button('files-root').insertAdjacentHTML('beforebegin','<button type="button" id="files-editor">在 VS Code 打开项目</button>');
+ button('file-reference').insertAdjacentHTML('afterend','<label class="editor-line-label" for="file-editor-line">行号<input type="number" id="file-editor-line" min="1" max="10000000" value="1" inputmode="numeric"></label><button type="button" id="file-editor">在 VS Code 打开文件</button>');
+ button('files-editor').onclick=()=>void openEditor(chosen);
+ button('file-editor').onclick=()=>{if(fileTask!==chosen||!filePath)return;void openEditor(chosen,{path:filePath,line:Number(input('file-editor-line').value),column:1})};
 }
 async function searchEverywhere(){
  const q=input('search').value.trim(),token=++searchRequest;if(!q){searchHits=null;searchPending=false;renderList();return}
@@ -49,6 +53,7 @@ function renderFiles(){
 }
 function formatFileSize(size:number){return size>=1048576?(size/1048576).toFixed(1)+' MiB':size>=1024?(size/1024).toFixed(1)+' KiB':size+' B'}
 async function previewFile(p:string,view:string){
+ if(p!==filePath)input('file-editor-line').value='1';
  if(!p||fileTask!==chosen)return;filePath=p;fileView=view;fileContent='';const token=++filePreviewRequest,task=chosen;element('file-preview').classList.remove('hidden');element('file-name').textContent=p;element('file-status').textContent='正在读取…';element('file-code').textContent='';button('file-read').classList.toggle('selected',view==='read');button('file-diff').classList.toggle('selected',view==='diff');
  const download=element<HTMLAnchorElement>('file-download');download.href='/api/'+filesURL('download',p);download.download=p.split('/').at(-1)||'download';
  try{const r=await api<FileResult>(filesURL(view,p));if(chosen!==task||token!==filePreviewRequest)return;fileContent=r.content||'';element('file-status').textContent=(r.message||(view==='read'?formatFileSize(r.size)+' · UTF-8 文本':'工作目录当前差异'))+(r.truncated?' · 内容已截断':'');

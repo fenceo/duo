@@ -7,8 +7,8 @@ export async function createWebShellFixture(webRoot=new URL('../web/',import.met
 // Run every production feature initializer against a real connected/detached
 // DOM implementation. HTTP is a synthetic in-memory fixture; no browser, CLI,
 // credentials, model turn, storage directory or external network is accessed.
-const files=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','account-import','account-center','engines','handoff','desktop','usage','app','panels'];
-const source=(await Promise.all(files.map(name=>readFile(new URL(name+'.ts',webRoot),'utf8')))).join('\n');
+const files=['editor','library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','account-import','account-center','engines','handoff','desktop','usage','app','panels'];
+const source=(await Promise.all(files.map(name=>readFile(new URL(name+'.ts',webRoot),'utf8').catch(error=>{if(name==='editor'&&error.code==='ENOENT')return '';throw error})))).join('\n');
 const {document,window}=parseHTML('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><div id="notice"></div></body></html>');
 // linkedom implements real node attachment and selectors, but intentionally
 // omits some browser-only form/layout/media interfaces used at mount time.
