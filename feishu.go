@@ -273,6 +273,8 @@ func (f *Feishu) handle(chat, text string) (string, error) {
 				model = env.ClaudeModel
 			case "deepseek-harness":
 				model = env.HarnessModel
+			case "mimo":
+				model = env.MimoModel
 			}
 		}
 		t, e := a.create(strings.TrimSpace(title), c.Workspaces[0], model)

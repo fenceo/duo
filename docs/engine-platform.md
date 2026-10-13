@@ -48,6 +48,8 @@ v0.31.1 起，账号管理通过原生文件切换 Windows、WSL 或 SSH 的账�
 3. Harness：优先 headless JSON 事件流或 SDK，不抓桌面 UI；固定一个版本并记录协议版本。
 4. Kimi / MiMo：优先 ACP/CLI，桌面端仅作为人工兜底。适配器具备可验证的启动、发送和停止链路后才开放运行；恢复与审批按真实能力分别声明，不使用统一接口掩盖缺失能力。
 
+v0.34.18 已开放 MiMo Code 官方 ACP 适配器与一键安装，支持原生会话创建/恢复、流式输出、模型切换、单次审批和取消。API 库存通过 `mimo_config` 引用独立配置文件，激活后仅设置 `MIMOCODE_CONFIG`，不移动原生会话目录。Claude Code 同时新增官方与第三方 Messages 配置入口及模型目录认证检查。MiMo 尚未开放独立知识整理、无工具推理测试或 Duo 桌面/硬件工具；Kimi 仍未开放运行。配置和权限说明见 [Claude Code 与 MiMo 配置](claude-mimo.md)。
+
 ## 升级流程
 
 CLI 更新使用 `POST /api/engine-setup`，传入 `action: "update"`、`engine`、`environment_id`、幂等请求 `id` 和当前已保存的 `expected_path`。更新前检查同一环境/引擎没有运行或排队任务；操作期间拦截该目标的新提交。新版本安装到独立目录，版本验证通过且环境连接身份、原路径未变后才切换配置；失败保留旧配置和安装。账号和原生会话目录不随 CLI 安装目录迁移。

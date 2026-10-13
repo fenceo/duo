@@ -107,6 +107,9 @@ func probeWorkspace(e Environment, workspace string) (string, error) {
 }
 
 func prepareModelProbe(c Config, e Environment, engine, workspace string, requested []string) (modelProbePlan, error) {
+	if engine == "mimo" {
+		return modelProbePlan{}, errors.New("MiMo 独立无工具模型测试尚未接入；可在 API 配置中验证认证和读取模型列表")
+	}
 	if engine == "" {
 		engine = "codex"
 	}

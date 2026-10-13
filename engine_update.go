@@ -62,6 +62,8 @@ func environmentEnginePath(e Environment, engine string) string {
 		return e.Claude
 	case "deepseek-harness":
 		return e.Harness
+	case "mimo":
+		return e.Mimo
 	}
 	return ""
 }

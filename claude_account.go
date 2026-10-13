@@ -4,8 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 )
+
+func claudeUsesToken(r EngineSetupRequest) bool {
+	if r.AuthMode == "api-key" {
+		return false
+	}
+	if r.AuthMode == "auth-token" {
+		return true
+	}
+	u, _ := url.Parse(r.BaseURL)
+	return r.BaseURL != "" && (u == nil || !strings.EqualFold(u.Hostname(), "api.anthropic.com"))
+}
 
 func (a *App) performClaudeAccount(ctx context.Context, env Environment, r EngineSetupRequest) error {
 	variables := map[string]string{}
@@ -15,13 +27,20 @@ func (a *App) performClaudeAccount(ctx context.Context, env Environment, r Engin
 	for _, key := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_PROFILE"} {
 		variables[key] = ""
 	}
-	if r.BaseURL == "" {
-		variables["ANTHROPIC_API_KEY"] = r.APIKey
-	} else {
+	if claudeUsesToken(r) {
 		variables["ANTHROPIC_AUTH_TOKEN"] = r.APIKey
-		variables["ANTHROPIC_BASE_URL"] = strings.TrimRight(r.BaseURL, "/")
+	} else {
+		variables["ANTHROPIC_API_KEY"] = r.APIKey
 	}
+	variables["ANTHROPIC_BASE_URL"] = strings.TrimRight(r.BaseURL, "/")
 	variables["ANTHROPIC_MODEL"] = r.Model
+	if r.BaseURL != "" && r.Model != "" {
+		for _, key := range []string{"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
+			variables[key] = r.Model
+		}
+		variables["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+		variables["CLAUDE_CODE_SUBAGENT_MODEL"] = r.Model
+	}
 	data, _ := json.MarshalIndent(map[string]any{"env": variables}, "", "  ")
 	dir, err := a.engineSetup.accountHome(ctx, env, a.store.directory, r.ID, "claude", map[string][]byte{"settings.json": data})
 	if err != nil {

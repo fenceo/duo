@@ -13,9 +13,12 @@ import (
 )
 
 func validEngine(engine string) bool {
-	return engine == "codex" || engine == "claude" || engine == "deepseek-harness"
+	return engine == "codex" || engine == "claude" || engine == "deepseek-harness" || engine == "mimo"
 }
 func engineName(engine string) string {
+	if engine == "mimo" {
+		return "MiMo Code"
+	}
 	if engine == "claude" {
 		return "Claude Code"
 	}
@@ -25,6 +28,9 @@ func engineName(engine string) string {
 	return "Codex"
 }
 func validEngineReasoning(engine, effort string) bool {
+	if engine == "mimo" {
+		return effort == ""
+	}
 	if engine == "codex" {
 		return validReasoning(effort)
 	}
@@ -102,6 +108,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	if engine == "deepseek-harness" {
 		return nil, errors.New("DeepSeek Harness 必须通过 SDK 运行")
 	}
+	if engine == "mimo" {
+		return nil, errors.New("此引擎必须通过原生 ACP 运行")
+	}
 	args := codexArgs(c, t)
 	binary := c.Codex
 	launch := launcher
@@ -148,12 +157,26 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 	if engine == "deepseek-harness" {
 		return configuredHarnessCatalog(ctx, env, firstProfileEnv(profileEnv))
 	}
+	if engine == "mimo" {
+		return configuredMimoCatalog(ctx, env, firstProfileEnv(profileEnv))
+	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")
 	}
 	return configuredClaudeCatalog(ctx, env, profileEnv...)
 }
 func checkEngine(c Config, engine string) (string, error) {
+	if engine == "mimo" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := commandWithContext(ctx, engineCheckCommand(c, c.Mimo, "--version"))
+		hideCommand(cmd)
+		out, err := cmd.Output()
+		if err != nil {
+			return "MiMo CLI 检查失败，请检查目标环境和程序路径", err
+		}
+		return "MiMo CLI " + strings.TrimSpace(string(out)) + "；版本检查不代表 API/模型可用", nil
+	}
 	if engine == "codex" {
 		return checkEnvironment(c)
 	}

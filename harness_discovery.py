@@ -14,7 +14,10 @@ try:
     request = json.loads(sys.stdin.buffer.read(24000))
     headers = {'Accept': 'application/json'}
     if request['api'] == 'anthropic-messages':
-        headers['x-api-key'] = request['api_key']
+        if request.get('bearer_auth'):
+            headers['Authorization'] = 'Bearer ' + request['api_key']
+        else:
+            headers['x-api-key'] = request['api_key']
         headers['anthropic-version'] = '2023-06-01'
     else:
         headers['Authorization'] = 'Bearer ' + request['api_key']

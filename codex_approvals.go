@@ -77,8 +77,11 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 	engine := "Codex"
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput":
-	case harnessPermissionMethod:
+	case harnessPermissionMethod, mimoPermissionMethod:
 		engine = "Harness"
+		if method == mimoPermissionMethod {
+			engine = "MiMo Code"
+		}
 		if _, err := parseHarnessPermission(params); err != nil {
 			return nil, err
 		}
@@ -97,7 +100,7 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 		TurnID   string `json:"turnId"`
 		ItemID   string `json:"itemId"`
 	}
-	if method != harnessPermissionMethod && (json.Unmarshal(params, &envelope) != nil || envelope.ThreadID == "" || envelope.TurnID == "" || envelope.ItemID == "") {
+	if !isACPToolPermission(method) && (json.Unmarshal(params, &envelope) != nil || envelope.ThreadID == "" || envelope.TurnID == "" || envelope.ItemID == "") {
 		return nil, errors.New("Codex 审批请求缺少会话、轮次或操作标识")
 	}
 	p := &codexPending{CodexPendingRequest: CodexPendingRequest{ID: uid(), TaskID: taskID, RunID: runID, Method: method, Params: append(json.RawMessage(nil), params...), Created: now()}, ctx: ctx, answer: make(chan json.RawMessage, 1)}
@@ -148,7 +151,7 @@ var errCodexRequestExpired = errors.New("此请求已处理或已失效，请刷
 func codexAnswerPayload(p CodexPendingRequest, answer CodexAnswer) (json.RawMessage, error) {
 	var result any
 	switch p.Method {
-	case harnessPermissionMethod:
+	case harnessPermissionMethod, mimoPermissionMethod:
 		return harnessAnswerPayload(p.Params, answer)
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
 		if len(answer.Answers) != 0 || (answer.Decision != "accept" && answer.Decision != "decline" && answer.Decision != "cancel") {
@@ -245,6 +248,9 @@ func (a *App) answerCodexInteraction(taskID, id string, answer CodexAnswer) erro
 	engine := "Codex"
 	if p.Method == harnessPermissionMethod {
 		engine = "Harness"
+	}
+	if p.Method == mimoPermissionMethod {
+		engine = "MiMo Code"
 	}
 	if err = a.store.event(taskID, p.RunID, "progress", "已处理 "+engine+" 请求 · "+p.ID+" · "+label); err != nil {
 		return err

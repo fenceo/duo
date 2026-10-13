@@ -203,6 +203,9 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 	if t.Engine == "deepseek-harness" {
 		return runHarnessACP(ctx, c, t, input, emit)
 	}
+	if t.Engine == "mimo" {
+		return runMimoACP(ctx, c, t, input, emit)
+	}
 	cmd, commandErr := engineCommand(c, t)
 	if commandErr != nil {
 		return t.Session, "", commandErr

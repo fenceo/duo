@@ -1025,18 +1025,27 @@ function modeOptions(select, snapshot) {
     select.value = items.some((m)=>m.id === preferred && modeSupportsEngine(m, engine)) ? preferred : items.find((m)=>m.id === defaultID && modeSupportsEngine(m, engine))?.id || items.find((m)=>modeSupportsEngine(m, engine))?.id || '';
 }
 function modesForEngine(engine) {
-    return workCatalog.modes.filter((m)=>engine === 'deepseek-harness' ? m.id === 'harness:workspace' || m.id === 'full' || !m.builtin && m.id !== 'work' && m.id !== 'plan' && m.id !== 'codex:auto' && m.id !== 'harness:read' : m.id !== 'harness:read' && m.id !== 'harness:workspace');
+    if (engine === 'mimo') return workCatalog.modes.filter((m)=>[
+            'work',
+            'mimo:plan',
+            'full'
+        ].includes(m.id));
+    return workCatalog.modes.filter((m)=>m.id !== 'mimo:plan' && (engine === 'deepseek-harness' ? m.id === 'harness:workspace' || m.id === 'full' || !m.builtin && m.id !== 'work' && m.id !== 'plan' && m.id !== 'codex:auto' && m.id !== 'harness:read' : m.id !== 'harness:read' && m.id !== 'harness:workspace'));
 }
 function modeApproval(mode) {
     return mode.approval || (mode.permission === 'workspace' ? 'request' : 'never');
 }
 function modeSupportsEngine(mode, engine) {
-    return (![
+    return (mode.id !== 'mimo:plan' || engine === 'mimo') && (![
         'harness:read',
         'harness:workspace'
-    ].includes(mode.id) || engine === 'deepseek-harness') && (engine === 'codex' || modeApproval(mode) !== 'auto') && (engine !== 'deepseek-harness' || mode.allow_network !== false);
+    ].includes(mode.id) || engine === 'deepseek-harness') && (engine === 'codex' || modeApproval(mode) !== 'auto') && (![
+        'deepseek-harness',
+        'mimo'
+    ].includes(engine || '') || mode.allow_network !== false);
 }
 function modeLabel(mode, engine) {
+    if (engine === 'mimo') return mode.permission === 'read' ? '计划 · 原生只读代理' : mode.permission === 'full' ? '完全访问 · 原生 allow 权限' : '构建 · 原生工具审批';
     if (engine === 'deepseek-harness') {
         if (mode.id === 'harness:workspace') return '工作区权限 · 需要提升权限时询问';
         if (mode.id === 'full') return '完全访问 · 不询问';
@@ -1329,6 +1338,7 @@ function installWorkflow() {
     button('trash-close').onclick = ()=>element('trash-dialog').close();
 }
 function modeForPermission(permission, engine = 'codex') {
+    if (engine === 'mimo' && permission === 'read') return workCatalog.modes.find((m)=>m.id === 'mimo:plan');
     if (engine === 'deepseek-harness' && permission === 'request') return workCatalog.modes.find((mode)=>mode.id === 'harness:workspace' && mode.permission === 'workspace' && modeApproval(mode) === 'request' && mode.allow_network === true);
     if (engine === 'deepseek-harness' && permission === 'read') return workCatalog.modes.find((mode)=>mode.id === 'harness:read' && mode.permission === 'read' && modeApproval(mode) === 'never' && mode.allow_network === true);
     const wanted = permission === 'read' ? 'read' : permission === 'full' ? 'full' : 'workspace', preferred = permission === 'read' ? 'plan' : permission === 'request' ? 'work' : permission === 'auto' ? 'codex:auto' : permission, approval = permission === 'read' || permission === 'full' ? 'never' : permission;
@@ -1351,8 +1361,8 @@ function setCreatePermission(permission) {
         b.setAttribute('aria-pressed', String(on));
         b.disabled = value === 'auto' && !codex || harness && (!candidate || !modeSupportsEngine(candidate, engine));
         if (value === 'request') {
-            b.textContent = harness ? '工作区权限' : codex ? '请求批准' : 'CLI 预授权';
-            b.title = harness ? candidate ? '官方 workspace-write：工作区和允许的临时目录内可写，需要提升权限时询问' : '当前服务未提供 Harness 官方工作区权限，请更新服务' : codex ? '工作区内执行，需要提升权限时请求批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
+            b.textContent = harness ? '工作区权限' : codex ? '请求批准' : engine === 'mimo' ? '构建 / 审批' : 'CLI 预授权';
+            b.title = harness ? candidate ? '官方 workspace-write：工作区和允许的临时目录内可写，需要提升权限时询问' : '当前服务未提供 Harness 官方工作区权限，请更新服务' : codex ? '工作区内执行，需要提升权限时请求批准' : engine === 'mimo' ? '遵循 MiMo 原生权限，待处理的工具请求在 Duo 中单次批准' : '遵循 Claude CLI 预授权规则；不支持此页交互审批';
         }
         if (value === 'read') {
             b.textContent = '只读规划';
@@ -1362,7 +1372,7 @@ function setCreatePermission(permission) {
         if (value === 'full') b.title = harness ? '官方 danger-full-access：完全访问，不询问' : '跳过工作区边界，仅在你明确选择时使用';
     });
     const hint = permission === 'read' ? '只读分析规划，不允许修改工作区' : permission === 'request' ? harness ? '工作区和允许的临时目录内可写；需要提升权限时询问，可批准本次或拒绝' : codex ? '允许工作区内执行与联网；需要提升权限时请求批准' : '允许工作区内执行，遵循 Claude CLI 预授权规则' : permission === 'full' ? '跳过工作区边界且不请求批准，请确认任务来源可信' : 'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
-    if (element('create-permission-hint')) element('create-permission-hint').textContent = hint + (harness ? '。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。' : codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+    if (element('create-permission-hint')) element('create-permission-hint').textContent = engine === 'mimo' ? permission === 'read' ? '使用 MiMo 原生 Plan 代理；不保证禁用联网。' : permission === 'full' ? '设置 MiMo 原生 allow 权限；保留工具自己的明确限制。' : '使用 MiMo 原生 Build 代理；工具请求可在 Duo 单次批准或拒绝，未提供操作详情时拒绝。' : hint + (harness ? '。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。' : codex ? '' : '。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
     renderCreateFiles();
 }
 function renderCreateFiles() {
@@ -1500,6 +1510,10 @@ function renderWorkflow() {
         hint.textContent = harness ? mode?.id === 'harness:workspace' ? 'Harness 工作区权限 · 需要提升权限时询问' : mode?.permission === 'full' ? 'Harness 完全访问 · 不询问' : 'Harness 原权限保留 · 越界请求拒绝' : 'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
         hint.title = harness ? '所选权限在下次发送时生效；当前执行不变，会话历史保留。' : hint.textContent;
         hint.classList.toggle('hidden', detail.task.engine === 'codex');
+        if (detail.task.engine === 'mimo') {
+            hint.textContent = 'MiMo 原生权限 · 工具请求可单次批准；下次发送生效';
+            hint.title = 'MiMo Build / Plan 代理及原生权限；不代表操作系统沙箱或禁用网络保证。';
+        }
         control.title = harness || detail.task.engine === 'claude' ? hint.title : '本轮 Codex 工作模式与原生审批方式';
         button('task-model-button').title = harness ? harnessSessionHint : '本任务使用的 AI 工具、模型和推理强度';
         const footnote = element('composer-wrap').querySelector('.footnote');
@@ -1677,7 +1691,10 @@ function editPreset(id) {
     element('preset-error').textContent = builtin ? '内置模式可直接选择；需要调整时新增一个模式。' : '';
 }
 function presetNetworkForPermission(permission, id, current) {
-    return permission === 'read' ? id === 'harness:read' : permission === 'full' ? true : current;
+    return permission === 'read' ? [
+        'harness:read',
+        'mimo:plan'
+    ].includes(id) : permission === 'full' ? true : current;
 }
 function syncPresetNetwork() {
     const permission = input('preset-permission').value, network = input('preset-network'), approval = input('preset-approval');
@@ -2793,6 +2810,12 @@ function runImageGallery(run) {
         return `<figure class="output-image"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" loading="lazy" decoding="async" width="${f.width}" height="${f.height}" alt="${label}"></a><figcaption>${label} · ${f.width}×${f.height} <a href="${url}?download=1" download>下载</a></figcaption></figure>`;
     }).join('');
 }
+function isACPApproval(request) {
+    return [
+        'harness/requestPermission',
+        'mimo/requestPermission'
+    ].includes(request.method);
+}
 const codexApprovalCards = new Map();
 let codexApprovalRevision = 0;
 function codexRecord(value) {
@@ -2817,6 +2840,7 @@ function codexIsQuestion(request) {
 function codexApprovalKind(request) {
     return ({
         'harness/requestPermission': 'Harness 工具权限',
+        'mimo/requestPermission': 'MiMo 工具权限',
         'item/commandExecution/requestApproval': '命令执行',
         'item/fileChange/requestApproval': '文件修改',
         'item/permissions/requestApproval': '临时权限',
@@ -2825,7 +2849,7 @@ function codexApprovalKind(request) {
     })[request.method] || '暂不支持的请求';
 }
 function codexApprovalDecisions(request) {
-    if (request.method === 'harness/requestPermission') {
+    if (isACPApproval(request)) {
         const options = codexRecord(request.params).options, kinds = Array.isArray(options) ? options.map((option)=>codexText(codexRecord(option).kind)) : [];
         return [
             'accept',
@@ -2897,7 +2921,7 @@ function codexAnswersBody(request, read) {
     };
 }
 function codexApprovalFields(request, task) {
-    const params = codexRecord(request.params), env = task.environment, tool = codexRecord(params.toolCall), reason = codexText(params.reason) || (request.method === 'harness/requestPermission' ? codexText(codexRecord(tool.rawInput).justification) : '');
+    const params = codexRecord(request.params), env = task.environment, tool = codexRecord(params.toolCall), reason = codexText(params.reason) || (isACPApproval(request) ? codexText(codexRecord(tool.rawInput).justification) : '');
     const fields = [
         {
             label: '执行环境',
@@ -2925,7 +2949,7 @@ function codexApprovalFields(request, task) {
             value: text
         });
     };
-    if (request.method === 'harness/requestPermission') {
+    if (isACPApproval(request)) {
         add('工具', tool.title);
         add('操作参数', tool.rawInput);
     }
@@ -3015,7 +3039,7 @@ function createCodexApprovalCard(request, task) {
     node.dataset.request = request.id;
     const questionRequest = codexIsQuestion(request), asyncQuestion = request.method === 'duo/asyncQuestion', background = questionRequest && codexRecord(request.params).isBlocking === false;
     node.classList.toggle('codex-question-card', questionRequest);
-    node.classList.toggle('harness-permission-card', request.method === 'harness/requestPermission');
+    node.classList.toggle('harness-permission-card', isACPApproval(request));
     const scope = asyncQuestion ? '提交后立即引导当前执行；若本轮已结束，则作为新消息继续。' : questionRequest ? background ? 'AI 可以继续工作；提交后会收到你的补充。' : 'AI 正在等你回答。选择选项或填写答案后，点击提交。' : request.method === 'item/permissions/requestApproval' ? '仅授予本次请求列出的权限，有效范围为当前轮次。' : '批准仅针对当前请求；不会改写会话的审批模式。';
     node.innerHTML = `<h3>${escapeHTML(codexApprovalKind(request))}</h3>${questionRequest ? '' : `<dl class="codex-approval-fields">${codexApprovalFieldsHTML(request, task)}</dl>`}<p class="codex-approval-scope">${scope}</p><div class="codex-approval-questions"></div><div class="codex-approval-actions"></div><p class="codex-approval-status" role="status"></p>`;
     const card = {
@@ -3089,7 +3113,7 @@ function createCodexApprovalCard(request, task) {
             }));
         else appendCodexAction(actions, '停止本轮', '', ()=>void stopCodexApprovalRun(card));
     } else {
-        for (const decision of codexApprovalDecisions(request))appendCodexAction(actions, decision === 'cancel' && request.method === 'harness/requestPermission' ? '取消请求' : ({
+        for (const decision of codexApprovalDecisions(request))appendCodexAction(actions, decision === 'cancel' && isACPApproval(request) ? '取消请求' : ({
             accept: '批准本次',
             decline: '拒绝本次',
             cancel: '取消本轮'
@@ -3148,7 +3172,7 @@ function renderCodexApprovals(current) {
     }
     panel.classList.toggle('hidden', !pending.length);
     const questions = pending.filter(codexIsQuestion), onlyQuestions = questions.length === pending.length;
-    const engine = current?.task.engine === 'deepseek-harness' ? 'Harness' : current?.task.engine === 'claude' ? 'Claude Code' : 'Codex';
+    const engine = current?.task.engine === 'mimo' ? 'MiMo Code' : current?.task.engine === 'deepseek-harness' ? 'Harness' : current?.task.engine === 'claude' ? 'Claude Code' : 'Codex';
     const heading = element('codex-approvals-title'), title = (onlyQuestions ? engine + ' 有问题需要你回答' : engine + ' 等待处理') + ' · ' + pending.length;
     if (heading.textContent !== title) heading.textContent = title;
     const hint = element('codex-approvals-hint'), hintText = onlyQuestions ? '答案会直接交回当前 ' + engine + ' 会话' : '批准只针对当前请求，不创建永久授权规则';
@@ -3552,7 +3576,7 @@ function installEnvironmentDiscovery() {
     input('search').placeholder = '搜索任务和记录';
     const modelManager = document.createElement('section');
     modelManager.className = 'model-manager';
-    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前环境的指定引擎补充模型 ID。新建任务会自动读取目标 CLI；这里添加的名称不代表已验证可用，实际调用仍由引擎和 provider 决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><label for="custom-model-engine">模型所属引擎</label><select id="custom-model-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="">所有引擎（兼容共享配置）</option></select><div class="model-add-row"><input id="custom-model-id" aria-label="模型 ID" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" aria-label="模型显示名称" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
+    modelManager.innerHTML = '<div class="model-manager-head"><div><h3>模型目录</h3><p>为当前环境的指定引擎补充模型 ID。新建任务会自动读取目标 CLI；这里添加的名称不代表已验证可用，实际调用仍由引擎和 provider 决定。</p></div><span class="model-manager-badge">本地配置</span></div><div id="configured-models" class="configured-models"></div><label for="custom-model-engine">模型所属引擎</label><select id="custom-model-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="mimo">MiMo Code</option><option value="">所有引擎（兼容共享配置）</option></select><div class="model-add-row"><input id="custom-model-id" aria-label="模型 ID" maxlength="120" placeholder="模型 ID，例如 deepseek-flash"><input id="custom-model-name" aria-label="模型显示名称" maxlength="120" placeholder="显示名称（可选）"><button type="button" id="custom-model-add" class="primary">添加模型</button></div><p id="custom-model-result" class="settings-result" role="status"></p>';
     section.append(modelManager);
     button('custom-model-add').onclick = ()=>{
         const id = input('custom-model-id').value.trim(), name = input('custom-model-name').value.trim() || id, engine = input('custom-model-engine').value;
@@ -4700,7 +4724,10 @@ function renderAccountCenter() {
         return `<article class="account-card ${active ? 'account-card-active' : ''}" data-account-card="${escapeHTML(p.id)}"><header><label class="account-pick"><input type="checkbox" data-account-select="${escapeHTML(p.id)}" aria-label="选择账号" ${accountSelected.has(p.id) ? 'checked' : ''}></label><span class="account-engine-badge">${escapeHTML(engine?.name || p.engine)}</span>${active ? '<span class="account-default-badge">已应用到环境</span>' : ''}</header><h3>${escapeHTML(accountVisibleName(p))}</h3>${accountIdentityHTML(p)}<div class="account-card-meta"><span>${escapeHTML(env?.type?.toUpperCase() || '环境已移除')}</span><strong>${escapeHTML(engineTargetName(p.environment_id))}</strong></div>${active ? `<p class="account-kind">上次切换到：${accountAppliedEnvironments(p).map((e)=>escapeHTML(e.name)).join('、')}</p>` : ''}<p class="account-kind">${kind}</p>${accountInfoHTML(p)}<details class="account-reference"><summary>配置位置</summary><code>${escapeHTML(p.kind === 'native' ? '继承目标环境的原生配置' : p.reference || '未记录配置位置')}</code></details><p class="account-updated">更新于 ${escapeHTML(stamp)}</p><div class="account-card-actions">${p.engine === 'codex' ? `<button type="button" data-account-refresh="${escapeHTML(p.id)}" ${accountInfoLoading.has(p.id) ? 'disabled' : ''}>${accountInfoLoading.has(p.id) ? '刷新中…' : '刷新账号'}</button>` : ''}<button type="button" data-account-organize="${escapeHTML(p.id)}">备注 / 标签</button>${[
             'codex_home',
             'claude_home'
-        ].includes(p.kind) ? `<button type="button" data-account-sync="${escapeHTML(p.id)}" class="primary" ${disabled} ${!available ? 'disabled' : ''}>切换到环境</button>` : p.engine === 'deepseek-harness' ? `<button type="button" data-account-activate="${escapeHTML(p.id)}" ${disabled} ${active || !available ? 'disabled' : ''}>用于此环境</button>` : ''}<button type="button" data-account-rename="${escapeHTML(p.id)}" ${disabled}>重命名</button><button type="button" data-account-remove="${escapeHTML(p.id)}" ${disabled}>移除</button></div></article>`;
+        ].includes(p.kind) ? `<button type="button" data-account-sync="${escapeHTML(p.id)}" class="primary" ${disabled} ${!available ? 'disabled' : ''}>切换到环境</button>` : [
+            'deepseek-harness',
+            'mimo'
+        ].includes(p.engine) ? `<button type="button" data-account-activate="${escapeHTML(p.id)}" ${disabled} ${active || !available ? 'disabled' : ''}>用于此环境</button>` : ''}<button type="button" data-account-rename="${escapeHTML(p.id)}" ${disabled}>重命名</button><button type="button" data-account-remove="${escapeHTML(p.id)}" ${disabled}>移除</button></div></article>`;
     }).join('') || `<div class="account-empty"><strong>${profiles.length ? '没有匹配的账号' : '还没有添加账号'}</strong><p>${profiles.length ? '调整搜索内容或筛选条件。' : '添加 Codex 登录、配置 API，或从本地账号和 Cockpit Tools JSON 导入。'}</p></div>`;
     bindAccountInfoActions();
     list.querySelectorAll('[data-account-activate]').forEach((b)=>b.onclick = ()=>void activateEngineProfile(b.dataset.accountActivate));
@@ -5935,14 +5962,16 @@ const modelPickers = {
     }
 };
 function taskEngineName(engine) {
-    return engine === 'claude' ? 'Claude Code' : engine === 'deepseek-harness' ? 'DeepSeek Harness' : 'Codex';
+    return engine === 'mimo' ? 'MiMo Code' : engine === 'claude' ? 'Claude Code' : engine === 'deepseek-harness' ? 'DeepSeek Harness' : 'Codex';
 }
 function engineDefaultModel(env, engine) {
+    if (engine === 'mimo') return env.mimo_model || '';
     return engine === 'claude' ? env.claude_model || '' : engine === 'deepseek-harness' ? env.harness_model || 'deepseek-flash' : env.model;
 }
-const harnessSessionHint = 'Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
+const harnessSessionHint = 'Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。权限可在下次发送时切换；更换工作目录请新建任务。';
 const harnessKnowledgeHint = 'Harness 用独立会话整理已有知识和最近最多 8 轮已完成对话的文本摘录，全部工具操作被拒绝，不改变当前聊天和权限；长文本可能截断，图片及工具记录不纳入。整理会调用当前模型，完成后可审阅并保存草稿。';
 function effortLevels(engine, model) {
+    if (engine === 'mimo') return [];
     if (engine === 'deepseek-harness') return (model?.reasoning_levels || []).filter((level)=>[
             'off',
             'low',
@@ -5987,7 +6016,7 @@ function installExecution() {
     input('create-workspace').addEventListener('change', ()=>void loadCreateModels());
     installModelPicker();
     element('setting-model').previousElementSibling.textContent = 'Codex 默认模型（可留空）';
-    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+    element('setting-model').insertAdjacentHTML('afterend', `<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-mimo">此环境中的 MiMo Code 可执行文件</label><input id="setting-mimo" placeholder="Windows: mimo.exe；WSL / SSH: mimo"><label for="setting-mimo-model">MiMo 默认模型（可留空）</label><input id="setting-mimo-model" placeholder="provider/model；留空使用原生 API 配置"><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="mimo">MiMo Code</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
     button('check-codex').textContent = '检查 Codex';
     button('check-codex').insertAdjacentHTML('afterend', ' <button type="button" id="check-claude">检查 Claude</button>');
     button('check-claude').onclick = async ()=>{
@@ -6060,10 +6089,11 @@ function syncModelTestButton() {
         'task'
     ]){
         const prefix = target === 'create' ? '' : 'task-', control = button(prefix + 'test-models'), stop = button(prefix + 'stop-model-test'), state = modelProbeStates[target], count = modelListIDs(target).length;
+        const mimo = target === 'create' ? input('create-engine')?.value === 'mimo' : detail?.task.engine === 'mimo';
         if (control) {
             control.textContent = '测试列表模型' + (count ? '（' + count + '）' : '');
-            control.disabled = modelTestBusy || modelCatalogState[target].loading || modelCatalogState[target].failed || count === 0 || count > 24 || target === 'create' && createSubmitting || target === 'task' && !!taskModelProbeMismatch();
-            control.title = count > 24 ? '每次最多测试 24 个模型；请精简该环境的模型配置' : '逐个测试完整列表，不受搜索筛选影响';
+            control.disabled = mimo || modelTestBusy || modelCatalogState[target].loading || modelCatalogState[target].failed || count === 0 || count > 24 || target === 'create' && createSubmitting || target === 'task' && !!taskModelProbeMismatch();
+            control.title = mimo ? 'MiMo 独立无工具推理测试尚未接入，可在配置 API 中验证认证和读取模型' : count > 24 ? '每次最多测试 24 个模型；请精简该环境的模型配置' : '逐个测试完整列表，不受搜索筛选影响';
         }
         if (stop) {
             stop.classList.toggle('hidden', !state.busy);
@@ -7693,10 +7723,15 @@ function installEngineSettings() {
     editor.append(element('settings-engines').querySelector('.engine-profile-editor'));
     const accountFields = document.createElement('fieldset');
     accountFields.id = 'engine-account-fields';
-    accountFields.innerHTML = '<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>';
+    accountFields.innerHTML = '<legend>添加账号 / API</legend><label for="engine-account-environment">保存账号的环境</label><select id="engine-account-environment"></select><label for="engine-account-engine">引擎</label><select id="engine-account-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="mimo">MiMo Code</option></select>';
     accountFields.append(element('engine-setup-fields').querySelector('details'));
     editor.prepend(accountFields);
-    element('engine-account-engine').onchange = refreshAccountLogin;
+    element('engine-account-engine').onchange = ()=>{
+        input('engine-account-key').value = '';
+        refreshAccountLogin();
+        refreshEngineAPIOptions();
+    };
+    installEngineAPIOptions();
     refreshAccountLogin();
     button('engine-account-cancel').onclick = button('engine-setup-cancel').onclick;
     const installEntry = document.createElement('button');
@@ -7769,6 +7804,7 @@ async function submitCodexSync() {
 function engineCredentialLabel(kind) {
     return ({
         native: '继承目标环境默认配置',
+        mimo_config: 'MiMo API 配置目录（保留原生会话目录）',
         dsh_home: 'Harness 配置目录（DSH_HOME）',
         codex_home: 'Codex 配置目录（CODEX_HOME）',
         claude_home: 'Claude 配置目录（CLAUDE_CONFIG_DIR）',
@@ -7811,7 +7847,10 @@ function renderEngineCatalog() {
             const tool = status?.[toolKey];
             const state = tool?.state || 'unknown', installed = !!tool?.path && state !== 'missing', missing = state === 'missing';
             const label = installed ? '已安装' + (tool?.version ? ' · v' + tool.version : '') : missing ? '未安装' : engineStatusBusy ? '检测中…' : '未完成检测';
-            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + escapeHTML(label) + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (installed && engine.auto_install ? '<button type="button" data-update-engine="' + escapeHTML(engine.id) + '" data-update-environment="' + escapeHTML(env.id) + '" title="安装官方 npm latest 版本，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
+            return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + escapeHTML(label) + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + ([
+                'claude',
+                'mimo'
+            ].includes(engine.id) ? '<button type="button" data-engine-api="' + escapeHTML(engine.id) + '" data-engine-api-environment="' + escapeHTML(env.id) + '" ' + (engineSetupBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (installed && engine.auto_install ? '<button type="button" data-update-engine="' + escapeHTML(engine.id) + '" data-update-environment="' + escapeHTML(env.id) + '" title="安装官方最新 CLI，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
         }).join('');
         return '<article class="engine-environment"><header><div><h4>' + escapeHTML(env.name) + '</h4><small>' + escapeHTML([
             env.type,
@@ -7854,6 +7893,7 @@ function renderEngineCatalog() {
                 engine: b.dataset.installEngine,
                 environment_id: b.dataset.installEnvironment
             }));
+    element('engine-catalog').querySelectorAll('[data-engine-api]').forEach((b)=>b.onclick = ()=>void openEngineAPIAccount(b.dataset.engineApi, b.dataset.engineApiEnvironment));
     element('engine-catalog').querySelectorAll('[data-harness-api]').forEach((b)=>b.onclick = ()=>void openHarnessAPI(b.dataset.harnessApi));
     element('engine-catalog').querySelectorAll('[data-update-engine]').forEach((b)=>b.onclick = ()=>void startEngineOnboarding('update', {
                 engine: b.dataset.updateEngine,
@@ -8053,7 +8093,7 @@ function renderEngineSetup(job) {
     }
 }
 async function startEngineOnboarding(action, target) {
-    if (engineSetupBusy || accountImportBusy || accountSyncBusy || harnessAPIBusy || action !== 'account' && !target) return;
+    if (engineSetupBusy || engineAPIProbeBusy || accountImportBusy || accountSyncBusy || harnessAPIBusy || action !== 'account' && !target) return;
     if (action !== 'account' && (engineStatusBusy || engineStatusSignature !== engineEnvironmentSignature())) {
         element('engine-setup-status').textContent = '请等待当前环境检测完成，再安装或更新。';
         return;
@@ -8068,11 +8108,20 @@ async function startEngineOnboarding(action, target) {
             login,
             api_key: login === 'apiKey' ? input('engine-account-key').value : '',
             base_url: login === 'apiKey' ? input('engine-account-url').value.trim() : '',
-            model: input('engine-account-model').value.trim()
+            model: input('engine-account-model').value.trim(),
+            ...[
+                'claude',
+                'mimo'
+            ].includes(element('engine-account-engine').value) ? {
+                api_protocol: input('engine-account-protocol').value,
+                ...element('engine-account-engine').value === 'claude' ? {
+                    auth_mode: input('engine-account-auth').value
+                } : {}
+            } : {}
         } : {}
     };
     if (action === 'update') Object.assign(body, {
-        expected_path: settings.config.environments.find((e)=>e.id === target.environment_id)?.[target.engine === 'codex' ? 'codex' : target.engine === 'claude' ? 'claude' : 'harness'] || ''
+        expected_path: settings.config.environments.find((e)=>e.id === target.environment_id)?.[target.engine === 'codex' ? 'codex' : target.engine === 'claude' ? 'claude' : target.engine === 'mimo' ? 'mimo' : 'harness'] || ''
     });
     const signature = JSON.stringify(body);
     if (!engineSetupAttempt || engineSetupAttempt.signature !== signature) engineSetupAttempt = {
@@ -8130,7 +8179,7 @@ async function pollEngineSetup(id, epoch) {
                         const fresh = await api('settings', 'GET', undefined, shellController.signal);
                         if (!shellCurrent(epoch)) return;
                         storeEnvironmentEditor();
-                        const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : 'harness';
+                        const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : job.engine === 'mimo' ? 'mimo' : 'harness';
                         const before = settings.config.environments.find((e)=>e.id === job.environment_id), updated = fresh.config.environments.find((e)=>e.id === job.environment_id), editing = editingEnvironments.find((e)=>e.id === job.environment_id);
                         if (updated && before) {
                             if (editing) {
@@ -8160,11 +8209,156 @@ async function pollEngineSetup(id, epoch) {
         if (shellCurrent(epoch)) engineSetupPolling = false;
     }
 }
+let engineAPIProbeRequest = 0, engineAPIProbeBusy = false, engineAPIProbeController;
+function installEngineAPIOptions() {
+    element('engine-account-api').insertAdjacentHTML('beforeend', `<div id="engine-api-options"><label for="engine-account-provider">服务预设</label><select id="engine-account-provider"><option value="custom">自定义 API</option><option value="anthropic">Anthropic 官方 API</option><option value="mimo">MiMo 官方 API（按量付费）</option><option value="mimo-cn">MiMo Token Plan · 中国</option><option value="mimo-sgp">MiMo Token Plan · 新加坡</option><option value="mimo-ams">MiMo Token Plan · 欧洲</option></select><label for="engine-account-protocol">接口协议</label><select id="engine-account-protocol"><option value="anthropic-messages">Anthropic Messages 兼容</option><option value="openai-chat">OpenAI Chat Completions 兼容</option></select><div id="engine-account-auth-wrap"><label for="engine-account-auth">Claude 认证请求头</label><select id="engine-account-auth"><option value="auto">自动（官方 API Key / 第三方 Bearer）</option><option value="api-key">API Key · x-api-key</option><option value="auth-token">Bearer Token · Authorization</option></select></div><p id="engine-account-protocol-hint" class="muted"></p><button type="button" id="engine-api-models-read">验证认证并读取模型</button><p id="engine-api-models-status" role="status"></p><datalist id="engine-api-models"></datalist></div>`);
+    input('engine-account-model').setAttribute('list', 'engine-api-models');
+    const summary = document.createElement('p');
+    summary.id = 'engine-account-target-summary';
+    summary.className = 'muted';
+    element('engine-api-options').prepend(summary);
+    const note = element('engine-account-api').querySelector(':scope > p');
+    if (note) note.id = 'engine-account-api-note';
+    input('engine-account-provider').onchange = ()=>applyEngineAPIProvider();
+    input('engine-account-protocol').onchange = ()=>{
+        resetEngineAPIProbe();
+        if (input('engine-account-provider').value !== 'custom') applyEngineAPIProvider();
+        else refreshEngineAPIOptions();
+    };
+    input('engine-account-auth').onchange = resetEngineAPIProbe;
+    button('engine-api-models-read').onclick = ()=>void probeEngineAPIModels();
+    for (const id of [
+        'engine-account-key',
+        'engine-account-url'
+    ])input(id).addEventListener('input', resetEngineAPIProbe);
+    input('engine-account-environment').addEventListener('change', refreshEngineAPIOptions);
+    disposeWithShell(()=>{
+        engineAPIProbeController?.abort();
+        engineAPIProbeRequest++;
+        engineAPIProbeBusy = false;
+        input('engine-account-key').value = '';
+    });
+    refreshEngineAPIOptions();
+}
+function resetEngineAPIProbe() {
+    engineAPIProbeController?.abort();
+    engineAPIProbeRequest++;
+    engineAPIProbeBusy = false;
+    element('engine-api-models').replaceChildren();
+    element('engine-api-models-status').textContent = '';
+    button('engine-api-models-read').disabled = engineSetupBusy;
+    button('engine-account-add').disabled = engineSetupBusy;
+}
+function refreshEngineAPIOptions() {
+    const engine = input('engine-account-engine').value, claude = engine === 'claude', mimo = engine === 'mimo';
+    resetEngineAPIProbe();
+    element('engine-api-options').classList.toggle('hidden', !claude && !mimo);
+    element('engine-account-auth-wrap').classList.toggle('hidden', !claude);
+    const protocol = element('engine-account-protocol');
+    protocol.disabled = claude;
+    if (claude) protocol.value = 'anthropic-messages';
+    else if (mimo && protocol.value !== 'openai-chat' && protocol.value !== 'anthropic-messages') protocol.value = 'openai-chat';
+    const env = settings.config.environments.find((e)=>e.id === input('engine-account-environment').value);
+    element('engine-account-target-summary').textContent = '配置对象：' + taskEngineName(engine) + ' · ' + (env?.name || '请选择环境');
+    const urlLabel = element('engine-account-api').querySelector('label[for="engine-account-url"]');
+    if (urlLabel) urlLabel.textContent = mimo ? 'API 地址（必填）' : 'API 地址（官方可留空）';
+    const modelLabel = element('engine-account-fields').querySelector('label[for="engine-account-model"]');
+    if (modelLabel) modelLabel.textContent = mimo ? '默认云端模型 ID（必填）' : '默认云端模型（可选）';
+    element('engine-account-api-note').textContent = claude ? '官方或第三方 Anthropic Messages 兼容 API；密钥保存到独立账号配置。' : mimo ? '官方或第三方兼容 API；配置文件决定模型路由，原生会话目录保留。' : 'Codex 需要 Responses 兼容 API；密钥保存到独立原生账号目录。';
+    element('engine-account-protocol-hint').textContent = claude ? 'Claude Code 使用 Anthropic Messages 协议。官方 API 可留空地址，第三方服务需提供兼容地址；配置不会自动授予工具权限。' : 'MiMo Code 支持官方和自定义兼容 API。OpenAI 地址通常包含 /v1；Anthropic 地址填写完整版本根路径。Token Plan 的地址和 Key 请以订阅后台为准。';
+    input('engine-account-url').placeholder = claude ? '留空使用 Anthropic；或填写第三方 Messages 兼容地址' : '例如 https://api.xiaomimimo.com/v1 或第三方兼容地址';
+}
+function applyEngineAPIProvider() {
+    resetEngineAPIProbe();
+    const preset = input('engine-account-provider').value, engine = input('engine-account-engine').value, protocol = input('engine-account-protocol').value;
+    if (preset === 'custom') {
+        refreshEngineAPIOptions();
+        return;
+    }
+    if (engine === 'claude' && preset !== 'custom') input('engine-account-auth').value = preset === 'anthropic' ? 'api-key' : 'auth-token';
+    if (preset === 'anthropic') {
+        input('engine-account-protocol').value = 'anthropic-messages';
+        input('engine-account-url').value = engine === 'claude' ? '' : 'https://api.anthropic.com/v1';
+    } else {
+        const base = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
+        input('engine-account-url').value = base + (engine === 'claude' ? '/anthropic' : protocol === 'anthropic-messages' ? '/anthropic/v1' : '/v1');
+    }
+    refreshEngineAPIOptions();
+}
+async function openEngineAPIAccount(engine, environmentID) {
+    if (engineSetupBusy || accountImportBusy || accountSyncBusy) return;
+    const epoch = shellEpoch;
+    await openAccountCenter();
+    if (!shellCurrent(epoch)) return;
+    if (!settings.config.environments.some((e)=>e.id === environmentID)) {
+        notify('环境已变化，请重新检测。');
+        return;
+    }
+    input('engine-account-environment').value = environmentID;
+    input('engine-account-engine').value = engine;
+    input('engine-account-key').value = '';
+    input('engine-account-name').value = taskEngineName(engine) + ' API';
+    input('engine-account-model').value = '';
+    input('engine-account-url').value = '';
+    refreshAccountLogin();
+    input('engine-account-provider').value = engine === 'mimo' ? 'mimo' : 'anthropic';
+    input('engine-account-protocol').value = engine === 'mimo' ? 'openai-chat' : 'anthropic-messages';
+    applyEngineAPIProvider();
+    openAccountEditor(false);
+}
+async function probeEngineAPIModels() {
+    if (engineAPIProbeBusy || engineSetupBusy) return;
+    const engine = input('engine-account-engine').value, env = settings.config.environments.find((e)=>e.id === input('engine-account-environment').value);
+    if (!env || ![
+        'claude',
+        'mimo'
+    ].includes(engine)) return;
+    if (!input('engine-account-key').value.trim()) {
+        element('engine-api-models-status').textContent = '请先填写 API key。';
+        return;
+    }
+    const epoch = shellEpoch, request = ++engineAPIProbeRequest, signature = JSON.stringify(env);
+    engineAPIProbeController?.abort();
+    const controller = new AbortController();
+    engineAPIProbeController = controller;
+    engineAPIProbeBusy = true;
+    const target = {
+        engine,
+        ...engine === 'claude' ? {
+            auth_mode: input('engine-account-auth').value
+        } : {},
+        api_protocol: input('engine-account-protocol').value,
+        base_url: input('engine-account-url').value.trim(),
+        api_key: input('engine-account-key').value,
+        target: env
+    };
+    button('engine-api-models-read').disabled = true;
+    button('engine-account-add').disabled = true;
+    element('engine-api-models-status').textContent = '正在目标环境验证认证并读取模型；不发送推理请求…';
+    try {
+        const result = await api('environments/' + encodeURIComponent(env.id) + '/engine-api-models', 'POST', target, controller.signal);
+        if (!shellCurrent(epoch) || request !== engineAPIProbeRequest || signature !== JSON.stringify(settings.config.environments.find((e)=>e.id === env.id))) return;
+        element('engine-api-models').innerHTML = result.models.map((m)=>'<option value="' + escapeHTML(m.id) + '">' + escapeHTML(m.name || m.id) + '</option>').join('');
+        element('engine-api-models-status').textContent = result.message + (result.status === 'ready' ? ' 模型列表认证已通过；具体模型调用尚未验证。' : '');
+    } catch (e) {
+        if (shellCurrent(epoch) && request === engineAPIProbeRequest && !controller.signal.aborted) element('engine-api-models-status').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === engineAPIProbeRequest) {
+            engineAPIProbeBusy = false;
+            button('engine-api-models-read').disabled = engineSetupBusy;
+            button('engine-account-add').disabled = engineSetupBusy;
+        }
+    }
+}
 function refreshAccountLogin() {
-    const claude = element('engine-account-engine').value === 'claude', select = element('engine-account-login');
+    const claude = [
+        'claude',
+        'mimo'
+    ].includes(element('engine-account-engine').value), select = element('engine-account-login');
     select.innerHTML = claude ? '<option value="apiKey">API key / 中转站</option>' : '<option value="chatgptDeviceCode">登录 ChatGPT 账号</option><option value="apiKey">API key / 中转站</option>';
     element('engine-account-api').classList.toggle('hidden', select.value !== 'apiKey');
     input('engine-account-url').placeholder = claude ? '留空使用 Anthropic 官方 API' : '留空使用 OpenAI 官方 API';
+    if (element('engine-api-options')) refreshEngineAPIOptions();
 }
 let harnessAPIView = null, harnessAPIRequest = 0, harnessAPIBusy = false;
 function installHarnessAPI() {
@@ -8846,7 +9040,7 @@ function renderShell() {
     renewShellScope();
     lastList = '';
     element('root').innerHTML = `<div class="app"><aside class="sidebar" id="sidebar"><div class="brand"><img class="logo" src="/icon.svg" width="38" height="38" alt="" aria-hidden="true"><div><strong>Duo</strong><small>LOCAL TASK WORKSPACE</small></div></div><button class="primary" id="new-task">＋ 新建任务</button><input id="search" placeholder="查找任务" aria-label="查找任务"><div class="task-list" id="task-list"></div><div class="sidebar-footer"><button class="subtle" id="accounts-open">账号管理</button><button class="subtle" id="settings-open">设置</button><button class="mobile-menu subtle" id="sidebar-close">收起</button><span id="connection" class="hidden"></span><button class="subtle" id="logout">退出</button></div></aside><main><header class="header"><div class="actions task-heading"><button class="mobile-menu" id="menu" aria-label="展开任务列表">☰</button><div class="task-identity"><h1 id="task-title">把事情做完，把经验留下。</h1><p id="task-workspace">独立工作台 · 本地 AI 工具</p></div></div><div class="actions hidden" id="task-actions"><button id="bind-open">飞书连接</button></div></header><nav class="tabs hidden" id="tabs"><button id="chat-tab" class="selected">对话与执行</button><button id="note-tab">本任务知识</button><span class="model-picker" id="task-model"><button type="button" id="task-model-button" aria-expanded="false" aria-haspopup="listbox" title="本任务使用的 AI 工具、模型和推理强度"><span id="task-model-label"></span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="task-model-menu" role="listbox"><input id="task-model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="task-model-list" class="model-list"></div></div></span></nav><div id="session-banner" class="session-banner hidden"></div><section id="conversation" class="conversation"><div class="empty"><div class="eyebrow">ONE TASK. KEEP GOING.</div><h2>从一个具体目标开始。</h2><p>选好本地目录，把要求交给 AI 工具。<br>在网页或飞书继续同一个任务，<br>再把有用的解决办法留在任务里。</p><button class="primary" id="empty-new">创建一个任务 →</button></div></section><section id="notebook" class="notebook hidden"><div class="note-head"><div><h2>任务知识</h2><p id="note-status">一份任务，一份可复用的记录。</p></div><div class="actions"><button class="primary" id="knowledge-new">＋ 新建知识</button><button id="summarize">整理任务知识</button><button id="export-note">导出</button></div></div><nav class="task-views" id="knowledge-filter" aria-label="知识筛选"><button data-knowledge-filter="all" class="selected">全部</button><button data-knowledge-filter="observed">待验证</button><button data-knowledge-filter="verified">已验证</button><button data-knowledge-filter="stale">已过时</button></nav><div id="draft-banner" class="draft-banner hidden"><span id="draft-label">执行总结 · 未保存</span><div class="actions"><button id="adopt-draft">编辑后保存</button><button id="save-draft" class="primary">保存总结</button></div></div><details id="draft-preview" class="knowledge-preview hidden" open><summary>草稿预览</summary><div id="draft-content" class="content"></div></details><div id="knowledge-list" class="knowledge-list"></div></section><section id="composer-wrap" class="composer-wrap hidden"><div id="run-status" class="run-status"></div><form id="composer" class="composer"><textarea id="message" rows="2" aria-label="任务要求" placeholder="下一步，要做什么？"></textarea><div class="composer-bottom"><small>Enter 发送<br>Shift + Enter 换行</small><div class="actions"><button type="button" id="stop" class="hidden">停止</button><button class="primary" id="send">发送 ↑</button></div></div></form><div class="footnote">在服务所在电脑执行 · 保留所选工具的原生会话</div></section></main></div>
- <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
+ <section id="create-page" class="create-page hidden" aria-labelledby="create-heading"><form id="create-form" class="create-form"><h2 id="create-heading">新建任务</h2><p>给一个具体的目标，其余在对话中继续。</p><label for="create-input">任务要求</label><textarea id="create-input" rows="4" required placeholder="描述希望完成的事情"></textarea><label for="create-environment">执行环境</label><select id="create-environment"></select><label for="create-workspace">工作目录</label><input id="create-workspace" list="workspace-options" required autocomplete="off" placeholder="输入该环境中已有目录的绝对路径"><datalist id="workspace-options"></datalist><p>可直接修改路径，也可选择常用或最近使用的目录。</p><label for="create-engine">AI 工具</label><select id="create-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="mimo">MiMo Code</option></select><label for="create-effort">推理强度</label><select id="create-effort"><option value="">工具默认</option></select><p class="muted" id="effort-hint"></p><label for="model-picker-button">模型</label><div class="model-picker" id="model-picker"><button type="button" id="model-picker-button" aria-expanded="false" aria-haspopup="listbox"><span id="model-picker-label">使用此工具的默认模型</span><span class="model-picker-caret">▾</span></button><div class="model-menu hidden" id="model-menu" role="listbox"><input id="model-search" class="model-search-input" placeholder="搜索或输入模型名称" autocomplete="off"><div id="model-list" class="model-list"></div></div></div><input id="create-model" type="hidden"><input id="custom-model" class="hidden" placeholder="输入自定义模型名称" aria-label="自定义模型"><p id="models-hint"></p><button type="button" id="reload-models">重读模型列表</button><button type="button" id="test-models">测试模型</button><p id="model-test-result" class="model-test-result" role="status"></p><p>AI 工具可在选定工作目录内读写文件。请填写所选环境中的已有目录，常用目录可在设置中管理。</p><p class="error" id="create-error"></p><div class="dialog-footer"><button type="button">取消</button><button class="primary" id="create-submit">创建并执行</button></div></form></section>
  <dialog id="settings-dialog"><form id="settings-form"><h2>工作台设置</h2><p>独立程序、独立数据。使用各环境中 Codex / Claude Code 的登录状态。</p><h3 class="section-title">执行环境</h3><p>任务保存自己的环境。这里的修改只影响之后新建的任务。</p><label for="default-environment">默认环境（飞书新建任务也使用它）</label><select id="default-environment"></select><label for="environment-picker">编辑环境</label><select id="environment-picker"></select><div class="actions environment-actions"><button type="button" id="add-wsl">新增 WSL</button><button type="button" id="add-windows">新增 Windows</button><button type="button" id="add-ssh">新增 SSH</button><button type="button" id="remove-environment" class="danger">删除环境</button></div><div class="form-grid"><div><label for="environment-name">环境名称</label><input id="environment-name"></div><div><label for="environment-type">执行方式</label><select id="environment-type"><option value="wsl">WSL</option><option value="windows">本机 Windows</option><option value="ssh">SSH · Linux 主机</option></select></div></div><div id="wsl-fields"><label for="setting-distro">WSL 发行版</label><input id="setting-distro"></div><div id="linux-user"><label for="setting-user">执行用户名（可留空使用默认用户）</label><input id="setting-user"></div><div id="ssh-fields"><div class="form-grid"><div><label for="setting-host">SSH 主机 / SSH 配置别名</label><input id="setting-host" placeholder="例如：192.168.50.20"></div><div><label for="setting-port">SSH 端口</label><input id="setting-port" type="number" min="1" max="65535"></div></div><label for="setting-identity">私钥文件（服务电脑上的路径，可留空）</label><input id="setting-identity"><p>支持密钥或 ssh-agent。请先在运行Duo的 Windows 用户下用 ssh 登录该主机，确认指纹并配置免密登录。远端需要所选 AI 工具和 Python 3。</p></div><label for="setting-codex">此环境中的 Codex 可执行文件</label><input id="setting-codex"><label for="setting-model">此环境的默认模型（可留空）</label><input id="setting-model"><label for="setting-workspaces">工作目录（每行一个绝对路径）</label><textarea id="setting-workspaces" rows="3"></textarea><p><button type="button" id="check-codex">检查已保存的当前环境</button></p><div id="check-result" class="settings-result"></div><h3 class="section-title">飞书私聊</h3><button type="button" id="setup-feishu">扫码创建并绑定机器人</button><p>首次使用可扫码自动创建，无需填写凭据。已有机器人也可使用下面的手工配置。</p><p>使用飞书自建应用的长连接。开启机器人，订阅 im.message.receive_v1，授予接收私聊消息和以机器人发送消息的权限。</p><p>若沿用原机器人，启用前先关闭它在其他程序中的连接。</p><label for="feishu-id">App ID</label><input id="feishu-id" autocomplete="off"><label for="feishu-secret">App Secret</label><input id="feishu-secret" type="password" autocomplete="new-password" placeholder="留空保留已保存的密钥"><label class="check-row"><input id="feishu-enabled" type="checkbox">启用飞书长连接</label><p id="feishu-state"></p><p>选中任务后直接发要求，每轮在同一张卡片中更新进展和结果。长结果可通过卡片的局域网或 Tailscale 入口查看。</p><p id="feishu-owner"></p><button type="button" id="pair-code">生成配对码</button><p id="pair-result" class="pair"></p><p>首次连接后，使用你的飞书向机器人发送配对命令。配对码十分钟有效，只有配对的账号可以操作任务。</p><p class="error" id="settings-error"></p><div class="dialog-footer"><button type="button" data-close="settings-dialog">关闭</button><button class="primary" id="settings-save">保存设置</button></div></form></dialog>
  <dialog id="bind-dialog"><h2>在飞书继续这个任务</h2><p id="bind-status"></p><p>连接后，从网页或飞书发来的要求进入同一个任务；该任务的完成结果会发送到此私聊。</p><div class="dialog-footer"><button data-close="bind-dialog">关闭</button><button id="bind-setup">扫码创建并绑定当前任务</button><button id="unbind">断开当前任务</button><button class="primary" id="bind">连接此任务</button></div></dialog>
  <dialog id="setup-dialog"><h2>扫码连接飞书</h2><p>确认后将创建“Duo助手”，绑定扫码账号，初始化“我的任务、整理知识”菜单并提交发布，最后发送一条绑定通知。已有机器人不会被修改。</p><p>请在飞书官方页面审阅并确认权限；企业审批可能影响发布。</p><div id="setup-display"><p>点击下方按钮生成二维码。</p></div><div class="dialog-footer"><button id="setup-close">关闭</button><button id="setup-cancel" class="hidden">取消等待</button><button class="primary" id="setup-start">生成飞书二维码</button></div></dialog><dialog id="knowledge-dialog"><form id="knowledge-form"><h2>任务知识</h2><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" placeholder="例如：继电器上电顺序与验证方法"><label for="knowledge-state">状态</label><select id="knowledge-state"><option value="observed">待验证</option><option value="verified">已验证</option><option value="stale">已过时</option></select><label for="knowledge-body">内容</label><textarea id="knowledge-body" rows="12" maxlength="200000" aria-label="知识内容" placeholder="结论、命令、解决办法和验证结果…"></textarea><p id="knowledge-error" class="error"></p><div class="dialog-footer"><button type="button" id="knowledge-cancel">取消</button><button class="primary" id="knowledge-save">保存知识</button></div></form></dialog>`;
@@ -9363,7 +9557,7 @@ function renderTask() {
     }
     input('message').disabled = t.archived;
     button('send').disabled = sending || t.archived;
-    button('summarize').disabled = active || t.archived;
+    button('summarize').disabled = active || t.archived || t.engine === 'mimo';
     if (t.archived) element('run-status').textContent = '任务已归档，记录保留；恢复后可以继续执行。';
     if (harnessSessionClosed()) {
         element('run-status').textContent = '当前运行会话不可继续，请先新建会话。已输入的要求会保留。';
@@ -9372,7 +9566,7 @@ function renderTask() {
     }
     element('run-status').classList.toggle('hidden', !active && !latest?.error && !detail.approvals?.length && !t.archived && !harnessSessionClosed());
     const harness = t.engine === 'deepseek-harness';
-    button('summarize').disabled = active || t.archived;
+    button('summarize').disabled = active || t.archived || t.engine === 'mimo';
     button('summarize').title = harness ? harnessKnowledgeHint : '根据任务记录生成知识草稿';
     let knowledgeHint = element('harness-knowledge-hint');
     if (!knowledgeHint) {
@@ -10118,6 +10312,8 @@ function loadEnvironmentEditor() {
     input('setting-harness').value = e.harness || (e.type === 'windows' ? 'dsh.cmd' : 'dsh');
     input('setting-harness-model').value = e.harness_model || 'deepseek-flash';
     input('setting-harness-provider').value = e.harness_provider || 'deepseek-official';
+    input('setting-mimo').value = e.mimo || (e.type === 'windows' ? 'mimo.exe' : 'mimo');
+    input('setting-mimo-model').value = e.mimo_model || '';
     input('setting-engine').value = e.default_engine || 'codex';
     input('setting-codex').value = e.codex;
     input('setting-model').value = e.model;
@@ -10149,6 +10345,8 @@ function storeEnvironmentEditor() {
         harness: input('setting-harness').value.trim(),
         harness_model: input('setting-harness-model').value.trim(),
         harness_provider: input('setting-harness-provider').value.trim(),
+        mimo: input('setting-mimo').value.trim(),
+        mimo_model: input('setting-mimo-model').value.trim(),
         default_engine: input('setting-engine').value,
         codex: input('setting-codex').value.trim(),
         model: input('setting-model').value.trim(),

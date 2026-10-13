@@ -33,6 +33,7 @@ var harnessRuntimes = struct {
 }{workers: map[string]*harnessWorker{}}
 
 type harnessWorker struct {
+	engine       string
 	lease        sync.Mutex
 	c            Config
 	cmd          *exec.Cmd

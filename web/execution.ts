@@ -21,11 +21,12 @@ const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:str
  create:{root:'model-picker',button:'model-picker-button',label:'model-picker-label',menu:'model-menu',search:'model-search',list:'model-list'},
  task:{root:'task-model',button:'task-model-button',label:'task-model-label',menu:'task-model-menu',search:'task-model-search',list:'task-model-list'}
 };
-function taskEngineName(engine?:string){return engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
-function engineDefaultModel(env:Environment,engine:string){return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
-const harnessSessionHint='Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。更换工作目录或权限请新建任务。';
+function taskEngineName(engine?:string){return engine==='mimo'?'MiMo Code':engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
+function engineDefaultModel(env:Environment,engine:string){if(engine==='mimo')return env.mimo_model||'';return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
+const harnessSessionHint='Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。权限可在下次发送时切换；更换工作目录请新建任务。';
 const harnessKnowledgeHint='Harness 用独立会话整理已有知识和最近最多 8 轮已完成对话的文本摘录，全部工具操作被拒绝，不改变当前聊天和权限；长文本可能截断，图片及工具记录不纳入。整理会调用当前模型，完成后可审阅并保存草稿。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
+ if(engine==='mimo')return [];
  if(engine==='deepseek-harness')return (model?.reasoning_levels||[]).filter(level=>['off','low','high','max'].includes(level));
  if(model&&Array.isArray(model.reasoning_levels))return model.reasoning_levels;
  return engine==='claude'?['low','medium','high','xhigh','max']:['low','medium','high','xhigh'];
@@ -38,7 +39,7 @@ function installExecution(){
  input('create-workspace').addEventListener('change',()=>void loadCreateModels());
  installModelPicker();
  element('setting-model').previousElementSibling!.textContent='Codex 默认模型（可留空）';
- element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
+ element('setting-model').insertAdjacentHTML('afterend',`<label for="setting-claude">此环境中的 Claude Code 可执行文件</label><input id="setting-claude" placeholder="claude"><label for="setting-claude-model">Claude 默认模型（可留空）</label><input id="setting-claude-model" placeholder="例如 sonnet，或你的服务提供的模型 ID"><label for="setting-harness">此环境中的 DeepSeek Harness 可执行文件</label><input id="setting-harness" placeholder="Windows: dsh.cmd；WSL / SSH: dsh"><label for="setting-harness-model">Harness 默认模型 ID</label><input id="setting-harness-model" placeholder="deepseek-flash"><label for="setting-harness-provider">Harness provider ID</label><input id="setting-harness-provider" placeholder="deepseek-official"><p class="muted">通过 Harness ACP 原生会话接口执行；模型 ID 和 provider 必须存在于目标环境的 Harness 配置中，登录和密钥在该环境配置。${harnessSessionHint}</p><label for="setting-mimo">此环境中的 MiMo Code 可执行文件</label><input id="setting-mimo" placeholder="Windows: mimo.exe；WSL / SSH: mimo"><label for="setting-mimo-model">MiMo 默认模型（可留空）</label><input id="setting-mimo-model" placeholder="provider/model；留空使用原生 API 配置"><label for="setting-engine">默认 AI 工具（飞书新建也使用它）</label><select id="setting-engine"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="deepseek-harness">DeepSeek Harness</option><option value="mimo">MiMo Code</option></select><p class="muted">Claude 自动接受工作目录内的文件编辑；其他操作沿用该环境中的 Claude 权限设置。</p>`);
  button('check-codex').textContent='检查 Codex';
  button('check-codex').insertAdjacentHTML('afterend',' <button type="button" id="check-claude">检查 Claude</button>');
  button('check-claude').onclick=async()=>{button('check-claude').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'claude'});element('check-result').textContent=(r.ok?'Claude 已配置\n':'Claude 检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-claude').disabled=false}};
@@ -61,7 +62,8 @@ function modelListProbeContext(target:ModelPickerTarget){
 function syncModelTestButton(){
  for(const target of ['create','task'] as ModelPickerTarget[]){
   const prefix=target==='create'?'':'task-',control=button(prefix+'test-models'),stop=button(prefix+'stop-model-test'),state=modelProbeStates[target],count=modelListIDs(target).length;
-  if(control){control.textContent='测试列表模型'+(count?'（'+count+'）':'');control.disabled=modelTestBusy||modelCatalogState[target].loading||modelCatalogState[target].failed||count===0||count>24||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());control.title=count>24?'每次最多测试 24 个模型；请精简该环境的模型配置':'逐个测试完整列表，不受搜索筛选影响'}
+  const mimo=target==='create'?input('create-engine')?.value==='mimo':detail?.task.engine==='mimo';
+  if(control){control.textContent='测试列表模型'+(count?'（'+count+'）':'');control.disabled=mimo||modelTestBusy||modelCatalogState[target].loading||modelCatalogState[target].failed||count===0||count>24||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());control.title=mimo?'MiMo 独立无工具推理测试尚未接入，可在配置 API 中验证认证和读取模型':count>24?'每次最多测试 24 个模型；请精简该环境的模型配置':'逐个测试完整列表，不受搜索筛选影响'}
   if(stop){stop.classList.toggle('hidden',!state.busy);stop.disabled=!!state.controller?.signal.aborted}
  }
 }

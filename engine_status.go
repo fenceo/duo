@@ -169,7 +169,7 @@ func enginePresenceScript(env Environment) string {
 		"find_cli " + posixQuote(env.Claude) + " \"$(command -v claude 2>/dev/null || true)\" \"$HOME/.local/bin/claude\"\n" +
 		"find_cli " + posixQuote(env.Harness) + " \"$(command -v dsh 2>/dev/null || true)\" \"$HOME/.local/bin/dsh\"\n" +
 		"find_cli \"$(command -v kimi 2>/dev/null || true)\" \"$(command -v kimi-code 2>/dev/null || true)\" \"$HOME/.local/bin/kimi\"\n" +
-		"find_cli \"$(command -v mimo 2>/dev/null || true)\" \"$(command -v mimo-code 2>/dev/null || true)\" \"$HOME/.local/bin/mimo\"\n"
+		"find_cli " + posixQuote(env.Mimo) + " \"$(command -v mimo 2>/dev/null || true)\" \"$HOME/.local/bin/mimo\"\n"
 }
 
 func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env Environment) detectedEnvironment {
@@ -181,7 +181,7 @@ func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env E
 		paths[1] = executableCandidate(env.Claude, "claude.exe", "claude.cmd", filepath.Join(home, ".local", "bin", "claude.exe"))
 		paths[2] = executableCandidate(env.Harness, "dsh.cmd", "dsh.exe")
 		paths[3] = executableCandidate("kimi.exe", "kimi.cmd", "kimi-code.exe")
-		paths[4] = executableCandidate("mimo.exe", "mimo.cmd", "mimo-code.exe")
+		paths[4] = executableCandidate(env.Mimo, "mimo.exe", "mimo.cmd", filepath.Join(home, ".mimocode", "bin", "mimo.exe"))
 	} else {
 		out, err := probe(ctx, env, "sh", "-lc", enginePresenceScript(env))
 		_, payload, ok := strings.Cut(strings.ReplaceAll(out, "\r\n", "\n"), "__DUO_TOOLS__\n")

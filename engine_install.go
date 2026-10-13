@@ -112,6 +112,9 @@ func downloadManagedNode(ctx context.Context, directory string) (string, error) 
 	return filepath.Join(directory, name), nil
 }
 func installManagedEngine(ctx context.Context, directory, engine string, progress func(string)) (string, error) {
+	if engine == "mimo" {
+		return installManagedMimo(ctx, directory, progress)
+	}
 	pkg, ok := managedEnginePackages[engine]
 	if !ok {
 		return "", errors.New("引擎安装包无效")

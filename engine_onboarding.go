@@ -27,6 +27,8 @@ type EngineSetupRequest struct {
 	APIKey        string `json:"api_key"`
 	BaseURL       string `json:"base_url"`
 	Model         string `json:"model"`
+	APIProtocol   string `json:"api_protocol,omitempty"`
+	AuthMode      string `json:"auth_mode,omitempty"`
 }
 type EngineSetupJob struct {
 	Version       string `json:"version,omitempty"`
@@ -69,7 +71,7 @@ func validateEngineSetup(r EngineSetupRequest, env Environment) error {
 		return errors.New("请求标识无效")
 	}
 	if r.Action == "install" || r.Action == "update" {
-		if _, ok := managedEnginePackages[r.Engine]; !ok {
+		if _, ok := managedEnginePackages[r.Engine]; !ok && r.Engine != "mimo" {
 			return errors.New("此引擎暂不支持自动安装")
 		}
 		if env.Type != "windows" && env.Type != "wsl" && env.Type != "ssh" {
@@ -83,17 +85,26 @@ func validateEngineSetup(r EngineSetupRequest, env Environment) error {
 	if env.Type != "windows" && env.Type != "wsl" && env.Type != "ssh" {
 		return errors.New("目标环境类型不支持账号配置")
 	}
-	if r.Action != "account" || (r.Engine != "codex" && r.Engine != "claude") || strings.TrimSpace(r.Name) == "" || len([]rune(r.Name)) > 60 {
-		return errors.New("请填写 Codex 或 Claude 账号名称")
+	if r.Action != "account" || (r.Engine != "codex" && r.Engine != "claude" && r.Engine != "mimo") || strings.TrimSpace(r.Name) == "" || len([]rune(r.Name)) > 60 {
+		return errors.New("请填写账号/API 配置名称")
 	}
 	if r.Engine == "claude" && r.Login != "apiKey" {
 		return errors.New("Claude 订阅登录请引用已登录的配置目录；此向导用于 API 配置")
+	}
+	if r.Engine == "mimo" && (r.Login != "apiKey" || strings.TrimSpace(r.Model) == "" || strings.TrimSpace(r.BaseURL) == "") {
+		return errors.New("MiMo 配置需要 API key、API 地址和模型 ID")
 	}
 	if r.Login != "chatgptDeviceCode" && r.Login != "apiKey" {
 		return errors.New("请选择 ChatGPT 登录或 API key")
 	}
 	if r.Login == "apiKey" && (strings.TrimSpace(r.APIKey) == "" || len(r.APIKey) > 16000 || strings.ContainsAny(r.APIKey, "\r\n\x00")) {
 		return errors.New("API key 无效")
+	}
+	if r.APIProtocol != "" && ((r.Engine == "claude" && r.APIProtocol != "anthropic-messages") || (r.Engine == "mimo" && r.APIProtocol != "anthropic-messages" && r.APIProtocol != "openai-chat")) {
+		return errors.New("此引擎不支持所选 API 协议")
+	}
+	if r.AuthMode != "" && (r.Engine != "claude" || (r.AuthMode != "api-key" && r.AuthMode != "auth-token" && r.AuthMode != "auto")) {
+		return errors.New("认证方式不适用于此引擎")
 	}
 	if r.Login != "apiKey" && (r.APIKey != "" || r.BaseURL != "") {
 		return errors.New("ChatGPT 登录不使用 API key 或自定义地址")
@@ -185,6 +196,8 @@ func (a *App) startEngineSetup(r EngineSetupRequest) (EngineSetupJob, error) {
 			err = a.performEngineInstall(ctx, env, r)
 		} else if r.Engine == "claude" {
 			err = a.performClaudeAccount(ctx, env, r)
+		} else if r.Engine == "mimo" {
+			err = a.performMimoAccount(ctx, env, r)
 		} else {
 			err = a.performCodexAccount(ctx, env, r)
 		}
@@ -265,6 +278,9 @@ func remoteEngineBinary(engine string) (string, bool) {
 // only the discovered executable path. Package-manager output never enters
 // the task history or HTTP response.
 func installRemoteEngine(ctx context.Context, env Environment, engine, installID string, progress func(string)) (string, error) {
+	if engine == "mimo" {
+		return installRemoteMimo(ctx, env, installID, progress)
+	}
 	pkg, ok := managedEnginePackages[engine]
 	if !ok {
 		return "", errors.New("此引擎暂不支持远程自动安装")
@@ -414,6 +430,8 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 				c.Environments[i].Claude = path
 			case "deepseek-harness":
 				c.Environments[i].Harness = path
+			case "mimo":
+				c.Environments[i].Mimo = path
 			}
 		}
 	}
@@ -439,6 +457,7 @@ func (a *App) performEngineInstall(ctx context.Context, env Environment, r Engin
 }
 
 func (s *Server) engineSetupRoutes(m *http.ServeMux) {
+	s.engineAPIModelsRoutes(m)
 	s.harnessAPIRoutes(m)
 	m.HandleFunc("GET /api/engine-setup", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		manager := s.app.engineSetup

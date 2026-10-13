@@ -59,13 +59,13 @@ func (f *Feishu) pendingQuestions(taskID string) ([]CodexPendingRequest, error) 
 	if task.Archived || task.Deleted {
 		return nil, nil
 	}
-	if task.Engine == "deepseek-harness" {
+	if task.Engine == "deepseek-harness" || task.Engine == "mimo" {
 		// Harness shares the pending-request store for native permissions, not
 		// Codex question schemas. Notify only its live, validated approvals;
 		// questionCard keeps permission details and decisions in the web UI.
 		requests := []CodexPendingRequest{}
 		for _, p := range f.app.codexRequests.list(taskID) {
-			if p.Method == harnessPermissionMethod {
+			if isACPToolPermission(p.Method) {
 				requests = append(requests, p)
 			}
 		}

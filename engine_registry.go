@@ -108,12 +108,12 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command",
 		},
 		{
-			ID: "mimo", Name: "MiMo Code", Description: "Xiaomi MiMo Code CLI / ACP",
-			Transport: "acp", Runnable: false,
+			ID: "mimo", Name: "MiMo Code", Description: "小米官方 MiMo Code CLI，通过原生 ACP 创建和恢复会话、设置模型及处理单次工具审批",
+			Transport: "acp", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"stream", "resume", "approval", "acp"},
-			CredentialKinds:    []string{"native", "env_file"},
-			InstallDescription: "当前先以 CLI/ACP 作为接入面，桌面端不作为自动化协议依赖。",
+			Capabilities:       []string{"stream", "resume", "approval", "cancel", "attachments", "model_switch"},
+			CredentialKinds:    []string{"native", "mimo_config", "env_file"},
+			InstallDescription: "安装官方 MiMo Code 二进制；配置 API、地址和模型后在账号卡片选择“用于此环境”。原生会话保存在目标用户目录。",
 			DocumentationURL:   "https://github.com/XiaomiMiMo/MiMo-Code",
 		},
 	}
@@ -264,7 +264,7 @@ func validateEngineProfile(profile EngineCredentialProfile, environments []Envir
 	if profile.Reference == "" || strings.ContainsAny(profile.Reference, "\x00\r\n") || len(profile.Reference) > 4096 {
 		return errors.New("账号/API 配置需要填写外部配置引用")
 	}
-	if profile.Kind == "codex_home" || profile.Kind == "claude_home" || profile.Kind == "dsh_home" {
+	if profile.Kind == "codex_home" || profile.Kind == "claude_home" || profile.Kind == "dsh_home" || profile.Kind == "mimo_config" {
 		if target.Type == "windows" {
 			if !filepath.IsAbs(profile.Reference) {
 				return errors.New("Windows 账号目录需要绝对路径")
@@ -287,6 +287,8 @@ func engineProfileEnv(profile EngineCredentialProfile) map[string]string {
 		return map[string]string{"CLAUDE_CONFIG_DIR": profile.Reference}
 	case "dsh_home":
 		return map[string]string{"DSH_HOME": profile.Reference}
+	case "mimo_config":
+		return map[string]string{"MIMOCODE_CONFIG": strings.TrimRight(profile.Reference, `/\`) + "/mimocode.json"}
 	default:
 		// env_file is intentionally metadata-only for now. Reading arbitrary
 		// secret files belongs in the target adapter, not the HTTP process.
@@ -331,6 +333,8 @@ func engineInstallPlan(env Environment, engineID string) (EngineInstallPlan, err
 			plan.Executable = env.Claude
 		} else if engineID == "deepseek-harness" {
 			plan.Executable = env.Harness
+		} else if engineID == "mimo" {
+			plan.Executable = env.Mimo
 		}
 		return plan, nil
 	}

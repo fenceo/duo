@@ -397,6 +397,9 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 			if msg.Method != "" && len(msg.ID) > 0 {
 				if w.interactive && msg.Method == "session/request_permission" {
 					params, callID, err := state.permissionParams(msg.Params)
+					if err != nil && w.engine == "mimo" {
+						params, callID, err = state.mimoPermissionParams(msg.Params)
+					}
 					key := string(msg.ID)
 					_, duplicate := pending[key]
 					if duplicate {
@@ -410,7 +413,11 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 						requestCtx, cancel := context.WithCancel(ctx)
 						pending[key] = pendingPermission{callID, cancel}
 						go func(msg codexRPC, callID string, params json.RawMessage) {
-							reply := requestHarnessPermission(requestCtx, msg.ID, callID, params)
+							method := harnessPermissionMethod
+							if w.engine == "mimo" {
+								method = mimoPermissionMethod
+							}
+							reply := requestACPPermission(requestCtx, method, msg.ID, callID, params)
 							select {
 							case replies <- reply:
 							case <-ctx.Done():

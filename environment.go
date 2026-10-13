@@ -26,6 +26,8 @@ type Environment struct {
 	Codex           string                       `json:"codex"`
 	Claude          string                       `json:"claude"`
 	Harness         string                       `json:"harness"`
+	Mimo            string                       `json:"mimo,omitempty"`
+	MimoModel       string                       `json:"mimo_model,omitempty"`
 	HarnessModel    string                       `json:"harness_model"`
 	HarnessProvider string                       `json:"harness_provider"`
 	ClaudeModel     string                       `json:"claude_model"`
@@ -100,7 +102,7 @@ func normalizeEnvironments(c *Config) error {
 			e.DefaultEngine = "codex"
 		}
 		if !validEngine(e.DefaultEngine) {
-			return errors.New("AI 工具必须是 Codex、Claude Code 或 DeepSeek Harness")
+			return errors.New("AI 工具必须是 Codex、Claude Code、DeepSeek Harness 或 MiMo Code")
 		}
 		if e.Codex == "" {
 			e.Codex = "codex"
@@ -117,8 +119,17 @@ func normalizeEnvironments(c *Config) error {
 				e.Harness = "dsh.cmd"
 			}
 		}
+		if e.Mimo == "" {
+			e.Mimo = "mimo"
+			if e.Type == "windows" {
+				e.Mimo = "mimo.exe"
+			}
+		}
 		if strings.TrimSpace(e.HarnessModel) == "" {
 			e.HarnessModel = defaultHarnessModel
+		}
+		if len(e.Mimo) > 4096 || strings.ContainsAny(e.Mimo, "\x00\r\n") || len(e.MimoModel) > 200 || strings.ContainsAny(e.MimoModel, "\x00\r\n") {
+			return errors.New("MiMo 程序路径或默认模型无效")
 		}
 		if strings.TrimSpace(e.HarnessProvider) == "" {
 			e.HarnessProvider = defaultHarnessProvider
@@ -205,6 +216,7 @@ func runtimeConfig(c Config, e Environment) Config {
 	c.Codex = managedEnginePath(c, e, "codex")
 	c.Claude = managedEnginePath(c, e, "claude")
 	c.Harness = managedEnginePath(c, e, "deepseek-harness")
+	c.Mimo = managedEnginePath(c, e, "mimo")
 	c.HarnessModel = e.HarnessModel
 	c.HarnessProvider = e.HarnessProvider
 	if c.Claude == "" {

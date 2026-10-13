@@ -102,6 +102,14 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 	if mode != nil && (mode.ID == "harness:read" || mode.ID == harnessWorkspaceMode) && engine != "deepseek-harness" {
 		return Task{}, errors.New("Harness 权限模式仅适用于 Harness")
 	}
+	if mode != nil && mode.ID == "mimo:plan" && engine != "mimo" {
+		return Task{}, errors.New("MiMo 计划模式仅适用于 MiMo Code")
+	}
+	if engine == "mimo" {
+		if _, _, err := mimoInvocation(Task{Mode: mode}); err != nil {
+			return Task{}, err
+		}
+	}
 	if engine == "deepseek-harness" {
 		if _, err := harnessPolicy(Task{Mode: mode, Workspace: workspace}); err != nil {
 			return Task{}, err
@@ -253,6 +261,17 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 	}
 	if (mode.ID == "harness:read" || mode.ID == harnessWorkspaceMode) && task.Engine != "deepseek-harness" {
 		return Run{}, errors.New("Harness 权限模式仅适用于 Harness")
+	}
+	if mode.ID == "mimo:plan" && task.Engine != "mimo" {
+		return Run{}, errors.New("MiMo 计划模式仅适用于 MiMo Code")
+	}
+	if task.Engine == "mimo" {
+		if _, _, err := mimoInvocation(Task{Mode: &mode}); err != nil {
+			return Run{}, err
+		}
+		if kind == "knowledge" {
+			return Run{}, errors.New("MiMo 独立知识整理尚未接入")
+		}
 	}
 	if task.Engine == "deepseek-harness" {
 		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {

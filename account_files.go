@@ -47,6 +47,8 @@ func nativeAccountNames(engine string) ([]string, error) {
 		return []string{".credentials.json", "settings.json"}, nil
 	case "deepseek-harness":
 		return []string{".credentials.yaml", "cordis.patch.yml"}, nil
+	case "mimo":
+		return []string{"mimocode.json"}, nil
 	default:
 		return nil, errors.New("此引擎不支持账号文件同步")
 	}

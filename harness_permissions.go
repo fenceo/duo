@@ -9,6 +9,11 @@ import (
 
 const harnessWorkspaceMode = "harness:workspace"
 const harnessPermissionMethod = "harness/requestPermission"
+const mimoPermissionMethod = "mimo/requestPermission"
+
+func isACPToolPermission(method string) bool {
+	return method == harnessPermissionMethod || method == mimoPermissionMethod
+}
 
 // Old work/custom snapshots deliberately retain their previous never policy.
 // Only an explicit selection of the new official workspace preset enables ask.
@@ -106,8 +111,34 @@ func (s *harnessACPTurn) permissionParams(raw json.RawMessage) (json.RawMessage,
 	return params, tool.ID, err
 }
 
+// MiMo also emits native permissions not attached to a streamed tool call,
+// such as external_directory. Require detailed native metadata and the exact
+// live session; keep these scoped to this prompt and never infer a permission.
+func (s *harnessACPTurn) mimoPermissionParams(raw json.RawMessage) (json.RawMessage, string, error) {
+	request, err := parseHarnessPermission(raw)
+	if err != nil || request.SessionID != s.session {
+		return nil, "", errors.New("MiMo 权限请求不属于当前会话或缺少操作详情")
+	}
+	var details map[string]any
+	if json.Unmarshal(request.ToolCall.RawInput, &details) != nil || len(details) == 0 {
+		return nil, "", errors.New("MiMo 权限请求缺少明确的操作参数")
+	}
+	if s.tools == nil {
+		s.tools = map[string]harnessToolCall{}
+	}
+	if _, exists := s.tools[request.ToolCall.ID]; exists {
+		return nil, "", errors.New("MiMo 权限请求与已出现的本轮工具详情不一致")
+	}
+	s.tools[request.ToolCall.ID] = request.ToolCall
+	return append(json.RawMessage(nil), raw...), request.ToolCall.ID, nil
+}
+
 func requestHarnessPermission(ctx context.Context, id json.RawMessage, callID string, params json.RawMessage) harnessPermissionReply {
-	result, err := handleCodexInteraction(ctx, harnessPermissionMethod, params)
+	return requestACPPermission(ctx, harnessPermissionMethod, id, callID, params)
+}
+
+func requestACPPermission(ctx context.Context, method string, id json.RawMessage, callID string, params json.RawMessage) harnessPermissionReply {
+	result, err := handleCodexInteraction(ctx, method, params)
 	if err != nil {
 		result = json.RawMessage(`{"outcome":{"outcome":"cancelled"}}`)
 	}

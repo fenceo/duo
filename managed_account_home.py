@@ -12,7 +12,7 @@ def main():
     identifier = request['id']
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,48}', identifier):
         raise ValueError('invalid identifier')
-    name = {'codex': 'config.toml', 'claude': 'settings.json'}[request['engine']]
+    name = {'codex': 'config.toml', 'claude': 'settings.json', 'mimo':'mimocode.json'}[request['engine']]
     if set(request['files']) != {name}:
         raise ValueError('invalid files')
     content = base64.b64decode(request['files'][name], validate=True)

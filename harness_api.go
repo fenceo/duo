@@ -18,13 +18,14 @@ const harnessAPIProvider = "duo-api"
 const harnessAPIKeyRef = "DUO_HARNESS_API_KEY"
 
 type HarnessAPIRequest struct {
-	Target  string        `json:"target"`
-	API     string        `json:"api"`
-	BaseURL string        `json:"base_url"`
-	Model   string        `json:"model"`
-	APIKey  string        `json:"api_key"`
-	Input   []string      `json:"input,omitempty"`
-	Models  []ModelOption `json:"-"`
+	Target          string        `json:"target"`
+	API             string        `json:"api"`
+	BaseURL         string        `json:"base_url"`
+	Model           string        `json:"model"`
+	APIKey          string        `json:"api_key"`
+	Input           []string      `json:"input,omitempty"`
+	Models          []ModelOption `json:"-"`
+	ModelListBearer bool          `json:"-"`
 }
 
 // Only this projection crosses HTTP. Neither native files nor a masked key

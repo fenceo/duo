@@ -27,6 +27,7 @@ type harnessDiscoveryHTTP struct {
 	URL    string `json:"url"`
 	API    string `json:"api"`
 	APIKey string `json:"api_key"`
+	Bearer bool   `json:"bearer_auth,omitempty"`
 }
 type harnessDiscoveryResponse struct {
 	Status int    `json:"status"`
@@ -54,7 +55,11 @@ func requestHarnessModels(ctx context.Context, env Environment, req harnessDisco
 	}
 	request.Header.Set("Accept", "application/json")
 	if req.API == "anthropic-messages" {
-		request.Header.Set("x-api-key", req.APIKey)
+		if req.Bearer {
+			request.Header.Set("Authorization", "Bearer "+req.APIKey)
+		} else {
+			request.Header.Set("x-api-key", req.APIKey)
+		}
 		request.Header.Set("anthropic-version", "2023-06-01")
 	} else {
 		request.Header.Set("Authorization", "Bearer "+req.APIKey)
@@ -93,7 +98,7 @@ func discoverHarnessModels(ctx context.Context, env Environment, v HarnessAPIReq
 	endpoint := root + "/models"
 	seen, cursors := map[string]bool{}, map[string]bool{}
 	for page := 0; page < 10; page++ {
-		response, err := requestHarnessModels(ctx, env, harnessDiscoveryHTTP{URL: endpoint, API: v.API, APIKey: v.APIKey})
+		response, err := requestHarnessModels(ctx, env, harnessDiscoveryHTTP{URL: endpoint, API: v.API, APIKey: v.APIKey, Bearer: v.ModelListBearer})
 		if err != nil {
 			out.Message = err.Error()
 			return out

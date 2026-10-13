@@ -20,7 +20,7 @@ func createManagedAccountHome(ctx context.Context, env Environment, data, id, en
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	name := map[string]string{"codex": "config.toml", "claude": "settings.json"}[engine]
+	name := map[string]string{"codex": "config.toml", "claude": "settings.json", "mimo": "mimocode.json"}[engine]
 	if !safeWorkbenchID(id) || len(id) > 48 || name == "" || len(files) != 1 || files[name] == nil || len(files[name]) > 128*1024 {
 		return "", errors.New("账号目录请求无效")
 	}

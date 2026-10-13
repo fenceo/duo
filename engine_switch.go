@@ -118,6 +118,14 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 			return handoffResult{}, err
 		}
 	}
+	if mode != nil && mode.ID == "mimo:plan" && v.Engine != "mimo" {
+		return handoffResult{}, errors.New("MiMo 计划模式仅适用于 MiMo Code")
+	}
+	if v.Engine == "mimo" {
+		if _, _, err = mimoInvocation(Task{Mode: mode}); err != nil {
+			return handoffResult{}, err
+		}
+	}
 	preview, archive, err := a.buildContinuation(task, v.ContextMode)
 	if err != nil {
 		return handoffResult{}, err
