@@ -169,11 +169,6 @@ func (a *App) stageRuntimeFiles(ctx context.Context, t Task, result []RuntimeAtt
 			cleanup()
 		}
 	}()
-	var payload []map[string]string
-	for _, f := range result {
-		payload = append(payload, map[string]string{"name": attachmentFileName(f.Attachment), "data": base64.StdEncoding.EncodeToString(f.Data)})
-	}
-
 	if t.Environment.Type == "windows" {
 		base := filepath.Join(filepath.Dir(a.config.path), "attachments")
 		if err := os.MkdirAll(base, 0700); err != nil {
@@ -192,6 +187,10 @@ func (a *App) stageRuntimeFiles(ctx context.Context, t Task, result []RuntimeAtt
 			}
 		}
 	} else {
+		var payload []map[string]string
+		for _, f := range result {
+			payload = append(payload, map[string]string{"name": attachmentFileName(f.Attachment), "data": base64.StdEncoding.EncodeToString(f.Data)})
+		}
 		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		raw, _ := json.Marshal(payload)

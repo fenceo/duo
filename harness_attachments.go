@@ -39,7 +39,7 @@ func harnessPromptContent(input string, files []RuntimeAttachment, imageInput bo
 			continue
 		}
 		name, _ := json.Marshal(f.Name)
-		if len(f.Data) <= harnessTextFileLimit && len(f.Data) <= remaining && utf8.Valid(f.Data) && !strings.ContainsRune(string(f.Data), '\x00') {
+		if (len(f.Data) > 0 || f.Size == 0) && len(f.Data) <= harnessTextFileLimit && len(f.Data) <= remaining && utf8.Valid(f.Data) && !strings.ContainsRune(string(f.Data), '\x00') {
 			// JSON quoting gives a definite data boundary, including special names
 			// and file contents that resemble closing markers or instructions.
 			data, _ := json.Marshal(string(f.Data))

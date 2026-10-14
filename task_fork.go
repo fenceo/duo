@@ -148,14 +148,8 @@ func (a *App) forkTask(id string) (Task, error) {
 	}
 	// The archive is built from the copied rows within this same transaction.
 	// Later changes in the parent cannot alter the branch's initial context.
-	preview, archive, err := a.buildContinuation(target, "full", tx)
+	_, err = a.saveForkContinuation(target, tx)
 	if err != nil {
-		if errors.Is(err, errContinuationArchiveTooLarge) {
-			return Task{}, fmt.Errorf("%w：%v", errTaskForkBlocked, err)
-		}
-		return Task{}, err
-	}
-	if _, err = tx.Exec("INSERT INTO task_handoff_context VALUES(?,?,?,?,?)", target.Binding.HistoryID, target.ID, preview.Context, archive, target.Created); err != nil {
 		return Task{}, err
 	}
 	if _, err = tx.Exec("INSERT INTO task_continuations VALUES(?,?,?,?,?,?,?)", target.ID, source.ID, source.Engine, target.Engine, len(runs), len(knowledge), target.Created); err != nil {

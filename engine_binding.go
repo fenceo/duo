@@ -20,6 +20,7 @@ const engineBindingSchema = `
 CREATE TABLE IF NOT EXISTS task_engine_bindings(task_id TEXT PRIMARY KEY REFERENCES tasks(id),binding TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS run_execution(run_id TEXT PRIMARY KEY REFERENCES runs(id),snapshot TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS task_handoff_context(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),context TEXT NOT NULL,archive TEXT NOT NULL,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS task_handoff_archive_parts(history_id TEXT NOT NULL REFERENCES task_handoff_context(id),part INTEGER NOT NULL,archive TEXT NOT NULL,PRIMARY KEY(history_id,part));
 CREATE TABLE IF NOT EXISTS task_engine_switches(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),previous TEXT NOT NULL,created INTEGER NOT NULL);
 `
 

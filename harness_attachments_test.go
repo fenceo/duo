@@ -44,6 +44,18 @@ func TestHarnessAttachmentAdmissionAndTextBudget(t *testing.T) {
 	}
 }
 
+func TestHarnessStagedHistoryVolumeUsesItsPath(t *testing.T) {
+	file := RuntimeAttachment{Attachment: Attachment{Name: "Duo-历史对话-000001.md", Mime: "text/markdown", Size: continuationPartBytes}, Path: "/tmp/synthetic/history-part.md"}
+	content, err := harnessPromptContent("continue", []RuntimeAttachment{file}, false)
+	if err != nil || len(content) != 2 {
+		t.Fatal("staged history volume was rejected", err)
+	}
+	text := content[1].(map[string]any)["text"].(string)
+	if !strings.Contains(text, file.Path) || !strings.Contains(text, "未内嵌全文") {
+		t.Fatal("staged volume was mistaken for an empty text file")
+	}
+}
+
 func TestHarnessAttachmentsSurviveVisionSwitchAndResume(t *testing.T) {
 	c, task := harnessFixtureSetup(t, "attachments")
 	profileA, profileB := t.TempDir(), t.TempDir()

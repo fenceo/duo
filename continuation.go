@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 )
 
 // TaskContinuation records only lineage metadata; no native session or
@@ -80,11 +79,14 @@ func continuationEngineLabel(engine string) string {
 
 func clipContinuation(text string, maxRunes int) (string, bool) {
 	text = strings.TrimSpace(text)
-	if utf8.RuneCountInString(text) <= maxRunes {
-		return text, false
+	runes := 0
+	for offset := range text {
+		if runes == maxRunes {
+			return text[:offset] + "\n…（上下文已截断，请先检查工作区）", true
+		}
+		runes++
 	}
-	runes := []rune(text)
-	return string(runes[:maxRunes]) + "\n…（上下文已截断，请先检查工作区）", true
+	return text, false
 }
 
 // continuationPreview builds a bounded portable snapshot from existing local
