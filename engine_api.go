@@ -13,23 +13,26 @@ import (
 )
 
 type EngineAPIRequest struct {
-	Models      []ModelOption `json:"-"`
-	Target      string        `json:"target"`
-	Engine      string        `json:"engine"`
-	APIProtocol string        `json:"api_protocol"`
-	BaseURL     string        `json:"base_url"`
-	Model       string        `json:"model"`
-	APIKey      string        `json:"api_key,omitempty"`
-	AuthMode    string        `json:"auth_mode"`
+	Models      []ModelOption     `json:"-"`
+	Target      string            `json:"target"`
+	Engine      string            `json:"engine"`
+	APIProtocol string            `json:"api_protocol"`
+	BaseURL     string            `json:"base_url"`
+	Model       string            `json:"model"`
+	APIKey      string            `json:"api_key,omitempty"`
+	AuthMode    string            `json:"auth_mode"`
+	APIScope    string            `json:"api_scope,omitempty"`
+	ClaudeRoles *ClaudeRoleModels `json:"claude_roles,omitempty"`
 }
 type EngineAPIView struct {
 	EngineAPIRequest
-	EnvironmentID   string        `json:"environment_id"`
-	KeyConfigured   bool          `json:"key_configured"`
-	Models          []ModelOption `json:"models"`
-	Message         string        `json:"message,omitempty"`
-	DiscoveryStatus string        `json:"discovery_status,omitempty"`
-	ConfigPath      string        `json:"mimo_config,omitempty"`
+	EnvironmentID    string        `json:"environment_id"`
+	KeyConfigured    bool          `json:"key_configured"`
+	Models           []ModelOption `json:"models"`
+	Message          string        `json:"message,omitempty"`
+	DiscoveryStatus  string        `json:"discovery_status,omitempty"`
+	ConfigPath       string        `json:"mimo_config,omitempty"`
+	ClaudeConfigPath string        `json:"claude_api_config,omitempty"`
 }
 
 func mimoAPIDirectory(ctx context.Context, env Environment) (string, error) {
@@ -63,6 +66,9 @@ func (a *App) engineAPITarget(env Environment, engine string) string {
 
 func (a *App) engineAPILocation(ctx context.Context, env Environment, engine string) (string, string, error) {
 	if engine == "claude" {
+		if env.ClaudeAPIConfig != "" {
+			return claudeAPIConfigLocation(env.ClaudeAPIConfig)
+		}
 		return "", "claude", nil
 	}
 	if env.MimoConfig != "" {
@@ -97,7 +103,14 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 	if engine == "claude" {
 		v.APIProtocol = "anthropic-messages"
 		v.BaseURL = ""
-		doc, err := accountJSON(files["settings.json"])
+		v.APIScope = "environment"
+		name := "settings.json"
+		if kind == "claude-api" {
+			name = "duo-api.json"
+			v.APIScope = "duo"
+			v.ClaudeConfigPath = env.ClaudeAPIConfig
+		}
+		doc, err := accountJSON(files[name])
 		if err != nil {
 			return v, "", err
 		}
@@ -110,6 +123,7 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 		if v.Model == "" {
 			v.Model, _ = doc["model"].(string)
 		}
+		v.ClaudeRoles = claudeRolesFromEnv(vars, v.Model)
 		key, _ = vars["ANTHROPIC_AUTH_TOKEN"].(string)
 		v.AuthMode = "auth-token"
 		if key == "" {
@@ -151,12 +165,19 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 				return v, "", errors.New("配置字段包含凭据，未返回")
 			}
 		}
+		if v.ClaudeRoles != nil {
+			for _, value := range v.ClaudeRoles.values() {
+				if strings.Contains(value, key) {
+					return v, "", errors.New("配置字段包含凭据，未返回")
+				}
+			}
+		}
 	}
 	return v, key, nil
 }
 
 func engineAPISetup(v EngineAPIRequest) EngineSetupRequest {
-	return EngineSetupRequest{ID: "direct-api", Action: "account", Name: "API", Engine: v.Engine, Login: "apiKey", APIKey: v.APIKey, BaseURL: v.BaseURL, Model: v.Model, APIProtocol: v.APIProtocol, AuthMode: v.AuthMode}
+	return EngineSetupRequest{ID: "direct-api", Action: "account", Name: "API", Engine: v.Engine, Login: "apiKey", APIKey: v.APIKey, BaseURL: v.BaseURL, Model: v.Model, APIProtocol: v.APIProtocol, AuthMode: v.AuthMode, ClaudeRoles: v.ClaudeRoles}
 }
 func resolveEngineAPIKey(v EngineAPIRequest, old EngineAPIView, key string) (string, error) {
 	if v.APIKey != "" {
@@ -199,6 +220,9 @@ func engineAPIDiscover(ctx context.Context, manager *EngineSetup, env Environmen
 }
 func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (map[string][]byte, error) {
 	if v.Engine == "claude" {
+		if kind == "claude-api" {
+			return map[string][]byte{"duo-api.json": claudeAPISettings(engineAPISetup(v))}, nil
+		}
 		return mergeAccountFiles("claude", map[string][]byte{"settings.json": claudeAPISettings(engineAPISetup(v))}, files)
 	}
 	name := "duo-api.json"
@@ -318,6 +342,14 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "此入口仅支持 Claude Code 和 MiMo Code")
 		return
 	}
+	if v.APIScope != "" && (v.Engine != "claude" || v.APIScope != "duo" && v.APIScope != "environment") {
+		fail(w, 400, "API 生效范围无效")
+		return
+	}
+	if err := validateClaudeRoles(v.Engine, v.ClaudeRoles); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	a := s.app
 	save := r.Method == "PUT"
 	a.mu.Lock()
@@ -390,6 +422,16 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
+	fields := []string{v.BaseURL, v.Model}
+	if v.ClaudeRoles != nil {
+		fields = append(fields, v.ClaudeRoles.values()...)
+	}
+	for _, value := range fields {
+		if strings.Contains(value, v.APIKey) {
+			fail(w, 400, "配置字段包含凭据，未保存")
+			return
+		}
+	}
 	if err = validateMimoAPI(v); err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -424,7 +466,32 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 	if discovery.Status == "ready" {
 		v.Models = discovery.Models
 	}
-	next, err := mergeEngineAPI(old, kind, v)
+	writeDir, writeKind, writeOld := dir, kind, old
+	if v.Engine == "claude" {
+		if v.APIScope == "" {
+			v.APIScope = view.APIScope
+		}
+		if v.APIScope == "duo" {
+			if kind != "claude-api" {
+				writeDir, err = manager.claudeAPIDirectory(ctx, env)
+				writeKind = "claude-api"
+			}
+		} else {
+			writeDir, writeKind = "", "claude"
+		}
+		if err != nil {
+			fail(w, 400, "Claude Duo 配置目录不可用")
+			return
+		}
+		if writeDir != dir || writeKind != kind {
+			writeOld, err = manager.harnessRead(ctx, env, writeDir, writeKind)
+			if err != nil {
+				fail(w, 400, "目标配置不可读取，未写入")
+				return
+			}
+		}
+	}
+	next, err := mergeEngineAPI(writeOld, writeKind, v)
 	if err != nil {
 		fail(w, 400, "配置无法合并，原文件未更改")
 		return
@@ -437,7 +504,7 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "环境配置已变化，未保存")
 		return
 	}
-	if err = manager.harnessWrite(ctx, env, dir, kind, old, next); err != nil {
+	if err = manager.harnessWrite(ctx, env, writeDir, writeKind, writeOld, next); err != nil {
 		fail(w, 400, "配置写入失败，请检查权限或并发修改；备份保留在原目录")
 		return
 	}
@@ -445,6 +512,10 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		if c.Environments[i].ID == env.ID {
 			if v.Engine == "claude" {
 				c.Environments[i].ClaudeModel = v.Model
+				c.Environments[i].ClaudeAPIConfig = ""
+				if v.APIScope == "duo" {
+					c.Environments[i].ClaudeAPIConfig = nativeAPIConfigPath(env, writeDir, "duo-api.json")
+				}
 			} else {
 				name := "duo-api.json"
 				if kind == "mimo" {
@@ -462,7 +533,7 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 	if err = a.config.save(c); err != nil {
 		rollback, stop := context.WithTimeout(context.Background(), 20*time.Second)
 		defer stop()
-		if manager.harnessWrite(rollback, env, dir, kind, next, old) != nil {
+		if manager.harnessWrite(rollback, env, writeDir, writeKind, next, writeOld) != nil {
 			fail(w, 500, "环境保存失败且文件回退未确认，请检查目录备份")
 			return
 		}
@@ -470,15 +541,18 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current, _ = c.environment(env.ID)
-	out, _, _ := engineAPIConfigView(current, v.Engine, kind, next)
+	out, _, _ := engineAPIConfigView(current, v.Engine, writeKind, next)
 	out.Target = a.engineAPITarget(current, v.Engine)
 	out.Models = discovery.Models
 	out.DiscoveryStatus = discovery.Status
 	out.Message = "配置已保存并生效，原文件已备份。" + discovery.Message + " 不修改任务记录或原生会话。"
-	if v.Engine == "claude" {
+	if v.Engine == "claude" && v.APIScope != "duo" {
 		if err = a.store.useSyncedNativeAccount(env.ID, "claude", ""); err != nil {
 			out.Message += " 账号来源标记更新失败，请重新打开核对。"
 		}
+	}
+	if v.Engine == "claude" && v.APIScope == "duo" {
+		out.Message = "已保存 Duo 专用 API 配置，仅 Duo 启动的 Claude 进程加载；原生登录、权限和历史目录不变。" + discovery.Message
 	}
 	a.changed()
 	jsonOut(w, 200, out)

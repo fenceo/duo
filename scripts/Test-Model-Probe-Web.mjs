@@ -149,6 +149,11 @@ for(const accountMode of ['environment','pinned']){
  assert.equal(f.requests[0].body.task_id,'bound');
  assert.equal(f.ctx.detail.task.binding.profile.id,'old-account','metadata must not rewrite native session ownership');
 }
+{
+ const f=fixture();f.ctx.creatingTask=false;f.ctx.detail={task:{id:'duo-claude',environment:f.environment,engine:'claude',workspace:'/task',model:'main'}};
+ f.value("taskPickerModels=[{id:'main',name:'Main'},{id:'fast',name:'Fast'}];modelCatalogState.task.key=taskCatalogContextKey(detail.task);modelCatalogState.task.apiTarget='scope-revision';modelCatalogState.task.apiEndpoint='https://duo-claude.example'");
+ await f.ctx.testModelList('task');assert.equal(f.requests[0].body.expected_api_target,'scope-revision');assert(f.confirmations[0].includes('Duo 专用 Claude API'));assert(f.confirmations[0].includes('https://duo-claude.example'));
+}
 const workflow=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
 for(const field of ['distro','user','host','port','identity','claude','type','deleted']){
  const f=fixture();f.ctx.creatingTask=false;f.ctx.detail={task:{id:'old-task',environment:{...f.environment},engine:'claude',workspace:'/task',model:'old'}};

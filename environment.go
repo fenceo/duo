@@ -32,6 +32,7 @@ type Environment struct {
 	HarnessModel    string                       `json:"harness_model"`
 	HarnessProvider string                       `json:"harness_provider"`
 	ClaudeModel     string                       `json:"claude_model"`
+	ClaudeAPIConfig string                       `json:"claude_api_config,omitempty"`
 	DefaultEngine   string                       `json:"default_engine"`
 	Model           string                       `json:"model"`
 	ModelCache      string                       `json:"model_cache"`
@@ -172,6 +173,9 @@ func normalizeEnvironments(c *Config) error {
 		}
 		if e.MimoConfig != "" && (e.Type == "windows" && !filepath.IsAbs(e.MimoConfig) || e.Type != "windows" && !strings.HasPrefix(e.MimoConfig, "/")) {
 			return errors.New("MiMo 配置需要目标环境的绝对路径")
+		}
+		if len(e.ClaudeAPIConfig) > 4096 || strings.ContainsAny(e.ClaudeAPIConfig, "\r\n\x00") || e.ClaudeAPIConfig != "" && (e.Type == "windows" && !filepath.IsAbs(e.ClaudeAPIConfig) || e.Type != "windows" && !strings.HasPrefix(e.ClaudeAPIConfig, "/")) {
+			return errors.New("Claude Duo 配置需要目标环境的绝对路径")
 		}
 		if len(e.Workspaces) == 0 {
 			e.Workspaces = []string{defaultEnvironmentWorkspace(e.Type, e.User)}

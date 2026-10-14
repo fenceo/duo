@@ -8,7 +8,15 @@
 
 需要 Anthropic Messages 兼容服务。官方 Anthropic API 可选择官方预设并留空地址，使用 `x-api-key`。第三方地址通常使用 Bearer Token；服务若要求 `x-api-key`，在请求头选项中选择 API Key。MiMo 按量付费预设使用 `https://api.xiaomimimo.com/anthropic`；Token Plan 的区域地址与 Key 以订阅后台为准。
 
-填写模型 ID 后，第三方配置会同时设置默认模型、Opus/Sonnet/Haiku 映射及子任务默认模型，避免继续请求旧的 Claude 模型名称。点击“保存并读取模型”后，配置直接写入所选环境的原生 Claude 目录并生效，原文件留有备份。保留目标工具权限、MCP、工作区信任和其他偏好，不更改任务会话。API 配置会替换当前订阅登录；原登录在备份中保留，账号库存不删除。
+配置窗口可以选择生效范围。新配置默认建议“仅 Duo 生效”：在目标 Claude 配置目录保存独立 `duo-api.json`，每次由 Duo 启动时通过 `--settings` 加载。它只覆盖 API 路由和模型角色，不改原生登录文件、权限、MCP、工作区信任或历史目录，也不改变 `CLAUDE_CONFIG_DIR`。已有任务下次执行使用当前配置，仍恢复原会话。原生配置中的托管策略继续生效。
+
+“整个环境生效”延续原有行为，写入该环境的原生 Claude 配置，其他 Claude 会话也会使用。API 会替换当前订阅登录，原文件和登录保存在备份中，账号库存不删除。旧配置保留原范围，不自动迁移。切换范围可以保留同一服务的 Key；停用 Duo 专用引用后保留它的文件，不删除历史或重建会话。需要结束该环境的 Claude 执行和排队任务后才能保存。
+
+展开“模型角色配置”可选择统一使用主模型、分别配置角色或使用原生角色默认值。分别配置支持 Opus、Sonnet、Haiku、可选 Fable 和子代理模型；前三项留空跟随主模型，Fable 留空使用原生默认，子代理留空遵循 Claude 代理规则。主模型也为空时相应角色采用原生默认。每个 ID 必须由当前服务支持；不是为每个角色保存一把 Key。同一 API 服务的一把 Key 由这些角色共同使用。切换到另一服务预设会清空旧角色映射，防止请求旧服务的模型名称；手动修改自定义地址时，请核对模型 ID 是否仍适用。
+
+Duo 专用配置的任务模型列表读取主模型和角色 ID，不混入其他原生账号的列表；这只表示已配置，不保证模型可调用。付费测试会明确显示当前服务，并核对专用配置是否已变化，过期列表必须重读后重新确认。
+
+官方依据：[Claude 模型角色](https://code.claude.com/docs/en/model-config)、[会话设置与优先级](https://code.claude.com/docs/en/settings)、[Claude CLI 参数](https://code.claude.com/docs/en/cli-reference)。
 
 ## MiMo Code
 

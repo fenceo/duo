@@ -14,13 +14,13 @@ def main():
     request = json.loads(sys.stdin.buffer.read(24 * 1024 * 1024))
     engine = request['engine']
     names = {'codex': ('auth.json', 'config.toml'),
-             'claude': ('.credentials.json', 'settings.json'),
+             'claude': ('.credentials.json', 'settings.json'), 'claude-api': ('duo-api.json',),
              'deepseek-harness': ('.credentials.yaml', 'cordis.patch.yml'),
              'mimo': ('mimocode.json',), 'mimo-api': ('duo-api.json',)}[engine]
     if request['operation'] == 'harness-models' and engine == 'deepseek-harness':
         names = ('settings.yaml', 'cordis.patch.yml')
-    key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME', 'mimo': 'MIMOCODE_CONFIG_DIR', 'mimo-api': 'MIMOCODE_CONFIG_DIR'}[engine]
-    default_dir = '.dsh' if engine == 'deepseek-harness' else '.' + engine
+    key = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'claude-api': 'CLAUDE_CONFIG_DIR', 'deepseek-harness': 'DSH_HOME', 'mimo': 'MIMOCODE_CONFIG_DIR', 'mimo-api': 'MIMOCODE_CONFIG_DIR'}[engine]
+    default_dir = '.dsh' if engine == 'deepseek-harness' else '.claude' if engine == 'claude-api' else '.' + engine
     raw_root = request.get('directory') or os.environ.get(key)
     if engine == 'mimo-api' and not request.get('directory'):
         mimo_home = os.environ.get('MIMOCODE_HOME')
@@ -37,7 +37,7 @@ def main():
         if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
             raise ValueError('redirecting directory')
 
-    if request['operation'] == 'directory' and engine == 'mimo-api':
+    if request['operation'] == 'directory' and engine in ('mimo-api', 'claude-api'):
         print(json.dumps({'directory': base64.b64encode(str(root).encode('utf-8')).decode('ascii')}))
         return
 

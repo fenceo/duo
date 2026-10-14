@@ -6204,8 +6204,9 @@ async function testModelList(target) {
         if (!modelProbeStillCurrent(target, state) || state.controller.signal.aborted) return;
         const profileID = profiles.active_profile[context.environment.id + ':' + context.engine] || '', profile = profiles.profiles.find((item)=>item.id === profileID);
         if (profileID && !profile) throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
-        const account = context.engine === 'mimo' ? '所选环境当前 MiMo API 配置' : profile ? `${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）` : '目标环境 CLI 的原生默认配置';
-        const provider = context.engine === 'mimo' ? catalog.apiEndpoint || '所选环境 API' : context.engine === 'deepseek-harness' ? context.environment.harness_provider || 'deepseek-official' : '沿用该 CLI 的原生配置';
+        const scopedClaude = context.engine === 'claude' && !!catalog.apiTarget;
+        const account = scopedClaude ? '所选环境的 Duo 专用 Claude API' : context.engine === 'mimo' ? '所选环境当前 MiMo API 配置' : profile ? `${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）` : '目标环境 CLI 的原生默认配置';
+        const provider = context.engine === 'mimo' || scopedClaude ? catalog.apiEndpoint || '所选环境 API' : context.engine === 'deepseek-harness' ? context.environment.harness_provider || 'deepseek-official' : '沿用该 CLI 的原生配置';
         const scope = context.engine === 'mimo' ? '每个模型仅发送一条最小 API 文本请求，不创建 CLI 会话、不附加任务对话或附件、不读取项目指令、不调用工具。结果只验证 API 文本可用性，不能代表 CLI 工具或长会话能力。' : '每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令。';
         if (!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id, index)=>`${index + 1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)) {
             state.models = [];
@@ -6226,7 +6227,7 @@ async function testModelList(target) {
             workspace: context.workspace,
             models,
             expected_profile_id: profileID,
-            ...context.engine === 'mimo' ? {
+            ...context.engine === 'mimo' || scopedClaude ? {
                 expected_api_target: catalog.apiTarget
             } : {},
             ...target === 'task' && detail?.task.binding ? {
@@ -8262,6 +8263,39 @@ function installEnvironmentAPI() {
     planWrap.className = 'hidden';
     planWrap.innerHTML = '<label for="environment-api-mimo-plan">MiMo 套餐 / 区域</label><select id="environment-api-mimo-plan"><option value="mimo">按量付费</option><option value="mimo-cn">Token Plan · 中国</option><option value="mimo-sgp">Token Plan · 新加坡</option><option value="mimo-ams">Token Plan · 欧洲</option></select>';
     input('environment-api-provider').after(planWrap);
+    const scope = document.createElement('div');
+    scope.id = 'environment-api-claude-scope';
+    scope.className = 'hidden';
+    scope.innerHTML = '<label for="environment-api-scope">生效范围</label><select id="environment-api-scope"><option value="duo">仅 Duo 生效</option><option value="environment">整个环境生效</option></select><p id="environment-api-scope-hint" class="muted"></p>';
+    element('environment-api-fields').prepend(scope);
+    const roles = document.createElement('details');
+    roles.id = 'environment-api-claude-roles';
+    roles.className = 'hidden';
+    roles.innerHTML = '<summary>模型角色配置</summary><label for="environment-api-role-mode">角色使用方式</label><select id="environment-api-role-mode"><option value="uniform">统一使用主模型</option><option value="custom">分别配置角色</option><option value="native">使用原生角色默认值</option></select><div id="environment-api-role-fields">' + [
+        [
+            'opus',
+            'Opus'
+        ],
+        [
+            'sonnet',
+            'Sonnet'
+        ],
+        [
+            'haiku',
+            'Haiku'
+        ],
+        [
+            'fable',
+            'Fable（可选）'
+        ],
+        [
+            'subagent',
+            '子代理（可选）'
+        ]
+    ].map(([id, label])=>'<label for="environment-api-role-' + id + '">' + label + ' 模型 ID</label><input id="environment-api-role-' + id + '" maxlength="120" list="environment-api-models" autocomplete="off">').join('') + '<p class="muted">Opus / Sonnet / Haiku 留空跟随主模型；主模型也为空则使用原生默认。Fable 留空用原生默认，子代理留空遵循 Claude 的代理规则。每个模型都需所选服务支持。</p></div>';
+    input('environment-api-model').after(roles);
+    input('environment-api-scope').onchange = updateEnvironmentAPIScopeHint;
+    input('environment-api-role-mode').onchange = updateEnvironmentAPIRoleFields;
     button('environment-api-close').onclick = ()=>{
         if (!environmentAPIBusy) element('environment-api-dialog').close();
     };
@@ -8307,6 +8341,24 @@ function clearEnvironmentAPIModels() {
     element('environment-api-models').replaceChildren();
     element('environment-api-status').textContent = '';
 }
+function updateEnvironmentAPIScopeHint() {
+    element('environment-api-scope-hint').textContent = input('environment-api-scope').value === 'duo' ? '保存为 Duo 专用配置，仅 Duo 启动的 Claude 加载；保留原生登录、权限和历史目录。' : '更新目标环境的原生 API 配置，其他 Claude 会话也会使用；原文件保留备份。';
+}
+function updateEnvironmentAPIRoleFields() {
+    element('environment-api-role-fields').classList.toggle('hidden', input('environment-api-role-mode').value !== 'custom');
+}
+function resetEnvironmentAPIClaudeRoles() {
+    input('environment-api-role-mode').value = 'native';
+    for (const id of [
+        'opus',
+        'sonnet',
+        'haiku',
+        'fable',
+        'subagent'
+    ])input('environment-api-role-' + id).value = '';
+    element('environment-api-claude-roles').open = false;
+    updateEnvironmentAPIRoleFields();
+}
 function environmentAPIPreset(engine, base) {
     const url = base.replace(/\/$/, '');
     if (engine === 'claude' && [
@@ -8328,6 +8380,11 @@ function environmentAPIPreset(engine, base) {
 }
 function configureEnvironmentAPIFields(engine) {
     const claude = engine === 'claude';
+    element('environment-api-claude-scope').classList.toggle('hidden', !claude);
+    element('environment-api-claude-roles').classList.toggle('hidden', !claude);
+    input('environment-api-scope').value = 'duo';
+    updateEnvironmentAPIScopeHint();
+    resetEnvironmentAPIClaudeRoles();
     input('environment-api-provider').innerHTML = claude ? '<option value="anthropic">Anthropic 官方 API</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>' : '<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
     input('environment-api-mimo-plan').value = 'mimo';
     element('environment-api-mimo-wrap').classList.toggle('hidden', claude);
@@ -8358,6 +8415,10 @@ function applyEnvironmentAPIPreset() {
     const provider = input('environment-api-provider').value, preset = provider === 'mimo' ? input('environment-api-mimo-plan').value : provider, claude = view.engine === 'claude';
     element('environment-api-mimo-wrap').classList.toggle('hidden', provider !== 'mimo');
     if (preset === 'custom') {
+        if (claude && !view.key_configured && input('environment-api-role-mode').value === 'native') {
+            input('environment-api-role-mode').value = 'uniform';
+            updateEnvironmentAPIRoleFields();
+        }
         updateEnvironmentAPIKeyNote();
         return;
     }
@@ -8383,6 +8444,9 @@ function applyEnvironmentAPIPreset() {
     ].join('\n')) {
         input('environment-api-model').value = '';
         input('environment-api-key').value = '';
+        resetEnvironmentAPIClaudeRoles();
+        input('environment-api-role-mode').value = preset === 'anthropic' ? 'native' : 'uniform';
+        updateEnvironmentAPIRoleFields();
     }
     updateEnvironmentAPIKeyNote();
 }
@@ -8390,6 +8454,21 @@ function renderEnvironmentAPI(view) {
     environmentAPIView = view;
     const claude = view.engine === 'claude';
     configureEnvironmentAPIFields(view.engine);
+    if (claude) {
+        input('environment-api-scope').value = view.api_scope || (view.key_configured ? 'environment' : 'duo');
+        if (!view.key_configured && view.api_scope === 'environment') input('environment-api-scope').value = 'duo';
+        updateEnvironmentAPIScopeHint();
+        const roles = view.claude_roles;
+        input('environment-api-role-mode').value = roles?.mode || (view.base_url && view.model ? 'uniform' : 'native');
+        for (const id of [
+            'opus',
+            'sonnet',
+            'haiku',
+            'fable',
+            'subagent'
+        ])input('environment-api-role-' + id).value = roles?.[id] || '';
+        updateEnvironmentAPIRoleFields();
+    }
     element('environment-api-title').textContent = taskEngineName(view.engine) + ' API 配置';
     input('environment-api-protocol').value = view.api_protocol;
     input('environment-api-auth').value = view.auth_mode === 'auth-token' ? 'auth-token' : 'api-key';
@@ -8462,6 +8541,7 @@ async function submitEnvironmentAPI(save) {
     const view = environmentAPIView;
     if (!view || environmentAPIBusy || engineSetupBusy) return;
     const epoch = shellEpoch, request = environmentAPIRequest, dialog = element('environment-api-dialog');
+    const roleMode = input('environment-api-role-mode').value;
     const body = {
         target: view.target,
         api_protocol: input('environment-api-protocol').value,
@@ -8469,7 +8549,21 @@ async function submitEnvironmentAPI(save) {
         model: input('environment-api-model').value.trim(),
         api_key: input('environment-api-key').value,
         ...view.engine === 'claude' ? {
-            auth_mode: input('environment-api-auth').value
+            auth_mode: input('environment-api-auth').value,
+            api_scope: input('environment-api-scope').value,
+            claude_roles: {
+                mode: roleMode,
+                ...Object.fromEntries([
+                    'opus',
+                    'sonnet',
+                    'haiku',
+                    'fable',
+                    'subagent'
+                ].map((id)=>[
+                        id,
+                        roleMode === 'custom' ? input('environment-api-role-' + id).value.trim() : ''
+                    ]))
+            }
         } : {}
     };
     environmentAPIBusy = true;
@@ -8492,7 +8586,8 @@ async function submitEnvironmentAPI(save) {
                     mimo_config: out.mimo_config,
                     mimo_model: 'duo-mimo/' + out.model
                 } : {
-                    claude_model: out.model
+                    claude_model: out.model,
+                    claude_api_config: out.claude_api_config || ''
                 };
                 for (const key of Object.keys(values)){
                     if (draft && draft[key] === saved[key]) draft[key] = values[key];

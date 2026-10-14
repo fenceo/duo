@@ -34,12 +34,9 @@ func claudeAPISettings(r EngineSetupRequest) []byte {
 	}
 	variables["ANTHROPIC_BASE_URL"] = strings.TrimRight(r.BaseURL, "/")
 	variables["ANTHROPIC_MODEL"] = r.Model
+	applyClaudeRoles(variables, r.Model, r.BaseURL, r.ClaudeRoles)
 	if r.BaseURL != "" && r.Model != "" {
-		for _, key := range []string{"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
-			variables[key] = r.Model
-		}
 		variables["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-		variables["CLAUDE_CODE_SUBAGENT_MODEL"] = r.Model
 	}
 	data, _ := json.MarshalIndent(map[string]any{"env": variables}, "", "  ")
 	return data

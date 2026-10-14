@@ -17,18 +17,19 @@ import (
 )
 
 type EngineSetupRequest struct {
-	ExpectedPath  string `json:"expected_path,omitempty"`
-	ID            string `json:"id"`
-	Action        string `json:"action"`
-	EnvironmentID string `json:"environment_id"`
-	Engine        string `json:"engine"`
-	Name          string `json:"name"`
-	Login         string `json:"login"`
-	APIKey        string `json:"api_key"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
-	APIProtocol   string `json:"api_protocol,omitempty"`
-	AuthMode      string `json:"auth_mode,omitempty"`
+	ExpectedPath  string            `json:"expected_path,omitempty"`
+	ID            string            `json:"id"`
+	Action        string            `json:"action"`
+	EnvironmentID string            `json:"environment_id"`
+	Engine        string            `json:"engine"`
+	Name          string            `json:"name"`
+	Login         string            `json:"login"`
+	APIKey        string            `json:"api_key"`
+	BaseURL       string            `json:"base_url"`
+	Model         string            `json:"model"`
+	APIProtocol   string            `json:"api_protocol,omitempty"`
+	AuthMode      string            `json:"auth_mode,omitempty"`
+	ClaudeRoles   *ClaudeRoleModels `json:"claude_roles,omitempty"`
 }
 type EngineSetupJob struct {
 	Version       string `json:"version,omitempty"`
@@ -45,29 +46,33 @@ type EngineSetupJob struct {
 	cancel        context.CancelFunc
 }
 type EngineSetup struct {
-	updatingTarget  *Environment
-	updatingEngine  string
-	verifyVersion   func(context.Context, Environment, string) (string, error)
-	mu              sync.Mutex
-	jobs            map[string]*EngineSetupJob
-	active          bool
-	account         func(context.Context, Environment, string, string, string, func(string, string)) error
-	accountHome     func(context.Context, Environment, string, string, string, map[string][]byte) (string, error)
-	install         func(context.Context, string, string, func(string)) (string, error)
-	remoteInstall   func(context.Context, Environment, string, string, func(string)) (string, error)
-	harnessRead     func(context.Context, Environment, string, string) (map[string][]byte, error)
-	harnessWrite    func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
-	harnessDiscover func(context.Context, Environment, HarnessAPIRequest) HarnessDiscovery
-	apiDirectory    func(context.Context, Environment) (string, error)
+	updatingTarget     *Environment
+	updatingEngine     string
+	verifyVersion      func(context.Context, Environment, string) (string, error)
+	mu                 sync.Mutex
+	jobs               map[string]*EngineSetupJob
+	active             bool
+	account            func(context.Context, Environment, string, string, string, func(string, string)) error
+	accountHome        func(context.Context, Environment, string, string, string, map[string][]byte) (string, error)
+	install            func(context.Context, string, string, func(string)) (string, error)
+	remoteInstall      func(context.Context, Environment, string, string, func(string)) (string, error)
+	harnessRead        func(context.Context, Environment, string, string) (map[string][]byte, error)
+	harnessWrite       func(context.Context, Environment, string, string, map[string][]byte, map[string][]byte) error
+	harnessDiscover    func(context.Context, Environment, HarnessAPIRequest) HarnessDiscovery
+	apiDirectory       func(context.Context, Environment) (string, error)
+	claudeAPIDirectory func(context.Context, Environment) (string, error)
 }
 
 func newEngineSetup() *EngineSetup {
-	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels, apiDirectory: mimoAPIDirectory, verifyVersion: func(ctx context.Context, env Environment, path string) (string, error) {
+	return &EngineSetup{jobs: map[string]*EngineSetupJob{}, account: setupCodexAccount, accountHome: createManagedAccountHome, install: installManagedEngine, remoteInstall: installRemoteEngine, harnessRead: readNativeAccountFiles, harnessWrite: writeNativeAccountFiles, harnessDiscover: discoverHarnessModels, apiDirectory: mimoAPIDirectory, claudeAPIDirectory: claudeAPIDirectory, verifyVersion: func(ctx context.Context, env Environment, path string) (string, error) {
 		return readEngineVersion(ctx, exactEngineProbe, env, path)
 	}}
 }
 
 func validateEngineSetup(r EngineSetupRequest, env Environment) error {
+	if err := validateClaudeRoles(r.Engine, r.ClaudeRoles); err != nil {
+		return err
+	}
 	if !safeWorkbenchID(r.ID) || len(r.ID) > 48 {
 		return errors.New("请求标识无效")
 	}

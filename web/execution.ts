@@ -104,13 +104,14 @@ async function testModelList(target:ModelPickerTarget){
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   const profileID=profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=profiles.profiles.find(item=>item.id===profileID);
   if(profileID&&!profile)throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
-  const account=context.engine==='mimo'?'所选环境当前 MiMo API 配置':profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
-  const provider=context.engine==='mimo'?(catalog.apiEndpoint||'所选环境 API'):context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
+  const scopedClaude=context.engine==='claude'&&!!catalog.apiTarget;
+  const account=scopedClaude?'所选环境的 Duo 专用 Claude API':context.engine==='mimo'?'所选环境当前 MiMo API 配置':profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
+  const provider=context.engine==='mimo'||scopedClaude?(catalog.apiEndpoint||'所选环境 API'):context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
   const scope=context.engine==='mimo'?'每个模型仅发送一条最小 API 文本请求，不创建 CLI 会话、不附加任务对话或附件、不读取项目指令、不调用工具。结果只验证 API 文本可用性，不能代表 CLI 工具或长会话能力。':'每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令。';
   if(!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   state.rows=Object.fromEntries(models.map(id=>[id,{status:'pending' as const}]));state.summary='正在建立测试连接…';renderModelProbe(target);
-  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(context.engine==='mimo'?{expected_api_target:catalog.apiTarget}:{}),...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
+  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(context.engine==='mimo'||scopedClaude?{expected_api_target:catalog.apiTarget}:{}),...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
    if(!modelProbeStillCurrent(target,state))return;
    if(event.type==='model_start'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model))state.rows[event.model]={status:'testing'};
    if(event.type==='result'){

@@ -45,6 +45,8 @@ func nativeAccountNames(engine string) ([]string, error) {
 		return []string{"auth.json", "config.toml"}, nil
 	case "claude":
 		return []string{".credentials.json", "settings.json"}, nil
+	case "claude-api":
+		return []string{"duo-api.json"}, nil
 	case "deepseek-harness":
 		return []string{".credentials.yaml", "cordis.patch.yml"}, nil
 	case "mimo":
@@ -76,6 +78,9 @@ func localAccountDirectory(dir, engine string) (string, error) {
 		}
 	}
 	if dir == "" {
+		if engine == "claude-api" {
+			engine = "claude"
+		}
 		key := "CODEX_HOME"
 		if engine == "claude" {
 			key = "CLAUDE_CONFIG_DIR"

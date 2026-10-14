@@ -116,6 +116,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	launch := launcher
 	if engine == "claude" {
 		args = claudeArgs(t)
+		if path := c.EngineEnv["DUO_CLAUDE_SETTINGS"]; path != "" {
+			args = append(args, "--settings", path)
+		}
 		binary = c.Claude
 		if binary == "" {
 			kind := "windows"
@@ -127,18 +130,22 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 		launch = claudeLauncher
 	}
 	if c.Distro != "" || c.SSHHost != "" {
+		targetCommand := command
+		if engine == "claude" {
+			targetCommand = mimoTargetCommand
+		}
 		if c.HardwareAI != nil {
 			if engine == "claude" {
 				args = append(args, claudeHardwareArgs(c.HardwareAI)...)
 			}
 			base := []string{"python3", "-u", "-c", hardwareLauncher, t.Workspace, binary}
-			return command(c, withEngineEnv(append(base, args...), c.EngineEnv)...), nil
+			return targetCommand(c, withEngineEnv(append(base, args...), c.EngineEnv)...), nil
 		}
 		base := []string{"python3", "-u", "-c", launch}
 		if engine == "claude" {
 			base = append(base, t.Workspace)
 		}
-		return command(c, withEngineEnv(append(append(base, binary), args...), c.EngineEnv)...), nil
+		return targetCommand(c, withEngineEnv(append(append(base, binary), args...), c.EngineEnv)...), nil
 	}
 	if engine == "claude" && c.HardwareAI != nil {
 		args = append(args, claudeHardwareArgs(c.HardwareAI)...)

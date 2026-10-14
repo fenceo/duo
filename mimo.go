@@ -127,7 +127,7 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 }
 
 // WSL's default shell strips JSON quotes and expands shell syntax in env
-// arguments. Execute MiMo's launcher directly, like Codex's ACP launcher;
+// arguments. Execute native engine launchers directly, like Codex's ACP launcher;
 // SSH already quotes each argument in sshCommand. Keep the selected user and
 // minimal Windows host environment unchanged.
 func mimoTargetCommand(c Config, args ...string) *exec.Cmd {

@@ -298,11 +298,21 @@ func engineProfileEnv(profile EngineCredentialProfile) map[string]string {
 
 func (a *App) activeEngineEnvironment(task Task) map[string]string {
 	// Credentials belong to the native environment; legacy task profiles are inert.
-	if task.Engine == "codex" || task.Engine == "claude" {
+	if task.Engine == "codex" {
 		return nil
 	}
 	if task.Environment == nil {
 		return nil
+	}
+	if task.Engine == "claude" {
+		env := *task.Environment
+		if current, err := a.config.get().environment(env.ID); err == nil && sameEngineTarget(current, env) {
+			env = current
+		}
+		if env.ClaudeAPIConfig == "" && task.Environment.ClaudeAPIConfig == "" {
+			return nil
+		}
+		return map[string]string{"DUO_CLAUDE_SETTINGS": env.ClaudeAPIConfig}
 	}
 	if task.Engine == "mimo" {
 		env := *task.Environment

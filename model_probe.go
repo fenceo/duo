@@ -240,6 +240,8 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	runtime := runtimeConfig(c, env)
 	if boundTask != nil {
 		runtime.EngineEnv = s.app.activeEngineEnvironment(*boundTask)
+	} else if request.Engine == "claude" {
+		runtime.EngineEnv = s.app.activeEngineEnvironment(Task{Engine: "claude", Environment: &env})
 	} else if profileID != "" && request.Engine != "codex" && request.Engine != "claude" {
 		found := false
 		for _, profile := range s.app.store.engineProfiles() {
@@ -262,6 +264,28 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
 	defer cancel()
 	probe := probeOneModel
+	if request.Engine == "claude" {
+		if runtime.EngineEnv["DUO_CLAUDE_SETTINGS"] == "" && request.ExpectedAPITarget != "" {
+			fail(w, 409, "Duo Claude 专用配置已停用，请重新读取模型列表并确认测试")
+			return
+		}
+		if path := runtime.EngineEnv["DUO_CLAUDE_SETTINGS"]; path != "" {
+			dir, kind, e := claudeAPIConfigLocation(path)
+			if e != nil {
+				fail(w, 400, "Duo Claude 配置路径无效")
+				return
+			}
+			files, e := s.app.engineSetup.harnessRead(ctx, env, dir, kind)
+			if e != nil {
+				fail(w, 400, "Duo Claude 配置无法读取")
+				return
+			}
+			if request.ExpectedAPITarget == "" || request.ExpectedAPITarget != hash(string(files["duo-api.json"])) {
+				fail(w, 409, "Duo Claude API 或角色配置已变化，请重读模型列表并确认测试")
+				return
+			}
+		}
+	}
 	if request.Engine == "mimo" {
 		selected := s.app.activeEngineEnvironment(Task{Engine: "mimo", Environment: &env})
 		if boundTask != nil {

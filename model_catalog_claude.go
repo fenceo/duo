@@ -97,6 +97,9 @@ func configuredClaudeCatalog(ctx context.Context, env Environment, profileEnv ..
 	if len(profileEnv) > 0 {
 		selected = profileEnv[0]
 	}
+	if path := claudeScopedSettingsPath(env, selected); path != "" {
+		return scopedClaudeCatalog(ctx, env, path)
+	}
 	workspace := ""
 	if len(env.Workspaces) > 0 {
 		workspace = env.Workspaces[0]

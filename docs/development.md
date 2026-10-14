@@ -128,6 +128,10 @@ Remove-Item Env:DUO_MIMO_WSL_DISTRO,Env:DUO_MIMO_WSL_USER,Env:DUO_MIMO_WSL_BINAR
 
 需在普通 Windows 用户上下文执行。回归检查 JSON 与 shell 字符原样传递、未预先注册的模型、权限配置、短回复、同一原生会话恢复及历史保留，结束后移除隔离的模拟数据；不修改用户配置。
 
+## Claude 专用 API WSL 隔离回归
+
+设置 `DUO_CLAUDE_WSL_SCOPE_FIXTURE=1`，并通过 `DUO_CLAUDE_WSL_DISTRO`、`DUO_CLAUDE_WSL_USER` 指定已安装发行版和目标用户，运行 `go test -run '^TestClaudeScopedAPINativeWSLFilesAndInvocation$' -count=1 -v`。测试在独立 WSL 临时目录内使用真实配置文件读写 helper 和合成 Claude CLI，检查原登录/设置字节保持不变、角色目录和配置版本、带引号及 shell 字符的路径、权限参数与原会话恢复参数。它不启动用户的 Claude CLI、不读取真实 Key、不访问模型；结束后只清理自身经过目录边界校验的临时目录。普通全量测试默认跳过此用例。
+
 ## 发布新版本
 
 维护者约定：每轮完成的功能优化都发布正式 Release，不以仅推送提交或本地体验构建代替。当前任务明确要求暂不发布时例外；测试失败或发布受阻时说明原因，不跳过校验。
