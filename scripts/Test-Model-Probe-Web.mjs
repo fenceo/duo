@@ -7,15 +7,15 @@ import assert from 'node:assert/strict';
 const source=await readFile(new URL('../web/execution.ts',import.meta.url),'utf8');
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(){
- const nodes=new Map(),requests=[],confirmations=[],metadata=[];
+ const nodes=new Map(),requests=[],confirmations=[],metadata=[],timers=new Map();let clock=1000,timerID=0;
  const node=id=>{
   if(!nodes.has(id)){const classes=new Set();nodes.set(id,{value:'',textContent:'',innerHTML:'',disabled:false,attributes:{},setAttribute(k,v){this.attributes[k]=v},classList:{add(v){classes.add(v)},remove(v){classes.delete(v)},contains(v){return classes.has(v)},toggle(v,on){on?classes.add(v):classes.delete(v)}}})}
   return nodes.get(id);
  };
  const environment={id:'wsl',name:'WSL synthetic',type:'wsl',model:'default-model',harness_model:'gateway-default',harness_provider:'fixture-gateway',workspaces:['/tmp/probe']};
  const profiles={active_profile:{'wsl:codex':'account-one'},profiles:[{id:'account-one',name:'工作账号',engine:'codex',environment_id:'wsl',kind:'codex_home'}]};
- const f={nodes,node,requests,confirmations,metadata,environment,profiles,allowed:true,statuses:['available','unavailable','timeout'],hold:false,events:null,fail:0};
- const ctx=createContext({console,URLSearchParams,AbortController,TextDecoder,Date,modelRequest:0,shellEpoch:1,csrf:'fixture-csrf',creatingTask:true,createSubmitting:false,detail:null,settings:{config:{environments:[environment]}},element:node,input:node,button:node,escapeHTML:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),engineCredentialLabel:()=> 'Codex 配置目录',confirm:message=>{confirmations.push(message);return f.allowed},api:async(path,method,body)=>{metadata.push({path,method,body});return profiles},fetch:async(path,options)=>{
+ const f={nodes,node,requests,confirmations,metadata,environment,profiles,timers,advance(ms){clock+=ms;for(const callback of [...timers.values()])callback()},allowed:true,statuses:['available','unavailable','timeout'],hold:false,events:null,fail:0};
+ const ctx=createContext({console,URLSearchParams,AbortController,TextDecoder,Date:class extends Date{static now(){return clock}},setInterval(callback){timers.set(++timerID,callback);return timerID},clearInterval(id){timers.delete(id)},modelRequest:0,shellEpoch:1,csrf:'fixture-csrf',creatingTask:true,createSubmitting:false,detail:null,settings:{config:{environments:[environment]}},element:node,input:node,button:node,escapeHTML:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),engineCredentialLabel:()=> 'Codex 配置目录',confirm:message=>{confirmations.push(message);return f.allowed},api:async(path,method,body)=>{metadata.push({path,method,body});return profiles},fetch:async(path,options)=>{
   requests.push({path,options,body:JSON.parse(options.body)});
   if(f.fail)return new Response(JSON.stringify({error:'fixture HTTP '+f.fail}),{status:f.fail,headers:{'Content-Type':'application/json'}});
   const encoder=new TextEncoder();let control;
@@ -166,5 +166,54 @@ for(const field of ['distro','user','host','port','identity','claude','type','de
  const f=fixture();f.value("createModels=Array.from({length:25},(_,i)=>({id:'m'+i,name:''}))");f.ctx.renderModelMenu('create');
  assert.equal(f.node('test-models').disabled,true);assert.match(f.node('models-status').textContent,/一次最多测试 24 项，本列表 25 项/);
 }
-assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\),element\('stop-model-test'\)\)/);
-console.log('PASS: full unique catalog/account/cost confirmation, limits, streaming badges, cancellation, HTTP409/network unverified status, profile/context isolation and no task mutation. Synthetic only.');
+assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\),element\('stop-model-test'\),element\('model-latency-controls'\)\)/);
+
+for(const choice of ['selected','custom','default']){
+ const f=fixture();f.node('model-search').value='model-a';f.node('create-model').value=choice==='selected'?'model-b':choice==='custom'?'__custom__':'';f.node('custom-model').value='typed-model';f.value("modelCatalogState.create.defaultModel='native-default'");f.node('model-test-timeout').value='300';
+ await f.ctx.testModelList('create','latency');
+ assert.equal(f.requests.length,1);assert.deepEqual(f.requests[0].body.models,[choice==='selected'?'model-b':choice==='custom'?'typed-model':'native-default']);assert.equal(f.requests[0].body.mode,'latency');assert.equal(f.requests[0].body.timeout_seconds,300);
+ for(const text of ['仅测试当前选定的一个模型','等待上限：300 秒','CLI 启动及重试','独立的新测试会话','不恢复当前任务','可能消耗模型额度'])assert(f.confirmations[0].includes(text));
+ assert.match(f.node('model-test-result').textContent,/服务未提供首段回复计时/,'older streams without a first-response metric must remain honest');assert.equal(f.timers.size,0);
+}
+for(const kind of ['unresolved-default','invalid-model','invalid-timeout','mimo']){
+ const f=fixture();f.node('create-model').value=kind==='invalid-model'?'bad\nmodel':kind==='unresolved-default'?'':'model-b';
+ if(kind==='invalid-timeout')f.node('model-test-timeout').value='0';
+ if(kind==='mimo'){f.node('create-engine').value='mimo';f.value('modelCatalogState.create.key=currentCreateCatalogContext().key')}
+ await f.ctx.testModelList('create','latency');assert.equal(f.requests.length,0);assert.equal(f.confirmations.length,0);assert.equal(f.timers.size,0);
+ if(kind==='unresolved-default')assert.match(f.node('model-test-result').textContent,/不会猜测默认模型/,'environment.model does not resolve the native default');
+ if(kind==='mimo'){f.ctx.syncModelTestButton();assert(f.node('test-model-latency').disabled);assert.match(f.node('test-model-latency').title,/非流式/)}
+}
+for(const status of ['available','unavailable','timeout']){
+ const f=fixture();f.hold=true;f.node('create-model').value='model-b';const pending=f.ctx.testModelList('create','latency');await flush();
+ assert.equal(f.requests[0].body.timeout_seconds,180);assert(f.node('test-model-latency').disabled);assert(f.node('model-test-timeout').disabled);assert(!f.node('stop-model-test').disabled);
+ f.advance(12000);assert.match(f.node('model-test-result').textContent,/已等待 12 秒/);assert.match(f.node('model-test-result').textContent,/正在等待首段回复/);
+ f.events.emit({type:'model_start',model:'model-b'});f.events.emit({type:'heartbeat',model:'model-b',elapsed_ms:13000});await flush();assert.match(f.node('model-test-result').textContent,/正在等待首段回复/);
+ f.events.emit({type:'model_response',model:'model-b',first_response_ms:1420,timing_source:'stream_text'});await flush();assert.match(f.node('model-test-result').textContent,/首段回复 1\.42 秒/);
+ f.events.emit({type:'result',result:{model:'model-b',status,message:'fixture',duration_ms:180000}});f.events.emit({type:'done'});f.events.close();await pending;
+ assert.match(f.node('model-test-result').textContent,/首段回复 1\.42 秒/);assert.match(f.node('model-test-result').textContent,/总耗时 180\.00 秒/);assert.doesNotMatch(f.node('model-test-result').textContent,/首段回复 180/);assert.equal(f.timers.size,0);assert(!f.node('model-test-timeout').disabled);
+}
+{
+ const f=fixture();f.hold=true;f.node('create-model').value='model-a';const pending=f.ctx.testModelList('create','latency');await flush();
+ f.events.emit({type:'result',result:{model:'model-a',status:'timeout',message:'fixture',duration_ms:180000,timeout_seconds:180}});f.events.emit({type:'done'});f.events.close();await pending;
+ assert.match(f.node('model-test-result').textContent,/未收到首段回复/);assert.match(f.node('model-test-result').textContent,/总耗时 180\.00 秒/);assert.equal(f.timers.size,0);
+}
+{
+ const f=fixture();f.hold=true;f.node('create-model').value='model-a';const pending=f.ctx.testModelList('create','latency');await flush();
+ f.events.emit({type:'model_response',model:'model-a',first_response_ms:0,timing_source:'completed_text'});await flush();f.ctx.stopModelTest('create');await pending;
+ assert.match(f.node('model-test-result').textContent,/首段回复 0\.00 秒（从完成结果观测）/);assert.match(f.node('model-test-result').textContent,/已取消 1/);assert.equal(f.timers.size,0);
+}
+for(const changed of ['environment','engine','workspace','profile','shell','closed','invalidate']){
+ const f=fixture();f.hold=true;f.node('create-model').value='model-a';const pending=f.ctx.testModelList('create','latency');await flush();
+ if(changed==='environment')f.environment.user='changed';if(changed==='engine')f.node('create-engine').value='claude';if(changed==='workspace')f.node('create-workspace').value='/changed';if(changed==='profile')f.value('modelProfileRevision++');if(changed==='shell')f.ctx.shellEpoch++;if(changed==='closed')f.ctx.creatingTask=false;if(changed==='invalidate')f.ctx.invalidateModelTest();
+ f.node('model-test-result').textContent='fresh context';f.advance(1000);await pending;
+ assert.equal(f.timers.size,0,changed+' timer cleanup');assert(f.requests[0].options.signal.aborted);assert.equal(f.node('model-test-result').textContent,'fresh context');
+}
+for(const altered of ['none','host','manual-current','unrecognized-previous']){
+ const f=fixture();f.ctx.creatingTask=false;f.environment.codex='/tools/new';f.environment.managed_tools={codex:{path:'/tools/new',version:'1.2.3',previous_paths:['/tools/old']}};
+ f.ctx.detail={task:{id:'upgraded-task',environment:{...f.environment,codex:'/tools/old'},engine:'codex',workspace:'/task',model:'picked',session:'preserved',binding:{revision:'preserved-revision'}}};
+ if(altered==='host')f.ctx.detail.task.environment.host='other';if(altered==='manual-current')f.environment.codex='/tools/manual';if(altered==='unrecognized-previous')f.ctx.detail.task.environment.codex='/tools/custom';
+ f.value("modelCatalogState.task.key=taskCatalogContextKey(detail.task);modelCatalogState.task.defaultModel='native-default'");
+ const before=JSON.stringify(f.ctx.detail.task);await f.ctx.testModelList('task','latency');assert.equal(f.requests.length,altered==='none'?1:0,altered+' managed update compatibility');assert.equal(JSON.stringify(f.ctx.detail.task),before);
+ if(altered==='none'){assert.deepEqual(f.requests[0].body.models,['picked']);assert.equal(f.requests[0].body.task_id,'upgraded-task');assert.equal(f.requests[0].body.binding_revision,'preserved-revision')}
+}
+console.log('PASS: list probes and one-model latency, explicit native default, cost confirmation, first-vs-total timing, waits/cancel/stale timer cleanup, MiMo limits, managed CLI snapshots and no task mutation. Synthetic only.');

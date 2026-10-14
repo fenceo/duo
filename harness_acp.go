@@ -324,7 +324,7 @@ retryWorker:
 	if _, err := harnessPromptContent(input, t.Files, w.imageInput); err != nil {
 		return session, "", err
 	}
-	setup, cancel := context.WithTimeout(ctx, 60*time.Second)
+	setup, cancel := context.WithTimeout(ctx, modelProbeStageTimeout(ctx, 60*time.Second))
 	if w.session == "" {
 		session, runErr = w.prepareSession(setup, c, t, emit)
 	} else {

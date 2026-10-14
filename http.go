@@ -302,7 +302,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/settings", s.secure(s.settings))
 	m.HandleFunc("POST /api/data/switch", s.secure(s.switchDataDirectory))
 	m.HandleFunc("GET /api/environments/{id}/models", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		env, e := s.app.config.get().environment(r.PathValue("id"))
+		config := s.app.config.get()
+		env, e := config.environment(r.PathValue("id"))
 		if e != nil {
 			fail(w, 404, e.Error())
 			return
@@ -355,6 +356,11 @@ func (s *Server) Handler() http.Handler {
 				profileEnv = engineProfileEnv(*profile)
 			}
 		}
+		// Catalog reads must follow the same verified CLI replacement as task
+		// execution, while preserving the task's stored target and snapshot.
+		env.Codex = managedEnginePath(config, env, "codex")
+		env.Claude = managedEnginePath(config, env, "claude")
+		env.Harness = managedEnginePath(config, env, "deepseek-harness")
 		var models ModelList
 		if engine == "mimo" {
 			models, e = s.app.mimoAPICatalog(r.Context(), env, profileEnv)

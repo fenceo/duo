@@ -243,7 +243,7 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 	session := t.Session
 	result := ""
 	failure := ""
-	claude := claudeStream{session: t.Session}
+	claude := claudeStream{session: t.Session, probeText: modelProbeTextObserver(ctx)}
 	diagnostic := ""
 	stopFailure := ""
 	cleanupDone := make(chan struct{})

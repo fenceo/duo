@@ -17,7 +17,7 @@ export async function startFixtureBrowser(executable,output){
    try{port=(await readFile(path.join(profile,'DevToolsActivePort'),'utf8')).split(/\r?\n/)[0];break}catch{await pause()}
   }
   if(!/^\d+$/.test(port||''))throw Error('Browser debugging endpoint was not created.');
-  const version=await(await fetch('http://127.0.0.1:'+port+'/json/version',{signal:AbortSignal.timeout(5000)})).json();
+  const version=await(await fetch('http://127.0.0.1:'+port+'/json/version',{signal:AbortSignal.timeout(30000)})).json();
   const url=new URL(version.webSocketDebuggerUrl);if(url.hostname!=='127.0.0.1'||url.protocol!=='ws:'||url.port!==port)throw Error('Unexpected browser endpoint.');
   socket=new WebSocket(url);await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true})});
   const pending=new Map();let sequence=0;
@@ -37,7 +37,11 @@ export async function startFixtureBrowser(executable,output){
     if(!ready)throw Error('Synthetic page did not finish loading.');
     await page('Runtime.evaluate',{expression:'document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))',awaitPromise:true});
     const result=await page('Runtime.evaluate',{expression:"document.getElementById('layout-metrics').textContent",returnByValue:true});
-    const screenshot=await page('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+    let screenshot;
+    for(let attempt=0;attempt<3;attempt++){
+     try{screenshot=await page('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});break}
+     catch(error){if(attempt===2||!error.message.includes('Unable to capture screenshot'))throw error;await pause()}
+    }
     return {metrics:JSON.parse(result.result.value),png:Buffer.from(screenshot.data,'base64')};
    },
    async close(){try{await send('Browser.close')}catch{}finally{socket.close();if(child.exitCode===null)child.kill()}},

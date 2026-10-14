@@ -53,6 +53,16 @@ Get-ChildItem scripts/Test-*-Web.mjs | ForEach-Object {
 `Test-Model-Probe-Web.mjs` 覆盖列表模型的明确范围确认、空列表拒绝、逐项流式结果、
 停止与中断、重复点击锁和过期测试结果隔离。以上只使用内存 fixture，不消耗模型额度。
 
+`Test-Model-Latency-Web.mjs` 验证已挂载模型菜单的单模型延时入口、等待上限、停止和计时器清理。Go 的 `testing/synctest` 覆盖虚拟 70 秒首回复及超时；若要验证实际进程等待超过一分钟，可显式运行以下合成 CLI 测试，不读取原账号、不调用真实模型：
+
+```powershell
+$env:DUO_TEST_PROBE_LATENCY_SLOW='1'
+go test ./... -run '^TestModelProbeLatencyNative(BeyondMinute|DelayedReplyBeyondMinute)$' -count=1 -v -timeout=4m
+Remove-Item Env:\DUO_TEST_PROBE_LATENCY_SLOW
+```
+
+浏览器布局默认检查全部合成视图；可临时设置 `DUO_UI_VIEWS='modellatency'` 仅复核延时结果的桌面和窄屏视图。发布流程不设置该筛选。
+
 需要在真实浏览器点击验收时，显式启动隔离 HTTP fixture：
 
 ```powershell

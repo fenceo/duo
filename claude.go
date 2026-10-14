@@ -208,6 +208,7 @@ func checkEngine(c Config, engine string) (string, error) {
 // Only stdout's reader owns this state. A result event is required, so a
 // truncated stream or a denied tool call cannot be reported as success.
 type claudeStream struct {
+	probeText                               func(string, string)
 	session, result, failure, lastAssistant string
 	finished                                bool
 }
@@ -284,6 +285,9 @@ func (s *claudeStream) consume(line string, emit func(string, string)) {
 			}
 		}
 		if text := strings.Join(texts, "\n"); text != "" {
+			if s.probeText != nil {
+				s.probeText(text, "completed_text")
+			}
 			s.lastAssistant = text
 			emit("assistant", text)
 		}
@@ -305,6 +309,9 @@ func (s *claudeStream) consume(line string, emit func(string, string)) {
 			}
 		}
 	case "result":
+		if s.probeText != nil && !v.IsError && !strings.HasPrefix(v.Subtype, "error") && len(v.PermissionDenials) == 0 {
+			s.probeText(v.Result, "completed_text")
+		}
 		emitUsage("claude", v.Usage, emit)
 		s.finished = true
 		s.result = v.Result

@@ -320,7 +320,7 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		close(w.done)
 		cleanup()
 	}()
-	initctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	initctx, cancel := context.WithTimeout(ctx, modelProbeStageTimeout(ctx, 60*time.Second))
 	defer cancel()
 	if len(bootstrap) > 0 {
 		if err = w.write(initctx, append(bootstrap, '\n')); err != nil {

@@ -1,10 +1,11 @@
 type EngineModel={id:string;name:string;reasoning_levels?:string[]|null;default_reasoning?:string;origin?:'native'|'cache'|'configured';engine?:string};
 type ModelListResponse={models:EngineModel[];modified:number;message?:string;source:string;status?:'ready'|'fallback'|'empty';default_model?:string;api_target?:string;api_endpoint?:string};
-type ModelProbeResult={model:string;status:'available'|'unavailable'|'timeout';message:string;duration_ms:number};
+type ModelProbeTiming={first_response_ms?:number;duration_ms?:number;timeout_seconds?:number;timing_source?:string};
+type ModelProbeResult=ModelProbeTiming&{model:string;status:'available'|'unavailable'|'timeout';message:string;duration_ms:number};
 type ModelProbeResponse={engine:string;workspace:string;results:ModelProbeResult[]};
 type ModelProbeStatus=ModelProbeResult['status']|'pending'|'testing'|'cancelled'|'unverified';
-type ModelProbeRow={status:ModelProbeStatus;message?:string;duration_ms?:number};
-type ModelProbeState={key:string;models:string[];rows:Record<string,ModelProbeRow>;summary:string;busy:boolean;controller?:AbortController};
+type ModelProbeRow=ModelProbeTiming&{status:ModelProbeStatus;message?:string};
+type ModelProbeState={key:string;models:string[];rows:Record<string,ModelProbeRow>;summary:string;busy:boolean;mode?:'availability'|'latency';timeout_seconds?:number;started_at?:number;timer?:ReturnType<typeof setInterval>;controller?:AbortController};
 type ModelPickerTarget='create'|'task';
 let createModels:EngineModel[]=[];
 let createResolvedDefault='';
@@ -12,7 +13,7 @@ let taskPickerModels:EngineModel[]=[];
 let taskModelRequest=0,modelTestRequest=0,modelProfileRevision=0;
 let modelTestBusy=false;
 const modelProbeStates:Record<ModelPickerTarget,ModelProbeState>={create:{key:'',models:[],rows:{},summary:'',busy:false},task:{key:'',models:[],rows:{},summary:'',busy:false}};
-type ModelCatalogState={loading:boolean;key:string;summary:string;details:string;failed:boolean;apiTarget?:string;apiEndpoint?:string};
+type ModelCatalogState={loading:boolean;key:string;summary:string;details:string;failed:boolean;apiTarget?:string;apiEndpoint?:string;defaultModel?:string};
 const modelCatalogState:Record<ModelPickerTarget,ModelCatalogState>={create:{loading:false,key:'',summary:'',details:'',failed:false},task:{loading:false,key:'',summary:'',details:'',failed:false}};
 const modelCatalogControllers:Partial<Record<ModelPickerTarget,AbortController>>={};
 const effortLabels:Record<string,string>={off:'关闭',none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
@@ -47,10 +48,19 @@ function installExecution(){
  button('check-harness').onclick=async()=>{button('check-harness').disabled=true;try{const r=await api('check','POST',{environment_id:editingID,engine:'deepseek-harness'});element('check-result').textContent=(r.ok?'Harness 基础检查通过（不代表模型调用成功）\n':'Harness 检查失败\n')+r.output+'\n检查使用已保存的环境配置；可在新建任务中测试模型调用。'}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-harness').disabled=false}};
 }
 function modelListIDs(target:ModelPickerTarget){return [...new Set((target==='create'?createModels:taskPickerModels).map(model=>model.id.trim()).filter(id=>id&&id!=='__custom__'))]}
+function modelLatencyID(target:ModelPickerTarget){
+ const selected=target==='create'?input('create-model').value:(detail?.task.model||'');
+ return (selected==='__custom__'?(target==='create'?input('custom-model').value:''):selected||modelCatalogState[target].defaultModel||'').trim();
+}
+function validProbeModel(id:string){return !!id&&id!=='__custom__'&&id.length<=120&&!/[\0\r\n]/.test(id)}
 function taskModelProbeMismatch(){
  if(!detail)return '';
  const previous=detail.task.environment,current=settings.config.environments.find(env=>env.id===previous.id),engine=detail.task.engine||'codex';
- const identity=(env:Environment)=>[env.type,env.distro||'',env.user||'',env.host||'',env.port||0,env.identity||'',engine==='mimo'?(env.mimo||'mimo'):engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex'),engine==='deepseek-harness'?(env.harness_provider||'deepseek-official'):''];
+ const path=(env:Environment)=>engine==='mimo'?(env.mimo||'mimo'):engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex');
+ const target=(env:Environment)=>[env.id,env.type,env.distro||'',env.user||'',env.host||'',env.port||0,env.identity||''];
+ const managed=current?.managed_tools?.[engine],sameTarget=!!current&&JSON.stringify(target(previous))===JSON.stringify(target(current));
+ const followsUpdate=sameTarget&&managed?.path===path(current!)&&managed.previous_paths.includes(path(previous));
+ const identity=(env:Environment)=>[...target(env),env===previous&&followsUpdate?managed!.path:path(env),engine==='deepseek-harness'?(env.harness_provider||'deepseek-official'):''];
  return !current||JSON.stringify(identity(previous))!==JSON.stringify(identity(current))?'任务保留旧执行环境，请在新建任务中测试当前配置。':'';
 }
 function modelListProbeContext(target:ModelPickerTarget){
@@ -64,13 +74,16 @@ function syncModelTestButton(){
   const prefix=target==='create'?'':'task-',control=button(prefix+'test-models'),stop=button(prefix+'stop-model-test'),state=modelProbeStates[target],count=modelListIDs(target).length;
   const mimo=target==='create'?input('create-engine')?.value==='mimo':detail?.task.engine==='mimo';
   if(control){control.textContent=(mimo?'测试 API 模型':'测试列表模型')+(count?'（'+count+'）':'');control.disabled=modelTestBusy||modelCatalogState[target].loading||modelCatalogState[target].failed||mimo&&!modelCatalogState[target].apiTarget||count===0||count>24||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());control.title=count>24?'每次最多测试 24 个模型；请精简该环境的模型配置':mimo&&!modelCatalogState[target].apiTarget?'请先配置此环境的 MiMo API 并重新读取模型目录':mimo?'逐个发送最小 API 文本请求；不创建 CLI 会话，不调用工具，不读取项目文件。可能消耗额度。':'逐个测试完整列表，不受搜索筛选影响'}
+  const latency=button(prefix+'test-model-latency'),timeout=element<HTMLSelectElement>(prefix+'model-test-timeout');
+  if(latency){const model=modelLatencyID(target);latency.disabled=modelTestBusy||mimo||modelCatalogState[target].loading||modelCatalogState[target].failed||!validProbeModel(model)||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());latency.title=mimo?'MiMo 当前 API 为非流式，暂不支持首段回复延时测试':model?'仅测试 '+model+'；包含 CLI 启动及重试时间，可能消耗模型额度':'请明确选择模型，或重新读取能提供默认模型的目录；不会猜测默认模型'}
+  if(timeout)timeout.disabled=modelTestBusy||mimo;
   if(stop){stop.classList.toggle('hidden',!state.busy);stop.disabled=!!state.controller?.signal.aborted}
  }
 }
 function invalidateModelTest(target?:ModelPickerTarget){
  modelTestRequest++;
  for(const pick of target?[target]:['create','task'] as ModelPickerTarget[]){
-  modelProbeStates[pick].controller?.abort();modelProbeStates[pick]={key:'',models:[],rows:{},summary:'',busy:false};
+  modelProbeStates[pick].controller?.abort();clearModelProbeTimer(modelProbeStates[pick]);modelProbeStates[pick]={key:'',models:[],rows:{},summary:'',busy:false};
   const result=element((pick==='create'?'':'task-')+'model-test-result');if(result)result.textContent='';
  }
  syncModelTestButton();
@@ -81,23 +94,38 @@ function modelProbeSummary(state:ModelProbeState){
  const completed=count('available')+count('unavailable')+count('timeout');
  return `${state.busy?'测试中':'测试结果'} ${completed}/${state.models.length} · 可用 ${count('available')}${count('unavailable')?' · 不可用 '+count('unavailable'):''}${count('timeout')?' · 超时 '+count('timeout'):''}${count('cancelled')?' · 已取消 '+count('cancelled'):''}${count('unverified')?' · 未验证 '+count('unverified'):''}`;
 }
-function renderModelProbe(target:ModelPickerTarget){
+function clearModelProbeTimer(state:ModelProbeState){if(state.timer!==undefined){clearInterval(state.timer);state.timer=undefined}}
+function probeMilliseconds(value:unknown):value is number{return typeof value==='number'&&Number.isFinite(value)&&value>=0}
+function modelLatencySummary(state:ModelProbeState){
+ const model=state.models[0],row=state.rows[model];if(!row)return '';
+ const first=probeMilliseconds(row.first_response_ms)?'首段回复 '+(row.first_response_ms/1000).toFixed(2)+' 秒'+(row.timing_source==='completed_text'?'（从完成结果观测）':''):state.busy?'正在等待首段回复':row.status==='available'?'服务未提供首段回复计时':'未收到首段回复';
+ const duration=probeMilliseconds(row.duration_ms)?'总耗时 '+(row.duration_ms/1000).toFixed(2)+' 秒':state.busy&&state.started_at!==undefined?'已等待 '+Math.max(0,Math.floor((Date.now()-state.started_at)/1000))+' 秒':'';
+ return [model,first,duration,'等待上限 '+state.timeout_seconds+' 秒'].filter(Boolean).join(' · ');
+}
+function renderModelProbeText(target:ModelPickerTarget){
  const state=modelProbeStates[target],result=element((target==='create'?'':'task-')+'model-test-result');
- if(result)result.textContent=state.models.length?[modelProbeSummary(state),state.summary].filter(Boolean).join('\n'):state.summary;
+ if(result)result.textContent=state.models.length?[modelProbeSummary(state),state.mode==='latency'?modelLatencySummary(state):'',state.summary].filter(Boolean).join('\n'):state.summary;
+}
+function renderModelProbe(target:ModelPickerTarget){
+ renderModelProbeText(target);
  syncModelTestButton();renderModelMenu(target);
 }
 function stopModelTest(target:ModelPickerTarget){
  const state=modelProbeStates[target];if(!state.busy)return;
- state.summary='正在停止；已完成的结果保留，尚未完成的不判为不可用。';state.controller?.abort();renderModelProbe(target);
+ state.summary='正在停止；已完成的结果保留，尚未完成的不判为不可用。';state.controller?.abort();clearModelProbeTimer(state);renderModelProbe(target);
 }
 async function testCreateModels(){return testModelList('create')}
-async function testModelList(target:ModelPickerTarget){
+async function testModelList(target:ModelPickerTarget,mode:'availability'|'latency'='availability'){
  const context=modelListProbeContext(target),catalog=modelCatalogState[target];
  if(!context||modelTestBusy||catalog.loading||catalog.failed||(target==='create'&&createSubmitting))return;
  if(catalog.key!==context.key){modelProbeStates[target].summary='目标配置已改变，请先重读模型列表。';renderModelProbe(target);return}
- const models=modelListIDs(target);
+ if(mode==='latency'&&context.engine==='mimo'){modelProbeStates[target].summary='MiMo 当前 API 为非流式，暂不支持首段回复延时测试。';renderModelProbe(target);return}
+ const timeout=Number(element<HTMLSelectElement>((target==='create'?'':'task-')+'model-test-timeout')?.value||180);
+ if(mode==='latency'&&![60,120,180,300,600].includes(timeout)){modelProbeStates[target].summary='请选择有效的等待上限。';renderModelProbe(target);return}
+ const selected=mode==='latency'?modelLatencyID(target):'',models=mode==='latency'?(selected?[selected]:[]):modelListIDs(target);
+ if(mode==='latency'&&!validProbeModel(selected)){modelProbeStates[target].summary='请明确选择一个模型，或重读目录以确认默认模型；不会猜测默认模型。';renderModelProbe(target);return}
  if(!models.length||models.length>24||models.some(id=>id.length>120||/[\0\r\n]/.test(id))){modelProbeStates[target].summary=!models.length?'列表为空，请先重读模型列表；不会猜测默认模型或自动测试其他模型。':'每次最多测试 24 个有效模型 ID，请调整配置后重读列表。';renderModelProbe(target);return}
- const state:ModelProbeState={key:context.key,models,rows:{},summary:'正在读取当前账号/API 配置…',busy:true,controller:new AbortController()};
+ const state:ModelProbeState={key:context.key,models,rows:{},summary:'正在读取当前账号/API 配置…',busy:true,mode,timeout_seconds:mode==='latency'?timeout:undefined,controller:new AbortController()};
  modelProbeStates[target]=state;modelTestBusy=true;renderModelProbe(target);
  try{
   const profiles=await api<EngineCatalog>('engines','GET',undefined,state.controller!.signal);
@@ -108,17 +136,20 @@ async function testModelList(target:ModelPickerTarget){
   const account=scopedClaude?'所选环境的 Duo 专用 Claude API':context.engine==='mimo'?'所选环境当前 MiMo API 配置':profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
   const provider=context.engine==='mimo'||scopedClaude?(catalog.apiEndpoint||'所选环境 API'):context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
   const scope=context.engine==='mimo'?'每个模型仅发送一条最小 API 文本请求，不创建 CLI 会话、不附加任务对话或附件、不读取项目指令、不调用工具。结果只验证 API 文本可用性，不能代表 CLI 工具或长会话能力。':'每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令。';
-  if(!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
+  const purpose=mode==='latency'?`仅测试当前选定的一个模型：\n${selected}\n等待上限：${timeout} 秒\n首段回复延时从单次调用开始计时，包含 CLI 启动及重试，不是网络 TTFB。使用独立的新测试会话，不恢复当前任务。`:`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}`;
+  if(!confirm(`${purpose}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   state.rows=Object.fromEntries(models.map(id=>[id,{status:'pending' as const}]));state.summary='正在建立测试连接…';renderModelProbe(target);
-  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(context.engine==='mimo'||scopedClaude?{expected_api_target:catalog.apiTarget}:{}),...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
+  if(mode==='latency'){state.started_at=Date.now();state.timer=setInterval(()=>{if(!state.busy||!modelProbeStillCurrent(target,state)){clearModelProbeTimer(state);state.controller?.abort();return}renderModelProbeText(target)},1000)}
+  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(mode==='latency'?{mode,timeout_seconds:timeout}:{}),...(context.engine==='mimo'||scopedClaude?{expected_api_target:catalog.apiTarget}:{}),...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
    if(!modelProbeStillCurrent(target,state))return;
-   if(event.type==='model_start'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model))state.rows[event.model]={status:'testing'};
+   if(event.type==='model_start'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model))state.rows[event.model]={...state.rows[event.model],status:'testing'};
+   if(event.type==='model_response'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model)&&probeMilliseconds(event.first_response_ms))Object.assign(state.rows[event.model],{first_response_ms:event.first_response_ms,timing_source:event.timing_source});
    if(event.type==='result'){
     const result=event.result as ModelProbeResult;
-    if(result&&typeof result.model==='string'&&Object.hasOwn(state.rows,result.model)&&['available','unavailable','timeout'].includes(result.status))state.rows[result.model]=result;
+    if(result&&typeof result.model==='string'&&Object.hasOwn(state.rows,result.model)&&['available','unavailable','timeout'].includes(result.status))state.rows[result.model]={...state.rows[result.model],...result};
    }
-   state.summary='结果仅代表本次最小调用，不保证后续额度或长任务、工具能力。';renderModelProbe(target);
+   state.summary=(mode==='latency'?'首段回复包含 CLI 连接及重试，非网络首包时间。':'')+'结果仅代表本次最小调用，不保证后续额度或长任务、工具能力。';renderModelProbe(target);
   });
   if(Object.values(state.rows).some(row=>row.status==='pending'||row.status==='testing'))throw new Error('测试连接已结束，但部分模型未返回结果。');
  }catch(e){
@@ -127,7 +158,7 @@ async function testModelList(target:ModelPickerTarget){
   for(const row of Object.values(state.rows))if(row.status==='pending'||row.status==='testing')row.status=cancelled?'cancelled':'unverified';
   state.summary=cancelled?'已停止测试；已发出的请求仍可能计费。':'测试未完成：'+(e as Error).message+' 未返回结果的模型不判为不可用。';
  }finally{
-  state.busy=false;modelTestBusy=false;
+  clearModelProbeTimer(state);state.busy=false;modelTestBusy=false;
   if(modelProbeStillCurrent(target,state))renderModelProbe(target);else syncModelTestButton();
  }
 }
@@ -169,7 +200,7 @@ async function loadCreateModels(reset=false,refresh=false){
  if(state.key!==target.key){createModels=[];createResolvedDefault=''}
  const request=++modelRequest,defaultModel=engineDefaultModel(target.environment,target.engine);
  modelCatalogControllers.create?.abort();const controller=new AbortController();modelCatalogControllers.create=controller;
- state.key=target.key;state.loading=true;state.failed=false;state.summary='';state.details='';state.apiTarget='';state.apiEndpoint='';
+ state.key=target.key;state.loading=true;state.failed=false;state.summary='';state.details='';state.apiTarget='';state.apiEndpoint='';state.defaultModel='';
  if(reset){setCreateModelsLoading();setCreateModels(defaultModel?[{id:defaultModel,name:defaultModel+'（环境默认）',origin:'configured'}]:[],defaultModel)}
  renderModelMenu('create');
  try{
@@ -181,7 +212,7 @@ async function loadCreateModels(reset=false,refresh=false){
   if(fallback&&!models.some(model=>model.id===fallback))models.unshift({id:fallback,name:fallback+'（环境默认）',origin:'configured'});
   createModels=models;
   createResolvedDefault=fallback;
-  state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;
+  state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;state.defaultModel=result.default_model||'';
  }catch(e){
   if(request!==modelRequest||!creatingTask||createSubmitting||currentCreateCatalogContext()?.key!==target.key)return;
   state.failed=true;state.summary='读取失败；可重试、沿用默认或输入模型 ID';state.details=(e as Error).message;
@@ -192,7 +223,7 @@ async function loadCreateModels(reset=false,refresh=false){
 function invalidateModelCatalogs(){
  modelCatalogControllers.create?.abort();modelCatalogControllers.task?.abort();
  modelProfileRevision++;modelRequest++;taskModelRequest++;invalidateModelTest();
- for(const target of ['create','task'] as ModelPickerTarget[]){Object.assign(modelCatalogState[target],{key:'',loading:false,summary:'配置已改变，请重新读取模型',details:'',failed:false})}
+ for(const target of ['create','task'] as ModelPickerTarget[]){Object.assign(modelCatalogState[target],{key:'',loading:false,summary:'配置已改变，请重新读取模型',details:'',failed:false,defaultModel:''})}
  createModels=[];taskPickerModels=[];createResolvedDefault='';
  if(creatingTask)void loadCreateModels(true);
  else if(detail&&!element('task-model-menu').classList.contains('hidden'))void refreshTaskModels();
@@ -202,6 +233,10 @@ function invalidateModelCatalogs(){
 function installModelPicker(){
  element('task-model-menu').insertAdjacentHTML('beforeend','<div class="model-catalog-footer"><p id="task-models-context" class="model-context"></p><p id="task-models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions"><button id="task-reload-models" type="button">重读模型列表</button><button id="task-test-models" type="button">测试列表模型</button><button id="task-stop-model-test" type="button" class="hidden">停止测试</button></div><p id="task-model-test-result" class="model-test-result" role="status"></p><details class="model-catalog-details"><summary>来源与诊断</summary><p id="task-models-hint"></p></details></div>');
  button('test-models').insertAdjacentHTML('afterend','<button id="stop-model-test" type="button" class="hidden">停止测试</button>');
+ for(const prefix of ['','task-']){
+  button(prefix+'stop-model-test').insertAdjacentHTML('afterend','<div id="'+prefix+'model-latency-controls" class="model-latency-controls"><button id="'+prefix+'test-model-latency" type="button">应答延时测试</button><label for="'+prefix+'model-test-timeout">等待上限 <select id="'+prefix+'model-test-timeout">'+[60,120,180,300,600].map(seconds=>'<option value="'+seconds+'"'+(seconds===180?' selected':'')+'>'+seconds+' 秒</option>').join('')+'</select></label></div>');
+  button(prefix+'test-model-latency').onclick=()=>void testModelList(prefix?'task':'create','latency');
+ }
  button('stop-model-test').onclick=()=>stopModelTest('create');button('task-stop-model-test').onclick=()=>stopModelTest('task');
  button('task-test-models').onclick=()=>void testModelList('task');
  button('task-reload-models').onclick=()=>void refreshTaskModels(true);
@@ -235,7 +270,7 @@ function installModelPicker(){
    else void chooseTaskModel(item.dataset.model==='__custom__'?input(ids.search).value.trim():item.dataset.model||'');
   };
  }
- input('custom-model').oninput=()=>{updateCreateModelLabel();updateReasoning()};
+ input('custom-model').oninput=()=>{updateCreateModelLabel();updateReasoning();syncModelTestButton()};
  listenWithShell(document,'click',e=>{const node=e.target as HTMLElement;for(const target of Object.keys(modelPickers) as ModelPickerTarget[])if(!node.closest('#'+modelPickers[target].root))closeModelMenu(target)});
 }
 async function toggleModelMenu(target:ModelPickerTarget){
@@ -309,11 +344,11 @@ async function refreshTaskModels(refresh=false){
  if(state.key!==key||refresh)invalidateModelTest('task');
  const request=++taskModelRequest;
  modelCatalogControllers.task?.abort();const controller=new AbortController();modelCatalogControllers.task=controller;
- taskPickerModels=mergeTaskModels(task,[]);Object.assign(state,{key,loading:true,summary:'',details:'',failed:false,apiTarget:'',apiEndpoint:''});renderModelMenu('task');
+ taskPickerModels=mergeTaskModels(task,[]);Object.assign(state,{key,loading:true,summary:'',details:'',failed:false,apiTarget:'',apiEndpoint:'',defaultModel:''});renderModelMenu('task');
  try{
   const result=await api<ModelListResponse>(modelsURL(task.environment.id,task.engine||'codex',task.workspace,refresh)+'&task_id='+encodeURIComponent(task.id),'GET',undefined,controller.signal);
   if(request!==taskModelRequest||!detail||taskCatalogContextKey(detail.task)!==key)return;
-  taskPickerModels=mergeTaskModels(task,result.models||[]);state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;
+  taskPickerModels=mergeTaskModels(task,result.models||[]);state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;state.defaultModel=result.default_model||'';
  }catch(e){
   if(request!==taskModelRequest||!detail||taskCatalogContextKey(detail.task)!==key)return;
   state.failed=true;state.summary='读取失败；可刷新或输入模型 ID';state.details=(e as Error).message;
@@ -348,7 +383,7 @@ async function chooseCreateModel(value:string){
  }else{
   input('create-model').value=value;custom.classList.add('hidden');
  }
- updateCreateModelLabel();updateReasoning();
+ updateCreateModelLabel();updateReasoning();syncModelTestButton();
 }
 function updateCreateModelLabel(){
  const value=input('create-model').value,label=element('model-picker-label');

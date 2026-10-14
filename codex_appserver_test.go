@@ -92,6 +92,9 @@ func runCodexAppServerFixture() {
 		return
 	}
 	threadResult := map[string]any{"id": threadID}
+	if scenario == "probe-latency-slow" {
+		time.Sleep(65 * time.Second)
+	}
 	if scenario == "large-history" {
 		// An older server may still hydrate the response. It must not abort a
 		// resumed task or replay old assistant messages into the new run.
@@ -136,6 +139,21 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "probe-latency", "probe-latency-slow", "probe-latency-slow-output":
+		if thread.Method != "thread/start" || threadParams["sandbox"] != "read-only" {
+			fail("latency probe must own a fresh read-only thread")
+		}
+		notify("warning", map[string]any{"message": "not model output"})
+		notify("item/agentMessage/delta", map[string]any{"threadId": "other-thread", "turnId": turnID, "itemId": "foreign", "delta": "not model output"})
+		notify("item/started", map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "probe-progress", "type": "agentMessage", "phase": "commentary"}})
+		notify("item/agentMessage/delta", map[string]any{"threadId": threadID, "turnId": turnID, "itemId": "probe-progress", "delta": "not model output"})
+		if scenario == "probe-latency-slow-output" {
+			time.Sleep(65 * time.Second)
+		}
+		notify("item/agentMessage/delta", map[string]any{"threadId": threadID, "turnId": turnID, "itemId": "probe-final", "delta": "OK"})
+		item("probe-final", "final_answer", "OK")
+		complete("completed")
+		return
 	case "async-question", "async-question-only":
 		params := map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "async-question-1", "type": "agentMessage", "phase": "final_answer", "delivery": "async", "text": "选择云端或补充需求", "questions": []any{map[string]any{"title": "安装范围？", "options": []string{"云端", "本地"}}, map[string]any{"title": "补充说明", "options": nil}}}}
 		notify("item/completed", params)

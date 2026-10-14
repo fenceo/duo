@@ -420,6 +420,9 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .model-catalog-status{color:var(--muted);padding:4px 0 8px}
 .model-catalog-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .model-catalog-actions button{font-size:12px;min-height:36px;padding:6px 9px;background:var(--surface);color:var(--ink)}
+.model-latency-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex-basis:100%;min-width:0}
+.model-latency-controls>label{display:flex;align-items:center;gap:6px;margin:0;font-size:12px;color:var(--muted)}
+.model-latency-controls select{width:auto;min-width:84px;min-height:36px;padding:6px;font-size:12px}
 .model-catalog-details{margin:8px 0 0;color:var(--muted);font-size:11px}
 .model-catalog-details>summary{cursor:pointer;padding:3px 0}
 .model-catalog-details>p{padding-top:6px;font-size:11px}
@@ -626,6 +629,7 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
  .model-menu{max-width:calc(100vw - 32px)}
  .create-model-field .model-menu,.composer-bottom .model-menu{position:fixed;top:auto;bottom:16px;left:16px;right:16px;width:auto;max-width:none;max-height:min(560px,calc(100dvh - 96px))}
  .model-catalog-actions button,.model-item,.model-search-input{min-height:44px}
+ .model-latency-controls select{min-height:44px}
  .model-item small{max-width:40%}
  .model-effort{min-height:40px}
  .create-page{padding:24px 16px 28px}

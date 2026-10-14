@@ -229,6 +229,7 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 }
 
 func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (session string, result string, runErr error) {
+	observeProbe := codexModelProbeObserver(ctx)
 	defer func() { runErr = codexSandboxInitializationError(runErr) }()
 	asyncFallback := ""
 	session = t.Session
@@ -432,7 +433,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 	stopping := false
 	interruptSent := false
 	ctxDone := ctx.Done()
-	stageTimer := time.NewTimer(30 * time.Second)
+	stageTimer := time.NewTimer(modelProbeStageTimeout(ctx, 30*time.Second))
 	defer stageTimer.Stop()
 	stageTimeout := stageTimer.C
 	var stopTimeout <-chan time.Time
@@ -726,6 +727,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			}
 			if foreign {
 				continue
+			}
+			if observeProbe != nil {
+				observeProbe(m.Method, m.Params, session, turnID)
 			}
 			// Task-scoped events must carry the native identity. Only global
 			// warning/config events are allowed without a thread/turn envelope.

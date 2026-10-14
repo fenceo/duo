@@ -96,7 +96,7 @@ for(const kind of ['workspace','config','shell','closed']){
  assert.equal(f.node('task-models-status').textContent,'new-task');assert.doesNotMatch(f.node('task-model-list').innerHTML,/stale-task/);
 }
 const workflow=await readFile(new URL('../web/workflow.ts',import.meta.url),'utf8');
-assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\),element\('stop-model-test'\)\)/);
+assert.match(workflow,/modelFooter\.querySelector\('#model-catalog-actions'\)!\.append\(element\('reload-models'\),element\('test-models'\),element\('stop-model-test'\),element\('model-latency-controls'\)\)/);
 assert.match(workflow,/meta\.append\(element\('effort-hint'\),element\('create-error'\)\)/);
 const environments=await readFile(new URL('../web/environments.ts',import.meta.url),'utf8');
 assert.match(environments,/id="custom-model-engine"/);assert.match(environments,/env\.models\.push\(\{id,name,engine\}\)/);

@@ -55,3 +55,4 @@ __pycache__/
 !/docs/feishu-interactions.md
 !/docs/vscode.md
 !/docs/claude-mimo.md
+!/docs/model-latency-tests.md

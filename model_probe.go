@@ -25,6 +25,8 @@ const (
 const modelProbePrompt = "Reply with exactly OK. Do not read files, call tools, use the network, or modify anything."
 
 type ModelProbeRequest struct {
+	Mode              string   `json:"mode,omitempty"`
+	TimeoutSeconds    *int     `json:"timeout_seconds,omitempty"`
 	TaskID            string   `json:"task_id,omitempty"`
 	BindingRevision   string   `json:"binding_revision,omitempty"`
 	Engine            string   `json:"engine"`
@@ -35,10 +37,13 @@ type ModelProbeRequest struct {
 }
 
 type ModelProbeResult struct {
-	Model      string `json:"model"`
-	Status     string `json:"status"`
-	Message    string `json:"message"`
-	DurationMS int64  `json:"duration_ms"`
+	FirstResponseMS *int64 `json:"first_response_ms,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	TimingSource    string `json:"timing_source,omitempty"`
+	Model           string `json:"model"`
+	Status          string `json:"status"`
+	Message         string `json:"message"`
+	DurationMS      int64  `json:"duration_ms"`
 }
 
 type ModelProbeResponse struct {
@@ -50,16 +55,22 @@ type ModelProbeResponse struct {
 // Streaming is opt-in so existing JSON clients retain the response contract.
 // Events contain public model IDs and classified errors, never raw CLI output.
 type ModelProbeEvent struct {
-	Type      string             `json:"type"`
-	Engine    string             `json:"engine,omitempty"`
-	Workspace string             `json:"workspace,omitempty"`
-	Models    []string           `json:"models,omitempty"`
-	Model     string             `json:"model,omitempty"`
-	Result    *ModelProbeResult  `json:"result,omitempty"`
-	Results   []ModelProbeResult `json:"results,omitempty"`
+	Mode            string             `json:"mode,omitempty"`
+	FirstResponseMS *int64             `json:"first_response_ms,omitempty"`
+	TimeoutSeconds  int                `json:"timeout_seconds,omitempty"`
+	TimingSource    string             `json:"timing_source,omitempty"`
+	ElapsedMS       int64              `json:"elapsed_ms,omitempty"`
+	Type            string             `json:"type"`
+	Engine          string             `json:"engine,omitempty"`
+	Workspace       string             `json:"workspace,omitempty"`
+	Models          []string           `json:"models,omitempty"`
+	Model           string             `json:"model,omitempty"`
+	Result          *ModelProbeResult  `json:"result,omitempty"`
+	Results         []ModelProbeResult `json:"results,omitempty"`
 }
 
 type modelProbePlan struct {
+	options   modelProbeOptions
 	config    Config
 	engine    string
 	workspace string
@@ -150,19 +161,19 @@ func executeModelProbe(ctx context.Context, plan modelProbePlan, run func(contex
 	send := func(event ModelProbeEvent) bool {
 		return emit == nil || emit(event) == nil
 	}
-	if ctx.Err() != nil || !send(ModelProbeEvent{Type: "start", Engine: plan.engine, Workspace: plan.workspace, Models: append([]string(nil), plan.models...)}) {
+	if ctx.Err() != nil || !send(ModelProbeEvent{Type: "start", Engine: plan.engine, Workspace: plan.workspace, Models: append([]string(nil), plan.models...), Mode: plan.options.mode, TimeoutSeconds: plan.options.publicTimeout()}) {
 		return response
 	}
 	for _, model := range plan.models {
-		if ctx.Err() != nil || !send(ModelProbeEvent{Type: "model_start", Model: model}) {
+		if ctx.Err() != nil || !send(ModelProbeEvent{Type: "model_start", Model: model, Mode: plan.options.mode, TimeoutSeconds: plan.options.publicTimeout()}) {
 			return response
 		}
 		if ctx.Err() != nil {
 			return response
 		}
-		result := run(ctx, plan.config, plan.engine, plan.workspace, model)
+		result, connected := invokeModelProbe(ctx, plan, model, run, emit)
 		response.Results = append(response.Results, result)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !connected {
 			return response
 		}
 		if !send(ModelProbeEvent{Type: "result", Result: &result}) {
@@ -197,6 +208,11 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reject empty/oversized lists before taking the lock or starting any CLI.
 	if _, err := normalizeProbeModels(request.Models); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	options, err := normalizeModelProbeOptions(request)
+	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -261,6 +277,7 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	plan.options = options
 	ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
 	defer cancel()
 	probe := probeOneModel
@@ -341,33 +358,58 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func probeOneModel(parent context.Context, c Config, engine, workspace, model string) ModelProbeResult {
+	return probeOneModelUsing(parent, c, engine, workspace, model, (CodexRunner{}).Run)
+}
+
+func probeOneModelUsing(parent context.Context, c Config, engine, workspace, model string, run func(context.Context, Config, Task, string, func(string, string)) (string, string, error)) ModelProbeResult {
 	if engine == "mimo" {
 		return ModelProbeResult{Model: model, Status: "unavailable", Message: "MiMo API 测试需要所选环境已保存的 API 配置"}
 	}
+	options := modelProbeOptionsFromContext(parent)
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(parent, modelProbeTimeout)
+	ctx, cancel := context.WithTimeout(parent, options.timeout())
 	defer cancel()
+	timing := newModelProbeTiming(started, modelProbeFirstCallback(parent))
+	observe := func(text, source string) {
+		if ctx.Err() == nil {
+			timing.observe(text, source)
+		}
+	}
+	if options.mode == "latency" {
+		ctx = context.WithValue(ctx, modelProbeTextKey{}, observe)
+	}
 	task := Task{
 		Engine:    engine,
 		Model:     model,
 		Workspace: workspace,
 		Mode:      &WorkMode{Permission: "read"},
 	}
-	_, result, err := (CodexRunner{}).Run(ctx, c, task, modelProbePrompt, func(string, string) {})
+	_, result, err := run(ctx, c, task, modelProbePrompt, func(kind, text string) {
+		if options.mode == "latency" && engine == "deepseek-harness" && kind == "assistant" {
+			observe(text, "stream_text")
+		}
+	})
 	duration := time.Since(started).Milliseconds()
 	if duration < 1 {
 		duration = 1
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return ModelProbeResult{Model: model, Status: "timeout", Message: "请求超时（25 秒）", DurationMS: duration}
+	response := ModelProbeResult{Model: model, Status: "unavailable", Message: publicProbeError(err), DurationMS: duration}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
+		response.Status, response.Message = "timeout", fmt.Sprintf("请求超时（%d 秒，包含启动、等待首段回复及完成）", int(options.timeout()/time.Second))
+		if options.mode != "latency" {
+			response.Message = "请求超时（25 秒）"
+		}
+	case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+		response.Message = "请求已取消"
+	case err == nil && strings.TrimSpace(result) != "":
+		response.Status, response.Message = "available", "调用成功"
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return ModelProbeResult{Model: model, Status: "unavailable", Message: "请求已取消", DurationMS: duration}
+	if options.mode == "latency" {
+		response.FirstResponseMS, response.TimingSource = timing.snapshot()
+		response.TimeoutSeconds = options.publicTimeout()
 	}
-	if err == nil && strings.TrimSpace(result) != "" {
-		return ModelProbeResult{Model: model, Status: "available", Message: "调用成功", DurationMS: duration}
-	}
-	return ModelProbeResult{Model: model, Status: "unavailable", Message: publicProbeError(err), DurationMS: duration}
+	return response
 }
 
 var unsupportedProbeModel = regexp.MustCompile("(?i)\\b(?:model_not_found|unsupported_model|invalid_model|model_not_supported)\\b|\\b(?:unsupported|unknown) model\\b|\\binvalid model (?:id|name)\\b|\\bmodel(?:\\s+['\"`][^'\"`\\r\\n]{1,120}['\"`])?\\s+(?:is\\s+)?(?:not found|not supported|does not exist)\\b")
@@ -394,6 +436,12 @@ func publicProbeError(err error) string {
 		return "认证或访问权限被拒绝"
 	case unsupportedProbeModel.MatchString(message):
 		return "模型不受当前服务支持"
+	case strings.Contains(message, "429"), strings.Contains(message, "rate limit"), strings.Contains(message, "rate_limit"), strings.Contains(message, "overloaded"), strings.Contains(message, "too many requests"), strings.Contains(message, "resource_exhausted"), strings.Contains(message, "high demand"), strings.Contains(message, "highdemanderror"):
+		return "服务繁忙或请求频率受限，请稍后重试"
+	case strings.Contains(message, "timeout"), strings.Contains(message, "timed out"), strings.Contains(message, "超时"):
+		return "等待模型响应超时"
+	case strings.Contains(message, "unexpected eof"), strings.Contains(message, "stream disconnected"), strings.Contains(message, "stream closed"), strings.Contains(message, "connection reset"), strings.Contains(message, "broken pipe"), strings.Contains(message, "turn/completed 前断开"), strings.Contains(message, "协议已关闭"):
+		return "模型响应连接中断，请重试"
 	case errors.As(err, &executableError), strings.Contains(message, "executable file not found"),
 		strings.Contains(message, "cannot find executable"), strings.Contains(message, "找不到 harness 程序"),
 		strings.Contains(message, "找不到 ai 工具程序"):
