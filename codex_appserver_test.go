@@ -139,6 +139,29 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "retry-success", "retry-failed", "retry-no-cause", "retry-foreign", "retry-other-failure":
+		nativeError := func(target, targetTurn, message string, retry bool, info any, details any) {
+			notify("error", map[string]any{"threadId": target, "turnId": targetTurn, "willRetry": retry, "error": map[string]any{"message": message, "codexErrorInfo": info, "additionalDetails": details}})
+		}
+		if scenario == "retry-foreign" {
+			for _, target := range [][2]string{{"other-thread", turnID}, {threadID, "other-turn"}, {"", turnID}, {threadID, ""}} {
+				nativeError(target[0], target[1], "foreign retry must not appear", true, "serverOverloaded", "HTTP 429 private-foreign")
+			}
+		} else if scenario == "retry-no-cause" {
+			nativeError(threadID, turnID, "Reconnecting... 1/5", true, "other", nil)
+		} else {
+			nativeError(threadID, turnID, "Reconnecting... 1/5", true, map[string]any{"responseStreamDisconnected": map[string]any{"httpStatusCode": nil}}, "HighDemandError: The model is experiencing high demand. Authorization: private-key; request: private-prompt")
+			nativeError(threadID, turnID, "Reconnecting... 2/5", true, map[string]any{"responseTooManyFailedAttempts": map[string]any{"httpStatusCode": 429}}, "private-url https://user:private-password@fixture.invalid/")
+		}
+		if scenario != "retry-success" {
+			message, info := "stream disconnected before completion: stream closed before response.completed", any(map[string]any{"responseStreamDisconnected": map[string]any{"httpStatusCode": nil}})
+			if scenario == "retry-other-failure" {
+				message, info = "fixture context limit reached", "contextWindowExceeded"
+			}
+			nativeError(threadID, turnID, message, false, info, nil)
+			notify("turn/completed", map[string]any{"threadId": threadID, "turn": map[string]any{"id": turnID, "status": "failed", "error": map[string]any{"message": message, "codexErrorInfo": info}}})
+			return
+		}
 	case "probe-latency", "probe-latency-slow", "probe-latency-slow-output":
 		if thread.Method != "thread/start" || threadParams["sandbox"] != "read-only" {
 			fail("latency probe must own a fresh read-only thread")

@@ -209,7 +209,7 @@ func stopAppServerTree(c Config, cmd *exec.Cmd, pid int) error {
 		defer cancel()
 		kill := commandWithContext(ctx, command(c, "python3", "-c", stopTree, strconv.Itoa(pid)))
 		hideCommand(kill)
-		err := kill.Run()
+		err := runCodexCleanupCommand(ctx, kill)
 		_ = cmd.Process.Kill()
 		if err != nil {
 			return fmt.Errorf("无法确认执行端 Codex 进程 %d 已停止：%w", pid, err)
@@ -455,6 +455,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 	fileChangesBytes := 0
 	var priorUsage *codexTokenUsage
 	var usage RunUsage
+	var retryDiagnostics codexRetryDiagnostics
 	for {
 		select {
 		case next := <-steerRequests:
@@ -651,11 +652,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				ItemID    string          `json:"itemId"`
 				RequestID json.RawMessage `json:"requestId"`
 				Turn      struct {
-					ID     string `json:"id"`
-					Status string `json:"status"`
-					Error  *struct {
-						Message string `json:"message"`
-					} `json:"error"`
+					ID     string          `json:"id"`
+					Status string          `json:"status"`
+					Error  *codexTurnError `json:"error"`
 				} `json:"turn"`
 				Item struct {
 					ID        string          `json:"id"`
@@ -672,11 +671,10 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 						Diff string `json:"diff"`
 					} `json:"changes"`
 				} `json:"item"`
-				Message string `json:"message"`
-				Summary string `json:"summary"`
-				Error   struct {
-					Message string `json:"message"`
-				} `json:"error"`
+				Message    string         `json:"message"`
+				Summary    string         `json:"summary"`
+				Error      codexTurnError `json:"error"`
+				WillRetry  bool           `json:"willRetry"`
 				TokenUsage struct {
 					Total codexTokenUsage `json:"total"`
 					Last  codexTokenUsage `json:"last"`
@@ -738,7 +736,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				if session == "" || p.ThreadID != session {
 					continue
 				}
-			case "item/started", "item/completed", "thread/tokenUsage/updated":
+			case "item/started", "item/completed", "thread/tokenUsage/updated", "error":
 				if session == "" || turnID == "" || p.ThreadID != session || p.TurnID != turnID {
 					continue
 				}
@@ -816,7 +814,11 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 			case "warning", "configWarning":
 				emit("progress", redact(strings.TrimSpace(p.Summary+" "+p.Message)))
 			case "error":
-				emit("error", redact(p.Error.Message))
+				if p.WillRetry {
+					emit("progress", retryDiagnostics.progress(p.Error, redact))
+				} else {
+					emit("error", redact(p.Error.Message))
+				}
 			case "turn/completed":
 				if turnID == "" || p.Turn.ID != turnID {
 					return session, result, errors.New("Codex 结束事件的轮次 ID 不一致")
@@ -826,11 +828,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					return session, result, context.Canceled
 				}
 				if p.Turn.Status != "completed" {
-					message := "Codex 原生轮次失败"
-					if p.Turn.Error != nil && p.Turn.Error.Message != "" {
-						message += "：" + redact(p.Turn.Error.Message)
-					}
-					return session, result, errors.New(message)
+					return session, result, errors.New(retryDiagnostics.failure(p.Turn.Error, redact))
 				}
 				if result == "" {
 					result = asyncFallback

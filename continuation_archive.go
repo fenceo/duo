@@ -63,6 +63,9 @@ func (a *App) writeContinuation(task Task, mode string, archive *continuationArc
 	if mode == "" {
 		mode = "full"
 	}
+	if mode == "brief" {
+		return a.writeBriefContinuation(task, archive, reader, len(snapshot) == 0)
+	}
 	if mode != "full" && mode != "recent" && mode != "summary" && mode != "notes" {
 		return ContinuationPreview{}, errors.New("上下文范围无效")
 	}

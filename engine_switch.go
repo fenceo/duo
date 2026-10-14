@@ -25,6 +25,7 @@ type handoffRequest struct {
 	Fingerprint             string                   `json:"fingerprint"`
 	Confirm                 bool                     `json:"confirm"`
 	PreserveLegacySession   bool                     `json:"preserve_legacy_session"`
+	RestartSession          bool                     `json:"restart_session,omitempty"`
 	ExpectedLegacySession   string                   `json:"expected_legacy_session,omitempty"`
 }
 
@@ -78,6 +79,17 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	}
 	if !validEngine(v.Engine) || !validEngineReasoning(v.Engine, v.ReasoningEffort) {
 		return handoffResult{}, errors.New("引擎或推理强度无效")
+	}
+	if v.RestartSession {
+		if task.Engine != "codex" || v.Engine != "codex" {
+			return handoffResult{}, errors.New("重新建立原生会话仅支持 Codex 任务")
+		}
+		if v.PreserveLegacySession {
+			return handoffResult{}, errors.New("重新建立会话不能同时保留旧原生会话")
+		}
+		if v.ContextMode != "brief" {
+			return handoffResult{}, errors.New("重新建立会话必须先预览并确认精简接续摘要")
+		}
 	}
 	if len(v.Model) > 120 || strings.ContainsAny(v.Model, "\x00\r\n") {
 		return handoffResult{}, errors.New("模型名称无效")
@@ -133,7 +145,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	if preview.Fingerprint != v.Fingerprint {
 		return handoffResult{}, errHandoffChanged
 	}
-	newSession := task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env)
+	newSession := v.RestartSession || task.Engine != v.Engine || task.Workspace != v.Workspace || !reflect.DeepEqual(task.Environment, &env)
 	if task.Engine == "deepseek-harness" && !reflect.DeepEqual(task.Mode, mode) {
 		newSession = true
 	}
@@ -157,6 +169,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	binding := &TaskEngineBinding{Revision: operation}
 	if !newSession && task.Binding != nil {
 		binding.HistoryID = task.Binding.HistoryID
+		binding.HistoryMode = task.Binding.HistoryMode
 	}
 	tx, err := a.store.Begin()
 	if err != nil {
@@ -169,6 +182,7 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 	}
 	if newSession {
 		binding.HistoryID = uid()
+		binding.HistoryMode = v.ContextMode
 		if _, err = tx.Exec("INSERT INTO task_handoff_context VALUES(?,?,?,?,?)", binding.HistoryID, id, preview.Context, archive, now()); err != nil {
 			return handoffResult{}, err
 		}

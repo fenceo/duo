@@ -455,12 +455,16 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					input = handoffInput + "\n\n本轮用户要求：\n" + input
 				}
 				if r.Kind == "chat" {
-					contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
-					if recallErr != nil {
-						_ = a.store.event(id, r.ID, "progress", "自动恢复任务知识失败，本轮继续使用原始要求。")
-					} else if contextText != "" {
-						input = contextText + input
-						_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
+					// A brief recovery already carries the reviewed local recall.
+					// Do not silently add a second set of knowledge to that scope.
+					if handoffInput == "" || task.Binding == nil || task.Binding.HistoryMode != "brief" {
+						contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
+						if recallErr != nil {
+							_ = a.store.event(id, r.ID, "progress", "自动恢复任务知识失败，本轮继续使用原始要求。")
+						} else if contextText != "" {
+							input = contextText + input
+							_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
+						}
 					}
 					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture && automatic.Organize {
 						input = memoryPrompt(r.ID) + input

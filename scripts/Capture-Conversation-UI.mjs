@@ -33,6 +33,7 @@ cases.push(['questionsfull','light',1280,800],['questionsfull','dark',390,844],[
 cases.push(['composerlarge','light',1280,800],['composerlarge','dark',390,844]);
 cases.push(['history','light',1280,800],['history','dark',390,844],['filters','light',1280,800],['filtered','dark',320,844]);
 cases.push(['handoff','light',1280,800],['handoff','dark',390,844],['handoff','light',320,844],['handoffbottom','dark',390,844]);
+cases.push(['handoffrecovery','light',1280,800],['handoffrecovery','dark',390,844],['handoffrecoverybottom','light',320,844]);
 cases.push(['handofflegacy','light',1280,800],['handofflegacy','dark',390,844],['handofflegacybottom','light',320,844]);
 cases.push(['accountmanager','light',1280,800],['accountmanager','dark',390,844],['accountmanager','light',320,844]);
 cases.push(['accountimport','light',1280,800],['accountimport','dark',390,844],['accountimport','light',320,844]);
@@ -257,11 +258,12 @@ for(const [view,theme,width,height] of cases){
   ctx.api=async route=>{
    if(route==='engines')return {engines:[],profiles:[{id:'team',name:'团队 API 配置',engine:'codex',environment_id:env.id,kind:'codex_home',reference:'/fixture/team',updated:1}],active_profile:{}};
    if(route.endsWith('?recent=1'))return snapshot;
-   if(route.includes('/continuation/preview'))return {source_task_id:snapshot.task.id,source_title:snapshot.task.title,source_engine:'codex',transferred_runs:27,transferred_knowledge:6,archive_bytes:102400,fingerprint:'fixture-preview',context_truncated:true,context:'任务目标：继续完成页面优化。已有验证：合成回归通过。未解决：真实模型接续效果尚未验证。完整历史包含 27 轮记录。'};
+   if(route.includes('/continuation/preview'))return {source_task_id:snapshot.task.id,source_title:snapshot.task.title,source_engine:'codex',transferred_runs:route.endsWith('mode=brief')?3:27,transferred_knowledge:3,archive_bytes:route.endsWith('mode=brief')?8192:102400,fingerprint:'fixture-preview',context_truncated:true,context:route.endsWith('mode=brief')?'任务共识：保留聊天记录，使用有限接续资料。最近完成：合成回归通过。待确认：原会话压缩失败后的真实接续效果。需要遗漏细节时请检查原聊天和工作区。':'任务目标：继续完成页面优化。已有验证：合成回归通过。未解决：真实模型接续效果尚未验证。完整历史包含 27 轮记录。'};
    if(route.includes('/models?'))return {models:[{id:'gpt-6-astra',name:'gpt-6-astra'}],source:'本地配置',status:'ready',modified:0};
    throw Error('Unexpected switch preview request '+route);
   };
   await ctx.openHandoff();await new Promise(resolve=>setImmediate(resolve));
+  if(view.startsWith('handoffrecovery')){const restart=document.getElementById('handoff-restart-session');restart.checked=true;await restart.onchange();await new Promise(resolve=>setImmediate(resolve))}
  }
  const style=document.createElement('style');style.textContent=(await fs.readFile(new URL('style.css',webRoot),'utf8'))+'\n'+(await fs.readFile(new URL('workbench.css',webRoot),'utf8'));document.head.append(style);
  const meta=document.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';document.head.append(meta);

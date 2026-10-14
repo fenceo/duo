@@ -14,6 +14,7 @@ type TaskEngineBinding struct {
 	NativeRevision string                   `json:"native_revision,omitempty"`
 	Profile        *EngineCredentialProfile `json:"profile,omitempty"`
 	HistoryID      string                   `json:"history_id,omitempty"`
+	HistoryMode    string                   `json:"history_mode,omitempty"`
 }
 
 const engineBindingSchema = `
