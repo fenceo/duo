@@ -112,6 +112,22 @@ WSL 附件原生验收复用 `TestHarnessAPINativeWSL` 的隔离回环服务：�
 - Windows 自启使用当前用户的 `Jianzuo User` 计划任务。配置一致时应复用现有任务，不从受限进程强制重注册。
 - WSL、计划任务相关测试必须在普通 Windows 用户上下文运行；Codex 沙箱账户通常没有 `wsl.exe` 和任务计划服务所需权限。
 
+## MiMo WSL 隔离回归
+
+MiMo ACP 及结果导出使用 `wsl --exec`，临时 JSON 环境变量不得经过 WSL 默认 shell。参数检查只执行 Python，不启动 CLI；原生回归启动目标环境中已安装的官方 CLI，使用独立临时 HOME、假 Key 和同一 WSL 内的回环模拟 API，不读取真实账号或发送付费请求。
+
+```powershell
+$env:DUO_MIMO_WSL_DISTRO='<已安装发行版>'
+$env:DUO_MIMO_WSL_USER='<目标用户>'
+$env:DUO_MIMO_WSL_BINARY='<环境中官方 MiMo 的绝对路径>'
+$env:DUO_MIMO_WSL_TRANSPORT='1'
+$env:DUO_MIMO_WSL_LOCAL_PROVIDER='1'
+go test -run '^TestMimo(WSLJSONEnvironmentNative|ACPNativeWSLLocalProvider)$' -count=1 -v -timeout=3m
+Remove-Item Env:DUO_MIMO_WSL_DISTRO,Env:DUO_MIMO_WSL_USER,Env:DUO_MIMO_WSL_BINARY,Env:DUO_MIMO_WSL_TRANSPORT,Env:DUO_MIMO_WSL_LOCAL_PROVIDER
+```
+
+需在普通 Windows 用户上下文执行。回归检查 JSON 与 shell 字符原样传递、未预先注册的模型、权限配置、短回复、同一原生会话恢复及历史保留，结束后移除隔离的模拟数据；不修改用户配置。
+
 ## 发布新版本
 
 维护者约定：每轮完成的功能优化都发布正式 Release，不以仅推送提交或本地体验构建代替。当前任务明确要求暂不发布时例外；测试失败或发布受阻时说明原因，不跳过校验。

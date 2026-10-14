@@ -16,6 +16,10 @@ func TestMimoProcessFixture(t *testing.T) {
 	if os.Getenv("DUO_TEST_MIMO_ACP") != "1" {
 		t.Skip("synthetic child only")
 	}
+	if os.Getenv("DUO_TEST_MIMO_STARTUP_ERROR") == "1" {
+		os.Stderr.WriteString("ConfigJsonError: config contains synthetic-private-key\n--- End ---\n")
+		os.Exit(0)
+	}
 	for _, arg := range os.Args {
 		if arg == "export" {
 			data, err := os.ReadFile("mimo-fixture-export.json")
@@ -137,6 +141,22 @@ func mimoFixture(t *testing.T) (Config, Task) {
 		t.Fatal(err)
 	}
 	return Config{Mimo: exe}, Task{ID: "mimo-fixture", Engine: "mimo", Workspace: t.TempDir(), Model: "duo-mimo/model-one", Mode: &WorkMode{ID: "work", Permission: "workspace", Approval: "request", AllowNetwork: boolPtr(true)}}
+}
+
+func TestMimoStartupConfigFailureKeepsSafeCause(t *testing.T) {
+	c, task := mimoFixture(t)
+	t.Setenv("DUO_TEST_MIMO_STARTUP_ERROR", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	w, err := startMimo(ctx, c, task, map[string]string{})
+	if w == nil || err == nil || !strings.Contains(err.Error(), "CONFIG_PARSE_ERROR") || strings.Contains(err.Error(), "synthetic-private-key") || strings.Contains(err.Error(), "<nil>") || strings.Contains(err.Error(), "--- End ---") {
+		t.Fatalf("startup cause lost or private config leaked: %v", err)
+	}
+	select {
+	case <-w.done:
+	default:
+		t.Fatal("failed startup process remains live")
+	}
 }
 
 func TestMimoNativeACPResumeAndPermissionSwitch(t *testing.T) {

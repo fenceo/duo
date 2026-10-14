@@ -33,32 +33,33 @@ var harnessRuntimes = struct {
 }{workers: map[string]*harnessWorker{}}
 
 type harnessWorker struct {
-	engine       string
-	lease        sync.Mutex
-	c            Config
-	cmd          *exec.Cmd
-	in           io.WriteCloser
-	frames       chan codexRPC
-	fault        chan error
-	done, halt   chan struct{}
-	once         sync.Once
-	pid          atomic.Int64
-	mu           sync.Mutex
-	diagnostic   string
-	exitErr      error
-	readErr      error
-	stdoutClosed atomic.Bool
-	fingerprint  string
-	identity     string
-	idle         *time.Timer
-	nextID       int
-	generation   int
-	session      string
-	selection    string
-	retiring     bool
-	interactive  bool
-	imageInput   bool
-	guardReady   atomic.Bool
+	engine        string
+	lease         sync.Mutex
+	c             Config
+	cmd           *exec.Cmd
+	in            io.WriteCloser
+	frames        chan codexRPC
+	fault         chan error
+	done, halt    chan struct{}
+	once          sync.Once
+	pid           atomic.Int64
+	mu            sync.Mutex
+	diagnostic    string
+	diagnosticErr error
+	exitErr       error
+	readErr       error
+	stdoutClosed  atomic.Bool
+	fingerprint   string
+	identity      string
+	idle          *time.Timer
+	nextID        int
+	generation    int
+	session       string
+	selection     string
+	retiring      bool
+	interactive   bool
+	imageInput    bool
+	guardReady    atomic.Bool
 }
 
 // Final overlay wins over native profile defaults. Approval "never" denies
@@ -431,6 +432,11 @@ func (w *harnessWorker) scan(r io.Reader, stdout bool) {
 			}
 		}
 		w.mu.Lock()
+		if w.engine == "mimo" && strings.Contains(line, "ConfigJsonError") {
+			// MiMo's fatal JSON report can contain the entire configuration.
+			// Preserve a safe cause across the final "--- End ---" banner.
+			w.diagnosticErr = errors.New("MiMo Code [CONFIG_PARSE_ERROR]：原生配置 JSON 解析失败，请检查目标环境配置或升级 Duo；原有会话已保留")
+		}
 		w.diagnostic = line
 		w.mu.Unlock()
 	}
@@ -493,6 +499,9 @@ func (w *harnessWorker) failure() error {
 	defer w.mu.Unlock()
 	if w.readErr != nil {
 		return w.readErr
+	}
+	if w.diagnosticErr != nil {
+		return w.diagnosticErr
 	}
 	return fmt.Errorf("Harness ACP 意外退出：%v %s", w.exitErr, w.diagnostic)
 }

@@ -11,7 +11,7 @@ import (
 )
 
 // Keep this synchronized with package.json; packaging verifies the built version.
-const version = "0.34.21"
+const version = "0.34.22"
 
 // Only the native launcher's first-run wizard uses this stdin-only operation.
 // Existing databases are never reset by initialization.

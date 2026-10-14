@@ -51,7 +51,7 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 	}
 	var cmd *exec.Cmd
 	if c.Distro != "" || c.SSHHost != "" {
-		cmd = command(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, t.Workspace, binary, "acp", "--hostname", "127.0.0.1", "--port", "0"}, variables)...)
+		cmd = mimoTargetCommand(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, t.Workspace, binary, "acp", "--hostname", "127.0.0.1", "--port", "0"}, variables)...)
 	} else {
 		cmd = exec.Command(binary, "acp", "--hostname", "127.0.0.1", "--port", "0")
 		cmd.Dir = t.Workspace
@@ -101,7 +101,15 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 	}()
 	data, err := w.request(ctx, "initialize", map[string]any{"protocolVersion": 1, "clientInfo": map[string]string{"name": "Duo", "version": version}, "clientCapabilities": map[string]any{"fs": map[string]bool{"readTextFile": false, "writeTextFile": false}, "terminal": false}})
 	if err != nil {
-		return w, errors.Join(err, w.stop())
+		stopErr := w.stop()
+		// stdout EOF may arrive before the stderr scanner sees the fatal
+		// diagnostic. Recheck after confirmed stop, without echoing config.
+		w.mu.Lock()
+		if w.diagnosticErr != nil && ctx.Err() == nil {
+			err = w.diagnosticErr
+		}
+		w.mu.Unlock()
+		return w, errors.Join(err, stopErr)
 	}
 	var hello struct {
 		ProtocolVersion   int
@@ -116,6 +124,21 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 	}
 	w.imageInput = hello.AgentCapabilities.PromptCapabilities.Image
 	return w, nil
+}
+
+// WSL's default shell strips JSON quotes and expands shell syntax in env
+// arguments. Execute MiMo's launcher directly, like Codex's ACP launcher;
+// SSH already quotes each argument in sshCommand. Keep the selected user and
+// minimal Windows host environment unchanged.
+func mimoTargetCommand(c Config, args ...string) *exec.Cmd {
+	if c.Distro == "" || c.SSHHost != "" {
+		return command(c, args...)
+	}
+	base := []string{"-d", c.Distro}
+	if c.User != "" {
+		base = append(base, "-u", c.User)
+	}
+	return wslCommand(append(append(base, "--exec"), args...)...)
 }
 
 func applyMimoEnv(cmd *exec.Cmd, variables map[string]string) {

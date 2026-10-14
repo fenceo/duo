@@ -35,7 +35,7 @@ func mimoTranscript(ctx context.Context, c Config, t Task, variables map[string]
 			quoted = append(quoted, posixQuote(arg))
 		}
 		script := "cd -- " + posixQuote(t.Workspace) + " && exec " + strings.Join(quoted, " ")
-		cmd = commandWithContext(ctx, command(c, "sh", "-lc", script))
+		cmd = commandWithContext(ctx, mimoTargetCommand(c, "sh", "-lc", script))
 	} else {
 		cmd = exec.CommandContext(ctx, binary, "export", session)
 		cmd.Dir = t.Workspace
