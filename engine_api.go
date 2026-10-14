@@ -142,7 +142,9 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 		}
 	}
 	v.KeyConfigured = key != ""
-	v.ConfigPath = env.MimoConfig
+	if engine == "mimo" {
+		v.ConfigPath = env.MimoConfig
+	}
 	if key != "" {
 		for _, value := range []string{v.BaseURL, v.Model, v.APIProtocol, v.AuthMode} {
 			if strings.Contains(value, key) {

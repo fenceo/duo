@@ -8257,6 +8257,11 @@ function refreshAccountLogin() {
 let environmentAPIView = null, environmentAPIRequest = 0, environmentAPIBusy = false;
 function installEnvironmentAPI() {
     element('root').insertAdjacentHTML('beforeend', `<dialog id="environment-api-dialog"><form id="environment-api-form"><h2 id="environment-api-title">API 配置</h2><p id="environment-api-target" class="muted"></p><fieldset id="environment-api-fields"><label for="environment-api-provider">服务预设</label><select id="environment-api-provider"><option value="custom">自定义 API</option><option value="anthropic">Anthropic 官方 API</option><option value="mimo">MiMo 官方 API（按量付费）</option><option value="mimo-cn">MiMo Token Plan · 中国</option><option value="mimo-sgp">MiMo Token Plan · 新加坡</option><option value="mimo-ams">MiMo Token Plan · 欧洲</option></select><label for="environment-api-protocol">接口协议</label><select id="environment-api-protocol"><option value="anthropic-messages">Anthropic Messages 兼容</option><option value="openai-chat">OpenAI Chat Completions 兼容</option></select><label for="environment-api-url">API 根地址</label><input id="environment-api-url" type="url" maxlength="2000"><div id="environment-api-auth-wrap"><label for="environment-api-auth">认证请求头</label><select id="environment-api-auth"><option value="api-key">API Key · x-api-key</option><option value="auth-token">Bearer Token · Authorization</option></select></div><label for="environment-api-model">默认模型 ID</label><input id="environment-api-model" maxlength="120" list="environment-api-models"><datalist id="environment-api-models"></datalist><label for="environment-api-key">API key</label><input id="environment-api-key" type="password" maxlength="16000" autocomplete="off"><p id="environment-api-key-note" class="muted"></p><button type="button" id="environment-api-discover">验证并读取模型</button></fieldset><p id="environment-api-hint" class="muted"></p><p id="environment-api-status" role="status"></p><div class="dialog-footer"><button type="button" id="environment-api-close">关闭</button><button type="submit" id="environment-api-save" class="primary">保存并读取模型</button></div></form></dialog>`);
+    const planWrap = document.createElement('div');
+    planWrap.id = 'environment-api-mimo-wrap';
+    planWrap.className = 'hidden';
+    planWrap.innerHTML = '<label for="environment-api-mimo-plan">MiMo 套餐 / 区域</label><select id="environment-api-mimo-plan"><option value="mimo">按量付费</option><option value="mimo-cn">Token Plan · 中国</option><option value="mimo-sgp">Token Plan · 新加坡</option><option value="mimo-ams">Token Plan · 欧洲</option></select>';
+    input('environment-api-provider').after(planWrap);
     button('environment-api-close').onclick = ()=>{
         if (!environmentAPIBusy) element('environment-api-dialog').close();
     };
@@ -8275,15 +8280,22 @@ function installEnvironmentAPI() {
     };
     button('environment-api-discover').onclick = ()=>void submitEnvironmentAPI(false);
     input('environment-api-provider').onchange = applyEnvironmentAPIPreset;
+    input('environment-api-mimo-plan').onchange = applyEnvironmentAPIPreset;
     input('environment-api-protocol').onchange = ()=>{
         if (input('environment-api-provider').value !== 'custom') applyEnvironmentAPIPreset();
-        else clearEnvironmentAPIModels();
+        else {
+            clearEnvironmentAPIModels();
+            updateEnvironmentAPIKeyNote();
+        }
     };
     for (const id of [
         'environment-api-url',
         'environment-api-key',
         'environment-api-auth'
-    ])input(id).addEventListener('input', clearEnvironmentAPIModels);
+    ])input(id).addEventListener('input', ()=>{
+        clearEnvironmentAPIModels();
+        updateEnvironmentAPIKeyNote();
+    });
     disposeWithShell(()=>{
         environmentAPIRequest++;
         environmentAPIView = null;
@@ -8295,12 +8307,65 @@ function clearEnvironmentAPIModels() {
     element('environment-api-models').replaceChildren();
     element('environment-api-status').textContent = '';
 }
+function environmentAPIPreset(engine, base) {
+    const url = base.replace(/\/$/, '');
+    if (engine === 'claude' && [
+        '',
+        'https://api.anthropic.com',
+        'https://api.anthropic.com/v1'
+    ].includes(url)) return 'anthropic';
+    if (engine === 'mimo' && url === 'https://api.anthropic.com/v1') return 'anthropic';
+    for (const preset of [
+        'mimo',
+        'mimo-cn',
+        'mimo-sgp',
+        'mimo-ams'
+    ]){
+        const root = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
+        if (url === root + (engine === 'claude' ? '/anthropic' : '/v1')) return preset;
+    }
+    return 'custom';
+}
+function configureEnvironmentAPIFields(engine) {
+    const claude = engine === 'claude';
+    input('environment-api-provider').innerHTML = claude ? '<option value="anthropic">Anthropic 官方 API</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>' : '<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
+    input('environment-api-mimo-plan').value = 'mimo';
+    element('environment-api-mimo-wrap').classList.toggle('hidden', claude);
+    input('environment-api-protocol').innerHTML = claude ? '<option value="anthropic-messages">Anthropic Messages 兼容</option>' : '<option value="openai-chat">OpenAI Chat Completions 兼容</option><option value="anthropic-messages">Anthropic Messages 兼容</option>';
+    input('environment-api-protocol').value = claude ? 'anthropic-messages' : 'openai-chat';
+    input('environment-api-protocol').disabled = claude;
+    input('environment-api-auth').value = 'api-key';
+    element('environment-api-auth-wrap').classList.toggle('hidden', !claude);
+    input('environment-api-url').required = !claude;
+    input('environment-api-model').required = !claude;
+    input('environment-api-url').placeholder = claude ? '留空使用 Anthropic 官方 API' : 'https://api.xiaomimimo.com/v1';
+    input('environment-api-model').placeholder = claude ? '留空使用 Claude Code 默认模型，或填写服务模型 ID' : '读取后选择，或填写服务提供的模型 ID';
+    element('environment-api-hint').textContent = claude ? '这是所选环境的 Claude Code 配置。默认使用 Anthropic 官方 API；MiMo 等第三方服务需使用 Messages 兼容接口。保存时保留 Claude 权限、MCP 和会话。' : '这是所选环境的 MiMo Code 配置。MiMo 模型使用 OpenAI Chat Completions（/v1）；其他模型可用兼容协议。Token Plan Key 需匹配套餐区域地址。保留原生权限与会话目录。';
+}
+function updateEnvironmentAPIKeyNote() {
+    const view = environmentAPIView;
+    if (!view) return;
+    const same = input('environment-api-url').value.trim().replace(/\/$/, '') === view.base_url.replace(/\/$/, '') && input('environment-api-protocol').value === view.api_protocol && (view.engine !== 'claude' || input('environment-api-auth').value === (view.auth_mode === 'auth-token' ? 'auth-token' : 'api-key'));
+    const keep = view.key_configured && same;
+    input('environment-api-key').required = !keep;
+    input('environment-api-key').placeholder = keep ? '留空保留已保存的 Key' : '填写当前服务的 API key';
+    element('environment-api-key-note').textContent = keep ? 'Key 已配置，不回显；留空保留，填写新 Key 替换。' : view.key_configured ? '服务地址、协议或认证方式已改变，请填写当前服务的 Key。' : '首次保存需要填写 Key。';
+}
 function applyEnvironmentAPIPreset() {
     const view = environmentAPIView;
     if (!view) return;
     clearEnvironmentAPIModels();
-    const preset = input('environment-api-provider').value, claude = view.engine === 'claude';
-    if (preset === 'custom') return;
+    const provider = input('environment-api-provider').value, preset = provider === 'mimo' ? input('environment-api-mimo-plan').value : provider, claude = view.engine === 'claude';
+    element('environment-api-mimo-wrap').classList.toggle('hidden', provider !== 'mimo');
+    if (preset === 'custom') {
+        updateEnvironmentAPIKeyNote();
+        return;
+    }
+    const before = [
+        input('environment-api-url').value,
+        input('environment-api-protocol').value,
+        input('environment-api-auth').value
+    ].join('\n');
     if (preset === 'anthropic') {
         input('environment-api-protocol').value = 'anthropic-messages';
         input('environment-api-url').value = claude ? '' : 'https://api.anthropic.com/v1';
@@ -8311,10 +8376,20 @@ function applyEnvironmentAPIPreset() {
         input('environment-api-url').value = base + (claude ? '/anthropic' : '/v1');
         input('environment-api-auth').value = 'auth-token';
     }
+    if (before !== [
+        input('environment-api-url').value,
+        input('environment-api-protocol').value,
+        input('environment-api-auth').value
+    ].join('\n')) {
+        input('environment-api-model').value = '';
+        input('environment-api-key').value = '';
+    }
+    updateEnvironmentAPIKeyNote();
 }
 function renderEnvironmentAPI(view) {
     environmentAPIView = view;
     const claude = view.engine === 'claude';
+    configureEnvironmentAPIFields(view.engine);
     element('environment-api-title').textContent = taskEngineName(view.engine) + ' API 配置';
     input('environment-api-protocol').value = view.api_protocol;
     input('environment-api-auth').value = view.auth_mode === 'auth-token' ? 'auth-token' : 'api-key';
@@ -8328,18 +8403,12 @@ function renderEnvironmentAPI(view) {
     input('environment-api-key').required = !view.key_configured;
     input('environment-api-key').placeholder = view.key_configured ? '留空保留已保存的 Key' : '填写服务商 API key';
     element('environment-api-key-note').textContent = view.key_configured ? 'Key 已配置，不回显；留空保留，填写新 Key 替换。改变服务地址或协议时需要重新填写 Key。' : '首次保存需要填写 Key。';
-    input('environment-api-provider').value = 'custom';
-    for (const preset of [
-        'mimo',
-        'mimo-cn',
-        'mimo-sgp',
-        'mimo-ams'
-    ]){
-        const base = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
-        if (view.base_url.replace(/\/$/, '') === base + (claude ? '/anthropic' : '/v1')) input('environment-api-provider').value = preset;
-    }
+    const preset = environmentAPIPreset(view.engine, view.base_url), mimo = preset.startsWith('mimo');
+    input('environment-api-provider').value = mimo ? 'mimo' : preset;
+    input('environment-api-mimo-plan').value = mimo ? preset : 'mimo';
+    element('environment-api-mimo-wrap').classList.toggle('hidden', !mimo);
+    updateEnvironmentAPIKeyNote();
     renderEnvironmentAPIModels(view.models || []);
-    element('environment-api-hint').textContent = claude ? '保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。' : 'MiMo 模型使用 OpenAI Chat Completions（/v1）；其他模型可用兼容协议。Token Plan Key 需匹配套餐区域地址。只验证模型目录，不代表所有模型均已通过推理测试。保留原生权限与会话目录。';
     element('environment-api-fields').disabled = false;
     element('environment-api-protocol').disabled = claude;
     button('environment-api-save').disabled = false;
@@ -8348,7 +8417,10 @@ function renderEnvironmentAPIModels(models) {
     element('environment-api-models').innerHTML = models.map((m)=>'<option value="' + escapeHTML(m.id) + '">' + escapeHTML(m.name || m.id) + '</option>').join('');
 }
 async function openEnvironmentAPI(engine, environmentID) {
-    if (environmentAPIBusy || engineSetupBusy || harnessAPIBusy || accountImportBusy || accountSyncBusy) return;
+    if (![
+        'claude',
+        'mimo'
+    ].includes(engine) || environmentAPIBusy || engineSetupBusy || harnessAPIBusy || accountImportBusy || accountSyncBusy) return;
     const env = settings.config.environments.find((e)=>e.id === environmentID);
     if (!env) return;
     storeEnvironmentEditor();
@@ -8362,10 +8434,15 @@ async function openEnvironmentAPI(engine, environmentID) {
         env.user,
         env.host
     ].filter(Boolean).join(' / ') + '）';
+    configureEnvironmentAPIFields(engine);
+    input('environment-api-provider').value = engine === 'claude' ? 'anthropic' : 'mimo';
     input('environment-api-key').value = '';
     input('environment-api-url').value = '';
     input('environment-api-model').value = '';
     clearEnvironmentAPIModels();
+    input('environment-api-key').required = true;
+    input('environment-api-key').placeholder = '读取目标配置后再填写 Key';
+    element('environment-api-key-note').textContent = '正在读取当前引擎配置；不复用其他引擎的 Key。';
     element('environment-api-fields').disabled = true;
     button('environment-api-save').disabled = true;
     button('environment-api-close').disabled = false;
@@ -8374,6 +8451,7 @@ async function openEnvironmentAPI(engine, environmentID) {
     try {
         const view = await api('environments/' + encodeURIComponent(environmentID) + '/engines/' + engine + '/api', 'GET', undefined, shellController.signal);
         if (!shellCurrent(epoch) || request !== environmentAPIRequest || !dialog.open) return;
+        if (view.engine !== engine || view.environment_id !== environmentID) throw new Error('配置响应与所选引擎或环境不一致，请重新打开窗口。');
         renderEnvironmentAPI(view);
         element('environment-api-status').textContent = '可验证并读取模型；保存时自动读取。不发送推理请求。';
     } catch (e) {
@@ -8406,6 +8484,7 @@ async function submitEnvironmentAPI(save) {
         if (!shellCurrent(epoch) || request !== environmentAPIRequest || !dialog.open) return;
         if (save) {
             const out = result;
+            if (out.engine !== view.engine || out.environment_id !== view.environment_id) throw new Error('保存响应与所选引擎或环境不一致，请重新打开窗口核对。');
             renderEnvironmentAPI(out);
             const saved = settings.config.environments.find((e)=>e.id === view.environment_id), draft = editingEnvironments.find((e)=>e.id === view.environment_id);
             if (saved) {

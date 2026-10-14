@@ -9,6 +9,26 @@ import (
 	"testing"
 )
 
+func TestClaudeAPIViewDoesNotExposeMimoConfig(t *testing.T) {
+	env := Environment{ID: "fixture", MimoConfig: "/synthetic/mimo/duo-api.json"}
+	files := map[string][]byte{
+		"settings.json": []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://claude.example","ANTHROPIC_MODEL":"claude-model","ANTHROPIC_AUTH_TOKEN":"synthetic-claude-key"}}`),
+		"duo-api.json":  []byte(`{"model":"duo-mimo/mimo-v2.6-pro","provider":{"duo-mimo":{"options":{"baseURL":"https://mimo.example/v1","apiKey":"synthetic-mimo-key"}}}}`),
+	}
+	view, key, err := engineAPIConfigView(env, "claude", "claude", files)
+	if err != nil || key != "synthetic-claude-key" || view.Engine != "claude" || view.BaseURL != "https://claude.example" || view.Model != "claude-model" || view.ConfigPath != "" {
+		t.Fatal("Claude view mixed engines", err)
+	}
+	raw, _ := json.Marshal(view)
+	if strings.Contains(string(raw), "mimo") || strings.Contains(string(raw), "synthetic-claude-key") {
+		t.Fatal("Claude view exposed another engine's config or credentials")
+	}
+	view, key, err = engineAPIConfigView(env, "mimo", "mimo-api", files)
+	if err != nil || key != "synthetic-mimo-key" || view.Model != "mimo-v2.6-pro" || view.ConfigPath != env.MimoConfig {
+		t.Fatal("MiMo view changed while isolating Claude", err)
+	}
+}
+
 func TestEnvironmentAPIConfigAppliesWithoutCreatingAccount(t *testing.T) {
 	for _, engine := range []string{"claude", "mimo"} {
 		t.Run(engine, func(t *testing.T) {

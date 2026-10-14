@@ -2,6 +2,8 @@
 
 在“环境与引擎”中先检测并安装对应环境的 CLI，再点击该行“配置 API”。它直接打开所选环境的独立配置窗口，不进入账号管理。两个工具都支持官方服务或自定义兼容服务；引擎决定执行方式，API 服务决定实际调用哪个模型。
 
+服务预设按引擎展示：未配置的 Claude Code 默认选择 Anthropic 官方 API；也可选择自定义 Messages 服务或 MiMo 兼容 API。MiMo 的套餐和区域只在选中 MiMo 服务后展开，不在主预设中重复列出。已保存的服务会正确回显；切换到另一服务会清空旧模型和待输入的 Key，需重新读取模型并填写该服务的 Key。打开另一个引擎的窗口时立即重置表单，读取失败也不会显示上一个引擎的配置。
+
 ## Claude Code
 
 需要 Anthropic Messages 兼容服务。官方 Anthropic API 可选择官方预设并留空地址，使用 `x-api-key`。第三方地址通常使用 Bearer Token；服务若要求 `x-api-key`，在请求头选项中选择 API Key。MiMo 按量付费预设使用 `https://api.xiaomimimo.com/anthropic`；Token Plan 的区域地址与 Key 以订阅后台为准。

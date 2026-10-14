@@ -41,7 +41,7 @@ cases.push(['accountquota','light',1280,800],['accountquota','dark',390,844],['a
 cases.push(['accountlist','light',1280,800],['accountlist','dark',390,844],['accountfilter','light',320,844]);
 cases.push(['accounts','light',1280,800],['accounts','dark',390,844],['accounts','light',320,844]);
 cases.push(['accountsetup','light',1280,800],['accountsetup','dark',390,844],['accountsetup','light',320,844]);
-cases.push(['claudeapi','light',1280,800],['claudeapi','dark',390,844],['mimoapi','light',1280,800],['mimoapi','dark',390,844],['mimoapi','light',320,844]);
+cases.push(['claudeapi','light',1280,800],['claudeapi','dark',390,844],['claudeapi','light',320,844],['claudemimoapi','light',1280,800],['claudemimoapi','dark',390,844],['claudemimoapi','light',320,844],['mimoapi','light',1280,800],['mimoapi','dark',390,844],['mimoapi','light',320,844]);
 cases.push(['mimoconversation','light',1280,800],['mimoconversation','dark',390,844],['mimoconversation','light',320,844]);
 cases.push(['mimomodels','light',1280,800],['mimomodels','dark',390,844],['mimomodels','light',320,844]);
 cases.push(['questionssplit','light',1280,800],['questionstools','dark',390,844],['questionstools','light',1280,800],['questionsasync','light',390,844],['questionsasync','dark',320,844]);
@@ -192,9 +192,9 @@ for(const [view,theme,width,height] of cases){
   runInContext("settings.config.environments.push({id:'remote',name:'开发服务器 · SSH',type:'ssh',host:'fixture.invalid',user:'fixture',workspaces:['/fixture']});populateEngineOnboarding();element('account-center-editor-wrap').open=true;element('engine-account-login').value='apiKey';element('engine-account-login').onchange();",ctx);
   const scroll=document.createElement('script');scroll.textContent="window.addEventListener('load',()=>document.getElementById('engine-account-environment').scrollIntoView({block:'center'}));";document.body.append(scroll);
  }
- if(view==='claudeapi'||view==='mimoapi'){
-  ctx.apiPreview={environment_id:'local',target:'fixture-target',engine:view==='mimoapi'?'mimo':'claude',api_protocol:view==='mimoapi'?'openai-chat':'anthropic-messages',base_url:'',model:'mimo-v2.6-pro',auth_mode:'api-key',key_configured:true,models:[]};
-  runInContext("element('environment-api-dialog').setAttribute('open','');renderEnvironmentAPI(apiPreview);element('environment-api-target').textContent='目标环境：Fixture WSL（wsl / Ubuntu-22.04）';input('environment-api-provider').value='mimo';applyEnvironmentAPIPreset();",ctx);
+ if(['claudeapi','claudemimoapi','mimoapi'].includes(view)){
+  const official=view==='claudeapi';ctx.apiPreview={environment_id:'local',target:'fixture-target',engine:view==='mimoapi'?'mimo':'claude',api_protocol:view==='mimoapi'?'openai-chat':'anthropic-messages',base_url:official?'':'https://token-plan-cn.xiaomimimo.com'+(view==='mimoapi'?'/v1':'/anthropic'),model:official?'':'mimo-v2.6-pro',auth_mode:official?'api-key':'auth-token',key_configured:!official,models:[]};
+  runInContext("element('environment-api-dialog').setAttribute('open','');renderEnvironmentAPI(apiPreview);element('environment-api-target').textContent='目标环境：Fixture WSL（wsl / Ubuntu-22.04）';",ctx);
   const scroll=document.createElement('script');scroll.textContent="window.addEventListener('load',()=>{const d=document.getElementById('environment-api-dialog');d.removeAttribute('open');d.showModal();document.getElementById('environment-api-protocol').scrollIntoView({block:'center'});});";document.body.append(scroll);
  }
  if(['accounts','accountlist','accountfilter','accountquota','accounterror'].includes(view)){
@@ -291,7 +291,7 @@ for(const [view,theme,width,height] of cases){
   if(view==='history')assert(items['conversation-older'].visible,'older history has no visible entry');
   if(view==='composerlarge'){assert(items.message.height>=270,'composer resize height was clamped to its old limit');assert(items.conversation.height>=100,'enlarged draft eliminates readable conversation');assert(items.send.y+items.send.height<=height,'resized draft pushes send action off screen')}
   assert(metrics.bodyWidth<=metrics.width+1,'page overflows horizontally');
-  if(view==='claudeapi'||view==='mimoapi'){
+   if(['claudeapi','claudemimoapi','mimoapi'].includes(view)){
    const dialog=items['environment-api-dialog'];assert(dialog.visible&&dialog.x>=0&&dialog.x+dialog.width<=width+1&&dialog.y>=0&&dialog.y+dialog.height<=height+1,'Standalone API dialog exceeds viewport');
    for(const id of ['environment-api-provider','environment-api-protocol','environment-api-discover']){const control=items[id];assert(control?.visible&&control.width>=44&&control.x>=0&&control.x+control.width<=width+1,id+' is clipped or inaccessible')}
    for(const id of ['environment-api-save','environment-api-close']){const control=items[id];assert(control?.visible&&control.y>=dialog.y&&control.y+control.height<=dialog.y+dialog.height+1,id+' is outside the visible dialog');if(width<=560)assert(control.height>=44,id+' is too small for touch')}
