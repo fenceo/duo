@@ -15,8 +15,8 @@ func mimoAPIConfig(r EngineSetupRequest) []byte {
 	if r.APIProtocol == "anthropic-messages" {
 		sdk = "@ai-sdk/anthropic"
 	}
-	provider := map[string]any{"name": strings.TrimSpace(r.Name), "npm": sdk, "only_configured_models": true, "models": map[string]any{r.Model: map[string]string{"name": r.Model}}, "options": map[string]string{"baseURL": strings.TrimRight(r.BaseURL, "/"), "apiKey": r.APIKey}}
-	data, _ := json.MarshalIndent(map[string]any{"$schema": "https://mimo.xiaomi.com/mimocode/config.json", "model": model, "provider": map[string]any{"duo-mimo": provider}}, "", "  ")
+	provider := map[string]any{"name": strings.TrimSpace(r.Name), "npm": sdk, "only_configured_models": true, "models": map[string]any{r.Model: mimoModelDefinition(r.Model, r.Model, r.APIProtocol)}, "options": map[string]string{"baseURL": strings.TrimRight(r.BaseURL, "/"), "apiKey": r.APIKey}}
+	data, _ := json.MarshalIndent(map[string]any{"$schema": "https://mimo.xiaomi.com/mimocode/config.json", "model": model, "enabled_providers": []string{"duo-mimo"}, "provider": map[string]any{"duo-mimo": provider}}, "", "  ")
 	return data
 }
 

@@ -42,6 +42,7 @@ cases.push(['accountlist','light',1280,800],['accountlist','dark',390,844],['acc
 cases.push(['accounts','light',1280,800],['accounts','dark',390,844],['accounts','light',320,844]);
 cases.push(['accountsetup','light',1280,800],['accountsetup','dark',390,844],['accountsetup','light',320,844]);
 cases.push(['claudeapi','light',1280,800],['claudeapi','dark',390,844],['mimoapi','light',1280,800],['mimoapi','dark',390,844],['mimoapi','light',320,844]);
+cases.push(['mimoconversation','light',1280,800],['mimoconversation','dark',390,844],['mimoconversation','light',320,844]);
 cases.push(['questionssplit','light',1280,800],['questionstools','dark',390,844],['questionstools','light',1280,800],['questionsasync','light',390,844],['questionsasync','dark',320,844]);
 cases.push(['usage','light',1280,800],['usage','dark',390,844],['usage','light',320,844],['queued','light',1280,800],['queued','dark',390,844]);
 cases.push(['desktopmanual','light',1280,800],['desktopmanual','dark',390,844],['desktopmanual','light',320,844]);
@@ -80,6 +81,12 @@ for(const [view,theme,width,height] of cases){
   runInContext("for(const id of ['tabs','task-actions','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');input('create-engine').value='deepseek-harness';modeOptions(input('create-mode'));setCreatePermission('request');element('task-title').textContent='新建任务';",ctx);
   document.querySelector('[data-create-permission="request"]').id='preview-answer-submit';
   const scroll=document.createElement('script');scroll.textContent="window.addEventListener('load',()=>document.getElementById('preview-answer-submit').scrollIntoView({block:'center'}));";document.body.append(scroll);
+ }
+ if(view==='mimoconversation'){
+  runInContext("detail.task.engine='mimo';detail.task.model='duo-mimo/mimo-v2.5-pro';detail.runs[0].engine='mimo';detail.runs[0].model=detail.task.model;detail.runs[0].result='已检查配置，原生会话与模型切换正常。';detail.runs[0].usage={input:120,output:32,cached:0,cache_write:0,total:152};resetConversation();sequence=0;element('conversation').replaceChildren();conversationFilter={tools:true,process:true};appendEvents([{seq:1,run_id:'r1',kind:'user',text:'检查模型切换与原生记录'},{seq:2,run_id:'r1',kind:'thought',text:'先核对模型路由，'},{seq:3,run_id:'r1',kind:'thought',text:'再读取原生会话结果。'},{seq:4,run_id:'r1',kind:'assistant',text:'准备'},{seq:5,run_id:'r1',kind:'assistant',text:'准备检查配置。'},{seq:6,run_id:'r1',kind:'tool',text:'read\\n{\"file_path\":\"fixture/config.json\"}'},{seq:7,run_id:'r1',kind:'thought',text:'记录显示模型已经切换，'},{seq:8,run_id:'r1',kind:'thought',text:'继续核对最终回复。'},{seq:9,run_id:'r1',kind:'assistant',text:detail.runs[0].result}]);renderTask();",ctx);
+  assert.equal(document.querySelectorAll('.message.thought').length,2,'MiMo thought deltas must join');
+  assert.match(document.querySelector('.message.thought').textContent,/先核对模型路由，再读取原生会话结果/,'MiMo thought prefix lost');
+  assert.equal(document.querySelectorAll('.turn-output .assistant').length,1,'MiMo final reply duplicated');
  }
  if(view==='harnesspermission'){
   runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',permission:'workspace',approval:'request'};detail.approvals=[{id:'synthetic-permission',task_id:chosen,run_id:'r1',method:'harness/requestPermission',created:1,params:{sessionId:'synthetic',toolCall:{toolCallId:'synthetic-tool',title:'bash',rawInput:{command:'printf synthetic-marker',sandbox_permissions:'danger-full-access',justification:'需要在工作区外执行本次操作。'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}}];renderTask();",ctx);

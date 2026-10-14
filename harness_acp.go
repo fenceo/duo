@@ -345,6 +345,8 @@ retryWorker:
 	return w.prompt(ctx, input, emit, t.Files...)
 }
 
+var errACPEmptyReply = errors.New("Harness 未返回最终回复")
+
 func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(string, string), files ...RuntimeAttachment) (string, string, error) {
 	ctx, cancelTurn := context.WithCancel(ctx)
 	defer cancelTurn()
@@ -356,7 +358,7 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 	if err != nil {
 		return w.session, "", err
 	}
-	state := harnessACPTurn{session: w.session}
+	state := harnessACPTurn{session: w.session, engine: w.engine}
 	type pendingPermission struct {
 		callID string
 		cancel context.CancelFunc
@@ -454,7 +456,7 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 				return w.session, state.result, fmt.Errorf("Harness 本轮未正常完成：%s", response.StopReason)
 			}
 			if strings.TrimSpace(state.result) == "" && (state.finalImages == 0 || state.afterTool) {
-				return w.session, "", errors.New("Harness 未返回最终回复")
+				return w.session, "", errACPEmptyReply
 			}
 			return w.session, state.result, nil
 		}
@@ -518,7 +520,8 @@ func harnessACPError(message string) error {
 }
 
 type harnessACPTurn struct {
-	session, result         string
+	session, result, engine string
+	messageID               string
 	afterTool               bool
 	tools                   map[string]harnessToolCall
 	finalImages, imageCount int
@@ -531,14 +534,15 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Update    struct {
-			Kind     string          `json:"sessionUpdate"`
-			Content  json.RawMessage `json:"content"`
-			Title    string          `json:"title"`
-			RawInput json.RawMessage `json:"rawInput"`
-			Status   string          `json:"status"`
-			CallID   string          `json:"toolCallId"`
-			Used     *int64          `json:"used"`
-			Size     *int64          `json:"size"`
+			Kind      string          `json:"sessionUpdate"`
+			Content   json.RawMessage `json:"content"`
+			Title     string          `json:"title"`
+			RawInput  json.RawMessage `json:"rawInput"`
+			Status    string          `json:"status"`
+			CallID    string          `json:"toolCallId"`
+			MessageID string          `json:"messageId"`
+			Used      *int64          `json:"used"`
+			Size      *int64          `json:"size"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(msg.Params, &p) != nil || p.SessionID != s.session {
@@ -563,17 +567,24 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 			if block.Type == "image" {
 				s.image(u.Content, "process", emit)
 			} else if block.Text != "" {
-				emit("progress", block.Text)
+				kind := "progress"
+				if s.engine == "mimo" {
+					kind = "thought"
+				}
+				emit(kind, block.Text)
 			}
 			return
 		}
-		if s.afterTool {
+		if s.afterTool || s.engine == "mimo" && u.MessageID != "" && s.messageID != "" && s.messageID != u.MessageID {
 			s.result = ""
 			if s.finalImages > 0 {
 				emit("output_image_reset", "")
 			}
 			s.finalImages = 0
 			s.afterTool = false
+		}
+		if u.MessageID != "" {
+			s.messageID = u.MessageID
 		}
 		if block.Type == "image" {
 			if s.image(u.Content, "assistant", emit) {
@@ -599,6 +610,20 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 		s.afterTool = true
 		emit("tool", u.Title+"\n"+string(u.RawInput))
 	case "tool_call_update":
+		if s.engine == "mimo" {
+			if call, ok := s.tools[u.CallID]; ok && len(u.RawInput) > 0 && len(u.RawInput) < 240*1024 && json.Valid(u.RawInput) && string(u.RawInput) != "{}" && string(u.RawInput) != string(call.RawInput) {
+				// MiMo first announces {} and supplies arguments in an update.
+				// Fill that placeholder once; never replace approval details.
+				if string(call.RawInput) == "{}" {
+					call.RawInput = append(json.RawMessage(nil), u.RawInput...)
+					if u.Title != "" {
+						call.Title = u.Title
+					}
+					s.tools[u.CallID] = call
+				}
+				emit("tool", call.Title+"\n"+string(u.RawInput))
+			}
+		}
 		if u.Status == "completed" || u.Status == "failed" {
 			delete(s.tools, u.CallID)
 		}

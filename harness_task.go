@@ -42,6 +42,9 @@ func (a *App) updateTaskModel(id string, title, model, effort *string) (Task, er
 		if len(selected) > 120 || strings.ContainsAny(selected, "\x00\r\n") {
 			return Task{}, errors.New("模型名称无效")
 		}
+		if task.Engine == "mimo" && mimoSpeechModel(selected) {
+			return Task{}, errors.New("语音识别/合成模型不能用于 MiMo 代码会话")
+		}
 		if selected != task.Model {
 			task.ReasoningEffort = ""
 		}

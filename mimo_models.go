@@ -20,7 +20,7 @@ func parseMimoModels(stdout string) []ModelOption {
 		id := strings.TrimSpace(line)
 		// MiMo 0.1.15 appends a human-readable context-window summary.
 		id, _, _ = strings.Cut(id, " — window ")
-		if len(id) <= 200 && mimoModelIDPattern.MatchString(id) && !seen[id] {
+		if len(id) <= 200 && mimoModelIDPattern.MatchString(id) && !seen[id] && !mimoSpeechModel(id) {
 			seen[id] = true
 			models = append(models, ModelOption{ID: id, Engine: "mimo", Origin: "native"})
 		}
@@ -45,11 +45,31 @@ func configuredMimoCatalog(ctx context.Context, env Environment, selected map[st
 		list.Message = "无法读取目标环境的 MiMo CLI 模型目录，请先安装当前官方 CLI 并配置 API。"
 	} else {
 		list.Models = parseMimoModels(string(stdout.Bytes()))
+		if env.MimoConfig != "" || selected["MIMOCODE_CONFIG"] != "" {
+			filtered := []ModelOption{}
+			for _, model := range list.Models {
+				if strings.HasPrefix(model.ID, "duo-mimo/") {
+					filtered = append(filtered, model)
+				}
+			}
+			list.Models = filtered
+			list.Message = "使用所选环境的 Duo API 配置；未配置账号的内置服务不列入选项。"
+		}
 		if len(list.Models) > 0 {
 			list.Status = "ready"
 		}
 	}
 	list = mergeEngineCatalog(list, env, "mimo", env.MimoModel)
+	chatModels := []ModelOption{}
+	for _, model := range list.Models {
+		if !mimoSpeechModel(model.ID) {
+			chatModels = append(chatModels, model)
+		}
+	}
+	list.Models = chatModels
+	if mimoSpeechModel(list.DefaultModel) {
+		list.DefaultModel = ""
+	}
 	if len(list.Models) > 0 && list.Status == "empty" {
 		list.Status = "fallback"
 	}

@@ -144,6 +144,9 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 	if c.HardwareAI != nil {
 		return session, "", errors.New("MiMo Code 的 Duo 桌面/硬件工具尚未接入，请先关闭此任务的工具授权")
 	}
+	if mimoSpeechModel(t.Model) {
+		return session, "", errors.New("MiMo 语音识别/合成模型不能用于代码会话，请选择文本模型")
+	}
 	for k, v := range c.EngineEnv {
 		variables[k] = v
 	}
@@ -248,10 +251,38 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 		return session, "", err
 	}
 	cancel()
-	return w.prompt(ctx, input, func(kind, value string) {
+	_, result, runErr = w.prompt(ctx, input, func(kind, value string) {
 		if kind == "progress" {
 			value = strings.ReplaceAll(value, "Harness", "MiMo Code")
 		}
 		emit(kind, value)
 	}, t.Files...)
+	if ctx.Err() != nil {
+		return session, result, runErr
+	}
+	if err := finishMimo(w); err != nil {
+		return session, result, errors.Join(runErr, err)
+	}
+	nativeResult, usage, nativeErr := mimoTranscript(ctx, c, t, variables, session, input)
+	if nativeErr != nil {
+		if errors.Is(nativeErr, errMimoTranscriptUnavailable) {
+			emit("progress", nativeErr.Error()+"；已保留本轮流式记录。")
+			return session, result, runErr
+		}
+		return session, result, nativeErr
+	}
+	if usage != nil {
+		raw, _ := json.Marshal(usage)
+		emit("usage", string(raw))
+	}
+	if nativeResult != "" {
+		if nativeResult != result {
+			emit("assistant", nativeResult)
+		}
+		if runErr != nil && !errors.Is(runErr, errACPEmptyReply) {
+			return session, nativeResult, runErr
+		}
+		return session, nativeResult, nil
+	}
+	return session, result, runErr
 }

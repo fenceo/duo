@@ -16,6 +16,16 @@ func TestMimoProcessFixture(t *testing.T) {
 	if os.Getenv("DUO_TEST_MIMO_ACP") != "1" {
 		t.Skip("synthetic child only")
 	}
+	for _, arg := range os.Args {
+		if arg == "export" {
+			data, err := os.ReadFile("mimo-fixture-export.json")
+			if err != nil {
+				os.Exit(2)
+			}
+			os.Stdout.Write(data)
+			os.Exit(0)
+		}
+	}
 	var session, model, mode string
 	var history []string
 	path := "mimo-fixture-history.json"
@@ -29,6 +39,16 @@ func TestMimoProcessFixture(t *testing.T) {
 	}
 	finish := func(id json.RawMessage) {
 		value, _ := json.Marshal(map[string]any{"session": session, "model": model, "mode": mode, "history": history, "pid": os.Getpid(), "permission": os.Getenv("MIMOCODE_PERMISSION")})
+		provider, modelID, _ := strings.Cut(model, "/")
+		input := history[len(history)-1]
+		if len(history) > 1 && strings.HasPrefix(input, "decision:") {
+			input = history[len(history)-2]
+		}
+		doc, _ := json.Marshal(map[string]any{"info": map[string]string{"id": session}, "messages": []any{
+			map[string]any{"info": map[string]string{"id": "user-current", "role": "user"}, "parts": []any{map[string]string{"type": "text", "text": input}}},
+			map[string]any{"info": map[string]string{"id": "assistant-current", "parentID": "user-current", "role": "assistant", "providerID": provider, "modelID": modelID}, "parts": []any{map[string]string{"type": "text", "text": string(value)}}},
+		}})
+		_ = os.WriteFile("mimo-fixture-export.json", doc, 0600)
 		notify(map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]string{"type": "text", "text": string(value)}})
 		reply(id, map[string]string{"stopReason": "end_turn"})
 	}
@@ -170,7 +190,7 @@ func TestMimoACPApprovalMappingAndCancellation(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, _, err := runMimoACP(waitCtx, c, task, "wait", func(kind, value string) {
-			if kind == "progress" && value == "waiting" {
+			if kind == "thought" && value == "waiting" {
 				waiting <- struct{}{}
 			}
 		})

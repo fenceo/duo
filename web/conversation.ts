@@ -109,10 +109,24 @@ function addConversationEvent(event:EventRecord){
  const item:ConversationItem={event};conversationItems.set(event.seq,item);
  const turn=conversationTurn(event.run_id||'');turn.items.push(item);turn.items.sort((a,b)=>a.event.seq-b.event.seq);turn.dirty=true;
 }
+// Keep raw events for paging/search, but display token deltas as one thought
+// and cumulative text snapshots as one live message. Tool boundaries remain.
+function conversationDisplayItems(items:ConversationItem[]):ConversationItem[]{
+ const display:ConversationItem[]=[];
+ for(const item of items){const previous=display.at(-1),ev=item.event;
+  if(previous&&previous.event.run_id===ev.run_id&&ev.kind==='thought'&&previous.event.kind==='thought'){
+   display[display.length-1]={event:{...ev,text:previous.event.text+ev.text},searchMatch:previous.searchMatch||item.searchMatch};
+  }else if(previous&&previous.event.run_id===ev.run_id&&ev.kind==='assistant'&&previous.event.kind==='assistant'&&ev.text.startsWith(previous.event.text)){
+   display[display.length-1]=item.searchMatch||!previous.searchMatch?item:{...item,searchMatch:true};
+  }else display.push(item);
+ }
+ return display;
+}
 function conversationEventNode(item:ConversationItem):HTMLElement{
  if(item.node)return item.node;
  const ev=item.event,node=document.createElement('div');node.dataset.event=String(ev.seq);
  if(ev.kind==='user'||ev.kind==='assistant'){node.className='message '+ev.kind;node.innerHTML='<div class="label">'+(ev.kind==='user'?'你':taskEngineName(detail?.runs.find(r=>r.id===ev.run_id)?.engine||detail?.task.engine))+'</div><div class="content">'+(ev.kind==='user'?escapeHTML(ev.text):markdown(ev.text))+'</div>'}
+ else if(ev.kind==='thought'){node.className='message thought';node.innerHTML='<div class="label">思考</div><div class="content">'+markdown(ev.text)+'</div>'}
  else if(ev.kind==='tool'||ev.kind==='log'){
   node.className='log';const disclosure=document.createElement('details'),summary=document.createElement('summary');
   const newline=ev.text.indexOf('\n');summary.textContent=ev.text.slice(0,newline<0?200:Math.min(newline,200));disclosure.append(summary);node.append(disclosure);
@@ -183,7 +197,7 @@ function applyConversationFilter(followBottom=true){
   if(!visible.some(([,item])=>item===turn)){turn.root.remove();turn.dirty=false;turn.state=state;turn.result=run?.result||'';continue}
   const final=finalConversationEvents(turn.items.map(item=>item.event),run?[run]:[]),inputs:HTMLElement[]=[],outputs:HTMLElement[]=[],records:ConversationItem[]=[];
   let count=0;turn.hidden=0;
-  for(const item of turn.items){
+  for(const item of conversationDisplayItems(turn.items)){
    const category=conversationCategory(item.event,final),record=category==='tools'||category==='process';if(record)count++;
    const shown=item.searchMatch||conversationEventVisible(category,conversationFilter);
    if(!shown){turn.hidden++;continue}
@@ -228,7 +242,8 @@ function runFooter(run:Run):string{
  const settled=runId&&typeof knowledgeForRun==='function'?knowledgeForRun(runId):null;
  const automatic=(settled as {source?:string}|null)?.source==='auto';
  const knowledge=runId&&run.status==='done'&&run.result?`<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled?'disabled':''} title="${settled?'这轮结果已经沉淀到任务知识':'把这轮结果存成一条任务知识'}">${automatic?'已自动记录':settled?'已沉淀':'沉淀为知识'}</button>`:'';
- return `${context}<span title="${escapeHTML(usageTip)}">用量 ${usage?formatTokens(usage.total)+' tok':'未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished-(run.started||run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}</time>${knowledge}`;
+ const model=run.engine==='mimo'&&run.model?`<span title="本轮执行快照中的所选模型；模型自述和默认配置文件不能作为路由依据">模型 ${escapeHTML(run.model)}</span>`:'';
+ return `${model}${context}<span title="${escapeHTML(usageTip)}">用量 ${usage?formatTokens(usage.total)+' tok':'未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished-(run.started||run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}</time>${knowledge}`;
 }
 function runImageGallery(run:Run):string{
  return (run.images||[]).filter(f=>f.source==='assistant'||f.source==='tool'&&conversationFilter.tools||f.source==='process'&&conversationFilter.process).map((f,i)=>{

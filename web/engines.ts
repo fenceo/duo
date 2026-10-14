@@ -209,7 +209,7 @@ function applyEnvironmentAPIPreset(){
  const view=environmentAPIView;if(!view)return;
  clearEnvironmentAPIModels();const preset=input('environment-api-provider').value,claude=view.engine==='claude';if(preset==='custom')return;
  if(preset==='anthropic'){input('environment-api-protocol').value='anthropic-messages';input('environment-api-url').value=claude?'':'https://api.anthropic.com/v1';input('environment-api-auth').value='api-key'}
- else {const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';input('environment-api-url').value=base+(claude?'/anthropic':input('environment-api-protocol').value==='anthropic-messages'?'/anthropic/v1':'/v1');input('environment-api-auth').value='auth-token'}
+ else {const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';if(!claude)input('environment-api-protocol').value='openai-chat';input('environment-api-url').value=base+(claude?'/anthropic':'/v1');input('environment-api-auth').value='auth-token'}
 }
 function renderEnvironmentAPI(view:EnvironmentAPIView){
  environmentAPIView=view;const claude=view.engine==='claude';
@@ -220,8 +220,9 @@ function renderEnvironmentAPI(view:EnvironmentAPIView){
  input('environment-api-key').value='';input('environment-api-key').required=!view.key_configured;input('environment-api-key').placeholder=view.key_configured?'留空保留已保存的 Key':'填写服务商 API key';
  element('environment-api-key-note').textContent=view.key_configured?'Key 已配置，不回显；留空保留，填写新 Key 替换。改变服务地址或协议时需要重新填写 Key。':'首次保存需要填写 Key。';
  input('environment-api-provider').value='custom';
+ for(const preset of ['mimo','mimo-cn','mimo-sgp','mimo-ams']){const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';if(view.base_url.replace(/\/$/,'')===base+(claude?'/anthropic':'/v1'))input('environment-api-provider').value=preset}
  renderEnvironmentAPIModels(view.models||[]);
- element('environment-api-hint').textContent=claude?'保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。':'保存后直接用于所选环境的 MiMo CLI；保留权限、其他原生配置和会话目录。OpenAI 地址通常包含 /v1，Messages 地址需填写完整版本根路径。';
+ element('environment-api-hint').textContent=claude?'保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。':'MiMo 模型使用 OpenAI Chat Completions（/v1）；其他模型可用兼容协议。Token Plan Key 需匹配套餐区域地址。只验证模型目录，不代表所有模型均已通过推理测试。保留原生权限与会话目录。';
  element<HTMLFieldSetElement>('environment-api-fields').disabled=false;
  // The protocol remains fixed for Claude even after the enclosing fieldset enables.
  element<HTMLSelectElement>('environment-api-protocol').disabled=claude;

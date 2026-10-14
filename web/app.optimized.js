@@ -2528,6 +2528,27 @@ function addConversationEvent(event) {
     turn.items.sort((a, b)=>a.event.seq - b.event.seq);
     turn.dirty = true;
 }
+function conversationDisplayItems(items) {
+    const display = [];
+    for (const item of items){
+        const previous = display.at(-1), ev = item.event;
+        if (previous && previous.event.run_id === ev.run_id && ev.kind === 'thought' && previous.event.kind === 'thought') {
+            display[display.length - 1] = {
+                event: {
+                    ...ev,
+                    text: previous.event.text + ev.text
+                },
+                searchMatch: previous.searchMatch || item.searchMatch
+            };
+        } else if (previous && previous.event.run_id === ev.run_id && ev.kind === 'assistant' && previous.event.kind === 'assistant' && ev.text.startsWith(previous.event.text)) {
+            display[display.length - 1] = item.searchMatch || !previous.searchMatch ? item : {
+                ...item,
+                searchMatch: true
+            };
+        } else display.push(item);
+    }
+    return display;
+}
 function conversationEventNode(item) {
     if (item.node) return item.node;
     const ev = item.event, node = document.createElement('div');
@@ -2535,6 +2556,9 @@ function conversationEventNode(item) {
     if (ev.kind === 'user' || ev.kind === 'assistant') {
         node.className = 'message ' + ev.kind;
         node.innerHTML = '<div class="label">' + (ev.kind === 'user' ? '你' : taskEngineName(detail?.runs.find((r)=>r.id === ev.run_id)?.engine || detail?.task.engine)) + '</div><div class="content">' + (ev.kind === 'user' ? escapeHTML(ev.text) : markdown(ev.text)) + '</div>';
+    } else if (ev.kind === 'thought') {
+        node.className = 'message thought';
+        node.innerHTML = '<div class="label">思考</div><div class="content">' + markdown(ev.text) + '</div>';
     } else if (ev.kind === 'tool' || ev.kind === 'log') {
         node.className = 'log';
         const disclosure = document.createElement('details'), summary = document.createElement('summary');
@@ -2700,7 +2724,7 @@ function applyConversationFilter(followBottom = true) {
         ] : []), inputs = [], outputs = [], records = [];
         let count = 0;
         turn.hidden = 0;
-        for (const item of turn.items){
+        for (const item of conversationDisplayItems(turn.items)){
             const category = conversationCategory(item.event, final), record = category === 'tools' || category === 'process';
             if (record) count++;
             const shown = item.searchMatch || conversationEventVisible(category, conversationFilter);
@@ -2797,7 +2821,8 @@ function runFooter(run) {
     const settled = runId && typeof knowledgeForRun === 'function' ? knowledgeForRun(runId) : null;
     const automatic = settled?.source === 'auto';
     const knowledge = runId && run.status === 'done' && run.result ? `<button type="button" class="run-knowledge" data-knowledge-run="${escapeHTML(runId)}" ${settled ? 'disabled' : ''} title="${settled ? '这轮结果已经沉淀到任务知识' : '把这轮结果存成一条任务知识'}">${automatic ? '已自动记录' : settled ? '已沉淀' : '沉淀为知识'}</button>` : '';
-    return `${context}<span title="${escapeHTML(usageTip)}">用量 ${usage ? formatTokens(usage.total) + ' tok' : '未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished - (run.started || run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN', {
+    const model = run.engine === 'mimo' && run.model ? `<span title="本轮执行快照中的所选模型；模型自述和默认配置文件不能作为路由依据">模型 ${escapeHTML(run.model)}</span>` : '';
+    return `${model}${context}<span title="${escapeHTML(usageTip)}">用量 ${usage ? formatTokens(usage.total) + ' tok' : '未提供'}</span><span title="${durationTip}">用时 ${formatDuration(run.finished - (run.started || run.created))}</span><time title="${escapeHTML(new Date(run.finished).toLocaleString())}">时间 ${new Date(run.finished).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
@@ -8270,7 +8295,8 @@ function applyEnvironmentAPIPreset() {
         input('environment-api-auth').value = 'api-key';
     } else {
         const base = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
-        input('environment-api-url').value = base + (claude ? '/anthropic' : input('environment-api-protocol').value === 'anthropic-messages' ? '/anthropic/v1' : '/v1');
+        if (!claude) input('environment-api-protocol').value = 'openai-chat';
+        input('environment-api-url').value = base + (claude ? '/anthropic' : '/v1');
         input('environment-api-auth').value = 'auth-token';
     }
 }
@@ -8291,8 +8317,17 @@ function renderEnvironmentAPI(view) {
     input('environment-api-key').placeholder = view.key_configured ? '留空保留已保存的 Key' : '填写服务商 API key';
     element('environment-api-key-note').textContent = view.key_configured ? 'Key 已配置，不回显；留空保留，填写新 Key 替换。改变服务地址或协议时需要重新填写 Key。' : '首次保存需要填写 Key。';
     input('environment-api-provider').value = 'custom';
+    for (const preset of [
+        'mimo',
+        'mimo-cn',
+        'mimo-sgp',
+        'mimo-ams'
+    ]){
+        const base = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
+        if (view.base_url.replace(/\/$/, '') === base + (claude ? '/anthropic' : '/v1')) input('environment-api-provider').value = preset;
+    }
     renderEnvironmentAPIModels(view.models || []);
-    element('environment-api-hint').textContent = claude ? '保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。' : '保存后直接用于所选环境的 MiMo CLI；保留权限、其他原生配置和会话目录。OpenAI 地址通常包含 /v1，Messages 地址需填写完整版本根路径。';
+    element('environment-api-hint').textContent = claude ? '保存后直接更新所选环境的 Claude 原生 API 配置，保留权限和 MCP。官方地址可留空；MiMo 和其他服务需使用 Messages 兼容接口。' : 'MiMo 模型使用 OpenAI Chat Completions（/v1）；其他模型可用兼容协议。Token Plan Key 需匹配套餐区域地址。只验证模型目录，不代表所有模型均已通过推理测试。保留原生权限与会话目录。';
     element('environment-api-fields').disabled = false;
     element('environment-api-protocol').disabled = claude;
     button('environment-api-save').disabled = false;

@@ -12,9 +12,13 @@
 
 选择官方 MiMo Code，引擎通过 `mimo acp` 执行。当前官方独立发行与旧 npm alpha 包的接口和配置格式不同；一键安装使用当前官方发行。
 
-选择 OpenAI Chat Completions 或 Anthropic Messages 兼容协议，填写相应版本根地址、Key 和模型 ID。OpenAI 地址通常包含 `/v1`；Anthropic SDK 需要包含版本路径的根地址。地址按服务商给出的值填写，不把 Responses 接口当作 Chat Completions 接口。MiMo、Anthropic 官方预设和 Token Plan 地址均可编辑。
+MiMo 模型选择 OpenAI Chat Completions，根地址通常包含 `/v1`。当前 MiMo CLI 会把 MiMo 模型固定到 Chat Completions SDK；不能为这些模型选择 Anthropic Messages 根地址。其他兼容服务的非 MiMo 模型仍可使用 Anthropic Messages，填写包含版本路径的根地址。地址按服务商给出的值填写，不把 Responses 接口当作 Chat Completions 接口。Token Plan Key 和按量付费 Key 不能混用；订阅套餐使用套餐页面给出的区域根地址。
 
 点击“保存并读取模型”后直接用于所选环境，无需添加账号或再激活。新配置保存为目标原生配置目录中的 `duo-api.json`，Duo 通过 `MIMOCODE_CONFIG` 引用，保留其他原生配置。MiMo 会话仍保存在目标用户的原生数据目录，切换 API 不移动历史。若已激活 v0.34.18 的 MiMo 库存配置，窗口会读取并更新它，不创建重复库存或删除旧引用。配置模型在原生目录中显示为 `duo-mimo/<上游模型 ID>`；上游 ID 中的 `/` 会保留。
+
+使用 Duo API 配置时，任务列表选择 `duo-mimo/` 路由的模型，避免误用未配置 Key 的内置提供商。官方模型目录中的专用 ASR/TTS 型号用于转写/合成，不能执行代码会话，因而不列入此选择器；并未卸载这些模型或禁用语音服务。重新保存旧配置可刷新原生目录和 MiMo 思考/工具续接元数据。
+
+每轮结束后，Duo 停止该轮原生写入进程，再读取 CLI 保存的本轮结果，核对会话、输入和所选模型；补回 ACP 未发出的短回复并投影认证、额度或接口错误。只采用当前输入对应的最终消息，不把旧回复或工具前言当作最终回复。原生记录读取失败时保留流式记录并提示，不清空历史或新建替代会话。过程显示合并连续思考片段和累积正文快照，保留工具步骤；轮次底部显示所选模型和原生用量。模型自述或默认配置文件不代表本轮实际路由。
 
 任务提供 Build、Plan 和原生 allow 权限。Plan 遵循 MiMo 的原生规划代理规则；允许联网，不能把它当作操作系统只读沙箱。需要人工决定的原生工具请求可以单次批准、拒绝或取消；原生明确的 ask/deny 规则保留。所选代理和权限在下次消息发送时生效，当前执行不变。
 

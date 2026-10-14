@@ -109,3 +109,5 @@
 .output-image img{display:block;max-width:100%;width:auto;height:auto;max-height:360px;object-fit:contain;border-radius:10px;border:1px solid var(--line)}
 .output-image figcaption{font-size:12px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere}
 .output-image figcaption a{margin-left:8px}
+.turn-records .thought .label{display:block;margin-bottom:6px}
+.turn-footer span{overflow-wrap:anywhere}

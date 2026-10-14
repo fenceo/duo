@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -177,8 +178,19 @@ func engineAPIDiscover(ctx context.Context, manager *EngineSetup, env Environmen
 		}
 	}
 	out := manager.harnessDiscover(ctx, env, HarnessAPIRequest{API: v.APIProtocol, BaseURL: base, APIKey: v.APIKey, ModelListBearer: v.Engine == "claude" && claudeUsesToken(engineAPISetup(v))})
-	for i := range out.Models {
-		out.Models[i].Engine = v.Engine
+	models := []ModelOption{}
+	excluded := 0
+	for _, model := range out.Models {
+		if v.Engine == "mimo" && mimoSpeechModel(model.ID) {
+			excluded++
+			continue
+		}
+		model.Engine = v.Engine
+		models = append(models, model)
+	}
+	out.Models = models
+	if excluded > 0 {
+		out.Message += "；已排除语音识别/合成模型，它们不能用于代码会话。"
 	}
 	return out
 }
@@ -206,12 +218,40 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 	providers["duo-mimo"] = fresh["provider"].(map[string]any)["duo-mimo"]
 	configuredModels := providers["duo-mimo"].(map[string]any)["models"].(map[string]any)
 	for _, model := range v.Models {
+		if mimoSpeechModel(model.ID) {
+			continue
+		}
 		name := model.Name
 		if name == "" {
 			name = model.ID
 		}
-		configuredModels[model.ID] = map[string]string{"name": name}
+		configuredModels[model.ID] = mimoModelDefinition(model.ID, name, v.APIProtocol)
 	}
+	// Scope a fresh API configuration to its declared providers. Preserve
+	// explicitly enabled native providers while making this API selectable.
+	enabled, _ := doc["enabled_providers"].([]any)
+	if doc["enabled_providers"] == nil {
+		ids := []string{}
+		for id := range providers {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			enabled = append(enabled, id)
+		}
+	} else {
+		if enabled == nil {
+			return nil, errors.New("MiMo 原生 enabled_providers 结构无效")
+		}
+		found := false
+		for _, id := range enabled {
+			found = found || id == "duo-mimo"
+		}
+		if !found {
+			enabled = append(enabled, "duo-mimo")
+		}
+	}
+	doc["enabled_providers"] = enabled
 	doc["provider"] = providers
 	doc["model"] = fresh["model"]
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -344,6 +384,10 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	v.APIKey, err = resolveEngineAPIKey(v, view, key)
 	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if err = validateMimoAPI(v); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
