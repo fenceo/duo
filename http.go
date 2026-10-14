@@ -355,7 +355,12 @@ func (s *Server) Handler() http.Handler {
 				profileEnv = engineProfileEnv(*profile)
 			}
 		}
-		models, e := modelsForEngine(r.Context(), env, engine, profileEnv)
+		var models ModelList
+		if engine == "mimo" {
+			models, e = s.app.mimoAPICatalog(r.Context(), env, profileEnv)
+		} else {
+			models, e = modelsForEngine(r.Context(), env, engine, profileEnv)
+		}
 		if e != nil {
 			fail(w, 400, e.Error())
 			return

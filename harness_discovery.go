@@ -24,10 +24,13 @@ type HarnessDiscovery struct {
 }
 
 type harnessDiscoveryHTTP struct {
-	URL    string `json:"url"`
-	API    string `json:"api"`
-	APIKey string `json:"api_key"`
-	Bearer bool   `json:"bearer_auth,omitempty"`
+	URL            string          `json:"url"`
+	API            string          `json:"api"`
+	APIKey         string          `json:"api_key"`
+	Bearer         bool            `json:"bearer_auth,omitempty"`
+	Method         string          `json:"method,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
 }
 type harnessDiscoveryResponse struct {
 	Status int    `json:"status"`
@@ -49,11 +52,21 @@ func requestHarnessModels(ctx context.Context, env Environment, req harnessDisco
 		}
 		return result, nil
 	}
-	request, err := http.NewRequestWithContext(ctx, "GET", req.URL, nil)
+	method := req.Method
+	if method == "" {
+		method = "GET"
+	}
+	if method != "GET" && method != "POST" {
+		return harnessDiscoveryResponse{}, errors.New("API 请求方法无效")
+	}
+	request, err := http.NewRequestWithContext(ctx, method, req.URL, bytes.NewReader(req.Payload))
 	if err != nil {
 		return harnessDiscoveryResponse{}, errors.New("模型列表地址无效")
 	}
 	request.Header.Set("Accept", "application/json")
+	if method == "POST" {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if req.API == "anthropic-messages" {
 		if req.Bearer {
 			request.Header.Set("Authorization", "Bearer "+req.APIKey)
@@ -64,7 +77,11 @@ func requestHarnessModels(ctx context.Context, env Environment, req harnessDisco
 	} else {
 		request.Header.Set("Authorization", "Bearer "+req.APIKey)
 	}
-	client := &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	timeout := 12 * time.Second
+	if req.TimeoutSeconds > 0 && req.TimeoutSeconds <= 25 {
+		timeout = time.Duration(req.TimeoutSeconds) * time.Second
+	}
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
 		return harnessDiscoveryResponse{}, errors.New("无法访问模型接口，请检查地址、网络、代理或证书")

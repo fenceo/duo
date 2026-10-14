@@ -108,7 +108,7 @@ func TestMimoACPNativeLocalProvider(t *testing.T) {
 	task := Task{ID: "native-loopback", Engine: "mimo", Workspace: workspace, Mode: &WorkMode{Permission: "full"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	for _, model := range []string{"mimo-v2.5", "mimo-v2.5-pro", "bad-model"} {
+	for _, model := range []string{"mimo-v2.5", "mimo-v2.5-pro", "new-model", "bad-model"} {
 		task.Model = "duo-mimo/" + model
 		var events []string
 		session, result, err := runMimoACP(ctx, c, task, "synthetic turn "+model, func(kind, text string) { events = append(events, kind+":"+text) })
@@ -131,7 +131,7 @@ func TestMimoACPNativeLocalProvider(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if requests["mimo-v2.5"] == 0 || requests["mimo-v2.5-pro"] < 2 || requests["bad-model"] == 0 || !sawReasoning || !sawHistory {
+	if requests["mimo-v2.5"] == 0 || requests["mimo-v2.5-pro"] < 2 || requests["new-model"] == 0 || requests["bad-model"] == 0 || !sawReasoning || !sawHistory {
 		t.Fatal("model switching or reasoning/tool/history continuation mismatch", requests, sawReasoning, sawHistory)
 	}
 }

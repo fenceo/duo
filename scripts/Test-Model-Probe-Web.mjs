@@ -56,6 +56,14 @@ function fixture(){
 {
  const f=fixture();f.allowed=false;await f.ctx.testCreateModels();assert.equal(f.requests.length,0);assert.equal(f.confirmations.length,1);assert.equal(f.node('model-test-result').textContent,'');
 }
+{
+ const f=fixture();f.node('create-engine').value='mimo';
+ f.value("createModels=[{id:'duo-mimo/model-a',name:'A'},{id:'duo-mimo/model-b',name:'B'}];modelCatalogState.create.key=currentCreateCatalogContext().key;modelCatalogState.create.apiTarget='fixture-api-target';modelCatalogState.create.apiEndpoint='https://fixture.example/v1'");
+ f.ctx.syncModelTestButton();assert.equal(f.node('test-models').disabled,false);assert.match(f.node('test-models').textContent,/测试 API 模型/);
+ await f.ctx.testCreateModels();assert.equal(f.requests.length,1);assert.equal(f.requests[0].body.expected_api_target,'fixture-api-target');
+ assert.equal(f.requests[0].body.engine,'mimo');assert.match(f.confirmations[0],/不创建 CLI 会话/);assert.match(f.confirmations[0],/不读取项目指令/);assert.match(f.confirmations[0],/https:\/\/fixture.example\/v1/);
+ f.value("modelCatalogState.create.apiTarget=''");f.ctx.syncModelTestButton();assert.equal(f.node('test-models').disabled,true);assert.match(f.node('test-models').title,/重新读取模型目录/);
+}
 for(const kind of ['empty','too-many','invalid','submitting','loading','failed','wrong-context']){
  const f=fixture();
  if(kind==='empty')f.value('createModels=[]');

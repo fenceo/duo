@@ -31,6 +31,7 @@ type ModelProbeRequest struct {
 	Workspace         string   `json:"workspace"`
 	Models            []string `json:"models"`
 	ExpectedProfileID *string  `json:"expected_profile_id,omitempty"`
+	ExpectedAPITarget string   `json:"expected_api_target,omitempty"`
 }
 
 type ModelProbeResult struct {
@@ -107,9 +108,6 @@ func probeWorkspace(e Environment, workspace string) (string, error) {
 }
 
 func prepareModelProbe(c Config, e Environment, engine, workspace string, requested []string) (modelProbePlan, error) {
-	if engine == "mimo" {
-		return modelProbePlan{}, errors.New("MiMo 独立无工具模型测试尚未接入；可在 API 配置中验证认证和读取模型列表")
-	}
 	if engine == "" {
 		engine = "codex"
 	}
@@ -263,8 +261,33 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), modelProbeRequestMax)
 	defer cancel()
+	probe := probeOneModel
+	if request.Engine == "mimo" {
+		selected := s.app.activeEngineEnvironment(Task{Engine: "mimo", Environment: &env})
+		if boundTask != nil {
+			selected = s.app.activeEngineEnvironment(*boundTask)
+		}
+		api, err := s.app.readMimoAPI(ctx, env, selected)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if request.ExpectedAPITarget == "" || request.ExpectedAPITarget != mimoAPIRevision(api) {
+			fail(w, http.StatusConflict, "MiMo API 地址、协议或 Key 已变化，请重新读取模型列表并确认测试")
+			return
+		}
+		for _, model := range plan.models {
+			if !strings.HasPrefix(model, "duo-mimo/") || mimoSpeechModel(model) {
+				fail(w, http.StatusBadRequest, "MiMo API 测试需要此服务的 duo-mimo/ 文本模型 ID")
+				return
+			}
+		}
+		probe = func(ctx context.Context, _ Config, _ string, _ string, model string) ModelProbeResult {
+			return probeMimoAPI(ctx, env, api, model)
+		}
+	}
 	if !acceptsModelProbeStream(r.Header.Get("Accept")) {
-		jsonOut(w, http.StatusOK, executeModelProbe(ctx, plan, probeOneModel, nil))
+		jsonOut(w, http.StatusOK, executeModelProbe(ctx, plan, probe, nil))
 		return
 	}
 	if _, ok := w.(http.Flusher); !ok {
@@ -276,7 +299,7 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	writer := json.NewEncoder(w)
 	controller := http.NewResponseController(w)
-	executeModelProbe(ctx, plan, probeOneModel, func(event ModelProbeEvent) error {
+	executeModelProbe(ctx, plan, probe, func(event ModelProbeEvent) error {
 		// A client that stops reading must not hold the shared admission lock
 		// forever. This only bounds stream writes, not model generation time.
 		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -294,6 +317,9 @@ func (s *Server) testModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func probeOneModel(parent context.Context, c Config, engine, workspace, model string) ModelProbeResult {
+	if engine == "mimo" {
+		return ModelProbeResult{Model: model, Status: "unavailable", Message: "MiMo API 测试需要所选环境已保存的 API 配置"}
+	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(parent, modelProbeTimeout)
 	defer cancel()

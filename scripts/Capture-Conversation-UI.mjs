@@ -43,6 +43,7 @@ cases.push(['accounts','light',1280,800],['accounts','dark',390,844],['accounts'
 cases.push(['accountsetup','light',1280,800],['accountsetup','dark',390,844],['accountsetup','light',320,844]);
 cases.push(['claudeapi','light',1280,800],['claudeapi','dark',390,844],['mimoapi','light',1280,800],['mimoapi','dark',390,844],['mimoapi','light',320,844]);
 cases.push(['mimoconversation','light',1280,800],['mimoconversation','dark',390,844],['mimoconversation','light',320,844]);
+cases.push(['mimomodels','light',1280,800],['mimomodels','dark',390,844],['mimomodels','light',320,844]);
 cases.push(['questionssplit','light',1280,800],['questionstools','dark',390,844],['questionstools','light',1280,800],['questionsasync','light',390,844],['questionsasync','dark',320,844]);
 cases.push(['usage','light',1280,800],['usage','dark',390,844],['usage','light',320,844],['queued','light',1280,800],['queued','dark',390,844]);
 cases.push(['desktopmanual','light',1280,800],['desktopmanual','dark',390,844],['desktopmanual','light',320,844]);
@@ -87,6 +88,10 @@ for(const [view,theme,width,height] of cases){
   assert.equal(document.querySelectorAll('.message.thought').length,2,'MiMo thought deltas must join');
   assert.match(document.querySelector('.message.thought').textContent,/先核对模型路由，再读取原生会话结果/,'MiMo thought prefix lost');
   assert.equal(document.querySelectorAll('.turn-output .assistant').length,1,'MiMo final reply duplicated');
+ }
+ if(view==='mimomodels'){
+  runInContext("detail.task.engine='mimo';detail.task.model='duo-mimo/mimo-v2.5';detail.task.environment.mimo='fixture-mimo';settings.config.environments.push(detail.task.environment);taskPickerModels=['mimo-v2.5','mimo-v2.5-pro','mimo-v2.6-flash','mimo-v2.6-pro'].map(id=>({id:'duo-mimo/'+id,name:id,engine:'mimo'}));modelCatalogState.task={key:taskCatalogContextKey(detail.task),loading:false,failed:false,summary:'已读取 4 个模型',details:'来源：MiMo API 实时模型目录。服务端共 8 项，含 4 个专用语音型号。',apiTarget:'synthetic-api-target',apiEndpoint:'https://token-plan-cn.xiaomimimo.com/v1'};modelProbeStates.task={key:taskCatalogContextKey(detail.task),models:taskPickerModels.map(m=>m.id),rows:Object.fromEntries(taskPickerModels.map((m,i)=>[m.id,{status:i===0?'available':'unverified',message:i===0?'API 文本调用成功；CLI 工具能力未验证':'尚未测试'}])),summary:'合成 API 测试结果，不调用真实模型',busy:false};renderTask();renderModelMenu('task');element('task-model-menu').classList.remove('hidden');button('task-model-button').setAttribute('aria-expanded','true');",ctx);
+  assert.equal(document.getElementById('task-test-models').disabled,false,'MiMo API probe still disabled');
  }
  if(view==='harnesspermission'){
   runInContext("detail.task.engine='deepseek-harness';detail.task.mode={id:'harness:workspace',permission:'workspace',approval:'request'};detail.approvals=[{id:'synthetic-permission',task_id:chosen,run_id:'r1',method:'harness/requestPermission',created:1,params:{sessionId:'synthetic',toolCall:{toolCallId:'synthetic-tool',title:'bash',rawInput:{command:'printf synthetic-marker',sandbox_permissions:'danger-full-access',justification:'需要在工作区外执行本次操作。'}},options:[{optionId:'allow-once',kind:'allow_once'},{optionId:'reject-once',kind:'reject_once'}]}}];renderTask();",ctx);

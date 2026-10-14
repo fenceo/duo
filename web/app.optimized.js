@@ -6089,7 +6089,7 @@ function taskModelProbeMismatch() {
             env.host || '',
             env.port || 0,
             env.identity || '',
-            engine === 'claude' ? env.claude || 'claude' : engine === 'deepseek-harness' ? env.harness || 'dsh' : env.codex || 'codex',
+            engine === 'mimo' ? env.mimo || 'mimo' : engine === 'claude' ? env.claude || 'claude' : engine === 'deepseek-harness' ? env.harness || 'dsh' : env.codex || 'codex',
             engine === 'deepseek-harness' ? env.harness_provider || 'deepseek-official' : ''
         ];
     return !current || JSON.stringify(identity(previous)) !== JSON.stringify(identity(current)) ? '任务保留旧执行环境，请在新建任务中测试当前配置。' : '';
@@ -6116,9 +6116,9 @@ function syncModelTestButton() {
         const prefix = target === 'create' ? '' : 'task-', control = button(prefix + 'test-models'), stop = button(prefix + 'stop-model-test'), state = modelProbeStates[target], count = modelListIDs(target).length;
         const mimo = target === 'create' ? input('create-engine')?.value === 'mimo' : detail?.task.engine === 'mimo';
         if (control) {
-            control.textContent = '测试列表模型' + (count ? '（' + count + '）' : '');
-            control.disabled = mimo || modelTestBusy || modelCatalogState[target].loading || modelCatalogState[target].failed || count === 0 || count > 24 || target === 'create' && createSubmitting || target === 'task' && !!taskModelProbeMismatch();
-            control.title = mimo ? 'MiMo 独立无工具推理测试尚未接入，可在配置 API 中验证认证和读取模型' : count > 24 ? '每次最多测试 24 个模型；请精简该环境的模型配置' : '逐个测试完整列表，不受搜索筛选影响';
+            control.textContent = (mimo ? '测试 API 模型' : '测试列表模型') + (count ? '（' + count + '）' : '');
+            control.disabled = modelTestBusy || modelCatalogState[target].loading || modelCatalogState[target].failed || mimo && !modelCatalogState[target].apiTarget || count === 0 || count > 24 || target === 'create' && createSubmitting || target === 'task' && !!taskModelProbeMismatch();
+            control.title = count > 24 ? '每次最多测试 24 个模型；请精简该环境的模型配置' : mimo && !modelCatalogState[target].apiTarget ? '请先配置此环境的 MiMo API 并重新读取模型目录' : mimo ? '逐个发送最小 API 文本请求；不创建 CLI 会话，不调用工具，不读取项目文件。可能消耗额度。' : '逐个测试完整列表，不受搜索筛选影响';
         }
         if (stop) {
             stop.classList.toggle('hidden', !state.busy);
@@ -6204,9 +6204,10 @@ async function testModelList(target) {
         if (!modelProbeStillCurrent(target, state) || state.controller.signal.aborted) return;
         const profileID = profiles.active_profile[context.environment.id + ':' + context.engine] || '', profile = profiles.profiles.find((item)=>item.id === profileID);
         if (profileID && !profile) throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
-        const account = profile ? `${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）` : '目标环境 CLI 的原生默认配置';
-        const provider = context.engine === 'deepseek-harness' ? context.environment.harness_provider || 'deepseek-official' : '沿用该 CLI 的原生配置';
-        if (!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id, index)=>`${index + 1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令，可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)) {
+        const account = context.engine === 'mimo' ? '所选环境当前 MiMo API 配置' : profile ? `${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）` : '目标环境 CLI 的原生默认配置';
+        const provider = context.engine === 'mimo' ? catalog.apiEndpoint || '所选环境 API' : context.engine === 'deepseek-harness' ? context.environment.harness_provider || 'deepseek-official' : '沿用该 CLI 的原生配置';
+        const scope = context.engine === 'mimo' ? '每个模型仅发送一条最小 API 文本请求，不创建 CLI 会话、不附加任务对话或附件、不读取项目指令、不调用工具。结果只验证 API 文本可用性，不能代表 CLI 工具或长会话能力。' : '每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令。';
+        if (!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id, index)=>`${index + 1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)) {
             state.models = [];
             state.summary = '';
             return;
@@ -6225,6 +6226,9 @@ async function testModelList(target) {
             workspace: context.workspace,
             models,
             expected_profile_id: profileID,
+            ...context.engine === 'mimo' ? {
+                expected_api_target: catalog.apiTarget
+            } : {},
             ...target === 'task' && detail?.task.binding ? {
                 task_id: detail.task.id,
                 binding_revision: detail.task.binding.revision
@@ -6397,6 +6401,8 @@ async function loadCreateModels(reset = false, refresh = false) {
     state.failed = false;
     state.summary = '';
     state.details = '';
+    state.apiTarget = '';
+    state.apiEndpoint = '';
     if (reset) {
         setCreateModelsLoading();
         setCreateModels(defaultModel ? [
@@ -6423,6 +6429,8 @@ async function loadCreateModels(reset = false, refresh = false) {
         createResolvedDefault = fallback;
         state.summary = catalogSummary(result);
         state.details = catalogDetails(result);
+        state.apiTarget = result.api_target;
+        state.apiEndpoint = result.api_endpoint;
     } catch (e) {
         if (request !== modelRequest || !creatingTask || createSubmitting || currentCreateCatalogContext()?.key !== target.key) return;
         state.failed = true;
@@ -6643,7 +6651,9 @@ async function refreshTaskModels(refresh = false) {
         loading: true,
         summary: '',
         details: '',
-        failed: false
+        failed: false,
+        apiTarget: '',
+        apiEndpoint: ''
     });
     renderModelMenu('task');
     try {
@@ -6652,6 +6662,8 @@ async function refreshTaskModels(refresh = false) {
         taskPickerModels = mergeTaskModels(task, result.models || []);
         state.summary = catalogSummary(result);
         state.details = catalogDetails(result);
+        state.apiTarget = result.api_target;
+        state.apiEndpoint = result.api_endpoint;
     } catch (e) {
         if (request !== taskModelRequest || !detail || taskCatalogContextKey(detail.task) !== key) return;
         state.failed = true;

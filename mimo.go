@@ -155,6 +155,9 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 	for k, v := range policy {
 		variables[k] = v
 	}
+	if err = projectMimoSelectedModel(variables, t.Model); err != nil {
+		return session, "", err
+	}
 	key := session
 	if key == "" {
 		key = "new:" + t.ID

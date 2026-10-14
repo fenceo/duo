@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -190,7 +191,7 @@ func engineAPIDiscover(ctx context.Context, manager *EngineSetup, env Environmen
 	}
 	out.Models = models
 	if excluded > 0 {
-		out.Message += "；已排除语音识别/合成模型，它们不能用于代码会话。"
+		out.Message += fmt.Sprintf("；其中 %d 个文本/会话模型、%d 个语音识别/合成模型；代码会话仅列出前者。", len(models), excluded)
 	}
 	return out
 }

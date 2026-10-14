@@ -26,6 +26,8 @@ MiMo 模型选择 OpenAI Chat Completions，根地址通常包含 `/v1`。当前
 
 “验证并读取模型”从所选 Windows/WSL/SSH 环境访问模型目录接口，只发 GET，不消耗推理额度；保存时也会自动验证。成功说明模型目录认证通过，具体模型调用仍未验证。服务若没有标准模型列表接口，会明确提示并允许手动填写模型 ID。Key 不回显；留空保留同一服务已保存的 Key。改变地址、协议或认证方式需要重新填写 Key。保存配置前需结束该环境对应引擎的执行或排队任务。
 
-新建任务的模型列表读取该环境实际 CLI 或显式配置。MiMo 的独立无工具推理测试、独立知识整理及 Duo 桌面/硬件工具尚未接入，相应入口不可用；不以普通聊天权限代替。
+MiMo 已配置 Duo API 时，新建任务与已有任务的模型目录实时查询所选服务的 `/models`，不再只读取上次保存的 CLI 目录。读取目录只发 GET，不更新配置或发送推理请求；没有标准目录接口时明确显示原生配置回退。目录不包含专用 ASR/TTS，提示中区分服务端总数和代码会话型号数。新发现模型在下一轮进程覆盖中注册，并同步该进程默认模型，原配置文件和原生会话目录不变。
+
+MiMo 的“测试 API 模型”逐项发送最小文本请求，无工具、项目文件、任务历史或附件；测试前确认当前 API 服务、模型范围及额度使用，可取消剩余测试。地址、协议或 Key 变化后需要重新读目录并确认测试；缺少配置时不能测试。结果只代表 API 文本调用，不保证原生 CLI 的工具能力或长会话表现。Key 和原始错误载荷不回显。MiMo 独立知识整理及 Duo 桌面/硬件工具仍未接入，不以普通聊天权限代替。
 
 官方依据：[MiMo Code](https://github.com/XiaomiMiMo/MiMo-Code)、[MiMo 在 Claude Code 中使用](https://mimo.mi.com/docs/zh-CN/tokenplan/integration/claudecode)、[Claude Code 网关配置](https://code.claude.com/docs/en/llm-gateway-connect)。

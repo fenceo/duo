@@ -1,5 +1,5 @@
 type EngineModel={id:string;name:string;reasoning_levels?:string[]|null;default_reasoning?:string;origin?:'native'|'cache'|'configured';engine?:string};
-type ModelListResponse={models:EngineModel[];modified:number;message?:string;source:string;status?:'ready'|'fallback'|'empty';default_model?:string};
+type ModelListResponse={models:EngineModel[];modified:number;message?:string;source:string;status?:'ready'|'fallback'|'empty';default_model?:string;api_target?:string;api_endpoint?:string};
 type ModelProbeResult={model:string;status:'available'|'unavailable'|'timeout';message:string;duration_ms:number};
 type ModelProbeResponse={engine:string;workspace:string;results:ModelProbeResult[]};
 type ModelProbeStatus=ModelProbeResult['status']|'pending'|'testing'|'cancelled'|'unverified';
@@ -12,7 +12,7 @@ let taskPickerModels:EngineModel[]=[];
 let taskModelRequest=0,modelTestRequest=0,modelProfileRevision=0;
 let modelTestBusy=false;
 const modelProbeStates:Record<ModelPickerTarget,ModelProbeState>={create:{key:'',models:[],rows:{},summary:'',busy:false},task:{key:'',models:[],rows:{},summary:'',busy:false}};
-type ModelCatalogState={loading:boolean;key:string;summary:string;details:string;failed:boolean};
+type ModelCatalogState={loading:boolean;key:string;summary:string;details:string;failed:boolean;apiTarget?:string;apiEndpoint?:string};
 const modelCatalogState:Record<ModelPickerTarget,ModelCatalogState>={create:{loading:false,key:'',summary:'',details:'',failed:false},task:{loading:false,key:'',summary:'',details:'',failed:false}};
 const modelCatalogControllers:Partial<Record<ModelPickerTarget,AbortController>>={};
 const effortLabels:Record<string,string>={off:'关闭',none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'Ultra（工具可能自动委派）'};
@@ -50,7 +50,7 @@ function modelListIDs(target:ModelPickerTarget){return [...new Set((target==='cr
 function taskModelProbeMismatch(){
  if(!detail)return '';
  const previous=detail.task.environment,current=settings.config.environments.find(env=>env.id===previous.id),engine=detail.task.engine||'codex';
- const identity=(env:Environment)=>[env.type,env.distro||'',env.user||'',env.host||'',env.port||0,env.identity||'',engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex'),engine==='deepseek-harness'?(env.harness_provider||'deepseek-official'):''];
+ const identity=(env:Environment)=>[env.type,env.distro||'',env.user||'',env.host||'',env.port||0,env.identity||'',engine==='mimo'?(env.mimo||'mimo'):engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex'),engine==='deepseek-harness'?(env.harness_provider||'deepseek-official'):''];
  return !current||JSON.stringify(identity(previous))!==JSON.stringify(identity(current))?'任务保留旧执行环境，请在新建任务中测试当前配置。':'';
 }
 function modelListProbeContext(target:ModelPickerTarget){
@@ -63,7 +63,7 @@ function syncModelTestButton(){
  for(const target of ['create','task'] as ModelPickerTarget[]){
   const prefix=target==='create'?'':'task-',control=button(prefix+'test-models'),stop=button(prefix+'stop-model-test'),state=modelProbeStates[target],count=modelListIDs(target).length;
   const mimo=target==='create'?input('create-engine')?.value==='mimo':detail?.task.engine==='mimo';
-  if(control){control.textContent='测试列表模型'+(count?'（'+count+'）':'');control.disabled=mimo||modelTestBusy||modelCatalogState[target].loading||modelCatalogState[target].failed||count===0||count>24||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());control.title=mimo?'MiMo 独立无工具推理测试尚未接入，可在配置 API 中验证认证和读取模型':count>24?'每次最多测试 24 个模型；请精简该环境的模型配置':'逐个测试完整列表，不受搜索筛选影响'}
+  if(control){control.textContent=(mimo?'测试 API 模型':'测试列表模型')+(count?'（'+count+'）':'');control.disabled=modelTestBusy||modelCatalogState[target].loading||modelCatalogState[target].failed||mimo&&!modelCatalogState[target].apiTarget||count===0||count>24||(target==='create'&&createSubmitting)||(target==='task'&&!!taskModelProbeMismatch());control.title=count>24?'每次最多测试 24 个模型；请精简该环境的模型配置':mimo&&!modelCatalogState[target].apiTarget?'请先配置此环境的 MiMo API 并重新读取模型目录':mimo?'逐个发送最小 API 文本请求；不创建 CLI 会话，不调用工具，不读取项目文件。可能消耗额度。':'逐个测试完整列表，不受搜索筛选影响'}
   if(stop){stop.classList.toggle('hidden',!state.busy);stop.disabled=!!state.controller?.signal.aborted}
  }
 }
@@ -104,12 +104,13 @@ async function testModelList(target:ModelPickerTarget){
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   const profileID=profiles.active_profile[context.environment.id+':'+context.engine]||'',profile=profiles.profiles.find(item=>item.id===profileID);
   if(profileID&&!profile)throw new Error('当前账号/API 引用无法确认，请刷新配置后重试。');
-  const account=profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
-  const provider=context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
-  if(!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令，可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
+  const account=context.engine==='mimo'?'所选环境当前 MiMo API 配置':profile?`${profile.name}（${profile.id}；${engineCredentialLabel(profile.kind)}）`:'目标环境 CLI 的原生默认配置';
+  const provider=context.engine==='mimo'?(catalog.apiEndpoint||'所选环境 API'):context.engine==='deepseek-harness'?(context.environment.harness_provider||'deepseek-official'):'沿用该 CLI 的原生配置';
+  const scope=context.engine==='mimo'?'每个模型仅发送一条最小 API 文本请求，不创建 CLI 会话、不附加任务对话或附件、不读取项目指令、不调用工具。结果只验证 API 文本可用性，不能代表 CLI 工具或长会话能力。':'每个模型发送一条最小测试请求，不附加当前任务对话或附件；沿用目标引擎配置，CLI 可能加载该目录的项目指令。';
+  if(!confirm(`将逐个测试列表中的全部 ${models.length} 个模型（不受搜索筛选影响）：\n${models.map((id,index)=>`${index+1}. ${id}`).join('\n')}\n\n环境：${context.environment.name}\nAI 工具：${taskEngineName(context.engine)}\n账号/API：${account}\nProvider：${provider}\n目录：${context.workspace}\n\n${scope}可能消耗模型额度。可以停止剩余测试，已发出的请求仍可能计费。是否继续？`)){state.models=[];state.summary='';return}
   if(!modelProbeStillCurrent(target,state)||state.controller!.signal.aborted)return;
   state.rows=Object.fromEntries(models.map(id=>[id,{status:'pending' as const}]));state.summary='正在建立测试连接…';renderModelProbe(target);
-  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
+  await streamModelProbes(context.environment.id,{engine:context.engine,workspace:context.workspace,models,expected_profile_id:profileID,...(context.engine==='mimo'?{expected_api_target:catalog.apiTarget}:{}),...(target==='task'&&detail?.task.binding?{task_id:detail.task.id,binding_revision:detail.task.binding.revision}:{})},state.controller!.signal,event=>{
    if(!modelProbeStillCurrent(target,state))return;
    if(event.type==='model_start'&&typeof event.model==='string'&&Object.hasOwn(state.rows,event.model))state.rows[event.model]={status:'testing'};
    if(event.type==='result'){
@@ -167,7 +168,7 @@ async function loadCreateModels(reset=false,refresh=false){
  if(state.key!==target.key){createModels=[];createResolvedDefault=''}
  const request=++modelRequest,defaultModel=engineDefaultModel(target.environment,target.engine);
  modelCatalogControllers.create?.abort();const controller=new AbortController();modelCatalogControllers.create=controller;
- state.key=target.key;state.loading=true;state.failed=false;state.summary='';state.details='';
+ state.key=target.key;state.loading=true;state.failed=false;state.summary='';state.details='';state.apiTarget='';state.apiEndpoint='';
  if(reset){setCreateModelsLoading();setCreateModels(defaultModel?[{id:defaultModel,name:defaultModel+'（环境默认）',origin:'configured'}]:[],defaultModel)}
  renderModelMenu('create');
  try{
@@ -179,7 +180,7 @@ async function loadCreateModels(reset=false,refresh=false){
   if(fallback&&!models.some(model=>model.id===fallback))models.unshift({id:fallback,name:fallback+'（环境默认）',origin:'configured'});
   createModels=models;
   createResolvedDefault=fallback;
-  state.summary=catalogSummary(result);state.details=catalogDetails(result);
+  state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;
  }catch(e){
   if(request!==modelRequest||!creatingTask||createSubmitting||currentCreateCatalogContext()?.key!==target.key)return;
   state.failed=true;state.summary='读取失败；可重试、沿用默认或输入模型 ID';state.details=(e as Error).message;
@@ -307,11 +308,11 @@ async function refreshTaskModels(refresh=false){
  if(state.key!==key||refresh)invalidateModelTest('task');
  const request=++taskModelRequest;
  modelCatalogControllers.task?.abort();const controller=new AbortController();modelCatalogControllers.task=controller;
- taskPickerModels=mergeTaskModels(task,[]);Object.assign(state,{key,loading:true,summary:'',details:'',failed:false});renderModelMenu('task');
+ taskPickerModels=mergeTaskModels(task,[]);Object.assign(state,{key,loading:true,summary:'',details:'',failed:false,apiTarget:'',apiEndpoint:''});renderModelMenu('task');
  try{
   const result=await api<ModelListResponse>(modelsURL(task.environment.id,task.engine||'codex',task.workspace,refresh)+'&task_id='+encodeURIComponent(task.id),'GET',undefined,controller.signal);
   if(request!==taskModelRequest||!detail||taskCatalogContextKey(detail.task)!==key)return;
-  taskPickerModels=mergeTaskModels(task,result.models||[]);state.summary=catalogSummary(result);state.details=catalogDetails(result);
+  taskPickerModels=mergeTaskModels(task,result.models||[]);state.summary=catalogSummary(result);state.details=catalogDetails(result);state.apiTarget=result.api_target;state.apiEndpoint=result.api_endpoint;
  }catch(e){
   if(request!==taskModelRequest||!detail||taskCatalogContextKey(detail.task)!==key)return;
   state.failed=true;state.summary='读取失败；可刷新或输入模型 ID';state.details=(e as Error).message;

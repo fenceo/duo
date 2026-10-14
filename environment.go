@@ -293,6 +293,8 @@ func validReasoning(value string) bool {
 }
 
 type ModelList struct {
+	APITarget    string        `json:"api_target,omitempty"`
+	APIEndpoint  string        `json:"api_endpoint,omitempty"`
 	Models       []ModelOption `json:"models"`
 	Source       string        `json:"source"`
 	Modified     int64         `json:"modified"`

@@ -13,6 +13,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 try:
     request = json.loads(sys.stdin.buffer.read(24000))
     headers = {'Accept': 'application/json'}
+    method = request.get('method') or 'GET'
+    if method not in ('GET', 'POST'):
+        raise ValueError('invalid method')
+    body = None
+    if method == 'POST':
+        headers['Content-Type'] = 'application/json'
+        body = json.dumps(request['payload']).encode('utf-8')
+    timeout = request.get('timeout_seconds') or 12
+    if not isinstance(timeout, int) or not 1 <= timeout <= 25:
+        raise ValueError('invalid timeout')
     if request['api'] == 'anthropic-messages':
         if request.get('bearer_auth'):
             headers['Authorization'] = 'Bearer ' + request['api_key']
@@ -23,7 +33,7 @@ try:
         headers['Authorization'] = 'Bearer ' + request['api_key']
     opener = urllib.request.build_opener(NoRedirect())
     try:
-        response = opener.open(urllib.request.Request(request['url'], headers=headers), timeout=12)
+        response = opener.open(urllib.request.Request(request['url'], data=body, headers=headers, method=method), timeout=timeout)
     except urllib.error.HTTPError as error:
         response = error
     with response:
