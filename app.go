@@ -468,6 +468,10 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					input = handoffInput + "\n\n本轮用户要求：\n" + input
 				}
 				if r.Kind == "chat" {
+					// Name a deliberate tool-free turn before the model runs.
+					if note := a.hardwareToolOmission(task); note != "" {
+						_ = a.store.event(id, r.ID, "progress", note)
+					}
 					// A brief recovery already carries the reviewed local recall.
 					// Do not silently add a second set of knowledge to that scope.
 					if handoffInput == "" || task.Binding == nil || task.Binding.HistoryMode != "brief" {

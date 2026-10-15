@@ -116,6 +116,38 @@ func TestHardwareMCPAuthPermissionsAndRevocation(t *testing.T) {
 	}
 }
 
+func TestHardwareToolOmissionNamesTheMissingGrant(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	one := taskFor(t, a)
+	admin := toolsClient(t, a)
+	if note := a.hardwareToolOmission(one); note != "" {
+		t.Fatalf("a task without devices must stay silent: %q", note)
+	}
+	var c HardwareConfig
+	json.Unmarshal(admin("/api/tasks/"+one.ID+"/hardware", "POST", HardwareConfig{Name: "fixture", Protocol: "serial", Device: "COM997", Baud: 115200}, 200), &c)
+	if note := a.hardwareToolOmission(one); !strings.Contains(note, "未授权 AI 使用") {
+		t.Fatalf("an attached device without a grant must be named: %q", note)
+	}
+	readOnly := one
+	readOnly.Mode = &WorkMode{ID: "plan", Permission: "read"}
+	if note := a.hardwareToolOmission(readOnly); !strings.Contains(note, "只读模式") {
+		t.Fatalf("a read-only tool-free turn must name the mode: %q", note)
+	}
+	noTools := one
+	noTools.NoTools = true
+	if note := a.hardwareToolOmission(noTools); note != "" {
+		t.Fatalf("an explicit no-tools run must stay silent: %q", note)
+	}
+	admin("/api/tasks/"+one.ID+"/hardware/"+c.ID+"/ai", "PUT", HardwareGrant{Read: true}, 200)
+	if note := a.hardwareToolOmission(one); note != "" {
+		t.Fatalf("an authorized device must stay silent: %q", note)
+	}
+	admin("/api/tasks/"+one.ID+"/hardware/"+c.ID+"/ai", "PUT", HardwareGrant{}, 200)
+	if note := a.hardwareToolOmission(one); !strings.Contains(note, "未授权 AI 使用") {
+		t.Fatalf("a revoked grant must be named again: %q", note)
+	}
+}
+
 func TestHardwareMCPSerialIOAndOwnership(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	one, two := taskFor(t, a), taskFor(t, a)

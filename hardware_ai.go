@@ -83,6 +83,40 @@ func effectiveHardwareGrant(c HardwareConfig, live, original HardwareGrant) Hard
 	live.Power = live.Read && live.Power && original.Power && !c.ReadOnly && c.Kind == "relay"
 	return live
 }
+
+// Attachment and authorization are separate: removing a task binding drops the
+// grant, but a device added without saving AI permissions has no grant row at
+// all, so the timeline note must ask the binding table instead of the grant one.
+func (s *Store) taskHardwareCount(task string) (int, error) {
+	var count int
+	err := s.QueryRow("SELECT count(*) FROM task_hardware WHERE task_id=?", task).Scan(&count)
+	return count, err
+}
+
+// A tool-free turn should say why it has no tools. An attached device without a
+// grant and a read-only turn are both deliberate, so name the reason instead of
+// letting the agent look like it lost access to hardware it was never given.
+func (a *App) hardwareToolOmission(t Task) string {
+	if t.NoTools {
+		return ""
+	}
+	attached, err := a.store.taskHardwareCount(t.ID)
+	if err != nil || attached == 0 {
+		return ""
+	}
+	if grants, err := a.store.hardwareGrants(t.ID); err == nil {
+		for _, g := range grants {
+			if g.Read {
+				return ""
+			}
+		}
+	}
+	if t.Mode != nil && t.Mode.Permission == "read" {
+		return "只读模式不接入 Duo 桌面/硬件工具：本轮不带工具运行。本任务已添加设备但未授权 AI 使用；切换到可执行模式并在硬件面板“AI 使用”里授权后，从下一轮生效。"
+	}
+	return "本任务已添加硬件设备但未授权 AI 使用：本轮不带硬件工具运行。在硬件面板“AI 使用”里授权后从下一轮生效。"
+}
+
 func (s *Store) hardwareGrants(task string) (map[string]HardwareGrant, error) {
 	rows, err := s.Query("SELECT hardware_id,allow_read,allow_write,allow_power FROM hardware_ai_access WHERE task_id=?", task)
 	if err != nil {
