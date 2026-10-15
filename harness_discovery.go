@@ -10,12 +10,46 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 //go:embed harness_discovery.py
 var harnessDiscoveryScript string
+
+// Some Anthropic-compatible relays (for example Z.ai/GLM) answer with HTTP 200
+// and a provider error envelope such as
+// {"code":1001,"msg":"Authentication parameter not received","success":false}
+// instead of an HTTP error status. Report that as a failed validation with only
+// the numeric provider code - never the raw payload or credential - and keep the
+// save blocked because no model list was verified.
+func modelListRejection(body []byte) string {
+	var envelope struct {
+		Success *bool           `json:"success"`
+		Code    json.RawMessage `json:"code"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		failed, code := envelope.Success != nil && !*envelope.Success, ""
+		if len(envelope.Code) > 0 {
+			var number float64
+			var text string
+			switch {
+			case json.Unmarshal(envelope.Code, &number) == nil && number != 0:
+				failed, code = true, strconv.FormatFloat(number, 'f', -1, 64)
+			case json.Unmarshal(envelope.Code, &text) == nil && text != "" && len(text) <= 12 && strings.Trim(text, "0123456789") == "":
+				failed, code = true, text
+			}
+		}
+		if failed {
+			if code != "" {
+				return "服务商以成功状态返回了错误（错误码 " + code + "），模型列表未读取，配置未保存；请检查 API Key、账号权限与 API 根地址"
+			}
+			return "服务商以成功状态返回了错误，模型列表未读取，配置未保存；请检查 API Key、账号权限与 API 根地址"
+		}
+	}
+	return "服务商返回了无法识别的模型列表，请检查 API 根地址"
+}
 
 type HarnessDiscovery struct {
 	Status  string        `json:"status"`
@@ -145,7 +179,7 @@ func discoverHarnessModels(ctx context.Context, env Environment, v HarnessAPIReq
 			LastID  string `json:"last_id"`
 		}
 		if json.Unmarshal(response.Body, &doc) != nil || doc.Data == nil {
-			out.Message = "服务商返回了无法识别的模型列表，请检查 API 根地址"
+			out.Message = modelListRejection(response.Body)
 			return out
 		}
 		for _, m := range doc.Data {

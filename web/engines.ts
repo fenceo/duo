@@ -217,6 +217,7 @@ function resetEnvironmentAPIClaudeRoles(){input('environment-api-role-mode').val
 function environmentAPIPreset(engine:string,base:string){
  const url=base.replace(/\/$/,'');
  if(engine==='claude'&&['','https://api.anthropic.com','https://api.anthropic.com/v1'].includes(url))return 'anthropic';
+ if(engine==='claude'&&url==='https://api.z.ai/api/anthropic')return 'zai';
  if(engine==='mimo'&&url==='https://api.anthropic.com/v1')return 'anthropic';
  for(const preset of ['mimo','mimo-cn','mimo-sgp','mimo-ams']){const root=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';if(url===root+(engine==='claude'?'/anthropic':'/v1'))return preset}
  return 'custom';
@@ -224,7 +225,7 @@ function environmentAPIPreset(engine:string,base:string){
 function configureEnvironmentAPIFields(engine:string){
  const claude=engine==='claude';
  element('environment-api-claude-scope').classList.toggle('hidden',!claude);element('environment-api-claude-roles').classList.toggle('hidden',!claude);input('environment-api-scope').value='duo';updateEnvironmentAPIScopeHint();resetEnvironmentAPIClaudeRoles();
- input('environment-api-provider').innerHTML=claude?'<option value="anthropic">Anthropic 官方 API</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>':'<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
+ input('environment-api-provider').innerHTML=claude?'<option value="anthropic">Anthropic 官方 API</option><option value="zai">Z.ai · GLM（Anthropic 兼容）</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>':'<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
  input('environment-api-mimo-plan').value='mimo';element('environment-api-mimo-wrap').classList.toggle('hidden',claude);
  input('environment-api-protocol').innerHTML=claude?'<option value="anthropic-messages">Anthropic Messages 兼容</option>':'<option value="openai-chat">OpenAI Chat Completions 兼容</option><option value="anthropic-messages">Anthropic Messages 兼容</option>';
  input('environment-api-protocol').value=claude?'anthropic-messages':'openai-chat';input('environment-api-protocol').disabled=claude;
@@ -245,6 +246,7 @@ function applyEnvironmentAPIPreset(){
  clearEnvironmentAPIModels();const provider=input('environment-api-provider').value,preset=provider==='mimo'?input('environment-api-mimo-plan').value:provider,claude=view.engine==='claude';element('environment-api-mimo-wrap').classList.toggle('hidden',provider!=='mimo');if(preset==='custom'){if(claude&&!view.key_configured&&input('environment-api-role-mode').value==='native'){input('environment-api-role-mode').value='uniform';updateEnvironmentAPIRoleFields()}updateEnvironmentAPIKeyNote();return}
  const before=[input('environment-api-url').value,input('environment-api-protocol').value,input('environment-api-auth').value].join('\n');
  if(preset==='anthropic'){input('environment-api-protocol').value='anthropic-messages';input('environment-api-url').value=claude?'':'https://api.anthropic.com/v1';input('environment-api-auth').value='api-key'}
+ else if(preset==='zai'){input('environment-api-protocol').value='anthropic-messages';input('environment-api-url').value='https://api.z.ai/api/anthropic';input('environment-api-auth').value='auth-token'}
  else {const base=preset==='mimo'?'https://api.xiaomimimo.com':'https://token-plan-'+preset.slice(5)+'.xiaomimimo.com';if(!claude)input('environment-api-protocol').value='openai-chat';input('environment-api-url').value=base+(claude?'/anthropic':'/v1');input('environment-api-auth').value='auth-token'}
  if(before!==[input('environment-api-url').value,input('environment-api-protocol').value,input('environment-api-auth').value].join('\n')){input('environment-api-model').value='';input('environment-api-key').value='';resetEnvironmentAPIClaudeRoles();input('environment-api-role-mode').value=preset==='anthropic'?'native':'uniform';updateEnvironmentAPIRoleFields()}
  updateEnvironmentAPIKeyNote();

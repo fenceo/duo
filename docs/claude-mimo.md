@@ -2,11 +2,13 @@
 
 在“环境与引擎”中先检测并安装对应环境的 CLI，再点击该行“配置 API”。它直接打开所选环境的独立配置窗口，不进入账号管理。两个工具都支持官方服务或自定义兼容服务；引擎决定执行方式，API 服务决定实际调用哪个模型。
 
-服务预设按引擎展示：未配置的 Claude Code 默认选择 Anthropic 官方 API；也可选择自定义 Messages 服务或 MiMo 兼容 API。MiMo 的套餐和区域只在选中 MiMo 服务后展开，不在主预设中重复列出。已保存的服务会正确回显；切换到另一服务会清空旧模型和待输入的 Key，需重新读取模型并填写该服务的 Key。打开另一个引擎的窗口时立即重置表单，读取失败也不会显示上一个引擎的配置。
+服务预设按引擎展示：未配置的 Claude Code 默认选择 Anthropic 官方 API；也可选择 Z.ai / GLM、自定义 Messages 服务或 MiMo 兼容 API。MiMo 的套餐和区域只在选中 MiMo 服务后展开，不在主预设中重复列出。已保存的服务会正确回显；切换到另一服务会清空旧模型和待输入的 Key，需重新读取模型并填写该服务的 Key。打开另一个引擎的窗口时立即重置表单，读取失败也不会显示上一个引擎的配置。
 
 ## Claude Code
 
 需要 Anthropic Messages 兼容服务。官方 Anthropic API 可选择官方预设并留空地址，使用 `x-api-key`。第三方地址通常使用 Bearer Token；服务若要求 `x-api-key`，在请求头选项中选择 API Key。MiMo 按量付费预设使用 `https://api.xiaomimimo.com/anthropic`；Token Plan 的区域地址与 Key 以订阅后台为准。
+
+Z.ai / GLM 预设使用官方 Anthropic 兼容入口 `https://api.z.ai/api/anthropic` 和 Bearer Token（保存为 `ANTHROPIC_AUTH_TOKEN`），角色默认“统一使用主模型”，模型 ID 以服务商目录或订阅页面为准（例如 GLM 编码套餐的 `glm-4.6`）。部分服务以 HTTP 200 返回错误对象（例如 `success:false` 加错误码）；Duo 会把它显示为验证失败并阻止保存，只回显错误码，不回显原始响应或 Key。目录接口不可用时按服务商能力选择：返回 404/405/501 允许手动填写模型 ID 保存；返回其他 200 内容则判定为无法识别的目录并阻止保存。
 
 配置窗口可以选择生效范围。新配置默认建议“仅 Duo 生效”：在目标 Claude 配置目录保存独立 `duo-api.json`，每次由 Duo 启动时通过 `--settings` 加载。它只覆盖 API 路由和模型角色，不改原生登录文件、权限、MCP、工作区信任或历史目录，也不改变 `CLAUDE_CONFIG_DIR`。已有任务下次执行使用当前配置，仍恢复原会话。原生配置中的托管策略继续生效。
 

@@ -8,7 +8,7 @@ const originalAPI=ctx.api;
 const view=engine=>({environment_id:'fixture',target:'fixture-target',engine,api_protocol:engine==='claude'?'anthropic-messages':'openai-chat',base_url:engine==='claude'?'':'https://api.xiaomimimo.com/v1',model:'',auth_mode:'api-key',key_configured:false,models:[]});
 ctx.api=async()=>view('claude');await ctx.openEnvironmentAPI('claude','fixture');
 assert(el('environment-api-dialog').open);assert(!el('account-center-dialog').open,'API entry must not open account management');assert.equal(el('environment-api-protocol').disabled,true);
-assert.equal(el('environment-api-provider').value,'anthropic');assert.deepEqual(Array.from(el('environment-api-provider').options,o=>o.value),['anthropic','custom','mimo']);assert(el('environment-api-mimo-wrap').classList.contains('hidden'),'Claude official API must not show MiMo regions');
+assert.equal(el('environment-api-provider').value,'anthropic');assert.deepEqual(Array.from(el('environment-api-provider').options,o=>o.value),['anthropic','zai','custom','mimo']);assert(el('environment-api-mimo-wrap').classList.contains('hidden'),'Claude official API must not show MiMo regions');
 el('environment-api-provider').value='mimo';el('environment-api-provider').onchange();assert.equal(el('environment-api-url').value,'https://api.xiaomimimo.com/anthropic');assert.equal(el('environment-api-auth').value,'auth-token');
 assert(!el('environment-api-mimo-wrap').classList.contains('hidden'));el('environment-api-mimo-plan').value='mimo-sgp';el('environment-api-mimo-plan').onchange();assert.equal(el('environment-api-url').value,'https://token-plan-sgp.xiaomimimo.com/anthropic');
 ctx.api=async()=>view('mimo');await ctx.openEnvironmentAPI('mimo','fixture');

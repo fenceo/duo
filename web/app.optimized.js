@@ -8499,6 +8499,7 @@ function environmentAPIPreset(engine, base) {
         'https://api.anthropic.com',
         'https://api.anthropic.com/v1'
     ].includes(url)) return 'anthropic';
+    if (engine === 'claude' && url === 'https://api.z.ai/api/anthropic') return 'zai';
     if (engine === 'mimo' && url === 'https://api.anthropic.com/v1') return 'anthropic';
     for (const preset of [
         'mimo',
@@ -8518,7 +8519,7 @@ function configureEnvironmentAPIFields(engine) {
     input('environment-api-scope').value = 'duo';
     updateEnvironmentAPIScopeHint();
     resetEnvironmentAPIClaudeRoles();
-    input('environment-api-provider').innerHTML = claude ? '<option value="anthropic">Anthropic 官方 API</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>' : '<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
+    input('environment-api-provider').innerHTML = claude ? '<option value="anthropic">Anthropic 官方 API</option><option value="zai">Z.ai · GLM（Anthropic 兼容）</option><option value="custom">自定义兼容 API</option><option value="mimo">MiMo 兼容 API</option>' : '<option value="mimo">MiMo 官方 API</option><option value="custom">自定义兼容 API</option><option value="anthropic">Anthropic Messages API</option>';
     input('environment-api-mimo-plan').value = 'mimo';
     element('environment-api-mimo-wrap').classList.toggle('hidden', claude);
     input('environment-api-protocol').innerHTML = claude ? '<option value="anthropic-messages">Anthropic Messages 兼容</option>' : '<option value="openai-chat">OpenAI Chat Completions 兼容</option><option value="anthropic-messages">Anthropic Messages 兼容</option>';
@@ -8564,6 +8565,10 @@ function applyEnvironmentAPIPreset() {
         input('environment-api-protocol').value = 'anthropic-messages';
         input('environment-api-url').value = claude ? '' : 'https://api.anthropic.com/v1';
         input('environment-api-auth').value = 'api-key';
+    } else if (preset === 'zai') {
+        input('environment-api-protocol').value = 'anthropic-messages';
+        input('environment-api-url').value = 'https://api.z.ai/api/anthropic';
+        input('environment-api-auth').value = 'auth-token';
     } else {
         const base = preset === 'mimo' ? 'https://api.xiaomimimo.com' : 'https://token-plan-' + preset.slice(5) + '.xiaomimimo.com';
         if (!claude) input('environment-api-protocol').value = 'openai-chat';

@@ -60,6 +60,8 @@ func TestHarnessDiscoveryAuthenticationAndFailures(t *testing.T) {
 		{404, "no models", "unsupported"}, {405, "no models", "unsupported"}, {500, "secret internal error", "failed"},
 		{200, `{"data":[]}`, "failed"}, {200, `{"wrong":"synthetic-harness-secret"}`, "failed"},
 		{200, `{"data":[{"id":"synthetic-harness-secret"}]}`, "failed"},
+		{200, `{"code":1001,"msg":"Authentication parameter not received in Header","success":false}`, "failed"},
+		{200, `{"code":"1001","msg":"reflected synthetic-harness-secret","success":false}`, "failed"},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(test.code); w.Write([]byte(test.body)) }))
 		v := syntheticHarnessAPI()
