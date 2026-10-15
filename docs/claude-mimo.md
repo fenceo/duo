@@ -40,6 +40,8 @@ MiMo 模型选择 OpenAI Chat Completions，根地址通常包含 `/v1`。当前
 
 MiMo 已配置 Duo API 时，新建任务与已有任务的模型目录实时查询所选服务的 `/models`，不再只读取上次保存的 CLI 目录。读取目录只发 GET，不更新配置或发送推理请求；没有标准目录接口时明确显示原生配置回退。目录不包含专用 ASR/TTS，提示中区分服务端总数和代码会话型号数。新发现模型在下一轮进程覆盖中注册，并同步该进程默认模型，原配置文件和原生会话目录不变。
 
-MiMo 的“测试 API 模型”逐项发送最小文本请求，无工具、项目文件、任务历史或附件；测试前确认当前 API 服务、模型范围及额度使用，可取消剩余测试。地址、协议或 Key 变化后需要重新读目录并确认测试；缺少配置时不能测试。结果只代表 API 文本调用，不保证原生 CLI 的工具能力或长会话表现。Key 和原始错误载荷不回显。MiMo 独立知识整理及 Duo 桌面/硬件工具仍未接入，不以普通聊天权限代替。
+MiMo 的“测试 API 模型”逐项发送最小文本请求，无工具、项目文件、任务历史或附件；测试前确认当前 API 服务、模型范围及额度使用，可取消剩余测试。地址、协议或 Key 变化后需要重新读目录并确认测试；缺少配置时不能测试。结果只代表 API 文本调用，不保证原生 CLI 的工具能力或长会话表现。Key 和原始错误载荷不回显。MiMo 独立知识整理仍未接入，不以普通聊天权限代替。
+
+MiMo 任务获得设备授权后，Duo 在原生 `session/new`（或恢复会话时）声明本轮 HTTP MCP 工具地址与凭据，凭据只对应当前一轮，收回授权立即失效。MiMo Code 的原生 ACP 是否声明 HTTP MCP 能力由 CLI 版本决定：声明时才挂载，未声明时明确拒绝本次执行并提示升级或先收回授权，不会在缺少工具的情况下静默运行，也不会把凭据写进启动参数、环境变量或原生配置。
 
 官方依据：[MiMo Code](https://github.com/XiaomiMiMo/MiMo-Code)、[MiMo 在 Claude Code 中使用](https://mimo.mi.com/docs/zh-CN/tokenplan/integration/claudecode)、[Claude Code 网关配置](https://code.claude.com/docs/en/llm-gateway-connect)。

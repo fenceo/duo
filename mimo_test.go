@@ -32,6 +32,7 @@ func TestMimoProcessFixture(t *testing.T) {
 	}
 	var session, model, mode string
 	var history []string
+	mcp := ""
 	path := "mimo-fixture-history.json"
 	reply := func(id json.RawMessage, value any) {
 		raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": value})
@@ -42,7 +43,7 @@ func TestMimoProcessFixture(t *testing.T) {
 		os.Stdout.Write(append(raw, '\n'))
 	}
 	finish := func(id json.RawMessage) {
-		value, _ := json.Marshal(map[string]any{"session": session, "model": model, "mode": mode, "history": history, "pid": os.Getpid(), "permission": os.Getenv("MIMOCODE_PERMISSION")})
+		value, _ := json.Marshal(map[string]any{"session": session, "model": model, "mode": mode, "history": history, "pid": os.Getpid(), "permission": os.Getenv("MIMOCODE_PERMISSION"), "mcp": json.RawMessage(mcp)})
 		provider, modelID, _ := strings.Cut(model, "/")
 		input := history[len(history)-1]
 		if len(history) > 1 && strings.HasPrefix(input, "decision:") {
@@ -65,22 +66,25 @@ func TestMimoProcessFixture(t *testing.T) {
 			os.Exit(3)
 		}
 		var p struct {
-			SessionID string
-			ConfigID  string
-			Value     string
-			ModeID    string
-			Prompt    []struct{ Text string }
+			SessionID  string
+			ConfigID   string
+			Value      string
+			ModeID     string
+			McpServers json.RawMessage `json:"mcpServers"`
+			Prompt     []struct{ Text string }
 		}
 		_ = json.Unmarshal(rpc.Params, &p)
 		switch rpc.Method {
 		case "initialize":
-			reply(rpc.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "OpenCode"}, "agentCapabilities": map[string]any{"loadSession": true, "promptCapabilities": map[string]bool{"image": true}}})
+			reply(rpc.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]string{"name": "OpenCode"}, "agentCapabilities": map[string]any{"loadSession": true, "mcpCapabilities": map[string]bool{"http": os.Getenv("DUO_TEST_MIMO_NO_MCP") != "1"}, "promptCapabilities": map[string]bool{"image": true}}})
 		case "session/new":
 			session = "fixture-mimo-session"
 			history = nil
+			mcp = string(p.McpServers)
 			reply(rpc.ID, map[string]string{"sessionId": session})
 		case "session/load":
 			session = p.SessionID
+			mcp = string(p.McpServers)
 			data, err := os.ReadFile(path)
 			if err != nil || json.Unmarshal(data, &history) != nil {
 				raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": rpc.ID, "error": map[string]any{"code": -32602, "message": "session missing"}})
@@ -279,5 +283,68 @@ func TestMimoWindowsModelsUseNativeEnvironmentInsteadOfUnixEnv(t *testing.T) {
 	cmd := mimoModelsCommand(context.Background(), Environment{Type: "windows", Mimo: "C:/synthetic/mimo.exe", Workspaces: []string{"C:/synthetic/work"}}, map[string]string{"MIMOCODE_CONFIG": "C:/synthetic/profile with spaces/mimocode.json"})
 	if len(cmd.Args) != 2 || cmd.Args[1] != "models" || cmd.Dir != "C:/synthetic/work" || !strings.Contains(strings.Join(cmd.Env, "\n"), "MIMOCODE_CONFIG=C:/synthetic/profile with spaces/mimocode.json") {
 		t.Fatal("Windows model read lost its native program/environment")
+	}
+}
+
+type mimoFixtureTurn struct {
+	Session string   `json:"session"`
+	History []string `json:"history"`
+	MCP     []struct {
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		URL     string `json:"url"`
+		Headers []struct{ Name, Value string }
+	} `json:"mcp"`
+}
+
+// A granted device must reach the native session as this run's own HTTP MCP
+// declaration, never through a launch-time variable or a stored credential.
+func TestMimoHardwareMCPDeclarationIsScopedToTheRun(t *testing.T) {
+	c, task := mimoFixture(t)
+	ai, address := harnessMCPFixture(t)
+	token, release := ai.issue(context.Background(), task.ID, "run-mimo", nil)
+	defer release()
+	c.HardwareAI = &HardwareRuntime{URL: address, Token: token}
+	session, result, err := runMimoACP(context.Background(), c, task, "one", func(string, string) {})
+	if err != nil || session != "fixture-mimo-session" {
+		t.Fatalf("granted hardware must not block the native session: %v %q", err, session)
+	}
+	var got mimoFixtureTurn
+	if json.Unmarshal([]byte(result), &got) != nil {
+		t.Fatalf("unexpected fixture result: %s", result)
+	}
+	if len(got.MCP) != 1 {
+		t.Fatalf("hardware declaration missing: %s", result)
+	}
+	mcp := got.MCP[0]
+	if mcp.Type != "http" || mcp.Name != "duo_hardware" || mcp.URL != address || len(mcp.Headers) != 1 || mcp.Headers[0].Name != "Authorization" || mcp.Headers[0].Value != "Bearer "+token {
+		t.Fatalf("declaration was not scoped to this run: %+v", mcp)
+	}
+}
+
+// Without the native HTTP MCP capability Duo must fail closed instead of
+// running a granted task without its tools.
+func TestMimoRefusesHardwareWithoutNativeHTTPMCP(t *testing.T) {
+	c, task := mimoFixture(t)
+	t.Setenv("DUO_TEST_MIMO_NO_MCP", "1")
+	ai, address := harnessMCPFixture(t)
+	token, release := ai.issue(context.Background(), task.ID, "run-mimo", nil)
+	defer release()
+	c.HardwareAI = &HardwareRuntime{URL: address, Token: token}
+	if _, result, err := runMimoACP(context.Background(), c, task, "one", func(string, string) {}); err == nil || !strings.Contains(err.Error(), "HTTP MCP") || result != "" {
+		t.Fatalf("incapable CLI was not refused safely: %v", err)
+	}
+}
+
+// Without a grant the native session must stay tool-free for this engine.
+func TestMimoWithoutGrantSendsNoHardwareServer(t *testing.T) {
+	c, task := mimoFixture(t)
+	_, result, err := runMimoACP(context.Background(), c, task, "one", func(string, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got mimoFixtureTurn
+	if json.Unmarshal([]byte(result), &got) != nil || len(got.MCP) != 0 {
+		t.Fatalf("ungranted hardware servers were declared: %s", result)
 	}
 }

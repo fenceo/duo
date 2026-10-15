@@ -116,6 +116,7 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 		AgentInfo         struct{ Name string }
 		AgentCapabilities struct {
 			LoadSession        bool
+			MCPCapabilities    struct{ HTTP bool }
 			PromptCapabilities struct{ Image bool }
 		}
 	}
@@ -123,6 +124,11 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 		return w, errors.Join(errors.New("MiMo CLI 未提供受支持的原生 ACP v1 会话接口，请安装当前官方 MiMo Code；旧 @xiaomi-mimo/cli 不兼容"), w.stop())
 	}
 	w.imageInput = hello.AgentCapabilities.PromptCapabilities.Image
+	// Hardware tools are declared per session, so the native CLI must accept an
+	// HTTP MCP server before Duo hands over this run's device credential.
+	if c.HardwareAI != nil && !hello.AgentCapabilities.MCPCapabilities.HTTP {
+		return w, errors.Join(errors.New("MiMo Code 的原生 ACP 未声明 HTTP MCP 能力，无法挂载 Duo 桌面/硬件工具；请升级此环境的 MiMo Code，或先收回本任务的工具授权（未发送模型请求）"), w.stop())
+	}
 	return w, nil
 }
 
@@ -164,9 +170,11 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 	if err != nil {
 		return session, "", err
 	}
-	if c.HardwareAI != nil {
-		return session, "", errors.New("MiMo Code 的 Duo 桌面/硬件工具尚未接入，请先关闭此任务的工具授权")
+	hardware, err := resolveHardwareRuntime(ctx, c, "MiMo Code")
+	if err != nil {
+		return session, "", err
 	}
+	c.HardwareAI = hardware
 	if mimoSpeechModel(t.Model) {
 		return session, "", errors.New("MiMo 语音识别/合成模型不能用于代码会话，请选择文本模型")
 	}
@@ -242,7 +250,7 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 		}
 	}()
 	method := "session/new"
-	params := map[string]any{"cwd": t.Workspace, "mcpServers": []any{}}
+	params := map[string]any{"cwd": t.Workspace, "mcpServers": harnessMCPServers(hardware)}
 	if session != "" {
 		method = "session/load"
 		params["sessionId"] = session
