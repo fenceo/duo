@@ -2,19 +2,19 @@ function taskItemMenu(t:Task):string{
  const busy=!t.archived&&(t.status==='running'||t.status==='queued');
  return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
 }
-function taskEngineBadge(engine?:string):{short:string;title:string}{
- if(engine==='claude')return {short:'Claude',title:'Claude Code'};
- if(engine==='deepseek-harness')return {short:'Harness',title:'DeepSeek Harness'};
- if(engine==='mimo')return {short:'MiMo',title:'MiMo Code'};
- if(engine==='opencode')return {short:'OpenCode',title:'OpenCode'};
- return {short:'Codex',title:'Codex'};
+function taskEngineBadge(engine?:string):{short:string;title:string;initial:string}{
+ if(engine==='claude')return {short:'Claude',title:'Claude Code',initial:'C'};
+ if(engine==='deepseek-harness')return {short:'Harness',title:'DeepSeek Harness',initial:'H'};
+ if(engine==='mimo')return {short:'MiMo',title:'MiMo Code',initial:'M'};
+ if(engine==='opencode')return {short:'OpenCode',title:'OpenCode',initial:'O'};
+ return {short:'Codex',title:'Codex',initial:'X'};
 }
-function taskStateBadge(status?:string):{text:string;className:string;title:string}{
- if(status==='running')return {text:'● 运行中',className:'running',title:'正在执行，已有中间输出'};
- if(status==='queued')return {text:'● 排队',className:'running',title:'已排队，等待执行'};
- if(status==='failed')return {text:'失败',className:'failed',title:'上一轮执行失败'};
- if(status==='interrupted')return {text:'已停止',className:'failed',title:'执行已停止'};
- return {text:'有回复',className:'ready',title:'已有回复，等待下一步'};
+function taskStateBadge(status?:string):{text:string;className:string;title:string;glyph:string}{
+ if(status==='running')return {text:'● 运行中',className:'running',title:'正在执行，已有中间输出',glyph:'●'};
+ if(status==='queued')return {text:'● 排队',className:'running',title:'已排队，等待执行',glyph:'●'};
+ if(status==='failed')return {text:'失败',className:'failed',title:'上一轮执行失败',glyph:'×'};
+ if(status==='interrupted')return {text:'已停止',className:'failed',title:'执行已停止',glyph:'×'};
+ return {text:'有回复',className:'ready',title:'已有回复，等待下一步',glyph:'✓'};
 }
 function workspaceTaskList(items:Task[]):string{
  return [...items].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updated-a.updated).map(t=>{
@@ -22,7 +22,7 @@ function workspaceTaskList(items:Task[]):string{
   const compact=env?.type==='windows'?'Win':env?.type==='wsl'?'WSL':env?.type==='ssh'?'SSH':environment;
   const folder=t.workspace.replace(/[\\/]+$/,'').split(/[\\/]/).at(-1)||t.workspace;
   const engine=taskEngineBadge(t.engine),state=taskStateBadge(t.status),busy=t.status==='running'||t.status==='queued';
-  return `<div class="task-row"><button class="task ${t.id===chosen?'selected':''}${busy?' task-busy':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title+'\n'+location+'\n'+engine.title+' · '+state.title)}" aria-label="${escapeHTML(t.title+'，'+location+'，'+engine.title+'，'+state.title)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><span class="task-badges" aria-hidden="true"><span class="task-engine-badge">${escapeHTML(engine.short)}</span><span class="task-state ${state.className}">${escapeHTML(state.text)}</span></span><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
+  return `<div class="task-row"><button class="task ${t.id===chosen?'selected':''}${busy?' task-busy':''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title+'\n'+location+'\n'+engine.title+' · '+state.title)}" aria-label="${escapeHTML(t.title+'，'+location+'，'+engine.title+'，'+state.title)}"><strong>${t.pinned?'↑ ':''}${escapeHTML(t.title)}</strong><span class="task-badges" aria-hidden="true"><span class="task-engine-badge" data-initial="${escapeHTML(engine.initial)}">${escapeHTML(engine.short)}</span><span class="task-state ${state.className}"><span class="task-state-text">${escapeHTML(state.text)}</span><span class="task-state-glyph">${escapeHTML(state.glyph)}</span></span></span><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
  }).join('');
 }
 function installLayout(){

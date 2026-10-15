@@ -3280,50 +3280,60 @@ function taskItemMenu(t) {
 function taskEngineBadge(engine) {
     if (engine === 'claude') return {
         short: 'Claude',
-        title: 'Claude Code'
+        title: 'Claude Code',
+        initial: 'C'
     };
     if (engine === 'deepseek-harness') return {
         short: 'Harness',
-        title: 'DeepSeek Harness'
+        title: 'DeepSeek Harness',
+        initial: 'H'
     };
     if (engine === 'mimo') return {
         short: 'MiMo',
-        title: 'MiMo Code'
+        title: 'MiMo Code',
+        initial: 'M'
     };
     if (engine === 'opencode') return {
         short: 'OpenCode',
-        title: 'OpenCode'
+        title: 'OpenCode',
+        initial: 'O'
     };
     return {
         short: 'Codex',
-        title: 'Codex'
+        title: 'Codex',
+        initial: 'X'
     };
 }
 function taskStateBadge(status) {
     if (status === 'running') return {
         text: '● 运行中',
         className: 'running',
-        title: '正在执行，已有中间输出'
+        title: '正在执行，已有中间输出',
+        glyph: '●'
     };
     if (status === 'queued') return {
         text: '● 排队',
         className: 'running',
-        title: '已排队，等待执行'
+        title: '已排队，等待执行',
+        glyph: '●'
     };
     if (status === 'failed') return {
         text: '失败',
         className: 'failed',
-        title: '上一轮执行失败'
+        title: '上一轮执行失败',
+        glyph: '×'
     };
     if (status === 'interrupted') return {
         text: '已停止',
         className: 'failed',
-        title: '执行已停止'
+        title: '执行已停止',
+        glyph: '×'
     };
     return {
         text: '有回复',
         className: 'ready',
-        title: '已有回复，等待下一步'
+        title: '已有回复，等待下一步',
+        glyph: '✓'
     };
 }
 function workspaceTaskList(items) {
@@ -3341,7 +3351,7 @@ function workspaceTaskList(items) {
         const compact = env?.type === 'windows' ? 'Win' : env?.type === 'wsl' ? 'WSL' : env?.type === 'ssh' ? 'SSH' : environment;
         const folder = t.workspace.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || t.workspace;
         const engine = taskEngineBadge(t.engine), state = taskStateBadge(t.status), busy = t.status === 'running' || t.status === 'queued';
-        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}${busy ? ' task-busy' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1 + '\n' + engine.title + ' · ' + state.title)}" aria-label="${escapeHTML(t.title + '，' + location1 + '，' + engine.title + '，' + state.title)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-badges" aria-hidden="true"><span class="task-engine-badge">${escapeHTML(engine.short)}</span><span class="task-state ${state.className}">${escapeHTML(state.text)}</span></span><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
+        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}${busy ? ' task-busy' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1 + '\n' + engine.title + ' · ' + state.title)}" aria-label="${escapeHTML(t.title + '，' + location1 + '，' + engine.title + '，' + state.title)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-badges" aria-hidden="true"><span class="task-engine-badge" data-initial="${escapeHTML(engine.initial)}">${escapeHTML(engine.short)}</span><span class="task-state ${state.className}"><span class="task-state-text">${escapeHTML(state.text)}</span><span class="task-state-glyph">${escapeHTML(state.glyph)}</span></span></span><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
     }).join('');
 }
 function installLayout() {
