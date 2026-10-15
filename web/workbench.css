@@ -173,7 +173,8 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .workspace-heading .folder-name{flex:1;min-width:0;max-width:none}
 .workspace-heading small{flex:0 1 auto;min-width:0;max-width:45%}
 .task-list .task-state{max-width:38%;overflow:hidden;text-overflow:ellipsis}
-.task-badges{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:auto}
+.sidebar .task{position:relative;padding-right:72px}
+.task-badges{display:flex;align-items:center;gap:4px;flex-shrink:0;position:absolute;right:8px;top:50%;transform:translateY(-50%);margin:0;max-width:64px;overflow:hidden}
 .task-engine-badge{font-size:10px;line-height:1.2;padding:2px 5px;border-radius:5px;background:var(--raised);color:var(--muted);white-space:nowrap;min-width:18px;text-align:center}
 .task-state{font-size:10px;line-height:1.2;white-space:nowrap}
 .task-state-glyph{display:none}
@@ -185,13 +186,11 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 @media (prefers-reduced-motion:reduce){.task.task-busy .task-state.running{animation:none}}
 /* Narrow sidebars keep the title readable: badges shrink to glyph only. */
 @container (max-width:260px){
+ .sidebar .task{padding-right:36px}
  .task-engine-badge{display:none}
  .task-state-text{display:none}
  .task-state-glyph{display:inline}
- .task-badges{gap:2px}
-}
-@media (max-width:1100px){
- .task-engine-badge{max-width:56px;overflow:hidden;text-overflow:ellipsis}
+ .task-badges{gap:2px;max-width:28px}
 }
 
 /* The title/count/actions occupy one row; filters get their own shrinkable row.
