@@ -103,7 +103,7 @@ assert.doesNotMatch(executionSource,/headless JSON|DSH_MODEL/);
 assert.match(workflowSource,/按 Harness 官方默认权限档位提供选项/);
 assert.match(workflowSource,/harness:workspace/);
 assert.match(app,/modeForPermission\(createPermission,input\('create-engine'\)\.value\)/);
-assert.match(app,/button\('summarize'\)\.disabled=active\|\|t\.archived\|\|t\.engine==='mimo';button\('summarize'\)\.title=harness/);
+assert.match(app,/button\('summarize'\)\.disabled=active\|\|t\.archived\|\|\['mimo','opencode'\]\.includes\(t\.engine\);button\('summarize'\)\.title=harness/);
 assert.match(app,/id='harness-knowledge-hint'/);
 assert.match(executionSource,/独立会话整理已有知识/);
 assert.match(workflowSource,/button\('create-attach'\)\.disabled=false/);
