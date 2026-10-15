@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuiltinEngineDefinitionsAndInstallPlan(t *testing.T) {
-	if len(builtinEngineDefinitions()) != 5 {
+	if len(builtinEngineDefinitions()) != 6 {
 		t.Fatalf("unexpected engine count: %d", len(builtinEngineDefinitions()))
 	}
 	e, ok := builtinEngine("codex")
@@ -16,6 +16,19 @@ func TestBuiltinEngineDefinitionsAndInstallPlan(t *testing.T) {
 	harness, ok := builtinEngine("deepseek-harness")
 	if !ok || !harness.Runnable || harness.Transport != "acp" || !slices.Contains(harness.Capabilities, "approval") {
 		t.Fatalf("Harness must declare its implemented ACP approval: %+v", harness)
+	}
+	opencode, ok := builtinEngine("opencode")
+	if !ok || !opencode.Runnable || opencode.Transport != "acp" || !slices.Contains(opencode.Capabilities, "mcp") || !slices.Contains(opencode.CredentialKinds, "native") {
+		t.Fatalf("OpenCode must declare its implemented ACP MCP support: %+v", opencode)
+	}
+	if !slices.Contains(opencode.Targets, "windows") || !slices.Contains(opencode.Targets, "wsl") || !slices.Contains(opencode.Targets, "ssh") {
+		t.Fatalf("OpenCode must support every execution target: %+v", opencode.Targets)
+	}
+	if env := (Environment{Type: "wsl"}); runtimeConfig(Config{}, env).OpenCode != "" {
+		t.Fatal("OpenCode must not invent an executable for an unconfigured environment")
+	}
+	if !validEngine("opencode") || validEngineReasoning("opencode", "high") || !validEngineReasoning("opencode", "") {
+		t.Fatal("OpenCode engine/reasoning admission is inconsistent")
 	}
 	env := Environment{ID: "wsl", Name: "WSL", Type: "wsl", Codex: "codex", Workspaces: []string{"/work"}}
 	plan, err := engineInstallPlan(env, "codex")

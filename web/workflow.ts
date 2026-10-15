@@ -71,8 +71,9 @@ function modeOptions(select:HTMLSelectElement,snapshot?:WorkMode){
 }
 function modesForEngine(engine?:string){if(engine==='mimo')return workCatalog.modes.filter(m=>['work','mimo:plan','full'].includes(m.id));return workCatalog.modes.filter(m=>m.id!=='mimo:plan'&&(engine==='deepseek-harness'?m.id==='harness:workspace'||m.id==='full'||!m.builtin&&m.id!=='work'&&m.id!=='plan'&&m.id!=='codex:auto'&&m.id!=='harness:read':m.id!=='harness:read'&&m.id!=='harness:workspace'))}
 function modeApproval(mode:WorkMode){return mode.approval||(mode.permission==='workspace'?'request':'never')}
-function modeSupportsEngine(mode:WorkMode,engine?:string){return (mode.id!=='mimo:plan'||engine==='mimo')&&(!['harness:read','harness:workspace'].includes(mode.id)||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(!['deepseek-harness','mimo'].includes(engine||'')||mode.allow_network!==false)}
+function modeSupportsEngine(mode:WorkMode,engine?:string){return (mode.id!=='mimo:plan'||engine==='mimo')&&(!['harness:read','harness:workspace'].includes(mode.id)||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(!['deepseek-harness','mimo','opencode'].includes(engine||'')||mode.allow_network!==false)}
 function modeLabel(mode:WorkMode,engine?:string){
+ if(engine==='opencode')return mode.permission==='read'?'只读 · 自动拒绝工具授权':mode.permission==='full'?'完全访问 · 工具请求仍单次确认':'工作区 · 工具请求单次确认';
  if(engine==='mimo')return mode.permission==='read'?'计划 · 原生只读代理':mode.permission==='full'?'完全访问 · 原生 allow 权限':'构建 · 原生工具审批';
  if(engine==='deepseek-harness'){if(mode.id==='harness:workspace')return '工作区权限 · 需要提升权限时询问';if(mode.id==='full')return '完全访问 · 不询问';return mode.name+' · '+(mode.permission==='read'?'只读，可联网':mode.permission==='full'?'完全访问，不询问':'工作区边界，越界拒绝')}
  const access=mode.permission==='read'?'只读':mode.permission==='full'?'完全访问':mode.allow_network===false?'工作区 · 离线':'工作区 · 联网';
@@ -191,7 +192,7 @@ function setCreatePermission(permission:'request'|'auto'|'full'|'read'){
  if(mode)mode.value=selected?.id||'';
  element('create-permission-options')?.querySelectorAll<HTMLButtonElement>('[data-create-permission]').forEach(b=>{const value=b.dataset.createPermission as 'request'|'auto'|'full'|'read',candidate=modeForPermission(value,engine),on=value===permission;b.classList.toggle('selected',on);b.classList.toggle('hidden',harness&&(value==='auto'||value==='read'));b.setAttribute('aria-pressed',String(on));b.disabled=(value==='auto'&&!codex)||(harness&&(!candidate||!modeSupportsEngine(candidate,engine)));if(value==='request'){b.textContent=harness?'工作区权限':codex?'请求批准':engine==='mimo'?'构建 / 审批':'CLI 预授权';b.title=harness?(candidate?'官方 workspace-write：工作区和允许的临时目录内可写，需要提升权限时询问':'当前服务未提供 Harness 官方工作区权限，请更新服务') :codex?'工作区内执行，需要提升权限时请求批准':engine==='mimo'?'遵循 MiMo 原生权限，待处理的工具请求在 Duo 中单次批准':'遵循 Claude CLI 预授权规则；不支持此页交互审批'}if(value==='read'){b.textContent='只读规划';b.title='只读规划，不修改工作区'}if(value==='auto')b.title='Codex 原生自动风险评审，不是无条件放行';if(value==='full')b.title=harness?'官方 danger-full-access：完全访问，不询问':'跳过工作区边界，仅在你明确选择时使用'});
  const hint=permission==='read'?'只读分析规划，不允许修改工作区':permission==='request'?(harness?'工作区和允许的临时目录内可写；需要提升权限时询问，可批准本次或拒绝':codex?'允许工作区内执行与联网；需要提升权限时请求批准':'允许工作区内执行，遵循 Claude CLI 预授权规则'):permission==='full'?'跳过工作区边界且不请求批准，请确认任务来源可信':'Codex 原生自动风险评审，不是全部放行；仍可能需要人工确认';
- if(element('create-permission-hint'))element('create-permission-hint').textContent=engine==='mimo'?(permission==='read'?'使用 MiMo 原生 Plan 代理；不保证禁用联网。':permission==='full'?'设置 MiMo 原生 allow 权限；保留工具自己的明确限制。':'使用 MiMo 原生 Build 代理；工具请求可在 Duo 单次批准或拒绝，未提供操作详情时拒绝。'):hint+(harness?'。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。':codex?'':'。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
+ if(element('create-permission-hint'))element('create-permission-hint').textContent=engine==='opencode'?(permission==='read'?'只读模式自动拒绝 OpenCode 的工具授权请求；不保证禁用联网。':permission==='full'?'完全访问，但 OpenCode 的工具授权请求仍会在 Duo 单次确认。':'OpenCode 工具授权请求可在 Duo 单次批准或拒绝，未提供操作详情时拒绝。'):engine==='mimo'?(permission==='read'?'使用 MiMo 原生 Plan 代理；不保证禁用联网。':permission==='full'?'设置 MiMo 原生 allow 权限；保留工具自己的明确限制。':'使用 MiMo 原生 Build 代理；工具请求可在 Duo 单次批准或拒绝，未提供操作详情时拒绝。'):hint+(harness?'。按 Harness 官方默认权限档位提供选项；无自动风险评审或独立网络开关。':codex?'':'。Claude Code 当前不支持 Codex 网页交互审批或自动风险评审。');
  renderCreateFiles();
 }
 function renderCreateFiles(){
@@ -249,6 +250,7 @@ function renderWorkflow(){
   hint.textContent=harness?(mode?.id==='harness:workspace'?'Harness 工作区权限 · 需要提升权限时询问':mode?.permission==='full'?'Harness 完全访问 · 不询问':'Harness 原权限保留 · 越界请求拒绝'):'Claude CLI 预授权 · 当前不支持此页交互审批或 Codex 自动风险评审';
   hint.title=harness?'所选权限在下次发送时生效；当前执行不变，会话历史保留。':hint.textContent;hint.classList.toggle('hidden',detail.task.engine==='codex');
   if(detail.task.engine==='mimo'){hint.textContent='MiMo 原生权限 · 工具请求可单次批准；下次发送生效';hint.title='MiMo Build / Plan 代理及原生权限；不代表操作系统沙箱或禁用网络保证。'}
+  if(detail.task.engine==='opencode'){hint.textContent=detail.task.mode?.permission==='read'?'OpenCode 只读 · 自动拒绝工具授权请求':'OpenCode 权限 · 工具请求可单次批准；下次发送生效';hint.title='OpenCode 无原生权限档位；Duo 通过批准或拒绝工具授权请求实现，不代表操作系统沙箱或禁用网络保证。'}
   control.title=harness||detail.task.engine==='claude'?hint.title:'本轮 Codex 工作模式与原生审批方式';
   button('task-model-button').title=harness?harnessSessionHint:'本任务使用的 AI 工具、模型和推理强度';
   const footnote=element('composer-wrap').querySelector('.footnote');if(footnote)footnote.textContent=harness?'Harness 原生会话 · 权限在下次发送时生效':'在服务所在电脑执行 · 保留所选工具的原生会话';

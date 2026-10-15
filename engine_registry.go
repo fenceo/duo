@@ -116,6 +116,15 @@ func builtinEngineDefinitions() []EngineDefinition {
 			InstallDescription: "安装官方 MiMo Code 二进制；在所选环境的独立 API 窗口保存地址、Key 和模型后生效。原生会话保存在目标用户目录。",
 			DocumentationURL:   "https://github.com/XiaomiMiMo/MiMo-Code",
 		},
+		{
+			ID: "opencode", Name: "OpenCode", Description: "OpenCode CLI 原生 ACP；支持恢复会话、模型切换、单次审批、附件及 Duo 桌面/硬件工具（HTTP MCP）；图片取决于所选模型能力",
+			Transport: "acp", Runnable: true, AutoInstall: true,
+			Targets:            []string{"windows", "wsl", "ssh"},
+			Capabilities:       []string{"stream", "resume", "model_switch", "cancel", "approval", "attachments", "image_input", "mcp"},
+			CredentialKinds:    []string{"native"},
+			InstallDescription: "支持 Windows/WSL/SSH 一键安装 CLI；账号在各环境的终端里用 opencode auth login 配置。Duo 通过 opencode acp 调用，只读模式以拒绝工具授权请求实现。",
+			DocumentationURL:   "https://opencode.ai/docs/acp/",
+		},
 	}
 }
 
@@ -354,6 +363,8 @@ func engineInstallPlan(env Environment, engineID string) (EngineInstallPlan, err
 			plan.Executable = env.Harness
 		} else if engineID == "mimo" {
 			plan.Executable = env.Mimo
+		} else if engineID == "opencode" {
+			plan.Executable = env.OpenCode
 		}
 		return plan, nil
 	}

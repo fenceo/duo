@@ -29,6 +29,7 @@ type detectedEnvironment struct {
 	Harness     detectedTool `json:"harness"`
 	Kimi        detectedTool `json:"kimi"`
 	Mimo        detectedTool `json:"mimo"`
+	OpenCode    detectedTool `json:"opencode"`
 	Message     string       `json:"message"`
 }
 type environmentDiscovery struct {
@@ -247,6 +248,7 @@ printf 'proxy=%s\ngit_config=%s\nssh_agent=%s\nshell=%s\n' "$proxy" "$git_config
 find_cli "$HOME/.local/bin/dsh" "$HOME/.local/bin/dsh.cmd" "$(command -v dsh 2>/dev/null)" /usr/local/bin/dsh
 find_cli "$HOME/.local/bin/kimi" "$HOME/.local/bin/kimi.cmd" "$(command -v kimi 2>/dev/null)" "$(command -v kimi-code 2>/dev/null)" /usr/local/bin/kimi /usr/local/bin/kimi-code
 find_cli "$HOME/.local/bin/mimo" "$HOME/.local/bin/mimo.cmd" "$(command -v mimo 2>/dev/null)" "$(command -v mimo-code 2>/dev/null)" /usr/local/bin/mimo /usr/local/bin/mimo-code
+find_cli "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "$(command -v opencode 2>/dev/null)" /usr/local/bin/opencode
 `
 
 func wslDiagnosticMessage(parts []string) string {
@@ -278,7 +280,7 @@ func discoverTool(ctx context.Context, probe environmentProbe, env Environment, 
 func discoverOne(ctx context.Context, probe environmentProbe, env Environment) detectedEnvironment {
 	result := detectedEnvironment{Environment: env}
 	codex, claude, harness := env.Codex, env.Claude, env.Harness
-	kimi, mimo := "", ""
+	kimi, mimo, opencode := "", "", ""
 	if env.Type == "wsl" {
 		out, err := probe(ctx, env, "sh", "-c", discoverWSLScript)
 		_, payload, ok := strings.Cut(out, "__JIANZUO_ENV__\n")
@@ -288,6 +290,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 			result.Codex = detectedTool{State: "unknown", Label: "未完成检测"}
 			result.Claude = result.Codex
 			result.Harness, result.Kimi, result.Mimo = result.Codex, result.Codex, result.Codex
+			result.OpenCode = result.Codex
 			return result
 		}
 		env.User = parts[0]
@@ -305,6 +308,9 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		if len(parts) > 10 && strings.HasPrefix(strings.TrimSpace(parts[10]), "/") {
 			mimo = parts[10]
 		}
+		if len(parts) > 11 && strings.HasPrefix(strings.TrimSpace(parts[11]), "/") {
+			opencode = parts[11]
+		}
 		result.Message = wslDiagnosticMessage(parts)
 	}
 	var wg sync.WaitGroup
@@ -315,6 +321,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 	result.Harness = detectedInstalledTool(harness)
 	result.Kimi = detectedInstalledTool(kimi)
 	result.Mimo = detectedInstalledTool(mimo)
+	result.OpenCode = detectedInstalledTool(opencode)
 	env.Codex = codex
 	env.Claude = claude
 	env.Harness = harness
@@ -373,6 +380,7 @@ func inspectDiscoveredEnvironment(ctx context.Context, env Environment) detected
 	if env.Type == "windows" {
 		item.Kimi = detectedInstalledTool(executableCandidate("kimi.cmd", "kimi.exe", "kimi", "kimi-code.exe", "kimi-code"))
 		item.Mimo = detectedInstalledTool(executableCandidate("mimo.cmd", "mimo.exe", "mimo", "mimo-code.exe", "mimo-code"))
+		item.OpenCode = detectedInstalledTool(executableCandidate("opencode.exe", "opencode.cmd", "opencode"))
 	}
 	return item
 }

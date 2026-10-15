@@ -24,6 +24,7 @@ type EngineEnvironmentStatus struct {
 	Harness       detectedTool `json:"harness"`
 	Kimi          detectedTool `json:"kimi"`
 	Mimo          detectedTool `json:"mimo"`
+	OpenCode      detectedTool `json:"opencode"`
 	Message       string       `json:"message,omitempty"`
 }
 
@@ -79,6 +80,7 @@ func (s *Server) engineStatusRoutes(m *http.ServeMux) {
 					Harness:       found.Harness,
 					Kimi:          found.Kimi,
 					Mimo:          found.Mimo,
+					OpenCode:      found.OpenCode,
 					Message:       found.Message,
 				}
 			}(i, env)
@@ -90,7 +92,7 @@ func (s *Server) engineStatusRoutes(m *http.ServeMux) {
 
 func engineEnvironmentStatus(found detectedEnvironment) EngineEnvironmentStatus {
 	env := found.Environment
-	return EngineEnvironmentStatus{EnvironmentID: env.ID, Name: env.Name, Type: env.Type, Distro: env.Distro, User: env.User, Host: env.Host, Codex: found.Codex, Claude: found.Claude, Harness: found.Harness, Kimi: found.Kimi, Mimo: found.Mimo, Message: found.Message}
+	return EngineEnvironmentStatus{EnvironmentID: env.ID, Name: env.Name, Type: env.Type, Distro: env.Distro, User: env.User, Host: env.Host, Codex: found.Codex, Claude: found.Claude, Harness: found.Harness, Kimi: found.Kimi, Mimo: found.Mimo, OpenCode: found.OpenCode, Message: found.Message}
 }
 
 // Discovery inventories local hosts only. A saved host is inspected once with
@@ -125,7 +127,7 @@ func scanEngineEnvironments(ctx context.Context, configured, candidates []Enviro
 			defer wg.Done()
 			if ctx.Err() != nil {
 				unknown := detectedTool{State: "unknown", Label: "未完成检测"}
-				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, Message: "检测已取消或超时"})
+				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, OpenCode: unknown, Message: "检测已取消或超时"})
 				return
 			}
 			select {
@@ -133,7 +135,7 @@ func scanEngineEnvironments(ctx context.Context, configured, candidates []Enviro
 				defer func() { <-sem }()
 			case <-ctx.Done():
 				unknown := detectedTool{State: "unknown", Label: "未完成检测"}
-				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, Message: "检测已取消或超时"})
+				save(detectedEnvironment{Environment: env, Codex: unknown, Claude: unknown, Harness: unknown, Kimi: unknown, Mimo: unknown, OpenCode: unknown, Message: "检测已取消或超时"})
 				return
 			}
 			save(inspect(ctx, env))
@@ -169,12 +171,13 @@ func enginePresenceScript(env Environment) string {
 		"find_cli " + posixQuote(env.Claude) + " \"$(command -v claude 2>/dev/null || true)\" \"$HOME/.local/bin/claude\"\n" +
 		"find_cli " + posixQuote(env.Harness) + " \"$(command -v dsh 2>/dev/null || true)\" \"$HOME/.local/bin/dsh\"\n" +
 		"find_cli \"$(command -v kimi 2>/dev/null || true)\" \"$(command -v kimi-code 2>/dev/null || true)\" \"$HOME/.local/bin/kimi\"\n" +
-		"find_cli " + posixQuote(env.Mimo) + " \"$(command -v mimo 2>/dev/null || true)\" \"$HOME/.local/bin/mimo\"\n"
+		"find_cli " + posixQuote(env.Mimo) + " \"$(command -v mimo 2>/dev/null || true)\" \"$HOME/.local/bin/mimo\"\n" +
+		"find_cli " + posixQuote(env.OpenCode) + " \"$(command -v opencode 2>/dev/null || true)\" \"$HOME/.opencode/bin/opencode\" \"$HOME/.local/bin/opencode\"\n"
 }
 
 func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env Environment) detectedEnvironment {
 	result := detectedEnvironment{Environment: env}
-	paths := make([]string, 5)
+	paths := make([]string, 6)
 	if env.Type == "windows" {
 		home, _ := os.UserHomeDir()
 		paths[0] = executableCandidate(env.Codex, "codex.exe", "codex.cmd", filepath.Join(home, ".codex", "packages", "standalone", "current", "bin", "codex.exe"))
@@ -182,20 +185,22 @@ func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env E
 		paths[2] = executableCandidate(env.Harness, "dsh.cmd", "dsh.exe")
 		paths[3] = executableCandidate("kimi.exe", "kimi.cmd", "kimi-code.exe")
 		paths[4] = executableCandidate(env.Mimo, "mimo.exe", "mimo.cmd", filepath.Join(home, ".mimocode", "bin", "mimo.exe"))
+		paths[5] = executableCandidate(env.OpenCode, "opencode.exe", "opencode.cmd", filepath.Join(home, "AppData", "Roaming", "npm", "node_modules", "opencode-ai", "bin", "opencode.exe"))
 	} else {
 		out, err := probe(ctx, env, "sh", "-lc", enginePresenceScript(env))
 		_, payload, ok := strings.Cut(strings.ReplaceAll(out, "\r\n", "\n"), "__DUO_TOOLS__\n")
 		lines := strings.Split(payload, "\n")
-		if !ok || len(lines) < 6 {
+		if !ok || len(lines) < 7 {
 			err = errors.New("invalid probe")
 		}
 		if err != nil {
 			unknown := detectedTool{State: "unknown", Label: "未完成检测"}
 			result.Codex, result.Claude, result.Harness, result.Kimi, result.Mimo = unknown, unknown, unknown, unknown, unknown
+			result.OpenCode = unknown
 			result.Message = "请检查目标环境连接、用户及 shell；未将连接失败当作未安装"
 			return result
 		}
-		copy(paths, lines[:5])
+		copy(paths, lines[:6])
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -205,6 +210,7 @@ func inspectEngineEnvironment(ctx context.Context, probe environmentProbe, env E
 	result.Harness = detectedInstalledTool(paths[2])
 	result.Kimi = detectedInstalledTool(paths[3])
 	result.Mimo = detectedInstalledTool(paths[4])
+	result.OpenCode = detectedInstalledTool(paths[5])
 	for _, tool := range []*detectedTool{&result.Codex, &result.Claude, &result.Harness} {
 		if tool.Path == "" {
 			continue

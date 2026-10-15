@@ -419,6 +419,9 @@ func (w *harnessWorker) prompt(ctx context.Context, input string, emit func(stri
 							if w.engine == "mimo" {
 								method = mimoPermissionMethod
 							}
+							if w.engine == "opencode" {
+								method = opencodePermissionMethod
+							}
 							reply := requestACPPermission(requestCtx, method, msg.ID, callID, params)
 							select {
 							case replies <- reply:

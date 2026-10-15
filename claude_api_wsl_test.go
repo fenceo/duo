@@ -30,7 +30,7 @@ cli=root/'mock-claude'
 cli.write_text("#!/usr/bin/env python3\nimport sys,json,pathlib\na=sys.argv[1:]\np=a[a.index('--settings')+1]\nd=json.loads(pathlib.Path(p).read_text())\ns=a[a.index('--resume')+1]\nsys.stdin.read()\nresult={'role':d['env']['ANTHROPIC_DEFAULT_HAIKU_MODEL'],'model':a[a.index('--model')+1],'settings':p,'permission':a[a.index('--permission-mode')+1]}\nprint(json.dumps({'type':'result','session_id':s,'is_error':False,'result':json.dumps(result)}),flush=True)\n")
 cli.chmod(0o700)
 print(json.dumps({'root':str(root),'cli':str(cli)}))`
-	cmd := commandWithContext(ctx, mimoTargetCommand(c, "python3", "-c", setup))
+	cmd := commandWithContext(ctx, nativeTargetCommand(c, "python3", "-c", setup))
 	raw, err := cmd.Output()
 	var paths struct{ Root, CLI string }
 	if err != nil || json.Unmarshal(raw, &paths) != nil || paths.Root == "" {
@@ -41,7 +41,7 @@ print(json.dumps({'root':str(root),'cli':str(cli)}))`
 root=pathlib.Path(sys.argv[1]).resolve().parent
 if root.parent!=pathlib.Path(tempfile.gettempdir()).resolve() or not root.name.startswith('duo-claude-api-'): raise ValueError('invalid cleanup root')
 shutil.rmtree(root)`
-		clean := commandWithContext(context.Background(), mimoTargetCommand(c, "python3", "-c", script, paths.Root))
+		clean := commandWithContext(context.Background(), nativeTargetCommand(c, "python3", "-c", script, paths.Root))
 		if err := clean.Run(); err != nil {
 			t.Error("WSL fixture cleanup failed", err)
 		}

@@ -13,9 +13,12 @@ import (
 )
 
 func validEngine(engine string) bool {
-	return engine == "codex" || engine == "claude" || engine == "deepseek-harness" || engine == "mimo"
+	return engine == "codex" || engine == "claude" || engine == "deepseek-harness" || engine == "mimo" || engine == "opencode"
 }
 func engineName(engine string) string {
+	if engine == "opencode" {
+		return "OpenCode"
+	}
 	if engine == "mimo" {
 		return "MiMo Code"
 	}
@@ -28,6 +31,10 @@ func engineName(engine string) string {
 	return "Codex"
 }
 func validEngineReasoning(engine, effort string) bool {
+	if engine == "opencode" {
+		// OpenCode exposes no reasoning option over ACP today; never send one.
+		return effort == ""
+	}
 	if engine == "mimo" {
 		return effort == ""
 	}
@@ -111,6 +118,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	if engine == "mimo" {
 		return nil, errors.New("此引擎必须通过原生 ACP 运行")
 	}
+	if engine == "opencode" {
+		return nil, errors.New("此引擎必须通过原生 ACP 运行")
+	}
 	args := codexArgs(c, t)
 	binary := c.Codex
 	launch := launcher
@@ -132,7 +142,7 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	if c.Distro != "" || c.SSHHost != "" {
 		targetCommand := command
 		if engine == "claude" {
-			targetCommand = mimoTargetCommand
+			targetCommand = nativeTargetCommand
 		}
 		if c.HardwareAI != nil {
 			if engine == "claude" {
@@ -167,6 +177,9 @@ func modelsForEngine(ctx context.Context, env Environment, engine string, profil
 	if engine == "mimo" {
 		return configuredMimoCatalog(ctx, env, firstProfileEnv(profileEnv))
 	}
+	if engine == "opencode" {
+		return configuredOpenCodeCatalog(ctx, env, firstProfileEnv(profileEnv))
+	}
 	if engine != "claude" {
 		return ModelList{}, errors.New("AI 工具无效")
 	}
@@ -183,6 +196,24 @@ func checkEngine(c Config, engine string) (string, error) {
 			return "MiMo CLI 检查失败，请检查目标环境和程序路径", err
 		}
 		return "MiMo CLI " + strings.TrimSpace(string(out)) + "；版本检查不代表 API/模型可用", nil
+	}
+	if engine == "opencode" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		binary := c.OpenCode
+		if binary == "" && c.Distro == "" && c.SSHHost == "" {
+			binary = opencodeBinary(c)
+		}
+		if binary == "" {
+			binary = "opencode"
+		}
+		cmd := commandWithContext(ctx, engineCheckCommand(c, binary, "--version"))
+		hideCommand(cmd)
+		out, err := cmd.Output()
+		if err != nil {
+			return "OpenCode CLI 检查失败，请检查目标环境和程序路径", err
+		}
+		return "OpenCode CLI " + strings.TrimSpace(string(out)) + "；版本检查不代表账号或模型可用", nil
 	}
 	if engine == "codex" {
 		return checkEnvironment(c)

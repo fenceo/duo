@@ -138,6 +138,11 @@ func (a *App) switchTaskEngine(id string, v handoffRequest) (handoffResult, erro
 			return handoffResult{}, err
 		}
 	}
+	if v.Engine == "opencode" {
+		if _, err = opencodeInvocation(Task{Mode: mode}); err != nil {
+			return handoffResult{}, err
+		}
+	}
 	preview, archive, err := a.buildContinuation(task, v.ContextMode)
 	if err != nil {
 		return handoffResult{}, err

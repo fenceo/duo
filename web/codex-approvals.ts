@@ -1,4 +1,4 @@
-function isACPApproval(request:CodexPendingRequest){return ['harness/requestPermission','mimo/requestPermission'].includes(request.method)}
+function isACPApproval(request:CodexPendingRequest){return ['harness/requestPermission','mimo/requestPermission','opencode/requestPermission'].includes(request.method)}
 type CodexPendingRequest={id:string;task_id:string;run_id:string;method:string;params:unknown;created:number};
 type CodexApprovalDecision='accept'|'decline'|'cancel';
 type CodexQuestion={id:string;header:string;question:string;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]};
@@ -10,7 +10,7 @@ function codexText(value:unknown):string{return typeof value==='string'?value:''
 function codexPretty(value:unknown):string{return value===undefined||value===null?'':typeof value==='string'?value:JSON.stringify(value,null,2)}
 function codexApprovalKey(request:CodexPendingRequest){return JSON.stringify([request.task_id,request.run_id,request.id])}
 function codexIsQuestion(request:CodexPendingRequest){return request.method==='item/tool/requestUserInput'||request.method==='duo/asyncQuestion'}
-function codexApprovalKind(request:CodexPendingRequest){return ({'harness/requestPermission':'Harness 工具权限','mimo/requestPermission':'MiMo 工具权限','item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'请你选择或补充','duo/asyncQuestion':'请你选择或补充'} as Record<string,string>)[request.method]||'暂不支持的请求'}
+function codexApprovalKind(request:CodexPendingRequest){return ({'harness/requestPermission':'Harness 工具权限','mimo/requestPermission':'MiMo 工具权限','opencode/requestPermission':'OpenCode 工具权限','item/commandExecution/requestApproval':'命令执行','item/fileChange/requestApproval':'文件修改','item/permissions/requestApproval':'临时权限','item/tool/requestUserInput':'请你选择或补充','duo/asyncQuestion':'请你选择或补充'} as Record<string,string>)[request.method]||'暂不支持的请求'}
 function codexApprovalDecisions(request:CodexPendingRequest):CodexApprovalDecision[]{
  if(isACPApproval(request)){const options=codexRecord(request.params).options,kinds=Array.isArray(options)?options.map(option=>codexText(codexRecord(option).kind)):[];return (['accept','decline','cancel'] as const).filter(value=>value==='cancel'||kinds.includes(value==='accept'?'allow_once':'reject_once'))}
  if(request.method==='item/permissions/requestApproval')return ['accept','decline'];
@@ -119,7 +119,7 @@ function renderCodexApprovals(current:Detail|null){
  for(const [key,card] of codexApprovalCards)if(!keys.has(key)){card.node.remove();codexApprovalCards.delete(key)}
  for(const request of pending){const key=codexApprovalKey(request);let card=codexApprovalCards.get(key);if(!card){card=createCodexApprovalCard(request,current!.task);codexApprovalCards.set(key,card);list.append(card.node)}updateCodexApprovalCard(card)}
  panel.classList.toggle('hidden',!pending.length);const questions=pending.filter(codexIsQuestion),onlyQuestions=questions.length===pending.length;
- const engine=current?.task.engine==='mimo'?'MiMo Code':current?.task.engine==='deepseek-harness'?'Harness':current?.task.engine==='claude'?'Claude Code':'Codex';
+ const engine=current?.task.engine==='mimo'?'MiMo Code':current?.task.engine==='opencode'?'OpenCode':current?.task.engine==='deepseek-harness'?'Harness':current?.task.engine==='claude'?'Claude Code':'Codex';
  const heading=element('codex-approvals-title'),title=(onlyQuestions?engine+' 有问题需要你回答':engine+' 等待处理')+' · '+pending.length;if(heading.textContent!==title)heading.textContent=title;
  const hint=element('codex-approvals-hint'),hintText=onlyQuestions?'答案会直接交回当前 '+engine+' 会话':'批准只针对当前请求，不创建永久授权规则';if(hint.textContent!==hintText)hint.textContent=hintText;
  positionCodexApprovals();

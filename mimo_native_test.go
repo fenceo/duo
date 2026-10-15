@@ -165,7 +165,7 @@ func TestMimoACPNativeNoPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal("native initialize failed", err)
 	}
-	defer finishMimo(w)
+	defer finishNativeACP(w)
 	data, err := w.request(ctx, "session/new", map[string]any{"cwd": workspace, "mcpServers": []any{}})
 	if err != nil {
 		t.Fatal("native session/new failed", err)
@@ -180,14 +180,14 @@ func TestMimoACPNativeNoPrompt(t *testing.T) {
 	if _, err = w.request(ctx, "session/set_mode", map[string]string{"sessionId": result.SessionID, "modeId": "plan"}); err != nil {
 		t.Fatal("native mode configuration failed", err)
 	}
-	if err = finishMimo(w); err != nil {
+	if err = finishNativeACP(w); err != nil {
 		t.Fatal("native process exit could not be confirmed", err)
 	}
 	w, err = startMimo(ctx, c, task, variables)
 	if err != nil {
 		t.Fatal("native restart failed", err)
 	}
-	defer finishMimo(w)
+	defer finishNativeACP(w)
 	if _, err = w.request(ctx, "session/load", map[string]any{"cwd": workspace, "sessionId": result.SessionID, "mcpServers": []any{}}); err != nil {
 		t.Fatal("native durable session/load failed", err)
 	}

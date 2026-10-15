@@ -4,7 +4,7 @@ Duo的长期结构分成四层：
 
 1. **工作台控制面**：任务、权限、审批、知识、飞书、硬件授权、远程访问和升级。
 2. **执行目标**：Windows、WSL 发行版/用户、SSH 主机。目标保存自己的路径、登录状态和工具安装状态。
-3. **引擎适配器**：Codex app-server、Claude Code CLI、DeepSeek Harness headless/SDK、Kimi ACP、MiMo ACP。引擎负责会话、流式事件、审批和取消，不负责知识库或硬件业务。
+3. **引擎适配器**：Codex app-server、Claude Code CLI、DeepSeek Harness headless/SDK、Kimi ACP、MiMo ACP、OpenCode ACP。引擎负责会话、流式事件、审批和取消，不负责知识库或硬件业务。
 4. **模型与账号**：模型是任务的引擎参数；账号/API 独立管理，通过切换目标环境的原生登录生效，不绑定任务。
 
 ## 代码边界与本轮收敛
@@ -46,11 +46,13 @@ v0.31.1 起，账号管理通过原生文件切换 Windows、WSL 或 SSH 的账�
 1. Codex：继续使用原生 app-server，完整保留 thread/resume、审批、interrupt 和流式事件。
 2. Claude Code：保留 CLI `stream-json`，补充稳定的取消/审批映射和 profile 检查。
 3. Harness：优先 headless JSON 事件流或 SDK，不抓桌面 UI；固定一个版本并记录协议版本。
-4. Kimi / MiMo：优先 ACP/CLI，桌面端仅作为人工兜底。适配器具备可验证的启动、发送和停止链路后才开放运行；恢复与审批按真实能力分别声明，不使用统一接口掩盖缺失能力。
+4. Kimi / MiMo / OpenCode：优先 ACP/CLI，桌面端仅作为人工兜底。适配器具备可验证的启动、发送和停止链路后才开放运行；恢复与审批按真实能力分别声明，不使用统一接口掩盖缺失能力。
 
 v0.34.18 已开放 MiMo Code 官方 ACP 适配器与一键安装，支持原生会话创建/恢复、流式输出、模型切换、单次审批和取消。API 库存通过 `mimo_config` 引用独立配置文件，激活后仅设置 `MIMOCODE_CONFIG`，不移动原生会话目录。Claude Code 同时新增官方与第三方 Messages 配置入口及模型目录认证检查。MiMo 尚未开放独立知识整理、无工具推理测试或 Duo 桌面/硬件工具；Kimi 仍未开放运行。配置和权限说明见 [Claude Code 与 MiMo 配置](claude-mimo.md)。
 
 v0.34.19 起 Claude/MiMo 使用环境行的独立 API 窗口，保存后直接生效。MiMo 的环境路由引用原生目录中的 `duo-api.json`，或复用已激活的旧库存文件；旧库存不删除。保存时保留原生权限、MCP 和会话目录，环境保存失败会回退原生文件；执行或排队中的对应引擎不得更换配置。
+
+v0.34.28 开放 OpenCode 官方 ACP 适配器与一键安装（npm 包 `opencode-ai`）：同一原生会话的创建/恢复、流式事件、模型切换、附件与图片、单次审批、取消，以及通过 `session/new` 挂载的 Duo 桌面/硬件工具（HTTP MCP）。OpenCode 不提供 ACP 权限档位，只读模式以自动拒绝工具授权请求实现；账号沿用目标环境的 `opencode auth login`，Duo 不保存 Key、不移动原生会话目录。独立知识整理与无工具推理测试尚未接入。
 
 ## 升级流程
 

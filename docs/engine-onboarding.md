@@ -4,9 +4,9 @@
 
 v0.34.10 起，新增 Codex/Claude 账号可选择 Windows、WSL 或 SSH，不再要求必须有 Windows 环境。Codex 通过所选环境的 CLI 进行 ChatGPT 设备码登录或 API 登录；Claude 向导仅配置 API。账号保存在独立目录，新增完成后仍需在卡片点击“切换到环境”应用，不绑定任务。WSL/SSH 需要 Python 3，目录位于所选用户的 `~/.local/share/duo/engine-accounts/<请求标识>`；不覆盖当前原生登录。
 
-“环境与引擎”中可检测全部已保存的 Windows、WSL、SSH 环境。检测区分未安装、已有登录配置、需要登录及未完成检测，不调用模型。已安装的 Codex、Claude Code、Harness 会尝试读取 CLI 版本；版本读取失败不等于未安装。连接失败不会报告成“未安装”；Harness/Kimi/MiMo 的安装检测不宣称账号可用。
+“环境与引擎”中可检测全部已保存的 Windows、WSL、SSH 环境。检测区分未安装、已有登录配置、需要登录及未完成检测，不调用模型。已安装的 Codex、Claude Code、Harness、OpenCode 会尝试读取 CLI 版本；版本读取失败不等于未安装。连接失败不会报告成“未安装”；Harness/Kimi/MiMo/OpenCode 的安装检测不宣称账号可用。
 
-自动安装支持 Codex、Claude Code、DeepSeek Harness。Windows 下载固定版本并校验 SHA-256 的 Node.js，再从官方 npm 仓库安装工具，放在 Duo 数据目录的独立目录中。WSL/SSH 在指定用户下执行允许列表中的 `npm install --global --prefix "$HOME/.local/share/duo/engine-tools/<操作标识>" --registry=https://registry.npmjs.org <官方包>@latest`；不使用 sudo、不覆盖全局 CLI、不修改 shell 的全局 PATH。成功运行 `--version` 后才保存路径；已有任务通过“切换 AI”选用新路径。当前不自动安装 Kimi/MiMo，也不安装桌面版或本地模型权重。
+自动安装支持 Codex、Claude Code、DeepSeek Harness、OpenCode。Windows 下载固定版本并校验 SHA-256 的 Node.js，再从官方 npm 仓库安装工具，放在 Duo 数据目录的独立目录中。WSL/SSH 在指定用户下执行允许列表中的 `npm install --global --prefix "$HOME/.local/share/duo/engine-tools/<操作标识>" --registry=https://registry.npmjs.org <官方包>@latest`；不使用 sudo、不覆盖全局 CLI、不修改 shell 的全局 PATH。成功运行 `--version` 后才保存路径；已有任务通过“切换 AI”选用新路径。当前不自动安装 Kimi/MiMo，也不安装桌面版或本地模型权重。
 
 ## 更新已安装的 CLI
 

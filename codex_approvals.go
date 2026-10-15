@@ -77,10 +77,13 @@ func (a *App) requestCodexInteraction(ctx context.Context, taskID, runID, method
 	engine := "Codex"
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput":
-	case harnessPermissionMethod, mimoPermissionMethod:
+	case harnessPermissionMethod, mimoPermissionMethod, opencodePermissionMethod:
 		engine = "Harness"
 		if method == mimoPermissionMethod {
 			engine = "MiMo Code"
+		}
+		if method == opencodePermissionMethod {
+			engine = "OpenCode"
 		}
 		if _, err := parseHarnessPermission(params); err != nil {
 			return nil, err
@@ -151,7 +154,7 @@ var errCodexRequestExpired = errors.New("此请求已处理或已失效，请刷
 func codexAnswerPayload(p CodexPendingRequest, answer CodexAnswer) (json.RawMessage, error) {
 	var result any
 	switch p.Method {
-	case harnessPermissionMethod, mimoPermissionMethod:
+	case harnessPermissionMethod, mimoPermissionMethod, opencodePermissionMethod:
 		return harnessAnswerPayload(p.Params, answer)
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
 		if len(answer.Answers) != 0 || (answer.Decision != "accept" && answer.Decision != "decline" && answer.Decision != "cancel") {

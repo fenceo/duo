@@ -9,7 +9,9 @@ GPT 是 OpenAI 的模型系列，Codex 是调用模型、管理原生会话并�
 | Codex | 官方 CLI 的 app-server | Windows / WSL / SSH 检测与一键安装 | ChatGPT 设备码登录、官方 API Key 或兼容 Responses 的服务；账号卡片切换到环境 | 使用 Codex 原生权限和自动风险评审 |
 | DeepSeek Harness | 官方 `dsh --profile acp` | Windows / WSL / SSH 检测与一键安装 | 每环境配置 API 地址、Key，验证认证并读取模型列表；不提供订阅账号登录 | 官方工作区审批与完全访问两档；支持批准或拒绝本次 |
 | Claude Code | 官方 CLI 的 stream-json | Windows / WSL / SSH 检测与一键安装 | API 配置；已有订阅登录可引用和切换 | 按现有 CLI 适配器的能力展示 |
-| Kimi / MiMo | 预留 ACP 适配器 | 检测已配置 CLI，提供安装指引 | 引用已有原生配置 | 尚未开放任务运行 |
+| MiMo Code | 官方 CLI 的 `mimo acp` | Windows / WSL / SSH 检测与一键安装 | 每环境配置 API 地址、协议、Key，验证后读取模型目录；不提供账号登录 | 原生 Build/Plan/allow 档位；支持批准或拒绝本次 |
+| OpenCode | 官方 CLI 的 `opencode acp` | Windows / WSL / SSH 检测与一键安装 | 引用环境中原生 `opencode auth login` 的登录状态；Duo 不保存 Key | 无原生档位；只读模式自动拒绝工具授权请求，其他模式单次批准或拒绝 |
+| Kimi Code | 预留 ACP 适配器 | 仅检测已配置 CLI，提供安装指引 | 引用已有原生配置 | 尚未开放任务运行 |
 
 ## 环境与账号
 
@@ -28,4 +30,8 @@ GPT 是 OpenAI 的模型系列，Codex 是调用模型、管理原生会话并�
 
 Codex 的 API 登录和 ChatGPT 订阅登录有不同的计费与功能范围。兼容 API 服务必须支持该 CLI 所需协议，仅保存 Key 不代表已经验证模型回复。真实模型调用需由用户明确发起。
 
-Harness 已接入单次审批和附件。PNG/JPEG/WebP/GIF 使用 ACP 原生图片块，要求 CLI 握手与所选模型均声明图片输入能力；未声明时明确拒绝，不把图片路径冒充看图结果。小型 UTF-8 文本直接进入原生会话，其他文件传到目标环境，由 CLI 按原权限读取。仍不支持硬件工具和 Codex 自动风险评审。Kimi/MiMo 的可运行适配器仍待实现。
+Harness 已接入单次审批、附件和 Duo 桌面/硬件工具（HTTP MCP；任务未授权设备时本轮不带工具运行）。PNG/JPEG/WebP/GIF 使用 ACP 原生图片块，要求 CLI 握手与所选模型均声明图片输入能力；未声明时明确拒绝，不把图片路径冒充看图结果。小型 UTF-8 文本直接进入原生会话，其他文件传到目标环境，由 CLI 按原权限读取。仍不支持 Codex 自动风险评审。
+
+MiMo Code 已接入原生 ACP 的创建/恢复、流式输出、模型切换和单次审批；独立知识整理、无工具推理测试和 Duo 桌面/硬件工具仍未开放。Kimi Code 的可运行适配器仍待实现。
+
+OpenCode 通过 `opencode acp` 接入：原生会话创建与恢复、模型切换（目录来自 `opencode models` 与本机显式配置）、附件与图片、单次审批、取消，以及 Duo 桌面/硬件工具。OpenCode 不提供 ACP 权限档位，因此只读任务以自动拒绝工具授权请求实现，其他任务在选择完全访问时也仍会为每次工具请求确认；这不等于操作系统沙箱或禁用联网保证。独立知识整理尚未接入。

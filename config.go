@@ -28,6 +28,7 @@ type Config struct {
 	Claude             string            `json:"-"`
 	Harness            string            `json:"-"`
 	Mimo               string            `json:"-"`
+	OpenCode           string            `json:"-"`
 	HarnessModel       string            `json:"-"`
 	HarnessProvider    string            `json:"-"`
 	Workspaces         []string          `json:"workspaces"`

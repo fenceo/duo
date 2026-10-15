@@ -35,16 +35,16 @@ func mimoTranscript(ctx context.Context, c Config, t Task, variables map[string]
 			quoted = append(quoted, posixQuote(arg))
 		}
 		script := "cd -- " + posixQuote(t.Workspace) + " && exec " + strings.Join(quoted, " ")
-		cmd = commandWithContext(ctx, mimoTargetCommand(c, "sh", "-lc", script))
+		cmd = commandWithContext(ctx, nativeTargetCommand(c, "sh", "-lc", script))
 	} else {
 		cmd = exec.CommandContext(ctx, binary, "export", session)
 		cmd.Dir = t.Workspace
-		applyMimoEnv(cmd, variables)
+		applyNativeEnv(cmd, variables)
 	}
 	if os.Getenv("DUO_TEST_MIMO_ACP") == "1" {
 		cmd = exec.CommandContext(ctx, binary, "-test.run=^TestMimoProcessFixture$", "--", "export", session)
 		cmd.Dir = t.Workspace
-		applyMimoEnv(cmd, variables)
+		applyNativeEnv(cmd, variables)
 	}
 	stdout, stderr := &cappedOutput{limit: 32 * 1024 * 1024}, &cappedOutput{limit: 4096}
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = stdout, stderr, time.Second

@@ -1,6 +1,6 @@
 # Duo
 
-本地运行的 AI 任务工作台。通过浏览器或飞书，把任务交给 Windows、WSL 或 SSH 环境中的 Codex、Claude Code 或 DeepSeek Harness，按任务保存对话、执行记录和知识。
+本地运行的 AI 任务工作台。通过浏览器或飞书，把任务交给 Windows、WSL 或 SSH 环境中的 Codex、Claude Code、DeepSeek Harness、MiMo Code 或 OpenCode，按任务保存对话、执行记录和知识。
 
 Duo 原名“简作 / Jianzuo”。对外名称和发布包统一改为 Duo，已有数据与账号配置继续使用。
 

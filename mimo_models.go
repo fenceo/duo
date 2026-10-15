@@ -93,7 +93,7 @@ func mimoModelsCommand(ctx context.Context, env Environment, selected map[string
 	if env.Type == "windows" {
 		cmd := exec.CommandContext(ctx, path, "models")
 		cmd.Dir = workspace
-		applyMimoEnv(cmd, variables)
+		applyNativeEnv(cmd, variables)
 		return cmd
 	}
 	args := withEngineEnv([]string{path, "models"}, variables)

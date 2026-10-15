@@ -274,6 +274,8 @@ func remoteEngineBinary(engine string) (string, bool) {
 		return "claude", true
 	case "deepseek-harness":
 		return "dsh", true
+	case "opencode":
+		return "opencode", true
 	default:
 		return "", false
 	}

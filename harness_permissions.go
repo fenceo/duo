@@ -10,9 +10,10 @@ import (
 const harnessWorkspaceMode = "harness:workspace"
 const harnessPermissionMethod = "harness/requestPermission"
 const mimoPermissionMethod = "mimo/requestPermission"
+const opencodePermissionMethod = "opencode/requestPermission"
 
 func isACPToolPermission(method string) bool {
-	return method == harnessPermissionMethod || method == mimoPermissionMethod
+	return method == harnessPermissionMethod || method == mimoPermissionMethod || method == opencodePermissionMethod
 }
 
 // Old work/custom snapshots deliberately retain their previous never policy.

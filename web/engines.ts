@@ -4,7 +4,7 @@ type EngineCatalog={engines:EngineDefinition[];profiles:EngineProfile[];active_p
 type CodexSyncResult={environment_id:string;state:string;message:string};
 type CodexSyncResponse={source_profile_id:string;results:CodexSyncResult[]};
 type DetectedEngineTool={path:string;state:string;label:string;version?:string};
-type EngineEnvironmentStatus={environment_id:string;name:string;type:string;distro?:string;user?:string;host?:string;codex:DetectedEngineTool;claude:DetectedEngineTool;harness:DetectedEngineTool;kimi:DetectedEngineTool;mimo:DetectedEngineTool;message?:string};
+type EngineEnvironmentStatus={environment_id:string;name:string;type:string;distro?:string;user?:string;host?:string;codex:DetectedEngineTool;claude:DetectedEngineTool;harness:DetectedEngineTool;kimi:DetectedEngineTool;mimo:DetectedEngineTool;opencode:DetectedEngineTool;message?:string};
 type EngineStatusResponse={items:EngineEnvironmentStatus[];discovered?:DetectedEnvironment[];message?:string};
 let engineCatalog:EngineCatalog|null=null;
 let engineSettingsRequest=0;
@@ -60,7 +60,7 @@ function renderEngineCatalog(){
  element('engine-catalog').innerHTML=settings.config.environments.map(env=>{
   const status=current?engineEnvironmentStatuses.find(s=>s.environment_id===env.id):undefined;
   const rows=engineCatalog!.engines.filter(e=>e.targets.includes(env.type)).map(engine=>{
-   const toolKey=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo'} as Record<string,'codex'|'claude'|'harness'|'kimi'|'mimo'>)[engine.id];
+   const toolKey=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo',opencode:'opencode'} as Record<string,'codex'|'claude'|'harness'|'kimi'|'mimo'|'opencode'>)[engine.id];
    const tool=status?.[toolKey];
    const state=tool?.state||'unknown',installed=!!tool?.path&&state!=='missing',missing=state==='missing';
    const label=installed?'已安装'+(tool?.version?' · v'+tool.version:''):missing?'未安装':engineStatusBusy?'检测中…':'未完成检测';
@@ -70,7 +70,7 @@ function renderEngineCatalog(){
  }).join('')||'<p>点击检测发现本机环境，或在下方手动添加环境。</p>';
  if(current)element('engine-catalog').insertAdjacentHTML('beforeend',engineDiscoveredEnvironments.map((item,index)=>{
   const env=item.environment,draft=editingEnvironments.find(e=>sameDetectedEnvironment(e,env));
-  return '<article class="engine-environment engine-discovered"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user].filter(Boolean).join(' / '))+' · '+(draft?'待保存':'新发现')+'</small></div><button type="button" data-add-engine-environment="'+index+'" '+(engineStatusBusy?'disabled':'')+'>'+(draft?'编辑待保存环境':'添加环境')+'</button></header><div class="detected-tools">'+[['Codex',item.codex],['Claude Code',item.claude],['Harness',item.harness],['Kimi',item.kimi],['MiMo',item.mimo]].map(([name,tool])=>'<span class="detected-tool">'+escapeHTML(String(name))+'：'+escapeHTML((tool as DetectedTool|undefined)?.label||'未完成检测')+'</span>').join('')+'</div>'+(item.message?'<p class="muted">'+escapeHTML(item.message)+'</p>':'')+'<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
+  return '<article class="engine-environment engine-discovered"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user].filter(Boolean).join(' / '))+' · '+(draft?'待保存':'新发现')+'</small></div><button type="button" data-add-engine-environment="'+index+'" '+(engineStatusBusy?'disabled':'')+'>'+(draft?'编辑待保存环境':'添加环境')+'</button></header><div class="detected-tools">'+[['Codex',item.codex],['Claude Code',item.claude],['Harness',item.harness],['Kimi',item.kimi],['MiMo',item.mimo],['OpenCode',item.opencode]].map(([name,tool])=>'<span class="detected-tool">'+escapeHTML(String(name))+'：'+escapeHTML((tool as DetectedTool|undefined)?.label||'未完成检测')+'</span>').join('')+'</div>'+(item.message?'<p class="muted">'+escapeHTML(item.message)+'</p>':'')+'<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
  }).join(''));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-add-engine-environment]').forEach(b=>b.onclick=()=>addScannedEnvironment(Number(b.dataset.addEngineEnvironment)));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-install-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('install',{engine:b.dataset.installEngine!,environment_id:b.dataset.installEnvironment!}));
@@ -144,7 +144,7 @@ async function startEngineOnboarding(action:'install'|'update'|'account',target?
  if(action!=='account'&&(engineStatusBusy||engineStatusSignature!==engineEnvironmentSignature())){element('engine-setup-status').textContent='请等待当前环境检测完成，再安装或更新。';return}
  const login=element<HTMLSelectElement>('engine-account-login').value;
  const body={action,engine:action==='account'?element<HTMLSelectElement>('engine-account-engine').value:target!.engine,environment_id:action==='account'?element<HTMLSelectElement>('engine-account-environment').value:target!.environment_id,...(action==='account'?{name:input('engine-account-name').value.trim(),login,api_key:login==='apiKey'?input('engine-account-key').value:'',base_url:login==='apiKey'?input('engine-account-url').value.trim():'',model:input('engine-account-model').value.trim(),...(['claude','mimo'].includes(element<HTMLSelectElement>('engine-account-engine').value)?{api_protocol:input('engine-account-protocol').value,...(element<HTMLSelectElement>('engine-account-engine').value==='claude'?{auth_mode:input('engine-account-auth').value}:{})}:{})}:{})};
- if(action==='update')Object.assign(body,{expected_path:settings.config.environments.find(e=>e.id===target!.environment_id)?.[target!.engine==='codex'?'codex':target!.engine==='claude'?'claude':target!.engine==='mimo'?'mimo':'harness']||''});
+ if(action==='update')Object.assign(body,{expected_path:settings.config.environments.find(e=>e.id===target!.environment_id)?.[target!.engine==='codex'?'codex':target!.engine==='claude'?'claude':target!.engine==='mimo'?'mimo':target!.engine==='opencode'?'opencode':'harness']||''});
  const signature=JSON.stringify(body);if(!engineSetupAttempt||engineSetupAttempt.signature!==signature)engineSetupAttempt={signature,id:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};
  const epoch=shellEpoch,status=element(action==='account'?'engine-account-status':'engine-setup-status');engineSetupBusy=true;element<HTMLFieldSetElement>('engine-setup-fields').disabled=true;element<HTMLFieldSetElement>('engine-account-fields').disabled=true;status.textContent='正在开始…';
  try{const job=await api<EngineSetupJob>('engine-setup','POST',{...body,id:engineSetupAttempt.id});if(!shellCurrent(epoch))return;input('engine-account-key').value='';engineSetupAttempt=null;renderEngineSetup(job);void pollEngineSetup(job.id,epoch)}catch(e){if(shellCurrent(epoch)){engineSetupBusy=false;populateEngineOnboarding();status.textContent=(e as Error).message}}
@@ -167,7 +167,7 @@ async function pollEngineSetup(id:string,epoch:number){
       engineSetupBusy=true;element<HTMLFieldSetElement>('engine-setup-fields').disabled=true;element<HTMLFieldSetElement>('engine-account-fields').disabled=true;
       const fresh=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;
       storeEnvironmentEditor();
-      const key=job.engine==='codex'?'codex':job.engine==='claude'?'claude':job.engine==='mimo'?'mimo':'harness';
+      const key=job.engine==='codex'?'codex':job.engine==='claude'?'claude':job.engine==='mimo'?'mimo':job.engine==='opencode'?'opencode':'harness';
       const before=settings.config.environments.find(e=>e.id===job.environment_id),updated=fresh.config.environments.find(e=>e.id===job.environment_id),editing=editingEnvironments.find(e=>e.id===job.environment_id);
       if(updated&&before){if(editing){if(editing[key]===before[key])editing[key]=updated[key]||'';editing.managed_tools=updated.managed_tools}before[key]=updated[key]||'';before.managed_tools=updated.managed_tools;if(editingID===job.environment_id)loadEnvironmentEditor()}
       renderEngineSetup(job);

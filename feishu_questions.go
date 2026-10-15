@@ -59,7 +59,7 @@ func (f *Feishu) pendingQuestions(taskID string) ([]CodexPendingRequest, error) 
 	if task.Archived || task.Deleted {
 		return nil, nil
 	}
-	if task.Engine == "deepseek-harness" || task.Engine == "mimo" {
+	if task.Engine == "deepseek-harness" || task.Engine == "mimo" || task.Engine == "opencode" {
 		// Harness shares the pending-request store for native permissions, not
 		// Codex question schemas. Notify only its live, validated approvals;
 		// questionCard keeps permission details and decisions in the web UI.

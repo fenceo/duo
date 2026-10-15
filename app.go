@@ -110,6 +110,11 @@ func (a *App) createWithExecutionAndMode(title, workspace, model, engine, reason
 			return Task{}, err
 		}
 	}
+	if engine == "opencode" {
+		if _, err := opencodeInvocation(Task{Mode: mode}); err != nil {
+			return Task{}, err
+		}
+	}
 	if engine == "deepseek-harness" {
 		if _, err := harnessPolicy(Task{Mode: mode, Workspace: workspace}); err != nil {
 			return Task{}, err
@@ -271,6 +276,14 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 		}
 		if kind == "knowledge" {
 			return Run{}, errors.New("MiMo 独立知识整理尚未接入")
+		}
+	}
+	if task.Engine == "opencode" {
+		if _, err := opencodeInvocation(Task{Mode: &mode}); err != nil {
+			return Run{}, err
+		}
+		if kind == "knowledge" {
+			return Run{}, errors.New("OpenCode 独立知识整理尚未接入")
 		}
 	}
 	if task.Engine == "deepseek-harness" {

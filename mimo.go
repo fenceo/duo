@@ -51,16 +51,16 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 	}
 	var cmd *exec.Cmd
 	if c.Distro != "" || c.SSHHost != "" {
-		cmd = mimoTargetCommand(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, t.Workspace, binary, "acp", "--hostname", "127.0.0.1", "--port", "0"}, variables)...)
+		cmd = nativeTargetCommand(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, t.Workspace, binary, "acp", "--hostname", "127.0.0.1", "--port", "0"}, variables)...)
 	} else {
 		cmd = exec.Command(binary, "acp", "--hostname", "127.0.0.1", "--port", "0")
 		cmd.Dir = t.Workspace
-		applyMimoEnv(cmd, variables)
+		applyNativeEnv(cmd, variables)
 	}
 	if os.Getenv("DUO_TEST_MIMO_ACP") == "1" {
 		cmd = exec.Command(binary, "-test.run=^TestMimoProcessFixture$")
 		cmd.Dir = t.Workspace
-		applyMimoEnv(cmd, variables)
+		applyNativeEnv(cmd, variables)
 	}
 	hideCommand(cmd)
 	in, err := cmd.StdinPipe()
@@ -130,7 +130,7 @@ func startMimo(ctx context.Context, c Config, t Task, variables map[string]strin
 // arguments. Execute native engine launchers directly, like Codex's ACP launcher;
 // SSH already quotes each argument in sshCommand. Keep the selected user and
 // minimal Windows host environment unchanged.
-func mimoTargetCommand(c Config, args ...string) *exec.Cmd {
+func nativeTargetCommand(c Config, args ...string) *exec.Cmd {
 	if c.Distro == "" || c.SSHHost != "" {
 		return command(c, args...)
 	}
@@ -141,14 +141,14 @@ func mimoTargetCommand(c Config, args ...string) *exec.Cmd {
 	return wslCommand(append(append(base, "--exec"), args...)...)
 }
 
-func applyMimoEnv(cmd *exec.Cmd, variables map[string]string) {
+func applyNativeEnv(cmd *exec.Cmd, variables map[string]string) {
 	cmd.Env = os.Environ()
 	for key, value := range variables {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 }
 
-func finishMimo(w *harnessWorker) error {
+func finishNativeACP(w *harnessWorker) error {
 	_ = w.in.Close()
 	select {
 	case <-w.done:
@@ -226,7 +226,7 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 	mimoWriters.workers[key] = w
 	mimoWriters.Unlock()
 	defer func() {
-		if err := finishMimo(w); err != nil {
+		if err := finishNativeACP(w); err != nil {
 			runErr = errors.Join(runErr, err)
 		}
 		mimoWriters.Lock()
@@ -286,7 +286,7 @@ func runMimoACP(ctx context.Context, c Config, t Task, input string, emit func(s
 	if ctx.Err() != nil {
 		return session, result, runErr
 	}
-	if err := finishMimo(w); err != nil {
+	if err := finishNativeACP(w); err != nil {
 		return session, result, errors.Join(runErr, err)
 	}
 	nativeResult, usage, nativeErr := mimoTranscript(ctx, c, t, variables, session, input)

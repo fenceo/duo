@@ -361,6 +361,7 @@ func (s *Server) Handler() http.Handler {
 		env.Codex = managedEnginePath(config, env, "codex")
 		env.Claude = managedEnginePath(config, env, "claude")
 		env.Harness = managedEnginePath(config, env, "deepseek-harness")
+		env.OpenCode = managedEnginePath(config, env, "opencode")
 		var models ModelList
 		if engine == "mimo" {
 			models, e = s.app.mimoAPICatalog(r.Context(), env, profileEnv)

@@ -13,7 +13,7 @@ import (
 func TestMimoTargetCommandUsesDirectWSLExecution(t *testing.T) {
 	value := `{"model":"duo-mimo/mimo-v2.6-pro","permission":{"*":"ask"}}`
 	c := Config{Distro: "synthetic-distro", User: "synthetic-user"}
-	cmd := mimoTargetCommand(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, "/workspace with 'quotes'", "/synthetic/mimo", "acp"}, map[string]string{"MIMOCODE_CONFIG_CONTENT": value})...)
+	cmd := nativeTargetCommand(c, withEngineEnv([]string{"python3", "-c", claudeLauncher, "/workspace with 'quotes'", "/synthetic/mimo", "acp"}, map[string]string{"MIMOCODE_CONFIG_CONTENT": value})...)
 	if len(cmd.Args) < 7 || strings.Join(cmd.Args[1:6], "|") != "-d|synthetic-distro|-u|synthetic-user|--exec" || cmd.Args[7] != "MIMOCODE_CONFIG_CONTENT="+value {
 		t.Fatal("MiMo WSL launch must preserve JSON and bypass shell interpretation")
 	}
@@ -39,7 +39,7 @@ func TestMimoWSLJSONEnvironmentNative(t *testing.T) {
 	args := withEngineEnv([]string{"python3", "-c", "import os,json; print(json.dumps({k:os.environ[k] for k in ['MIMOCODE_CONFIG_CONTENT','MIMOCODE_PERMISSION']}))"}, vars)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	output, err := commandWithContext(ctx, mimoTargetCommand(c, args...)).Output()
+	output, err := commandWithContext(ctx, nativeTargetCommand(c, args...)).Output()
 	if err != nil {
 		t.Fatal("transport failed", err)
 	}
@@ -64,7 +64,7 @@ func TestMimoACPNativeWSLLocalProvider(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	server := commandWithContext(ctx, mimoTargetCommand(c, "python3", "-u", "-c", mimoWSLProviderFixture))
+	server := commandWithContext(ctx, nativeTargetCommand(c, "python3", "-u", "-c", mimoWSLProviderFixture))
 	stdin, err := server.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

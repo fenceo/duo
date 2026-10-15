@@ -64,6 +64,8 @@ func environmentEnginePath(e Environment, engine string) string {
 		return e.Harness
 	case "mimo":
 		return e.Mimo
+	case "opencode":
+		return e.OpenCode
 	}
 	return ""
 }

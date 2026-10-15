@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 )
 
@@ -28,6 +28,12 @@ sys.exit(1)
 `
 
 func resolveHarnessHardware(ctx context.Context, c Config) (*HardwareRuntime, error) {
+	return resolveHardwareRuntime(ctx, c, "Harness")
+}
+
+// resolveHardwareRuntime proves the endpoint is reachable from the executing
+// environment (local, WSL or SSH) before an ACP session is allowed to attach it.
+func resolveHardwareRuntime(ctx context.Context, c Config, engine string) (*HardwareRuntime, error) {
 	h := c.HardwareAI
 	if h == nil {
 		return nil, nil
@@ -59,7 +65,7 @@ func resolveHarnessHardware(ctx context.Context, c Config) (*HardwareRuntime, er
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	return nil, errors.New("Harness 无法从执行环境连接 Duo 桌面/硬件工具；请检查 Python 3、网络及设置中的局域网或 Tailscale 访问地址（未发送模型请求）")
+	return nil, fmt.Errorf("%s 无法从执行环境连接 Duo 桌面/硬件工具；请检查 Python 3、网络及设置中的局域网或 Tailscale 访问地址（未发送模型请求）", engine)
 }
 
 func harnessMCPServers(h *HardwareRuntime) []any {
