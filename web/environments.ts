@@ -1,5 +1,5 @@
 type DetectedTool={path:string;state:string;label:string};
-type DetectedEnvironment={environment:Environment;codex:DetectedTool;claude:DetectedTool;harness?:DetectedTool;kimi?:DetectedTool;mimo?:DetectedTool;opencode?:DetectedTool;message:string};
+type DetectedEnvironment={environment:Environment;codex:DetectedTool;claude:DetectedTool;harness?:DetectedTool;kimi?:DetectedTool;mimo?:DetectedTool;opencode?:DetectedTool;zcode?:DetectedTool;message:string};
 let detectedEnvironments:DetectedEnvironment[]=[];
 let createEnvironmentDiscoveryAt=0;
 let createEnvironmentDiscoveryPromise:Promise<void>|null=null;

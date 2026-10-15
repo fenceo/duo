@@ -54,6 +54,8 @@ v0.34.19 起 Claude/MiMo 使用环境行的独立 API 窗口，保存后直接�
 
 v0.34.28 开放 OpenCode 官方 ACP 适配器与一键安装（npm 包 `opencode-ai`）：同一原生会话的创建/恢复、流式事件、模型切换、附件与图片、单次审批、取消，以及通过 `session/new` 挂载的 Duo 桌面/硬件工具（HTTP MCP）。OpenCode 不提供 ACP 权限档位，只读模式以自动拒绝工具授权请求实现；账号沿用目标环境的 `opencode auth login`，Duo 不保存 Key、不移动原生会话目录。独立知识整理与无工具推理测试尚未接入。
 
+v0.34.31 起只检测 ZCode CLI（智谱 Z.ai / GLM 官方 CLI，随 ZCode 桌面安装或自行放到 PATH），暂不安装、不登录、不运行任务：它的自有协议与 `--prompt/--json` 输出结构尚未在真实模型调用下核实，核实前不按“已接入并验证”开放。同一轮把 MiMo 的硬件工具说明补进授权对话框（v0.34.30 起 MiMo 已按原生能力挂载）。
+
 ## 升级流程
 
 CLI 更新使用 `POST /api/engine-setup`，传入 `action: "update"`、`engine`、`environment_id`、幂等请求 `id` 和当前已保存的 `expected_path`。更新前检查同一环境/引擎没有运行或排队任务；操作期间拦截该目标的新提交。新版本安装到独立目录，版本验证通过且环境连接身份、原路径未变后才切换配置；失败保留旧配置和安装。账号和原生会话目录不随 CLI 安装目录迁移。

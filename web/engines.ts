@@ -4,7 +4,7 @@ type EngineCatalog={engines:EngineDefinition[];profiles:EngineProfile[];active_p
 type CodexSyncResult={environment_id:string;state:string;message:string};
 type CodexSyncResponse={source_profile_id:string;results:CodexSyncResult[]};
 type DetectedEngineTool={path:string;state:string;label:string;version?:string};
-type EngineEnvironmentStatus={environment_id:string;name:string;type:string;distro?:string;user?:string;host?:string;codex:DetectedEngineTool;claude:DetectedEngineTool;harness:DetectedEngineTool;kimi:DetectedEngineTool;mimo:DetectedEngineTool;opencode:DetectedEngineTool;message?:string};
+type EngineEnvironmentStatus={environment_id:string;name:string;type:string;distro?:string;user?:string;host?:string;codex:DetectedEngineTool;claude:DetectedEngineTool;harness:DetectedEngineTool;kimi:DetectedEngineTool;mimo:DetectedEngineTool;opencode:DetectedEngineTool;zcode:DetectedEngineTool;message?:string};
 type EngineStatusResponse={items:EngineEnvironmentStatus[];discovered?:DetectedEnvironment[];message?:string};
 let engineCatalog:EngineCatalog|null=null;
 let engineSettingsRequest=0;
@@ -60,7 +60,7 @@ function renderEngineCatalog(){
  element('engine-catalog').innerHTML=settings.config.environments.map(env=>{
   const status=current?engineEnvironmentStatuses.find(s=>s.environment_id===env.id):undefined;
   const rows=engineCatalog!.engines.filter(e=>e.targets.includes(env.type)).map(engine=>{
-   const toolKey=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo',opencode:'opencode'} as Record<string,'codex'|'claude'|'harness'|'kimi'|'mimo'|'opencode'>)[engine.id];
+   const toolKey=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo',opencode:'opencode',zcode:'zcode'} as Record<string,'codex'|'claude'|'harness'|'kimi'|'mimo'|'opencode'|'zcode'>)[engine.id];
    const tool=status?.[toolKey];
    const state=tool?.state||'unknown',installed=!!tool?.path&&state!=='missing',missing=state==='missing';
    const label=installed?'已安装'+(tool?.version?' · v'+tool.version:''):missing?'未安装':engineStatusBusy?'检测中…':'未完成检测';
@@ -70,7 +70,7 @@ function renderEngineCatalog(){
  }).join('')||'<p>点击检测发现本机环境，或在下方手动添加环境。</p>';
  if(current)element('engine-catalog').insertAdjacentHTML('beforeend',engineDiscoveredEnvironments.map((item,index)=>{
   const env=item.environment,draft=editingEnvironments.find(e=>sameDetectedEnvironment(e,env));
-  return '<article class="engine-environment engine-discovered"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user].filter(Boolean).join(' / '))+' · '+(draft?'待保存':'新发现')+'</small></div><button type="button" data-add-engine-environment="'+index+'" '+(engineStatusBusy?'disabled':'')+'>'+(draft?'编辑待保存环境':'添加环境')+'</button></header><div class="detected-tools">'+[['Codex',item.codex],['Claude Code',item.claude],['Harness',item.harness],['Kimi',item.kimi],['MiMo',item.mimo],['OpenCode',item.opencode]].map(([name,tool])=>'<span class="detected-tool">'+escapeHTML(String(name))+'：'+escapeHTML((tool as DetectedTool|undefined)?.label||'未完成检测')+'</span>').join('')+'</div>'+(item.message?'<p class="muted">'+escapeHTML(item.message)+'</p>':'')+'<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
+  return '<article class="engine-environment engine-discovered"><header><div><h4>'+escapeHTML(env.name)+'</h4><small>'+escapeHTML([env.type,env.distro,env.user].filter(Boolean).join(' / '))+' · '+(draft?'待保存':'新发现')+'</small></div><button type="button" data-add-engine-environment="'+index+'" '+(engineStatusBusy?'disabled':'')+'>'+(draft?'编辑待保存环境':'添加环境')+'</button></header><div class="detected-tools">'+[['Codex',item.codex],['Claude Code',item.claude],['Harness',item.harness],['Kimi',item.kimi],['MiMo',item.mimo],['OpenCode',item.opencode],['ZCode',item.zcode]].map(([name,tool])=>'<span class="detected-tool">'+escapeHTML(String(name))+'：'+escapeHTML((tool as DetectedTool|undefined)?.label||'未完成检测')+'</span>').join('')+'</div>'+(item.message?'<p class="muted">'+escapeHTML(item.message)+'</p>':'')+'<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
  }).join(''));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-add-engine-environment]').forEach(b=>b.onclick=()=>addScannedEnvironment(Number(b.dataset.addEngineEnvironment)));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-install-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('install',{engine:b.dataset.installEngine!,environment_id:b.dataset.installEnvironment!}));

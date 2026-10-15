@@ -5105,7 +5105,7 @@ function installHardware() {
             void choose(b.dataset.hardwareTask, 'hardware');
         }
     };
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="hardware-ai-dialog"><form id="hardware-ai-form"><h2>允许本任务 AI 使用</h2><p id="hardware-ai-name"></p><label class="check-row"><input type="checkbox" id="hardware-ai-read">连接、读取日志和查询状态</label><label class="check-row" id="hardware-ai-write-row"><input type="checkbox" id="hardware-ai-write">发送串口 / 控制台命令</label><label class="check-row" id="hardware-ai-power-row"><input type="checkbox" id="hardware-ai-power">上电、断电和断电重启</label><p>适用于本任务的 Codex、Claude、DeepSeek Harness 和 OpenCode；MiMo Code 的硬件工具尚未接入。新增权限从下一轮使用；收回权限会立即撤销本轮硬件凭据。操作记录留在任务和硬件日志中。</p><p class="error" id="hardware-ai-error"></p><div class="dialog-footer"><button type="button" id="hardware-ai-cancel">取消</button><button class="primary" id="hardware-ai-save">保存</button></div></form></dialog>`);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="hardware-ai-dialog"><form id="hardware-ai-form"><h2>允许本任务 AI 使用</h2><p id="hardware-ai-name"></p><label class="check-row"><input type="checkbox" id="hardware-ai-read">连接、读取日志和查询状态</label><label class="check-row" id="hardware-ai-write-row"><input type="checkbox" id="hardware-ai-write">发送串口 / 控制台命令</label><label class="check-row" id="hardware-ai-power-row"><input type="checkbox" id="hardware-ai-power">上电、断电和断电重启</label><p>适用于本任务的 Codex、Claude、DeepSeek Harness、MiMo Code 和 OpenCode；CLI 未声明 HTTP MCP 能力时会明确拒绝而不是在没有工具的情况下运行。新增权限从下一轮使用；收回权限会立即撤销本轮硬件凭据。操作记录留在任务和硬件日志中。</p><p class="error" id="hardware-ai-error"></p><div class="dialog-footer"><button type="button" id="hardware-ai-cancel">取消</button><button class="primary" id="hardware-ai-save">保存</button></div></form></dialog>`);
     button('device-ai').onclick = ()=>void editHardwareAI();
     button('hardware-ai-cancel').onclick = ()=>element('hardware-ai-dialog').close();
     input('hardware-ai-read').onchange = renderHardwareAIForm;
@@ -8008,7 +8008,8 @@ function renderEngineCatalog() {
                 'deepseek-harness': 'harness',
                 kimi: 'kimi',
                 mimo: 'mimo',
-                opencode: 'opencode'
+                opencode: 'opencode',
+                zcode: 'zcode'
             }[engine.id];
             const tool = status?.[toolKey];
             const state = tool?.state || 'unknown', installed = !!tool?.path && state !== 'missing', missing = state === 'missing';
@@ -8055,6 +8056,10 @@ function renderEngineCatalog() {
             [
                 'OpenCode',
                 item.opencode
+            ],
+            [
+                'ZCode',
+                item.zcode
             ]
         ].map(([name, tool])=>'<span class="detected-tool">' + escapeHTML(String(name)) + '：' + escapeHTML(tool?.label || '未完成检测') + '</span>').join('') + '</div>' + (item.message ? '<p class="muted">' + escapeHTML(item.message) + '</p>' : '') + '<p class="muted">添加并保存环境后，可在此安装未安装的 CLI。</p></article>';
     }).join(''));

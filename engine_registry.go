@@ -108,6 +108,15 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command",
 		},
 		{
+			ID: "zcode", Name: "ZCode", Description: "智谱 Z.ai / GLM 官方 CLI（ZCode 桌面内置 zcode.cjs），自有 ZCode Protocol 与会话存储",
+			Transport: "cli", Runnable: false, AutoInstall: false,
+			Targets:            []string{"windows", "wsl", "ssh"},
+			Capabilities:       []string{"headless_prompt", "resume", "session_store"},
+			CredentialKinds:    []string{"native"},
+			InstallDescription: "当前只检测 ZCode CLI（PATH 上的 zcode，或 ZCode 桌面内置的 resources/glm/zcode.cjs）；配好账号后可改用 Claude Code 的 Z.ai/GLM 预设或 OpenCode 的原生供应商。",
+			DocumentationURL:   "https://docs.z.ai/devpack/tool/others",
+		},
+		{
 			ID: "mimo", Name: "MiMo Code", Description: "小米官方 MiMo Code CLI，通过原生 ACP 创建和恢复会话、设置模型及处理单次工具审批",
 			Transport: "acp", Runnable: true, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},

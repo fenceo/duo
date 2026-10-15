@@ -30,6 +30,7 @@ type detectedEnvironment struct {
 	Kimi        detectedTool `json:"kimi"`
 	Mimo        detectedTool `json:"mimo"`
 	OpenCode    detectedTool `json:"opencode"`
+	ZCode       detectedTool `json:"zcode"`
 	Message     string       `json:"message"`
 }
 type environmentDiscovery struct {
@@ -249,6 +250,7 @@ find_cli "$HOME/.local/bin/dsh" "$HOME/.local/bin/dsh.cmd" "$(command -v dsh 2>/
 find_cli "$HOME/.local/bin/kimi" "$HOME/.local/bin/kimi.cmd" "$(command -v kimi 2>/dev/null)" "$(command -v kimi-code 2>/dev/null)" /usr/local/bin/kimi /usr/local/bin/kimi-code
 find_cli "$HOME/.local/bin/mimo" "$HOME/.local/bin/mimo.cmd" "$(command -v mimo 2>/dev/null)" "$(command -v mimo-code 2>/dev/null)" /usr/local/bin/mimo /usr/local/bin/mimo-code
 find_cli "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "$(command -v opencode 2>/dev/null)" /usr/local/bin/opencode
+find_cli "$HOME/.local/bin/zcode" "$(command -v zcode 2>/dev/null)" /usr/local/bin/zcode
 `
 
 func wslDiagnosticMessage(parts []string) string {
@@ -280,7 +282,7 @@ func discoverTool(ctx context.Context, probe environmentProbe, env Environment, 
 func discoverOne(ctx context.Context, probe environmentProbe, env Environment) detectedEnvironment {
 	result := detectedEnvironment{Environment: env}
 	codex, claude, harness := env.Codex, env.Claude, env.Harness
-	kimi, mimo, opencode := "", "", ""
+	kimi, mimo, opencode, zcode := "", "", "", ""
 	if env.Type == "wsl" {
 		out, err := probe(ctx, env, "sh", "-c", discoverWSLScript)
 		_, payload, ok := strings.Cut(out, "__JIANZUO_ENV__\n")
@@ -291,6 +293,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 			result.Claude = result.Codex
 			result.Harness, result.Kimi, result.Mimo = result.Codex, result.Codex, result.Codex
 			result.OpenCode = result.Codex
+			result.ZCode = result.Codex
 			return result
 		}
 		env.User = parts[0]
@@ -311,6 +314,9 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 		if len(parts) > 11 && strings.HasPrefix(strings.TrimSpace(parts[11]), "/") {
 			opencode = parts[11]
 		}
+		if len(parts) > 12 && strings.HasPrefix(strings.TrimSpace(parts[12]), "/") {
+			zcode = parts[12]
+		}
 		result.Message = wslDiagnosticMessage(parts)
 	}
 	var wg sync.WaitGroup
@@ -322,6 +328,7 @@ func discoverOne(ctx context.Context, probe environmentProbe, env Environment) d
 	result.Kimi = detectedInstalledTool(kimi)
 	result.Mimo = detectedInstalledTool(mimo)
 	result.OpenCode = detectedInstalledTool(opencode)
+	result.ZCode = detectedInstalledTool(zcode)
 	env.Codex = codex
 	env.Claude = claude
 	env.Harness = harness
@@ -381,6 +388,9 @@ func inspectDiscoveredEnvironment(ctx context.Context, env Environment) detected
 		item.Kimi = detectedInstalledTool(executableCandidate("kimi.cmd", "kimi.exe", "kimi", "kimi-code.exe", "kimi-code"))
 		item.Mimo = detectedInstalledTool(executableCandidate("mimo.cmd", "mimo.exe", "mimo", "mimo-code.exe", "mimo-code"))
 		item.OpenCode = detectedInstalledTool(executableCandidate("opencode.exe", "opencode.cmd", "opencode"))
+		// ZCode ships its CLI inside the desktop app, so an installed desktop
+		// counts as a found CLI even before any standalone zcode is on PATH.
+		item.ZCode = detectedInstalledTool(executableCandidate("zcode.exe", "zcode.cmd", "zcode", filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "ZCode", "resources", "glm", "zcode.cjs")))
 	}
 	return item
 }

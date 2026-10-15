@@ -19,7 +19,7 @@ func TestConfiguredRemoteEngineDetection(t *testing.T) {
 					if !strings.Contains(args[2], "/custom/codex") {
 						t.Error("lost configured path")
 					}
-					return "__DUO_TOOLS__\n/custom/codex\n\n/home/user/dsh\n/home/user/kimi\n\n/home/user/opencode\n", nil
+					return "__DUO_TOOLS__\n/custom/codex\n\n/home/user/dsh\n/home/user/kimi\n\n/home/user/opencode\n/home/user/zcode\n", nil
 				}
 				if len(args) == 2 && args[1] == "--version" {
 					return "1.2.3", nil
@@ -30,13 +30,13 @@ func TestConfiguredRemoteEngineDetection(t *testing.T) {
 				return "Logged in with synthetic-account", nil
 			}
 			got := inspectEngineEnvironment(context.Background(), probe, env)
-			if got.Codex.State != "configured" || got.Claude.State != "missing" || got.Harness.State != "installed" || got.Kimi.State != "installed" || got.Mimo.State != "missing" || got.OpenCode.State != "installed" {
+			if got.Codex.State != "configured" || got.Claude.State != "missing" || got.Harness.State != "installed" || got.Kimi.State != "installed" || got.Mimo.State != "missing" || got.OpenCode.State != "installed" || got.ZCode.State != "installed" {
 				t.Fatalf("unexpected states: %#v", got)
 			}
 			failed := inspectEngineEnvironment(context.Background(), func(context.Context, Environment, ...string) (string, error) {
 				return "", errors.New("secret raw diagnostic")
 			}, env)
-			if failed.Codex.State != "unknown" || failed.Mimo.State != "unknown" || failed.OpenCode.State != "unknown" || strings.Contains(failed.Message, "secret") {
+			if failed.Codex.State != "unknown" || failed.Mimo.State != "unknown" || failed.OpenCode.State != "unknown" || failed.ZCode.State != "unknown" || strings.Contains(failed.Message, "secret") {
 				t.Fatal("connection failure misreported")
 			}
 		})
