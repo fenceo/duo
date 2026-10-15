@@ -173,6 +173,15 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .workspace-heading .folder-name{flex:1;min-width:0;max-width:none}
 .workspace-heading small{flex:0 1 auto;min-width:0;max-width:45%}
 .task-list .task-state{max-width:38%;overflow:hidden;text-overflow:ellipsis}
+.task-badges{display:flex;align-items:center;gap:5px;flex-shrink:0;margin-left:auto}
+.task-engine-badge{font-size:10px;line-height:1.2;padding:2px 5px;border-radius:5px;background:var(--raised);color:var(--muted);white-space:nowrap}
+.task-state{font-size:10px;line-height:1.2;white-space:nowrap}
+.task-state.running{color:var(--accent);font-weight:650}
+.task-state.ready{color:var(--muted)}
+.task-state.failed{color:var(--danger)}
+.task.task-busy .task-state.running{animation:task-state-pulse 1.4s ease-in-out infinite}
+@keyframes task-state-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.task.task-busy .task-state.running{animation:none}}
 
 /* The title/count/actions occupy one row; filters get their own shrinkable row.
    Explicit placement also accommodates the dock grip inserted by layout.ts. */

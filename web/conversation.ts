@@ -113,9 +113,12 @@ function addConversationEvent(event:EventRecord){
 // and cumulative text snapshots as one live message. Tool boundaries remain.
 function conversationDisplayItems(items:ConversationItem[]):ConversationItem[]{
  const display:ConversationItem[]=[];
+ const thinking=(kind:string)=>kind==='thought'||kind==='progress';
  for(const item of items){const previous=display.at(-1),ev=item.event;
-  if(previous&&previous.event.run_id===ev.run_id&&ev.kind==='thought'&&previous.event.kind==='thought'){
-   display[display.length-1]={event:{...ev,text:previous.event.text+ev.text},searchMatch:previous.searchMatch||item.searchMatch};
+  // Harness/MiMo stream thinking as many tiny progress/thought chunks; show one block.
+  if(previous&&previous.event.run_id===ev.run_id&&thinking(ev.kind)&&thinking(previous.event.kind)){
+   const kind=previous.event.kind==='thought'||ev.kind==='thought'?'thought':previous.event.kind;
+   display[display.length-1]={event:{...ev,kind,text:previous.event.text+ev.text},searchMatch:previous.searchMatch||item.searchMatch};
   }else if(previous&&previous.event.run_id===ev.run_id&&ev.kind==='assistant'&&previous.event.kind==='assistant'&&ev.text.startsWith(previous.event.text)){
    display[display.length-1]=item.searchMatch||!previous.searchMatch?item:{...item,searchMatch:true};
   }else display.push(item);
@@ -169,7 +172,7 @@ function installConversationFilter(){
 }
 function setConversationFilter(filter:ConversationFilter){
  conversationFilter=filter;
- for(const turn of conversationTurns.values())turn.process.open=filter.tools||filter.process;
+ for(const turn of conversationTurns.values())if(filter.tools||filter.process)turn.process.open=true;
  try{localStorage.setItem(conversationFilterKey,JSON.stringify(filter))}catch{}
  updateConversationFilterControls();applyConversationFilter();
 }
@@ -195,6 +198,8 @@ function applyConversationFilter(followBottom=true){
  const nearBottom=followBottom&&container.scrollHeight-container.scrollTop-container.clientHeight<100,top=container.scrollTop;
  for(const {turn,run,state,waiting} of changes){
   if(!visible.some(([,item])=>item===turn)){turn.root.remove();turn.dirty=false;turn.state=state;turn.result=run?.result||'';continue}
+  // Live turns expand their process rail so current work stays visible.
+  if(run?.status==='running'||run?.status==='queued'||waiting)turn.process.open=true;
   const final=finalConversationEvents(turn.items.map(item=>item.event),run?[run]:[]),inputs:HTMLElement[]=[],outputs:HTMLElement[]=[],records:ConversationItem[]=[];
   let count=0;turn.hidden=0;
   for(const item of conversationDisplayItems(turn.items)){
@@ -206,6 +211,7 @@ function applyConversationFilter(followBottom=true){
   }
   const body:HTMLElement[]=[];
   const page=conversationRecordPages.get(run?.id||''),remote=!!page?.has_older;
+  // Closed traces must not keep large hidden DOM; open mounts one page of records.
   if(turn.process.open){
    const start=Math.max(0,records.length-turn.limit);
    if(start||remote){const text=start?'加载更早的 '+Math.min(start,conversationPageSize)+' 条记录（还有 '+start+' 条）':page?.loading?'正在读取…':page?.error||'加载本轮更早记录';if(turn.more.textContent!==text)turn.more.textContent=text;turn.more.dataset.remote=String(!start&&remote);turn.more.disabled=!!page?.loading;body.push(turn.more)}

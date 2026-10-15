@@ -24,6 +24,8 @@ const raw=[event(1,'thought','先'),event(2,'thought','检查'),event(3,'assista
 assert.deepEqual(mod.conversationDisplayItems(raw).map(x=>[x.event.kind,x.event.text]),[['thought','先检查'],['assistant','正文'],['tool','read'],['thought','再确认'],['assistant','ok']]);
 assert.equal(raw[0].event.text,'先','display grouping must preserve raw history');
 assert.equal(mod.conversationDisplayItems([{event:event(1,'thought','a')},{event:event(2,'thought','b','other')}]).length,2,'separate turns must never join');
+const stream=[event(1,'progress','正'),event(2,'progress','在查'),event(3,'progress','看…'),event(4,'tool','read'),event(5,'progress','继续'),event(6,'thought','推理'),event(7,'assistant','done')].map(event=>({event}));
+assert.deepEqual(mod.conversationDisplayItems(stream).map(x=>[x.event.kind,x.event.text]),[['progress','正在查看…'],['tool','read'],['thought','继续推理'],['assistant','done']],'Harness/MiMo thinking chunks collapse into one process block');
 const footerContext=createContext({escapeHTML:s=>s,knowledgeForRun:()=>({source:'auto'})});
 runInContext(stripTypeScriptTypes(source,{mode:'transform'}),footerContext);
 assert.match(footerContext.runFooter({id:'saved',status:'done',result:'answer',created:1,finished:2}),/已自动记录/);
