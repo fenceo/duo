@@ -156,13 +156,13 @@ for(const changed of ['selection','codexApprovalRevision']){
 }
 {
  const f=fixture();let engineLoads=0,updateLoads=0;
- const tabs=['environment','engines','updates'].map(page=>({dataset:{settings:page},classList:{toggle(){}}}));
+ const tabs=['feishu','access','updates'].map(page=>({dataset:{settings:page},classList:{toggle(){}}}));
  const sections=tabs.map(tab=>({id:'settings-'+tab.dataset.settings,classList:{toggle(){}}}));
  f.node('settings-form').querySelector=()=>({querySelectorAll:()=>tabs});
  f.node('settings-form').querySelectorAll=()=>sections;
  f.ctx.openEngineCenter=()=>engineLoads++;f.ctx.loadUpdateInformation=()=>updateLoads++;
- f.ctx.showSettingsSection('engines');f.ctx.showSettingsSection('updates');f.ctx.showSettingsSection('environment');
- assert.equal(engineLoads,2);assert.equal(updateLoads,1);assert.equal(f.node('settings-save').classList.toggle instanceof Function,true);
+ f.ctx.showSettingsSection('updates');f.ctx.showSettingsSection('feishu');
+ assert.equal(engineLoads,0,'engine center is a sidebar dialog, not a settings tab');assert.equal(updateLoads,1);assert.equal(f.node('settings-save').classList.toggle instanceof Function,true);
  assert.doesNotMatch(engines,/nav\.querySelectorAll<HTMLButtonElement>/,'engine settings must not add a second navigation handler');
 }
 const webFiles=(await readdir(new URL('../web/',import.meta.url))).filter(name=>/\.(ts|html)$/.test(name));

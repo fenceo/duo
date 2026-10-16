@@ -11,7 +11,7 @@ ctx.api=async(path,method,body)=>{
  if(path==='environments/scan')return {items:[{environment_id:'fixture',name:'Synthetic SSH',type:'ssh',codex:{label:'已安装'},claude:{label:'未安装'},harness:{label:'已安装'},kimi:{label:'未安装'},mimo:{label:'未安装'}}]};
  throw Error(path);
 };
-assert(el('accounts-open'));assert(el('engines-open'));assert(el('desktop-open'));
+assert(el('engines-open'));assert(el('desktop-open'));assert(!el('accounts-open'),'single unified entry in the sidebar');
 await ctx.openAccountCenter();assert(el('account-center-dialog').open);assert.match(el('account-center-list').textContent,/Synthetic Claude/);
 el('account-center-list').querySelector('[data-account-sync]').onclick();
 const target=el('codex-sync-targets').querySelector('input');assert(!target.hasAttribute('checked'));

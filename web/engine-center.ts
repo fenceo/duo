@@ -85,9 +85,22 @@ async function engineCenterConfigure(engine:string){
 }
 function uidLike(){return 'job-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36)}
 function installEngineCenter(){
- element('settings-error').insertAdjacentHTML('beforebegin','<section id="settings-engine-center" class="settings-section hidden"><h3>引擎与账号</h3><p class="muted">按引擎管理安装、账号 / API Key，并一键配置到 Windows / WSL / SSH。Codex OAuth 账号仍在「账号管理」中切换。</p><nav id="engine-center-tabs" class="engine-center-tabs"></nav><div id="engine-center-body"></div></section>');
+ element('root').insertAdjacentHTML('beforeend','<dialog id="engine-center-dialog" class="engine-center-dialog"><header class="engine-center-heading"><h2>环境与引擎</h2><button type="button" id="engine-center-close">关闭</button></header><p class="muted">默认 Windows；可检测 WSL、发现局域网 SSH 或手动添加。环境就绪后，新建任务、配置 API、切换账号都可选择对应环境。</p><section class="engine-center-envs-manage"><h3>执行环境</h3><div id="engine-center-env-list"></div><div class="actions"><button type="button" id="engine-center-detect">检测 WSL 与本机环境</button><button type="button" id="engine-center-discover-ssh">发现局域网 SSH</button><button type="button" id="engine-center-add-ssh">手动添加 SSH</button><button type="button" id="engine-center-add-wsl">添加 WSL</button></div></section><nav id="engine-center-tabs" class="engine-center-tabs"></nav><div id="engine-center-body"></div></dialog>');
+ button('engine-center-close').onclick=()=>element<HTMLDialogElement>('engine-center-dialog').close();
+ button('engine-center-detect').onclick=()=>void refreshEngineStatus();
+ button('engine-center-discover-ssh').onclick=()=>void openDiscovery((endpoint)=>{void addEnvironment('ssh');setTimeout(()=>{input('setting-host').value=endpoint.host||'';input('setting-port').value=String(endpoint.port||22)},0)});
+ button('engine-center-add-ssh').onclick=()=>void addEnvironment('ssh');
+ button('engine-center-add-wsl').onclick=()=>void addEnvironment('wsl');
+}
+function renderEngineCenterEnvironments(){
+ const host=element('engine-center-env-list');if(!host)return;
+ const envs=settings?.config?.environments||[];
+ host.innerHTML=envs.map(e=>`<div class="engine-center-env-row"><strong>${escapeHTML(e.name)}</strong><span>${escapeHTML(e.type.toUpperCase())}${e.distro?' · '+escapeHTML(e.distro):''}${e.host?' · '+escapeHTML(e.host):''}</span>${e.id===settings?.config?.default_environment?'<span class="task-state-mark task-state-ready">默认</span>':''}</div>`).join('')||'<p class="muted">暂无环境，请添加。</p>';
 }
 function showEngineCenter(){
  installEngineCenter();
- void loadEngineSettings().then(()=>renderEngineCenterPanel());
+ renderEngineCenterEnvironments();
+ const dialog=element<HTMLDialogElement>('engine-center-dialog');
+ if(dialog&&!dialog.open)dialog.showModal();
+ void loadEngineSettings().then(()=>{renderEngineCenterEnvironments();renderEngineCenterPanel()});
 }

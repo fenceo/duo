@@ -34,7 +34,10 @@ function installLayout(){
  const utilities=document.createElement('div');utilities.className='header-utilities';utilities.append(element('task-actions'));
  const globalActions=document.createElement('nav');globalActions.id='app-menu-items';globalActions.className='header-global-actions';globalActions.setAttribute('aria-label','工作台设置与工具');
  for(const id of ['settings-open','theme-toggle','logout']){const control=element(id);if(control){control.classList.remove('subtle');globalActions.append(control)}}
- const accountTools=document.createElement('nav');accountTools.className='sidebar-account-tools';accountTools.setAttribute('aria-label','账号与引擎');accountTools.append(element('accounts-open'),element('engines-open'));element('task-list').after(accountTools);
+ const accountTools=document.createElement('nav');accountTools.className='sidebar-account-tools';accountTools.setAttribute('aria-label','环境与引擎');
+ const envEngineBtn=document.createElement('button');envEngineBtn.id='engines-open';envEngineBtn.className='subtle';envEngineBtn.textContent='环境与引擎';
+ envEngineBtn.onclick=()=>void openEngineCenter();
+ accountTools.append(envEngineBtn);element('task-list').after(accountTools);
  accountTools.addEventListener('click',()=>element('sidebar').classList.remove('open'));
  utilities.append(globalActions);document.querySelector('.header')!.append(utilities);
  const brand=document.querySelector('#sidebar .brand')!;brand.innerHTML='<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
