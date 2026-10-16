@@ -9170,6 +9170,12 @@ async function saveHarnessAPI() {
 }
 let engineCenterTab = 'codex';
 let engineCenterEnvPicks = {};
+let engineCenterSelectedCred = '';
+function engineCenterCredList(engine, profiles) {
+    const rows = profiles.map((p)=>`<button type="button" class="engine-center-cred ${engineCenterSelectedCred === p.id ? 'is-selected' : ''}" data-engine-center-cred="${escapeHTML(p.id)}"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></button>`).join('');
+    const hint = engineCenterSelectedCred ? '<p class="muted">已选用：' + escapeHTML(profiles.find((p)=>p.id === engineCenterSelectedCred)?.name || '') + '</p>' : '<p class="muted">点选一条 Key/账号，再配置到环境。</p>';
+    return (rows || '<p class="muted">尚未添加账号或 Key。</p>') + hint;
+}
 function engineCenterEnvCheckboxes(kind, engine) {
     const selected = engineCenterEnvPicks[kind + ':' + engine] || new Set(settings?.config?.environments?.map((e)=>e.id) || []);
     return (settings?.config?.environments || []).map((env)=>`<label class="check-row"><input type="checkbox" data-engine-center-env="${escapeHTML(kind + ':' + engine + ':' + env.id)}" ${selected.has(env.id) ? 'checked' : ''}> ${escapeHTML(env.name)}（${escapeHTML(env.type.toUpperCase())}）</label>`).join('');
@@ -9210,15 +9216,11 @@ function renderEngineCenterPanel() {
     <div class="actions"><button type="button" class="primary" data-engine-center-install="${escapeHTML(current.id)}" ${current.auto_install ? '' : 'disabled'}>一键安装到勾选环境</button>${current.documentation_url ? '<a href="' + escapeHTML(current.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : ''}</div>
    </li>
    <li class="engine-center-step">
-    <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key</h4></div>
-    <div id="engine-center-creds" class="engine-center-creds">${profiles.length ? profiles.map((p)=>`<div class="engine-center-cred"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></div>`).join('') : '<p class="muted">尚未添加账号或 Key。</p>'}</div>
-    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加账号 / Key</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
-   </li>
-   <li class="engine-center-step">
-    <div class="engine-center-step-head"><span class="engine-center-step-num">3</span><h4>配置到环境</h4></div>
-    <p class="muted">把已添加的账号或 API Key 写入勾选环境的原生配置。</p>
+    <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key → 配置到环境</h4></div>
+    <p class="muted">先添加或选用 Key，再勾选目标环境一键写入。列表不回显 Key。</p>
+    <div id="engine-center-creds" class="engine-center-creds">${engineCenterCredList(current.id, profiles)}</div>
     <div class="engine-center-envs">${engineCenterEnvCheckboxes('configure', current.id)}</div>
-    <div class="actions"><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-api="${escapeHTML(current.id)}">配置 API</button></div>
+    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加 API Key</button><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-api="${escapeHTML(current.id)}">配置 API</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
    </li>
   </ol>
   <p id="engine-center-status" class="engine-center-status" role="status"></p>
@@ -9237,6 +9239,10 @@ function renderEngineCenterPanel() {
         });
     host.querySelector('[data-engine-center-install]')?.addEventListener('click', ()=>void engineCenterInstall(current.id));
     host.querySelector('[data-engine-center-configure]')?.addEventListener('click', ()=>void engineCenterConfigure(current.id));
+    host.querySelectorAll('[data-engine-center-cred]').forEach((b)=>b.addEventListener('click', ()=>{
+            engineCenterSelectedCred = b.dataset.engineCenterCred;
+            renderEngineCenterPanel();
+        }));
     host.querySelector('[data-engine-center-api]')?.addEventListener('click', ()=>{
         const envs = settings?.config?.environments || [];
         if (!envs.length) return;

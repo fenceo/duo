@@ -798,8 +798,9 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 .engine-center-step>p{margin:0 0 8px;font-size:12px;line-height:1.5}
 .engine-center-envs{display:flex;flex-wrap:wrap;gap:6px 12px;margin:8px 0}
 .engine-center-envs label{font-size:12px;display:flex;align-items:center;gap:4px}
-.engine-center-creds{margin:4px 0 8px}
-.engine-center-cred{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:3px 0}
+.engine-center-creds{margin:4px 0 8px;display:flex;flex-direction:column;gap:6px}
+.engine-center-cred{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--canvas);text-align:left;width:100%}
+.engine-center-cred.is-selected{border-color:var(--accent);background:var(--tint)}
 .engine-center-cred small{color:var(--muted)}
 .engine-center-step .actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .engine-center-step .actions button{font-size:12px;padding:6px 11px}
