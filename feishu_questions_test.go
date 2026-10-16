@@ -77,6 +77,10 @@ func questionCallback(a *App, chat, token string, form map[string]interface{}) *
 	return &cb.CardActionTriggerEvent{Event: &cb.CardActionTriggerRequest{Operator: &cb.Operator{OpenID: a.config.get().Feishu.Owner}, Context: &cb.Context{OpenChatID: chat}, Action: &cb.CallBackAction{Tag: "button", Name: "duo_question_submit", Value: map[string]interface{}{"duo_question": token}, FormValue: form}}}
 }
 
+func approvalCallback(a *App, chat, token, decision string) *cb.CardActionTriggerEvent {
+	return &cb.CardActionTriggerEvent{Event: &cb.CardActionTriggerRequest{Operator: &cb.Operator{OpenID: a.config.get().Feishu.Owner}, Context: &cb.Context{OpenChatID: chat}, Action: &cb.CallBackAction{Tag: "button", Name: "duo_approval", Value: map[string]interface{}{"duo_approval": token, "decision": decision}}}}
+}
+
 func seedQuestionDelivery(t *testing.T, a *App) (Task, CodexPendingRequest, string, *string) {
 	t.Helper()
 	enableRunCards(t, a)

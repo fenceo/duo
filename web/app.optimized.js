@@ -7868,7 +7868,7 @@ function installSettingsSections() {
     const access = document.createElement('section');
     access.id = 'settings-access';
     access.className = 'settings-section hidden';
-    access.innerHTML = '<h3>从其他设备打开Duo</h3><p>Duo运行在这台电脑上，其他电脑或手机通过浏览器访问。远程访问前，请让两端连接同一 Tailscale 网络，并保持服务电脑开机。</p><label for="access-lan">局域网地址</label><input id="access-lan" type="url" placeholder="http://192.168.1.10:8789"><label for="access-tailscale">Tailscale 地址或域名</label><input id="access-tailscale" type="url" placeholder="http://100.100.100.10:8789"><p>保存后，新生成的飞书任务清单和详情卡片会显示这两个入口；详情入口会直接定位到对应任务。地址中不包含密码或登录令牌。</p><div id="access-preview" class="access-preview"></div><p>打开后仍需输入工作台密码。更换局域网、端口或设备后请更新地址。飞书内置浏览器打不开时，可复制地址到系统浏览器。</p>';
+    access.innerHTML = '<h3>从其他设备打开Duo</h3><p>Duo运行在这台电脑上，其他电脑或手机通过浏览器访问。远程访问前，请让两端连接同一 Tailscale 网络，并保持服务电脑开机。</p><label class="check-row"><input type="checkbox" id="access-remote">允许局域网和 Tailscale 访问（监听 0.0.0.0）</label><p class="muted" id="access-listen-state"></p><label for="access-lan">局域网地址</label><input id="access-lan" type="url" placeholder="http://192.168.1.10:8789"><label for="access-tailscale">Tailscale 地址或域名</label><input id="access-tailscale" type="url" placeholder="http://100.100.100.10:8789"><p>保存后，新生成的飞书任务清单和详情卡片会显示这两个入口；详情入口会直接定位到对应任务。地址中不包含密码或登录令牌。</p><div id="access-preview" class="access-preview"></div><p>打开后仍需输入工作台密码。更换局域网、端口或设备后请更新地址。飞书内置浏览器打不开时，可复制地址到系统浏览器。修改访问开关后需重启 Duo 才生效。</p>';
     form.insertBefore(tabs, error);
     form.insertBefore(environment, error);
     form.insertBefore(feishu, error);
@@ -7904,6 +7904,13 @@ function showSettingsSection(page) {
 function loadAccessSettings() {
     input('access-lan').value = settings.config.access?.lan || '';
     input('access-tailscale').value = settings.config.access?.tailscale || '';
+    const extra = settings;
+    const listen = settings.config.listen || '';
+    const remote = extra.listen_allows_remote !== undefined ? !!extra.listen_allows_remote : !!listen && !/^127\.0\.0\.1:/.test(listen) && !/^localhost:/i.test(listen);
+    input('access-remote').checked = remote;
+    const active = extra.active_listen || listen;
+    const state = element('access-listen-state');
+    if (state) state.textContent = '当前监听：' + (active || '未知') + (remote ? ' · 已允许其他设备访问' : ' · 仅本机访问') + (active && listen && active !== listen ? '（运行中仍为旧地址，重启后切换）' : '');
     renderAccessPreview();
 }
 function renderAccessPreview() {
@@ -10949,8 +10956,12 @@ async function saveSettings(e) {
     button('settings-save').disabled = true;
     element('settings-saved').textContent = '';
     storeEnvironmentEditor();
+    const port = (settings.config.listen || '8789').split(':').at(-1) || '8789';
+    const listen = input('access-remote').checked ? '0.0.0.0:' + port : '127.0.0.1:' + port;
+    const listenChanged = !!settings.config.listen && settings.config.listen !== listen;
     const c = {
         ...settings.config,
+        listen,
         access: {
             lan: input("access-lan").value.trim(),
             tailscale: input("access-tailscale").value.trim()
@@ -10971,9 +10982,11 @@ async function saveSettings(e) {
         void openEngineCenter();
         input('feishu-secret').value = '';
         updateFeishuStatus();
+        loadAccessSettings();
         element('settings-error').textContent = '';
-        element('settings-saved').textContent = '设置已保存';
-        notify('设置已保存');
+        const note = listenChanged ? '访问开关已保存，重启 Duo 后生效' : '设置已保存';
+        element('settings-saved').textContent = note;
+        notify(note);
     } catch (e) {
         if (shellCurrent(epoch)) element('settings-error').textContent = e.message;
     } finally{

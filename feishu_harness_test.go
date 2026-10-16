@@ -61,12 +61,12 @@ func TestFeishuHarnessPermissionNotificationAndWebAnswer(t *testing.T) {
 			if err := a.store.QueryRow("SELECT id,state FROM feishu_question_cards WHERE request_id=?", pending.ID).Scan(&token, &state); err != nil {
 				t.Fatal("Harness permission never received a Feishu reminder", err)
 			}
-			if creates != 1 || state != "sent" || !strings.Contains(content, "AI 等待网页处理") || !strings.Contains(content, "权限审批") {
+			if creates != 1 || state != "sent" || !strings.Contains(content, "AI 等待网页处理") || !strings.Contains(content, "批准本次") {
 				t.Fatal("missing permission reminder", creates, state, content)
 			}
 			for _, private := range []string{"echo synthetic", "native-allow", "native-reject", "form_submit", "PRIVATE_COMMAND"} {
 				if strings.Contains(content, private) {
-					t.Fatal("permission details or approval controls forwarded", private)
+					t.Fatal("permission details or raw native options forwarded", private)
 				}
 			}
 			// A question callback cannot approve a permission or consume the request.
@@ -74,13 +74,19 @@ func TestFeishuHarnessPermissionNotificationAndWebAnswer(t *testing.T) {
 			if err != nil || r.Toast.Type == "success" || len(a.codexRequests.list(task.ID)) != 1 {
 				t.Fatal("Feishu question callback consumed a native permission", r, err)
 			}
-			request := toolsClient(t, a)
-			request("/api/tasks/"+task.ID+"/approvals/"+pending.ID, "POST", CodexAnswer{Decision: test.decision}, 200)
+			// Feishu one-time approval uses the same decision path as the web UI.
+			r, err = a.feishu.receiveCard(approvalCallback(a, "chat", token, test.decision))
+			if err != nil || r.Toast.Type != "success" {
+				t.Fatal("Feishu approval rejected", r, err)
+			}
 			got := awaitCodexInteraction(t, result)
 			if got.err != nil {
 				t.Fatal(got.err)
 			}
 			requireCodexJSON(t, got.payload, test.expected)
+			if len(a.codexRequests.list(task.ID)) != 0 {
+				t.Fatal("approval left a pending native request")
+			}
 			if err := a.feishu.questionCardStep(at + 4000); err != nil {
 				t.Fatal(err)
 			}

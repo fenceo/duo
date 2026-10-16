@@ -626,7 +626,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		if !body(w, r, &v) {
 			return
 		}
-		v.Listen = c.Listen
+		listen, e := applyListenAccess(c.Listen, v.Listen)
+		if e != nil {
+			fail(w, http.StatusBadRequest, e.Error())
+			return
+		}
+		v.Listen = listen
 		if v.Feishu.Secret == "" {
 			v.Feishu.Secret = c.Feishu.Secret
 		}
@@ -655,5 +660,5 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := c.Feishu.Secret != ""
 	c.Feishu.Secret = ""
-	jsonOut(w, 200, map[string]any{"config": c, "data_dir": s.dataDir, "data_switch_supported": s.launcherPID > 0, "secret_configured": secret, "feishu_status": s.app.feishu.status(), "chat": s.app.store.setting("feishu_chat")})
+	jsonOut(w, 200, map[string]any{"config": c, "data_dir": s.dataDir, "data_switch_supported": s.launcherPID > 0, "secret_configured": secret, "feishu_status": s.app.feishu.status(), "chat": s.app.store.setting("feishu_chat"), "listen_allows_remote": listenAllowsRemote(c.Listen), "active_listen": s.app.hardwareAddress})
 }

@@ -147,6 +147,50 @@ type CodexQuestionAnswer struct {
 	Answers []string `json:"answers"`
 }
 
+// Decisions offered on Feishu approval cards. Mirrors the web control set
+// without inventing options the native request did not offer.
+func codexApprovalDecisionList(p CodexPendingRequest) []string {
+	switch p.Method {
+	case harnessPermissionMethod, mimoPermissionMethod, opencodePermissionMethod:
+		request, err := parseHarnessPermission(p.Params)
+		if err != nil {
+			return nil
+		}
+		kinds := map[string]bool{}
+		for _, option := range request.Options {
+			kinds[option.Kind] = true
+		}
+		out := []string{}
+		if kinds["allow_once"] {
+			out = append(out, "accept")
+		}
+		if kinds["reject_once"] {
+			out = append(out, "decline")
+		}
+		out = append(out, "cancel")
+		return out
+	case "item/permissions/requestApproval":
+		return []string{"accept", "decline"}
+	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+		var options struct {
+			AvailableDecisions []string `json:"availableDecisions"`
+		}
+		_ = json.Unmarshal(p.Params, &options)
+		if len(options.AvailableDecisions) == 0 {
+			return []string{"accept", "decline", "cancel"}
+		}
+		allowed := map[string]bool{"accept": true, "decline": true, "cancel": true}
+		out := []string{}
+		for _, decision := range options.AvailableDecisions {
+			if allowed[decision] {
+				out = append(out, decision)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 var errCodexRequestExpired = errors.New("此请求已处理或已失效，请刷新任务")
 
 // Never forward browser-provided permissions, request IDs, policy amendments,

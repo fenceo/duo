@@ -1,41 +1,37 @@
 package main
 
-import (
-	"encoding/json"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestPanelURLsValidationAndTaskLinks(t *testing.T) {
-	for _, bad := range []string{"javascript:alert(1)", "http://user:pass@host", "http://host/?token=secret", "http://host/path", "http://host/#x", "//host"} {
-		v := AccessConfig{LAN: bad}
-		if normalizeAccess(&v) == nil {
-			t.Fatalf("accepted %s", bad)
-		}
+func TestApplyListenAccess(t *testing.T) {
+	got, err := applyListenAccess("127.0.0.1:8789", "0.0.0.0:8789")
+	if err != nil || got != "0.0.0.0:8789" {
+		t.Fatal(got, err)
 	}
-	a := fixture(t, &fakeRunner{})
-	task := taskFor(t, a)
-	c := a.config.get()
-	c.Access = AccessConfig{LAN: "http://192.168.50.10:8789/", Tailscale: "http://100.100.10.10:8789"}
-	if e := a.config.save(c); e != nil {
-		t.Fatal(e)
+	got, err = applyListenAccess("0.0.0.0:8789", "127.0.0.1:8789")
+	if err != nil || got != "127.0.0.1:8789" {
+		t.Fatal(got, err)
 	}
-	card, e := a.feishu.taskDetailCard("chat", task)
-	if e != nil {
-		t.Fatal(e)
+	if _, err = applyListenAccess("127.0.0.1:8789", "0.0.0.0:9999"); err == nil {
+		t.Fatal("port change accepted")
 	}
-	b, _ := json.Marshal(card)
-	for _, want := range []string{"http://192.168.50.10:8789/?task=" + task.ID, "http://100.100.10.10:8789/?task=" + task.ID} {
-		if !strings.Contains(string(b), want) {
-			t.Fatal("missing deep link", want)
-		}
+	if _, err = applyListenAccess("127.0.0.1:8789", "192.168.1.2:8789"); err == nil {
+		t.Fatal("arbitrary host accepted")
 	}
-	card, e = a.feishu.taskListCard("chat", "", 0)
-	if e != nil {
-		t.Fatal(e)
+	if !listenAllowsRemote("0.0.0.0:8789") || listenAllowsRemote("127.0.0.1:8789") {
+		t.Fatal("remote detection wrong")
 	}
-	b, _ = json.Marshal(card)
-	if !strings.Contains(string(b), "http://100.100.10.10:8789/") || strings.Contains(string(b), "?task=") {
-		t.Fatal("list link should open home")
+}
+
+func TestCodexApprovalDecisionList(t *testing.T) {
+	if got := codexApprovalDecisionList(CodexPendingRequest{Method: "item/permissions/requestApproval", Params: []byte(`{}`)}); len(got) != 2 {
+		t.Fatal(got)
+	}
+	got := codexApprovalDecisionList(CodexPendingRequest{Method: "item/commandExecution/requestApproval", Params: []byte(`{"availableDecisions":["accept","decline"]}`)})
+	if len(got) != 2 || got[0] != "accept" {
+		t.Fatal(got)
+	}
+	got = codexApprovalDecisionList(CodexPendingRequest{Method: harnessPermissionMethod, Params: []byte(harnessPermissionTestParams)})
+	if len(got) != 3 {
+		t.Fatal(got)
 	}
 }

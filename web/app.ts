@@ -13,7 +13,7 @@ type Detail={task:Task;runs:Run[];events:EventRecord[];conversation?:Conversatio
 type ContextFile={name:string;label:string};
 type Knowledge={id:string;task_id:string;title:string;content:string;status:string;source:string;run_id:string;revision:number;created:number;updated:number};
 type Configuration={access?:{lan:string;tailscale:string};environments:Environment[];default_environment:string;listen:string;distro:string;user:string;codex:string;model:string;workspaces:string[];feishu:{enabled:boolean;app_id:string;secret?:string;owner?:string}};
-type Settings={config:Configuration;data_dir:string;data_switch_supported?:boolean;secret_configured:boolean;feishu_status:string;chat:string};
+type Settings={config:Configuration;data_dir:string;data_switch_supported?:boolean;secret_configured:boolean;feishu_status:string;chat:string;listen_allows_remote?:boolean;active_listen?:string};
 const element=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
 const input=(id:string)=>element<HTMLInputElement>(id);
 const button=(id:string)=>element<HTMLButtonElement>(id);
@@ -511,8 +511,11 @@ function updateFeishuStatus(){element('feishu-state').textContent='状态：'+se
 async function saveSettings(e:Event){
  e.preventDefault();if(engineSetupBusy){element('settings-error').textContent='引擎安装、更新或账号操作尚未完成，请稍后保存设置。';return}const epoch=shellEpoch;button('settings-save').disabled=true;element('settings-saved').textContent='';
  storeEnvironmentEditor();
- const c:Configuration={...settings.config,access:{lan:input("access-lan").value.trim(),tailscale:input("access-tailscale").value.trim()},environments:editingEnvironments,default_environment:input('default-environment').value,feishu:{enabled:input('feishu-enabled').checked,app_id:input('feishu-id').value.trim(),secret:input('feishu-secret').value.trim()}};
- try{const saved=await api<Settings>('settings','PUT',c);if(!shellCurrent(epoch))return;settings=saved;invalidateModelCatalogs();void openEngineCenter();input('feishu-secret').value='';updateFeishuStatus();element('settings-error').textContent='';element('settings-saved').textContent='设置已保存';notify('设置已保存')}catch(e){if(shellCurrent(epoch))element('settings-error').textContent=(e as Error).message}finally{if(shellCurrent(epoch))button('settings-save').disabled=false}
+ const port=(settings.config.listen||'8789').split(':').at(-1)||'8789';
+ const listen=input('access-remote').checked?'0.0.0.0:'+port:'127.0.0.1:'+port;
+ const listenChanged=!!settings.config.listen&&settings.config.listen!==listen;
+ const c:Configuration={...settings.config,listen,access:{lan:input("access-lan").value.trim(),tailscale:input("access-tailscale").value.trim()},environments:editingEnvironments,default_environment:input('default-environment').value,feishu:{enabled:input('feishu-enabled').checked,app_id:input('feishu-id').value.trim(),secret:input('feishu-secret').value.trim()}};
+ try{const saved=await api<Settings>('settings','PUT',c);if(!shellCurrent(epoch))return;settings=saved;invalidateModelCatalogs();void openEngineCenter();input('feishu-secret').value='';updateFeishuStatus();loadAccessSettings();element('settings-error').textContent='';const note=listenChanged?'访问开关已保存，重启 Duo 后生效':'设置已保存';element('settings-saved').textContent=note;notify(note)}catch(e){if(shellCurrent(epoch))element('settings-error').textContent=(e as Error).message}finally{if(shellCurrent(epoch))button('settings-save').disabled=false}
 }
 async function pollSettingsStatus(){
  if(!authenticated||settingsPolling||!element<HTMLDialogElement>('settings-dialog')?.open)return;

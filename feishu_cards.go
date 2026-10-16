@@ -243,6 +243,10 @@ func (f *Feishu) receiveCard(event *cb.CardActionTriggerEvent) (*cb.CardActionTr
 	if token, ok := v.Action.Value["duo_question"].(string); ok {
 		return f.answerQuestionCard(v.Context.OpenChatID, token, v.Action)
 	}
+	if token, ok := v.Action.Value["duo_approval"].(string); ok {
+		decision, _ := v.Action.Value["decision"].(string)
+		return f.answerApprovalCard(v.Context.OpenChatID, token, decision)
+	}
 	token, _ := v.Action.Value["jianzuo_action"].(string)
 	return f.applyCardAction(v.Context.OpenChatID, token)
 }

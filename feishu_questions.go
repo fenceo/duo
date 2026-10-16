@@ -262,7 +262,36 @@ func (f *Feishu) questionCard(task, token string, p CodexPendingRequest, open bo
 		elements = append(elements, cardLine("选择或填写全部问题后提交。执行中立即引导；本轮已结束则开始下一轮。"), map[string]any{"tag": "form", "name": "duo_questions", "elements": form})
 	} else {
 		title = "AI 等待网页处理"
-		elements = append(elements, cardLine("有待处理的问题或操作审批。涉及敏感输入、权限审批或内容较长，请在 Duo 网页中查看并处理。"))
+		decisions := codexApprovalDecisionList(p)
+		if len(decisions) == 0 {
+			elements = append(elements, cardLine("有待处理的问题或操作审批。涉及敏感输入、权限审批或内容较长，请在 Duo 网页中查看并处理。"))
+		} else {
+			elements = append(elements, cardLine("请审阅后选择本次决定；批准仅对当前请求生效，不会改写会话的长期权限。"))
+			actions := []any{}
+			labels := map[string]struct {
+				text, kind string
+			}{
+				"accept":  {"批准本次", "primary"},
+				"decline": {"拒绝本次", "danger"},
+				"cancel":  {"取消请求", "default"},
+			}
+			for _, decision := range decisions {
+				label, ok := labels[decision]
+				if !ok {
+					continue
+				}
+				actions = append(actions, map[string]any{
+					"tag":   "button",
+					"name":  "duo_approval",
+					"text":  plainCardText(label.text),
+					"type":  label.kind,
+					"value": map[string]string{"duo_approval": token, "decision": decision},
+				})
+			}
+			if len(actions) > 0 {
+				elements = append(elements, map[string]any{"tag": "action", "actions": actions})
+			}
+		}
 	}
 	elements = append(elements, f.panelLinks(task)...)
 	card := taskCard(title, elements)
@@ -350,4 +379,55 @@ func (f *Feishu) answerQuestionCard(chat, token string, action *cb.CallBackActio
 	}
 	_, _ = f.app.store.Exec("UPDATE feishu_question_cards SET next_at=0 WHERE id=?", token)
 	return &cb.CardActionTriggerResponse{Toast: &cb.Toast{Type: "success", Content: message}, Card: &cb.Card{Type: "raw", Data: f.questionCard(task, token, p, false)}}, nil
+}
+
+// One-time command/permission decisions from Feishu use the same
+// answerCodexInteraction path as the web UI. Secrets stay on the web form.
+func (f *Feishu) answerApprovalCard(chat, token, decision string) (*cb.CardActionTriggerResponse, error) {
+	if !f.inbound.TryLock() {
+		return cardToast("info", "正在处理上一条请求，请稍后重试"), nil
+	}
+	defer f.inbound.Unlock()
+	if f.app.updating.Load() {
+		return cardToast("error", errUpdateBusy.Error()), nil
+	}
+	cfg := f.app.config.get().Feishu
+	var request, task, savedChat, appID, owner string
+	err := f.app.store.QueryRow("SELECT request_id,task_id,chat_id,app_id,owner FROM feishu_question_cards WHERE id=?", token).Scan(&request, &task, &savedChat, &appID, &owner)
+	if err != nil || chat == "" || chat != savedChat || appID != cfg.AppID || owner != cfg.Owner || f.app.bound(chat) != task {
+		return cardToast("error", "审批卡片不属于当前任务或已失效"), nil
+	}
+	if decision != "accept" && decision != "decline" && decision != "cancel" {
+		return cardToast("error", "审批决定无效"), nil
+	}
+	requests, err := f.pendingQuestions(task)
+	if err != nil {
+		return cardToast("error", "无法读取当前审批，请稍后重试"), nil
+	}
+	var p CodexPendingRequest
+	for _, candidate := range requests {
+		if candidate.ID == request {
+			p = candidate
+			break
+		}
+	}
+	if p.ID == "" {
+		return cardToast("info", "请求已处理或已失效"), nil
+	}
+	allowed := false
+	for _, value := range codexApprovalDecisionList(p) {
+		if value == decision {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return cardToast("error", "此请求不支持所选审批决定"), nil
+	}
+	if err = f.app.answerCodexInteraction(task, request, CodexAnswer{Decision: decision}); err != nil {
+		return cardToast("error", "审批未确认送达，请在 Duo 网页查看后处理。"+err.Error()), nil
+	}
+	_, _ = f.app.store.Exec("UPDATE feishu_question_cards SET next_at=0 WHERE id=?", token)
+	labels := map[string]string{"accept": "已批准本次", "decline": "已拒绝本次", "cancel": "已取消请求"}
+	return &cb.CardActionTriggerResponse{Toast: &cb.Toast{Type: "success", Content: labels[decision]}, Card: &cb.Card{Type: "raw", Data: f.questionCard(task, token, p, false)}}, nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -25,6 +26,35 @@ func normalizeAccess(a *AccessConfig) error {
 		*value = u.String()
 	}
 	return nil
+}
+
+// Settings may only flip the bind host between loopback and all interfaces.
+// Port and other listen shapes stay in config.json after an intentional restart.
+func applyListenAccess(current, requested string) (string, error) {
+	current = strings.TrimSpace(current)
+	requested = strings.TrimSpace(requested)
+	if requested == "" || requested == current {
+		return current, nil
+	}
+	_, port, err := net.SplitHostPort(current)
+	if err != nil || port == "" {
+		return "", errors.New("当前监听地址无效，无法切换远程访问")
+	}
+	host, reqPort, err := net.SplitHostPort(requested)
+	if err != nil || reqPort != port {
+		return "", errors.New("不能在此更改监听端口；请退出后修改 config.json 的 listen")
+	}
+	switch host {
+	case "127.0.0.1", "0.0.0.0":
+		return net.JoinHostPort(host, port), nil
+	default:
+		return "", errors.New("监听主机仅支持 127.0.0.1（仅本机）或 0.0.0.0（局域网与 Tailscale）")
+	}
+}
+
+func listenAllowsRemote(listen string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(listen))
+	return err == nil && host != "" && host != "127.0.0.1" && host != "localhost" && host != "::1"
 }
 
 func (f *Feishu) panelLinks(task string, view ...string) []any {
