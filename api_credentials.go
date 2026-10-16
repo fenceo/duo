@@ -162,6 +162,27 @@ func (s *Server) apiCredentialRoutes(m *http.ServeMux) {
 		}
 		s.applyApiCredential(w, r, v, cred)
 	}))
+	m.HandleFunc("POST /api/api-credentials/apply-engine", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Engine       string   `json:"engine"`
+			Environments []string `json:"environments"`
+		}
+		if !body(w, r, &req) {
+			return
+		}
+		list := s.app.store.apiCredentials()
+		if len(list) == 0 {
+			fail(w, 400, "请先在账号管理录入 API Key")
+			return
+		}
+		cred := list[len(list)-1]
+		v := EngineAPIRequest{
+			Engine: req.Engine, APIProtocol: cred.Protocol, BaseURL: cred.BaseURL,
+			Model: cred.Model, APIKey: cred.Secret, AuthMode: cred.AuthMode,
+			Environments: req.Environments,
+		}
+		s.applyApiCredential(w, r, v, cred)
+	}))
 	m.HandleFunc("PUT /api/api-credentials", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var c ApiCredential
 		if !body(w, r, &c) {
