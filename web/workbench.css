@@ -168,29 +168,29 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .task-list{overflow-x:hidden}
 .workspace-tasks{grid-template-columns:minmax(0,1fr);width:100%}
 .task-row>.task{flex:1 1 0%;width:auto;max-width:100%}
-.task-list .task strong{min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-list .task strong{min-width:60px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .workspace-heading .folder-arrow{flex:none}
 .workspace-heading .folder-name{flex:1;min-width:0;max-width:none}
 .workspace-heading small{flex:0 1 auto;min-width:0;max-width:45%}
-.task-list .task-state{max-width:38%;overflow:hidden;text-overflow:ellipsis}
-.sidebar .task{position:relative;padding-right:72px}
-.task-badges{display:flex;align-items:center;gap:4px;flex-shrink:0;position:absolute;right:8px;top:50%;transform:translateY(-50%);margin:0;max-width:64px;overflow:hidden}
-.task-engine-badge{font-size:10px;line-height:1.2;padding:2px 5px;border-radius:5px;background:var(--raised);color:var(--muted);white-space:nowrap;min-width:18px;text-align:center}
-.task-state{font-size:10px;line-height:1.2;white-space:nowrap}
-.task-state-glyph{display:none}
-.task-state.running{color:var(--accent);font-weight:650}
-.task-state.ready{color:var(--muted)}
-.task-state.failed{color:var(--danger)}
-.task.task-busy .task-state.running{animation:task-state-pulse 1.4s ease-in-out infinite}
-@keyframes task-state-pulse{0%,100%{opacity:1}50%{opacity:.55}}
-@media (prefers-reduced-motion:reduce){.task.task-busy .task-state.running{animation:none}}
-/* Narrow sidebars keep the title readable: badges shrink to glyph only. */
+/* Prefix marks sit in the flex row before the title; never overlay text. */
+.task-marks{display:flex;align-items:center;gap:3px;flex:0 0 auto}
+.task-engine-mark{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;font-size:9px;line-height:1;font-weight:700;background:var(--raised);color:var(--muted);flex:none}
+.task-engine-codex{background:#2c3427;color:#d8f383}
+.task-engine-claude{background:#3a2c22;color:#f0c9a0}
+.task-engine-harness{background:#22303c;color:#9fd0ff}
+.task-engine-mimo{background:#2c2438;color:#d4b8ff}
+.task-engine-opencode{background:#24332c;color:#a8e6c0}
+.task-state-mark{font-size:11px;line-height:1;flex:none;width:12px;text-align:center}
+.task-state-mark.running{color:var(--accent);font-weight:700}
+.task-state-mark.ready{color:var(--muted)}
+.task-state-mark.failed{color:var(--danger);font-weight:700}
+.task.task-busy .task-state-mark.running{animation:task-state-pulse 1.4s ease-in-out infinite}
+@keyframes task-state-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.task.task-busy .task-state-mark.running{animation:none}}
 @container (max-width:260px){
- .sidebar .task{padding-right:36px}
- .task-engine-badge{display:none}
- .task-state-text{display:none}
- .task-state-glyph{display:inline}
- .task-badges{gap:2px;max-width:28px}
+ .task-engine-mark{display:none}
+ .task-marks{gap:0}
+ .task-state-mark{width:10px;font-size:10px}
 }
 
 /* The title/count/actions occupy one row; filters get their own shrinkable row.

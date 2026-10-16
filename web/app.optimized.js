@@ -3277,63 +3277,58 @@ function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
     return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
-function taskEngineBadge(engine) {
+function taskEngineMark(engine) {
     if (engine === 'claude') return {
-        short: 'Claude',
+        letter: 'C',
         title: 'Claude Code',
-        initial: 'C'
+        kind: 'claude'
     };
     if (engine === 'deepseek-harness') return {
-        short: 'Harness',
+        letter: 'H',
         title: 'DeepSeek Harness',
-        initial: 'H'
+        kind: 'harness'
     };
     if (engine === 'mimo') return {
-        short: 'MiMo',
+        letter: 'M',
         title: 'MiMo Code',
-        initial: 'M'
+        kind: 'mimo'
     };
     if (engine === 'opencode') return {
-        short: 'OpenCode',
+        letter: 'O',
         title: 'OpenCode',
-        initial: 'O'
+        kind: 'opencode'
     };
     return {
-        short: 'Codex',
+        letter: 'X',
         title: 'Codex',
-        initial: 'X'
+        kind: 'codex'
     };
 }
-function taskStateBadge(status) {
+function taskStateMark(status) {
     if (status === 'running') return {
-        text: '● 运行中',
+        glyph: '●',
         className: 'running',
-        title: '正在执行，已有中间输出',
-        glyph: '●'
+        title: '正在执行'
     };
     if (status === 'queued') return {
-        text: '● 排队',
+        glyph: '○',
         className: 'running',
-        title: '已排队，等待执行',
-        glyph: '●'
+        title: '排队中'
     };
     if (status === 'failed') return {
-        text: '失败',
+        glyph: '×',
         className: 'failed',
-        title: '上一轮执行失败',
-        glyph: '×'
+        title: '上一轮失败'
     };
     if (status === 'interrupted') return {
-        text: '已停止',
+        glyph: '×',
         className: 'failed',
-        title: '执行已停止',
-        glyph: '×'
+        title: '已停止'
     };
     return {
-        text: '有回复',
+        glyph: '✓',
         className: 'ready',
-        title: '已有回复，等待下一步',
-        glyph: '✓'
+        title: '有回复'
     };
 }
 function workspaceTaskList(items) {
@@ -3350,8 +3345,8 @@ function workspaceTaskList(items) {
         ].filter(Boolean).join(' · ');
         const compact = env?.type === 'windows' ? 'Win' : env?.type === 'wsl' ? 'WSL' : env?.type === 'ssh' ? 'SSH' : environment;
         const folder = t.workspace.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || t.workspace;
-        const engine = taskEngineBadge(t.engine), state = taskStateBadge(t.status), busy = t.status === 'running' || t.status === 'queued';
-        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}${busy ? ' task-busy' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1 + '\n' + engine.title + ' · ' + state.title)}" aria-label="${escapeHTML(t.title + '，' + location1 + '，' + engine.title + '，' + state.title)}"><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-badges" aria-hidden="true"><span class="task-engine-badge" data-initial="${escapeHTML(engine.initial)}">${escapeHTML(engine.short)}</span><span class="task-state ${state.className}"><span class="task-state-text">${escapeHTML(state.text)}</span><span class="task-state-glyph">${escapeHTML(state.glyph)}</span></span></span><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
+        const engine = taskEngineMark(t.engine), state = taskStateMark(t.status), busy = t.status === 'running' || t.status === 'queued';
+        return `<div class="task-row"><button class="task ${t.id === chosen ? 'selected' : ''}${busy ? ' task-busy' : ''}" data-task="${escapeHTML(t.id)}" title="${escapeHTML(t.title + '\n' + location1 + '\n' + engine.title + ' · ' + state.title)}" aria-label="${escapeHTML(t.title + '，' + location1 + '，' + engine.title + '，' + state.title)}"><span class="task-marks" aria-hidden="true"><span class="task-engine-mark task-engine-${escapeHTML(engine.kind)}" title="${escapeHTML(engine.title)}">${escapeHTML(engine.letter)}</span><span class="task-state-mark task-state-${escapeHTML(state.className)}" title="${escapeHTML(state.title)}">${escapeHTML(state.glyph)}</span></span><strong>${t.pinned ? '↑ ' : ''}${escapeHTML(t.title)}</strong><span class="task-path" aria-hidden="true">${escapeHTML(folder)}</span><small class="task-environment"><span class="task-environment-name">${escapeHTML(environment)}</span><span class="task-environment-short" aria-hidden="true">${escapeHTML(compact)}</span></small></button>${taskItemMenu(t)}</div>`;
     }).join('');
 }
 function installLayout() {
