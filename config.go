@@ -30,6 +30,7 @@ type Config struct {
 	Mimo               string            `json:"-"`
 	OpenCode           string            `json:"-"`
 	ZCode              string            `json:"-"`
+	Kimi               string            `json:"-"`
 	HarnessModel       string            `json:"-"`
 	HarnessProvider    string            `json:"-"`
 	Workspaces         []string          `json:"workspaces"`

@@ -100,11 +100,11 @@ func builtinEngineDefinitions() []EngineDefinition {
 		},
 		{
 			ID: "kimi", Name: "Kimi Code", Description: "Moonshot Kimi Code CLI / ACP",
-			Transport: "acp", Runnable: false,
+			Transport: "acp", Runnable: false, AutoInstall: true,
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "approval", "acp"},
 			CredentialKinds:    []string{"native", "env_file"},
-			InstallDescription: "先安装 Kimi Code CLI 并完成登录；ACP 适配器随后接入。",
+			InstallDescription: "支持 Windows/WSL/SSH 一键安装官方 npm 包 @moonshot-ai/kimi-code；安装后在目标环境执行 kimi 完成登录。ACP 适配器仍在接入，暂不开放 Duo 任务运行。",
 			DocumentationURL:   "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command",
 		},
 		{
@@ -113,7 +113,7 @@ func builtinEngineDefinitions() []EngineDefinition {
 			Targets:            []string{"windows", "wsl", "ssh"},
 			Capabilities:       []string{"stream", "resume", "session_store"},
 			CredentialKinds:    []string{"native"},
-			InstallDescription: "检测 PATH 上的 zcode 或 ZCode 桌面内置 zcode.cjs；在目标环境执行 zcode login 后可运行任务。暂不提供一键安装。",
+			InstallDescription: "官方桌面或 npm 入口请见文档；Duo 暂不提供一键安装。安装后执行 zcode login，即可在新建任务中选择 ZCode · GLM。",
 			DocumentationURL:   "https://docs.z.ai/devpack/tool/others",
 		},
 		{

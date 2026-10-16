@@ -276,6 +276,8 @@ func remoteEngineBinary(engine string) (string, bool) {
 		return "dsh", true
 	case "opencode":
 		return "opencode", true
+	case "kimi":
+		return "kimi", true
 	default:
 		return "", false
 	}

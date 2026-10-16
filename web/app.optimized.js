@@ -8094,8 +8094,9 @@ function renderEngineCatalog() {
             const label = installed ? '已安装' + (tool?.version ? ' · v' + tool.version : '') : missing ? '未安装' : engineStatusBusy ? '检测中…' : '未完成检测';
             return '<div class="engine-environment-row"><div><strong>' + escapeHTML(engine.name) + '</strong><span class="detected-tool detected-tool-' + escapeHTML(state) + '">' + escapeHTML(label) + '</span><small>' + escapeHTML((installed ? tool.label : engine.runnable ? '可用于 Duo 任务' : '') + (!engine.runnable ? ' · Duo 适配器尚未接入' : '')) + '</small>' + (tool?.path ? '<code>' + escapeHTML(tool.path) + '</code>' : '') + '</div><div class="engine-actions">' + (engine.id === 'deepseek-harness' ? '<button type="button" data-harness-api="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || harnessAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + ([
                 'claude',
-                'mimo'
-            ].includes(engine.id) ? '<button type="button" data-engine-api="' + escapeHTML(engine.id) + '" data-engine-api-environment="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || environmentAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (installed && engine.auto_install ? '<button type="button" data-update-engine="' + escapeHTML(engine.id) + '" data-update-environment="' + escapeHTML(env.id) + '" title="安装官方最新 CLI，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
+                'mimo',
+                'opencode'
+            ].includes(engine.id) ? '<button type="button" data-engine-api="' + escapeHTML(engine.id) + '" data-engine-api-environment="' + escapeHTML(env.id) + '" ' + (engineSetupBusy || environmentAPIBusy ? 'disabled' : '') + '>配置 API</button>' : '') + (missing && engine.auto_install ? '<button type="button" data-install-engine="' + escapeHTML(engine.id) + '" data-install-environment="' + escapeHTML(env.id) + '">一键安装</button>' : '') + (missing && !engine.auto_install && engine.documentation_url ? '<a class="engine-actions-link" href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">安装指引 ↗</a>' : '') + (installed && engine.auto_install ? '<button type="button" data-update-engine="' + escapeHTML(engine.id) + '" data-update-environment="' + escapeHTML(env.id) + '" title="安装官方最新 CLI，验证后切换；保留原安装。该环境的引擎须无执行或排队任务。">更新 CLI</button>' : '') + (engine.documentation_url ? '<a href="' + escapeHTML(engine.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : '') + '</div></div>';
         }).join('');
         return '<article class="engine-environment"><header><div><h4>' + escapeHTML(env.name) + '</h4><small>' + escapeHTML([
             env.type,
@@ -8374,7 +8375,7 @@ async function startEngineOnboarding(action, target) {
         } : {}
     };
     if (action === 'update') Object.assign(body, {
-        expected_path: settings.config.environments.find((e)=>e.id === target.environment_id)?.[target.engine === 'codex' ? 'codex' : target.engine === 'claude' ? 'claude' : target.engine === 'mimo' ? 'mimo' : target.engine === 'opencode' ? 'opencode' : 'harness'] || ''
+        expected_path: settings.config.environments.find((e)=>e.id === target.environment_id)?.[target.engine === 'codex' ? 'codex' : target.engine === 'claude' ? 'claude' : target.engine === 'mimo' ? 'mimo' : target.engine === 'opencode' ? 'opencode' : target.engine === 'zcode' ? 'zcode' : target.engine === 'kimi' ? 'kimi' : 'harness'] || ''
     });
     const signature = JSON.stringify(body);
     if (!engineSetupAttempt || engineSetupAttempt.signature !== signature) engineSetupAttempt = {
@@ -8432,7 +8433,7 @@ async function pollEngineSetup(id, epoch) {
                         const fresh = await api('settings', 'GET', undefined, shellController.signal);
                         if (!shellCurrent(epoch)) return;
                         storeEnvironmentEditor();
-                        const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : job.engine === 'mimo' ? 'mimo' : job.engine === 'opencode' ? 'opencode' : 'harness';
+                        const key = job.engine === 'codex' ? 'codex' : job.engine === 'claude' ? 'claude' : job.engine === 'mimo' ? 'mimo' : job.engine === 'opencode' ? 'opencode' : job.engine === 'zcode' ? 'zcode' : job.engine === 'kimi' ? 'kimi' : 'harness';
                         const before = settings.config.environments.find((e)=>e.id === job.environment_id), updated = fresh.config.environments.find((e)=>e.id === job.environment_id), editing = editingEnvironments.find((e)=>e.id === job.environment_id);
                         if (updated && before) {
                             if (editing) {
@@ -8719,7 +8720,8 @@ function renderEnvironmentAPIModels(models) {
 async function openEnvironmentAPI(engine, environmentID) {
     if (![
         'claude',
-        'mimo'
+        'mimo',
+        'opencode'
     ].includes(engine) || environmentAPIBusy || engineSetupBusy || harnessAPIBusy || accountImportBusy || accountSyncBusy) return;
     const env = settings.config.environments.find((e)=>e.id === environmentID);
     if (!env) return;

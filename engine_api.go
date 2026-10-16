@@ -71,6 +71,10 @@ func (a *App) engineAPILocation(ctx context.Context, env Environment, engine str
 		}
 		return "", "claude", nil
 	}
+	if engine == "opencode" {
+		dir, err := a.engineSetup.apiDirectory(ctx, env)
+		return dir, "opencode-api", err
+	}
 	if env.MimoConfig != "" {
 		normalized := strings.ReplaceAll(env.MimoConfig, `\`, "/")
 		pos := strings.LastIndex(normalized, "/")
@@ -135,15 +139,24 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 		if kind == "mimo" {
 			name = "mimocode.json"
 		}
+		if kind == "opencode-api" || engine == "opencode" {
+			name = "opencode.json"
+		}
 		doc, err := accountJSON(files[name])
 		if err != nil {
 			return v, "", err
 		}
+		providerID := "duo-mimo"
+		if engine == "opencode" {
+			providerID = "duo-opencode"
+			v.BaseURL = ""
+			v.APIProtocol = "openai-chat"
+		}
 		providers, _ := doc["provider"].(map[string]any)
 		if doc["provider"] != nil && providers == nil {
-			return v, "", errors.New("MiMo provider 结构无效")
+			return v, "", errors.New("provider 结构无效")
 		}
-		p, _ := providers["duo-mimo"].(map[string]any)
+		p, _ := providers[providerID].(map[string]any)
 		options, _ := p["options"].(map[string]any)
 		if p != nil {
 			v.BaseURL, _ = options["baseURL"].(string)
@@ -152,7 +165,16 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 				v.APIProtocol = "anthropic-messages"
 			}
 			model, _ := doc["model"].(string)
-			v.Model = strings.TrimPrefix(model, "duo-mimo/")
+			if engine == "opencode" {
+				if models, ok := p["models"].(map[string]any); ok && v.Model == "" {
+					for id := range models {
+						v.Model = id
+						break
+					}
+				}
+			} else {
+				v.Model = strings.TrimPrefix(model, "duo-mimo/")
+			}
 		}
 	}
 	v.KeyConfigured = key != ""
@@ -229,6 +251,11 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 	if kind == "mimo" {
 		name = "mimocode.json"
 	}
+	providerID := "duo-mimo"
+	if v.Engine == "opencode" || kind == "opencode-api" {
+		name = "opencode.json"
+		providerID = "duo-opencode"
+	}
 	doc, err := accountJSON(files[name])
 	if err != nil {
 		return nil, err
@@ -237,23 +264,32 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 	_ = json.Unmarshal(mimoAPIConfig(engineAPISetup(v)), &fresh)
 	providers, _ := doc["provider"].(map[string]any)
 	if doc["provider"] != nil && providers == nil {
-		return nil, errors.New("MiMo 原生 provider 结构无效")
+		return nil, errors.New("原生 provider 结构无效")
 	}
 	if providers == nil {
 		providers = map[string]any{}
 	}
-	providers["duo-mimo"] = fresh["provider"].(map[string]any)["duo-mimo"]
-	configuredModels := providers["duo-mimo"].(map[string]any)["models"].(map[string]any)
+	providers[providerID] = fresh["provider"].(map[string]any)["duo-mimo"]
+	entry := providers[providerID].(map[string]any)
+	models, _ := entry["models"].(map[string]any)
+	if models == nil {
+		models = map[string]any{}
+	}
 	for _, model := range v.Models {
-		if mimoSpeechModel(model.ID) {
+		if model.ID == "" {
+			continue
+		}
+		if providerID == "duo-mimo" && mimoSpeechModel(model.ID) {
 			continue
 		}
 		name := model.Name
 		if name == "" {
 			name = model.ID
 		}
-		configuredModels[model.ID] = mimoModelDefinition(model.ID, name, v.APIProtocol)
+		models[model.ID] = mimoModelDefinition(model.ID, name, v.APIProtocol)
 	}
+	entry["models"] = models
+	providers[providerID] = entry
 	// Scope a fresh API configuration to its declared providers. Preserve
 	// explicitly enabled native providers while making this API selectable.
 	enabled, _ := doc["enabled_providers"].([]any)
@@ -268,14 +304,14 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 		}
 	} else {
 		if enabled == nil {
-			return nil, errors.New("MiMo 原生 enabled_providers 结构无效")
+			return nil, errors.New("原生 enabled_providers 结构无效")
 		}
 		found := false
 		for _, id := range enabled {
-			found = found || id == "duo-mimo"
+			found = found || id == providerID
 		}
 		if !found {
-			enabled = append(enabled, "duo-mimo")
+			enabled = append(enabled, providerID)
 		}
 	}
 	doc["enabled_providers"] = enabled
@@ -288,8 +324,8 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 func (s *Server) engineAPIRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/environments/{id}/engines/{engine}/api", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		engine := r.PathValue("engine")
-		if engine != "claude" && engine != "mimo" {
-			fail(w, 400, "此入口仅支持 Claude Code 和 MiMo Code")
+		if engine != "claude" && engine != "mimo" && engine != "opencode" {
+			fail(w, 400, "此入口仅支持 Claude Code、MiMo Code 和 OpenCode")
 			return
 		}
 		env, err := s.app.config.get().environment(r.PathValue("id"))
@@ -338,8 +374,8 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.Engine = r.PathValue("engine")
-	if v.Engine != "claude" && v.Engine != "mimo" {
-		fail(w, 400, "此入口仅支持 Claude Code 和 MiMo Code")
+	if v.Engine != "claude" && v.Engine != "mimo" && v.Engine != "opencode" {
+		fail(w, 400, "此入口仅支持 Claude Code、MiMo Code 和 OpenCode")
 		return
 	}
 	if v.APIScope != "" && (v.Engine != "claude" || v.APIScope != "duo" && v.APIScope != "environment") {

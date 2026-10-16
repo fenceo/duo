@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var managedEnginePackages = map[string]string{"codex": "@openai/codex", "claude": "@anthropic-ai/claude-code", "deepseek-harness": "@deepseek-ai/dsh", "opencode": "opencode-ai"}
+var managedEnginePackages = map[string]string{"codex": "@openai/codex", "claude": "@anthropic-ai/claude-code", "deepseek-harness": "@deepseek-ai/dsh", "opencode": "opencode-ai", "kimi": "@moonshot-ai/kimi-code"}
 
 const managedNodeVersion = "24.19.0"
 

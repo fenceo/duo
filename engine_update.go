@@ -66,6 +66,10 @@ func environmentEnginePath(e Environment, engine string) string {
 		return e.Mimo
 	case "opencode":
 		return e.OpenCode
+	case "zcode":
+		return e.ZCode
+	case "kimi":
+		return e.Kimi
 	}
 	return ""
 }

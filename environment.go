@@ -31,6 +31,7 @@ type Environment struct {
 	MimoConfig      string                       `json:"mimo_config,omitempty"`
 	OpenCode        string                       `json:"opencode,omitempty"`
 	ZCode           string                       `json:"zcode,omitempty"`
+	Kimi            string                       `json:"kimi,omitempty"`
 	HarnessModel    string                       `json:"harness_model"`
 	HarnessProvider string                       `json:"harness_provider"`
 	ClaudeModel     string                       `json:"claude_model"`
@@ -241,6 +242,7 @@ func runtimeConfig(c Config, e Environment) Config {
 	c.Mimo = managedEnginePath(c, e, "mimo")
 	c.OpenCode = managedEnginePath(c, e, "opencode")
 	c.ZCode = managedEnginePath(c, e, "zcode")
+	c.Kimi = managedEnginePath(c, e, "kimi")
 	c.HarnessModel = e.HarnessModel
 	c.HarnessProvider = e.HarnessProvider
 	if c.Claude == "" {
