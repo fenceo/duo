@@ -30,6 +30,7 @@ type Environment struct {
 	MimoModel       string                       `json:"mimo_model,omitempty"`
 	MimoConfig      string                       `json:"mimo_config,omitempty"`
 	OpenCode        string                       `json:"opencode,omitempty"`
+	OpenCodeConfig  string                       `json:"opencode_config,omitempty"`
 	ZCode           string                       `json:"zcode,omitempty"`
 	Kimi            string                       `json:"kimi,omitempty"`
 	HarnessModel    string                       `json:"harness_model"`

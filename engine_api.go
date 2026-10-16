@@ -13,16 +13,18 @@ import (
 )
 
 type EngineAPIRequest struct {
-	Models      []ModelOption     `json:"-"`
-	Target      string            `json:"target"`
-	Engine      string            `json:"engine"`
-	APIProtocol string            `json:"api_protocol"`
-	BaseURL     string            `json:"base_url"`
-	Model       string            `json:"model"`
-	APIKey      string            `json:"api_key,omitempty"`
-	AuthMode    string            `json:"auth_mode"`
-	APIScope    string            `json:"api_scope,omitempty"`
-	ClaudeRoles *ClaudeRoleModels `json:"claude_roles,omitempty"`
+	Models       []ModelOption     `json:"-"`
+	Target       string            `json:"target"`
+	Engine       string            `json:"engine"`
+	APIProtocol  string            `json:"api_protocol"`
+	BaseURL      string            `json:"base_url"`
+	Model        string            `json:"model"`
+	APIKey       string            `json:"api_key,omitempty"`
+	AuthMode     string            `json:"auth_mode"`
+	APIScope     string            `json:"api_scope,omitempty"`
+	Preset       string            `json:"preset,omitempty"`
+	Environments []string          `json:"environments,omitempty"`
+	ClaudeRoles  *ClaudeRoleModels `json:"claude_roles,omitempty"`
 }
 type EngineAPIView struct {
 	EngineAPIRequest
@@ -72,6 +74,14 @@ func (a *App) engineAPILocation(ctx context.Context, env Environment, engine str
 		return "", "claude", nil
 	}
 	if engine == "opencode" {
+		if env.OpenCodeConfig != "" {
+			normalized := strings.ReplaceAll(env.OpenCodeConfig, `\`, "/")
+			pos := strings.LastIndex(normalized, "/")
+			if pos < 1 {
+				return "", "", errors.New("OpenCode 配置路径无效")
+			}
+			return env.OpenCodeConfig[:pos], "opencode-api", nil
+		}
 		dir, err := a.engineSetup.apiDirectory(ctx, env)
 		return dir, "opencode-api", err
 	}
@@ -148,7 +158,7 @@ func engineAPIConfigView(env Environment, engine, kind string, files map[string]
 		}
 		providerID := "duo-mimo"
 		if engine == "opencode" {
-			providerID = "duo-opencode"
+			providerID = "duo-api"
 			v.BaseURL = ""
 			v.APIProtocol = "openai-chat"
 		}
@@ -254,14 +264,18 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 	providerID := "duo-mimo"
 	if v.Engine == "opencode" || kind == "opencode-api" {
 		name = "opencode.json"
-		providerID = "duo-opencode"
+		providerID = "duo-api"
 	}
 	doc, err := accountJSON(files[name])
 	if err != nil {
 		return nil, err
 	}
 	var fresh map[string]any
-	_ = json.Unmarshal(mimoAPIConfig(engineAPISetup(v)), &fresh)
+	if providerID == "duo-api" {
+		_ = json.Unmarshal(opencodeAPIConfig(engineAPISetup(v)), &fresh)
+	} else {
+		_ = json.Unmarshal(mimoAPIConfig(engineAPISetup(v)), &fresh)
+	}
 	providers, _ := doc["provider"].(map[string]any)
 	if doc["provider"] != nil && providers == nil {
 		return nil, errors.New("原生 provider 结构无效")
@@ -269,7 +283,12 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 	if providers == nil {
 		providers = map[string]any{}
 	}
-	providers[providerID] = fresh["provider"].(map[string]any)["duo-mimo"]
+	source := fresh["provider"].(map[string]any)
+	if providerID == "duo-api" {
+		providers[providerID] = source["duo-api"]
+	} else {
+		providers[providerID] = source["duo-mimo"]
+	}
 	entry := providers[providerID].(map[string]any)
 	models, _ := entry["models"].(map[string]any)
 	if models == nil {
@@ -322,6 +341,9 @@ func mergeEngineAPI(files map[string][]byte, kind string, v EngineAPIRequest) (m
 }
 
 func (s *Server) engineAPIRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /api/engine-api-presets", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		jsonOut(w, 200, map[string]any{"presets": engineAPIPresetList()})
+	}))
 	m.HandleFunc("GET /api/environments/{id}/engines/{engine}/api", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		engine := r.PathValue("engine")
 		if engine != "claude" && engine != "mimo" && engine != "opencode" {
@@ -557,12 +579,21 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 				if kind == "mimo" {
 					name = "mimocode.json"
 				}
-				if env.Type == "windows" {
-					c.Environments[i].MimoConfig = filepath.Join(dir, name)
-				} else {
-					c.Environments[i].MimoConfig = strings.TrimRight(dir, "/") + "/" + name
+				if v.Engine == "opencode" || kind == "opencode-api" {
+					name = "opencode.json"
 				}
-				c.Environments[i].MimoModel = "duo-mimo/" + v.Model
+				configPath := ""
+				if env.Type == "windows" {
+					configPath = filepath.Join(dir, name)
+				} else {
+					configPath = strings.TrimRight(dir, "/") + "/" + name
+				}
+				if v.Engine == "opencode" {
+					c.Environments[i].OpenCodeConfig = configPath
+				} else {
+					c.Environments[i].MimoConfig = configPath
+					c.Environments[i].MimoModel = "duo-mimo/" + v.Model
+				}
 			}
 		}
 	}
@@ -587,9 +618,74 @@ func (s *Server) configureEngineAPI(w http.ResponseWriter, r *http.Request) {
 			out.Message += " 账号来源标记更新失败，请重新打开核对。"
 		}
 	}
+	if v.Engine == "claude" && v.APIScope != "duo" {
+		if err = a.store.useSyncedNativeAccount(env.ID, "claude", ""); err != nil {
+			out.Message += " 账号来源标记更新失败，请重新打开核对。"
+		}
+	}
 	if v.Engine == "claude" && v.APIScope == "duo" {
 		out.Message = "已保存 Duo 专用 API 配置，仅 Duo 启动的 Claude 进程加载；原生登录、权限和历史目录不变。" + discovery.Message
 	}
+	// Optionally write the same credentials to additional targets the user
+	// selected. Failures are reported per environment; the primary stays saved.
+	extra := []string{}
+	for _, id := range v.Environments {
+		if id == "" || id == env.ID {
+			continue
+		}
+		extra = append(extra, id)
+	}
+	if len(extra) > 0 {
+		out.Message += s.applyEngineAPIToEnvironments(ctx, manager, v, env, writeDir, writeKind, writeOld, next, extra)
+	}
 	a.changed()
 	jsonOut(w, 200, out)
+}
+
+// applyEngineAPIToEnvironments clones the verified primary write onto other
+// Windows/WSL/SSH targets. Each target uses its own native directory.
+func (s *Server) applyEngineAPIToEnvironments(ctx context.Context, manager *EngineSetup, v EngineAPIRequest, source Environment, writeDir, writeKind string, writeOld, next map[string][]byte, ids []string) string {
+	messages := []string{}
+	for _, id := range ids {
+		target, err := s.app.config.get().environment(id)
+		if err != nil {
+			messages = append(messages, target.Name+"：环境不存在")
+			continue
+		}
+		if err = s.app.engineTargetBusy(target, v.Engine); err != nil {
+			messages = append(messages, target.Name+"：仍有执行或排队任务，未写入")
+			continue
+		}
+		dir, kind, err := s.app.engineAPILocation(ctx, target, v.Engine)
+		if err != nil {
+			messages = append(messages, target.Name+"：配置目录不可用")
+			continue
+		}
+		if v.Engine == "claude" && v.APIScope == "duo" {
+			if dir, err = manager.claudeAPIDirectory(ctx, target); err != nil {
+				messages = append(messages, target.Name+"：Duo 配置目录不可用")
+				continue
+			}
+			kind = "claude-api"
+		}
+		old, err := manager.harnessRead(ctx, target, dir, kind)
+		if err != nil {
+			messages = append(messages, target.Name+"：原配置不可读")
+			continue
+		}
+		files, err := mergeEngineAPI(old, kind, v)
+		if err != nil {
+			messages = append(messages, target.Name+"：配置无法合并")
+			continue
+		}
+		if err = manager.harnessWrite(ctx, target, dir, kind, old, files); err != nil {
+			messages = append(messages, target.Name+"：写入失败")
+			continue
+		}
+		messages = append(messages, target.Name+"：已写入")
+	}
+	if len(messages) == 0 {
+		return ""
+	}
+	return " 多环境：" + strings.Join(messages, "；") + "。"
 }
