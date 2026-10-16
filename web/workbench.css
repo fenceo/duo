@@ -806,6 +806,10 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 .engine-center-step .actions button{font-size:12px;padding:6px 11px}
 .engine-center-status{margin:12px 0 0;font-size:12px;color:var(--muted);min-height:18px}
 .engine-center-status-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0}
+.engine-center-env-state{margin-left:auto;font-size:10px;color:var(--muted)}
+.engine-center-key-form{display:grid;gap:8px;margin:10px 0;padding:12px;border:1px dashed var(--line);border-radius:8px;background:var(--canvas)}
+.engine-center-key-form label{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.engine-center-key-form input,.engine-center-key-form select{min-height:34px;font-size:12px}
 @media(max-width:760px) {
  .engine-center-layout{grid-template-columns:minmax(0,1fr)}
  .engine-center-side{border-right:0;border-bottom:1px solid var(--line);max-height:180px}

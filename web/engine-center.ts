@@ -1,6 +1,7 @@
 let engineCenterTab='codex';
 let engineCenterEnvPicks:Record<string,Set<string>>={};
 let engineCenterSelectedCred='';
+let engineCenterShowAddKey=false;
 
 function engineCenterCredList(engine:string,profiles:EngineProfile[]):string{
  const rows=profiles.map(p=>`<button type="button" class="engine-center-cred ${engineCenterSelectedCred===p.id?'is-selected':''}" data-engine-center-cred="${escapeHTML(p.id)}"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></button>`).join('');
@@ -10,15 +11,36 @@ function engineCenterCredList(engine:string,profiles:EngineProfile[]):string{
 
 function engineCenterEnvCheckboxes(kind:string,engine:string):string{
  const selected=engineCenterEnvPicks[kind+':'+engine]||new Set(settings?.config?.environments?.map(e=>e.id)||[]);
- return (settings?.config?.environments||[]).map(env=>`<label class="check-row"><input type="checkbox" data-engine-center-env="${escapeHTML(kind+':'+engine+':'+env.id)}" ${selected.has(env.id)?'checked':''}> ${escapeHTML(env.name)}（${escapeHTML(env.type.toUpperCase())}）</label>`).join('');
+ return (settings?.config?.environments||[]).map(env=>{
+  const tool=engineCenterEnvTool(engine,env);
+  const installed=!!tool?.path&&tool.state!=='missing';
+  const disabled=kind==='install'&&installed;
+  return `<label class="check-row"><input type="checkbox" data-engine-center-env="${escapeHTML(kind+':'+engine+':'+env.id)}" ${selected.has(env.id)&&!disabled?'checked':''} ${disabled?'disabled':''}> ${escapeHTML(env.name)}<span class="engine-center-env-state">${installed?'已安装':'未安装'}</span></label>`;
+ }).join('');
+}
+function engineCenterEnvTool(engine:string,env:{id:string}):DetectedEngineTool|undefined{
+ const key=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo',opencode:'opencode',zcode:'zcode'} as Record<string,string>)[engine]||'codex';
+ const item=(engineEnvironmentStatuses||[]).find(s=>s.environment_id===env.id);
+ return item?((item as unknown as Record<string,DetectedEngineTool>)[key]):undefined;
 }
 function engineCenterSelectedEnvs(kind:string,engine:string):string[]{
  const prefix=kind+':'+engine+':';
- const ids:string[]=[];
- for(const key of Object.keys(engineCenterEnvPicks[kind+':'+engine]||{}))ids.push(key);
- // Prefer live checkbox state when mounted.
  const live=[...document.querySelectorAll<HTMLInputElement>('[data-engine-center-env^="'+CSS.escape(prefix)+'"]:checked')].map(x=>x.dataset.engineCenterEnv!.slice(prefix.length));
- return live.length?live:ids;
+ return live;
+}
+function engineCenterAddKeyForm(engine:string):string{
+ if(!engineCenterShowAddKey)return '';
+ return `<div class="engine-center-key-form">
+  <label>名称 <input id="engine-center-key-name" maxlength="60" placeholder="例如 DeepSeek 工作 Key"></label>
+  <label>服务预设 <select id="engine-center-key-provider">
+   <option value="deepseek">DeepSeek</option><option value="zai">Z.ai · GLM</option><option value="moonshot">Moonshot · Kimi</option>
+   <option value="minimax">MiniMax</option><option value="mimo">MiMo</option><option value="custom">自定义第三方</option>
+  </select></label>
+  <label>API 根地址 <input id="engine-center-key-url" type="url" placeholder="https://api.example.com/v1"></label>
+  <label>API key <input id="engine-center-key-secret" type="password" maxlength="16000" autocomplete="off"></label>
+  <label>模型 ID（可选） <input id="engine-center-key-model" maxlength="120" placeholder="添加后可再选"></label>
+  <div class="actions"><button type="button" class="primary" data-engine-center-save-key>保存 Key</button><button type="button" data-engine-center-cancel-key>取消</button></div>
+ </div>`;
 }
 function renderEngineCenterPanel(){
  const host=element('engine-center-body');
@@ -30,7 +52,6 @@ function renderEngineCenterPanel(){
  const tabs=element('engine-center-tabs');
  if(tabs)tabs.innerHTML=engines.map(e=>`<button type="button" data-engine-center-tab="${escapeHTML(e.id)}" class="${e.id===current.id?'selected':''}">${escapeHTML(e.name)}</button>`).join('');
  const profiles=(engineCatalog?.profiles||[]).filter(p=>p.engine===current.id);
- const creds=(engineCatalog?.profiles||[]).filter(p=>p.engine===current.id);
  host.innerHTML=`<section class="engine-center-panel">
   <header class="engine-center-panel-head">
    <div class="engine-center-panel-title"><h3>${escapeHTML(current.name)}</h3><span class="engine-center-badge ${current.runnable?'is-ready':'is-pending'}">${current.runnable?'可运行':'未开放'}</span></div>
@@ -45,15 +66,16 @@ function renderEngineCenterPanel(){
    </li>
    <li class="engine-center-step">
     <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key → 配置到环境</h4></div>
-    <p class="muted">先添加或选用 Key，再勾选目标环境一键写入。列表不回显 Key。</p>
+    <p class="muted">添加或点选 Key，勾选环境后一键写入该引擎的原生配置。列表不回显 Key。</p>
     <div id="engine-center-creds" class="engine-center-creds">${engineCenterCredList(current.id,profiles)}</div>
+    ${engineCenterAddKeyForm(current.id)}
     <div class="engine-center-envs">${engineCenterEnvCheckboxes('configure',current.id)}</div>
-    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加 API Key</button><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-api="${escapeHTML(current.id)}">配置 API</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
+    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">${engineCenterShowAddKey?'收起表单':'＋ 添加 API Key'}</button><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
    </li>
   </ol>
   <p id="engine-center-status" class="engine-center-status" role="status"></p>
  </section>`;
- tabs?.querySelectorAll<HTMLButtonElement>('[data-engine-center-tab]').forEach(b=>b.onclick=()=>{engineCenterTab=b.dataset.engineCenterTab!;renderEngineCenterPanel()});
+ tabs?.querySelectorAll<HTMLButtonElement>('[data-engine-center-tab]').forEach(b=>b.onclick=()=>{engineCenterTab=b.dataset.engineCenterTab!;engineCenterShowAddKey=false;renderEngineCenterPanel()});
  host.querySelectorAll<HTMLInputElement>('[data-engine-center-env]').forEach(cb=>cb.onchange=()=>{
   const parts=cb.dataset.engineCenterEnv!.split(':');const kind=parts[0],engine=parts[1],env=parts.slice(2).join(':');
   const key=kind+':'+engine;if(!engineCenterEnvPicks[key])engineCenterEnvPicks[key]=new Set();
@@ -62,33 +84,44 @@ function renderEngineCenterPanel(){
  host.querySelector<HTMLButtonElement>('[data-engine-center-install]')?.addEventListener('click',()=>void engineCenterInstall(current.id));
  host.querySelector<HTMLButtonElement>('[data-engine-center-configure]')?.addEventListener('click',()=>void engineCenterConfigure(current.id));
  host.querySelectorAll<HTMLButtonElement>('[data-engine-center-cred]').forEach(b=>b.addEventListener('click',()=>{engineCenterSelectedCred=b.dataset.engineCenterCred!;renderEngineCenterPanel()}));
- host.querySelector<HTMLButtonElement>('[data-engine-center-api]')?.addEventListener('click',()=>{
-  const envs=settings?.config?.environments||[];if(!envs.length)return;
-  void openEnvironmentAPI(current.id==='deepseek-harness'?'mimo':current.id,envs[0].id);
- });
- host.querySelector<HTMLButtonElement>('[data-engine-center-add]')?.addEventListener('click',()=>void openAccountEditor(false));
+ host.querySelector<HTMLButtonElement>('[data-engine-center-add]')?.addEventListener('click',()=>{engineCenterShowAddKey=!engineCenterShowAddKey;renderEngineCenterPanel()});
+ host.querySelector<HTMLButtonElement>('[data-engine-center-cancel-key]')?.addEventListener('click',()=>{engineCenterShowAddKey=false;renderEngineCenterPanel()});
+ host.querySelector<HTMLButtonElement>('[data-engine-center-save-key]')?.addEventListener('click',()=>void engineCenterSaveKey(current.id));
  host.querySelector<HTMLButtonElement>('[data-engine-center-open-accounts]')?.addEventListener('click',()=>void openAccountCenter());
  void engineCenterRefreshStatus(current.id);
+}
+async function engineCenterSaveKey(engine:string){
+ const status=element('engine-center-status');
+ const name=input('engine-center-key-name').value.trim(),provider=input('engine-center-key-provider').value;
+ const presets:Record<string,{url:string;protocol:string;auth:string}>={
+  deepseek:{url:'https://api.deepseek.com/v1',protocol:'openai-chat',auth:'api-key'},
+  zai:{url:'https://api.z.ai/api/anthropic',protocol:'anthropic-messages',auth:'auth-token'},
+  moonshot:{url:'https://api.moonshot.cn/v1',protocol:'openai-chat',auth:'api-key'},
+  minimax:{url:'https://api.minimaxi.com/v1',protocol:'openai-chat',auth:'auth-token'},
+  mimo:{url:'https://api.xiaomimimo.com/v1',protocol:'openai-chat',auth:'auth-token'},
+  custom:{url:'',protocol:'openai-chat',auth:'api-key'},
+ };
+ const preset=presets[provider]||presets.custom;
+ const body={name,provider,api_protocol:preset.protocol,base_url:input('engine-center-key-url').value.trim()||preset.url,auth_mode:preset.auth,api_key:input('engine-center-key-secret').value,model:input('engine-center-key-model').value.trim()};
+ try{
+  const saved=await api<{id:string}>('api-credentials','PUT',body);
+  engineCenterSelectedCred=saved.id||'';
+  engineCenterShowAddKey=false;
+  if(status)status.textContent='Key 已保存，可勾选环境后配置。';
+  renderEngineCenterPanel();
+ }catch(e){if(status)status.textContent=(e as Error).message}
 }
 async function engineCenterRefreshStatus(engine:string){
  try{
   const data=await api<EngineStatusResponse>('engine-status','GET');
   engineEnvironmentStatuses=data.items||[];engineStatusSignature=engineEnvironmentSignature();
-  const host=element('engine-center-body');if(!host)return;
-  const rows=(data.items||[]).map(item=>{
-   const key=({codex:'codex',claude:'claude','deepseek-harness':'harness',kimi:'kimi',mimo:'mimo',opencode:'opencode',zcode:'zcode'} as Record<string,string>)[engine]||'codex';
-   const tool=(item as unknown as Record<string,DetectedEngineTool>)[key];
-   return `<div class="engine-center-status-row"><span>${escapeHTML(item.name)}</span><span class="detected-tool detected-tool-${escapeHTML(tool?.state||'unknown')}">${escapeHTML(tool?.label||'未检测')}</span></div>`;
-  }).join('');
-  const statusBox=host.querySelector('#engine-center-status');
-  if(statusBox)statusBox.innerHTML=rows||'';
+  renderEngineCenterPanel();
  }catch{/* status optional */}
 }
 async function engineCenterInstall(engine:string){
  const envs=engineCenterSelectedEnvs('install',engine);
  const status=element('engine-center-status');
- if(!envs.length){if(status)status.textContent='请勾选目标环境。';return}
- // Engine setup currently installs one target per job; run sequentially.
+ if(!envs.length){if(status)status.textContent='请勾选未安装的目标环境。';return}
  for(const id of envs){
   try{const job=await api<EngineSetupJob>('engine-setup','POST',{action:'install',engine,environment_id:id,id:uidLike()});if(status)status.textContent=job.message||'安装已开始…'}
   catch(e){if(status)status.textContent=(e as Error).message}
@@ -98,11 +131,11 @@ async function engineCenterConfigure(engine:string){
  const envs=engineCenterSelectedEnvs('configure',engine);
  const status=element('engine-center-status');
  if(!envs.length){if(status)status.textContent='请勾选目标环境。';return}
- if(!['claude','mimo','opencode'].includes(engine)){if(status)status.textContent='此引擎请在账号管理中切换账号，或使用「配置 API」。';return}
+ if(!['claude','mimo','opencode'].includes(engine)){if(status)status.textContent='此引擎请在账号管理中切换账号，或用「配置 API」。';return}
  try{
   const out=await api<{message:string}>('api-credentials/apply-engine','POST',{engine,environments:envs});
   if(status)status.textContent=out.message||'已配置。';
- }catch(e){if(status)status.textContent=(e as Error).message+'（可先在账号管理录入 Key，再回到此处一键配置）'}
+ }catch(e){if(status)status.textContent=(e as Error).message+'（可先添加 API Key，再回到此处一键配置）'}
 }
 function uidLike(){return 'job-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36)}
 function installEngineCenter(){
@@ -150,3 +183,4 @@ function showEngineCenter(){
  if(dialog&&!dialog.open)dialog.showModal();
  void loadEngineSettings().then(()=>{renderEngineCenterEnvironments();renderEngineCenterPanel()});
 }
+async function openEngineCenter(){showEngineCenter()}

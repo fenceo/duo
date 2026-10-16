@@ -80,7 +80,7 @@ function renderEngineCatalog(){
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-update-engine]').forEach(b=>b.onclick=()=>void startEngineOnboarding('update',{engine:b.dataset.updateEngine!,environment_id:b.dataset.updateEnvironment!}));
  element('engine-catalog').querySelectorAll<HTMLButtonElement>('[data-edit-engine-environment]').forEach(b=>b.onclick=()=>{storeEnvironmentEditor();editingID=b.dataset.editEngineEnvironment!;environmentPickers();loadEnvironmentEditor();const editor=element<HTMLDetailsElement>('engine-environment-editor');editor.open=true;editor.scrollIntoView({block:'start'})});
 }
-async function openEngineCenter(){showEngineCenter()}
+function openEngineCenterPlaceholder(){/* openEngineCenter lives in engine-center.ts */}
 async function loadEngineSettings(){const epoch=shellEpoch,request=++engineSettingsRequest;try{const catalog=await api<EngineCatalog>('engines','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==engineSettingsRequest)return;engineCatalog=catalog;renderEngineCatalog();renderAccountCenter();populateEngineProfileForm();populateEngineOnboarding();void resumeEngineSetup();if(catalog.accounts&&element<HTMLDialogElement>('account-center-dialog').open)void refreshCodexAccounts(false,true)}catch(e){if(shellCurrent(epoch)&&request===engineSettingsRequest)element('engine-catalog').textContent=(e as Error).message}}
 function populateEngineProfileForm(){
  if(!engineCatalog)return;
