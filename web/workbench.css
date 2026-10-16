@@ -758,3 +758,20 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 .editor-line-label{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:12px}
 .editor-line-label input{width:90px;min-width:0;margin:0}
 .editor-file-reference{display:inline;padding:0 2px;border:0;border-radius:3px;background:var(--canvas);color:var(--accent);font:inherit;font-family:monospace;text-decoration:underline;overflow-wrap:anywhere;text-align:left}
+
+
+/* Unified engine and account center. */
+.engine-center-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.engine-center-tabs button{font-size:12px;padding:7px 12px}
+.engine-center-tabs button.selected{background:var(--tint);color:var(--accent);border-color:var(--accent)}
+.engine-center-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.engine-center-card{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--surface)}
+.engine-center-card h4{margin:0 0 8px;font-size:13px}
+.engine-center-card p{margin:0 0 10px;font-size:12px;line-height:1.5}
+.engine-center-envs{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.engine-center-envs label{font-size:12px}
+.engine-center-status-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0}
+.engine-center-cred{display:flex;gap:8px;align-items:baseline;font-size:12px;padding:4px 0}
+.engine-center-cred small{color:var(--muted)}
+.engine-center-card .actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.engine-center-card .actions button{font-size:12px;padding:6px 10px}
