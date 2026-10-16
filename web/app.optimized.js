@@ -3298,6 +3298,16 @@ function taskEngineMark(engine) {
         title: 'OpenCode',
         kind: 'opencode'
     };
+    if (engine === 'zcode') return {
+        letter: 'Z',
+        title: 'ZCode（Z.ai / GLM）',
+        kind: 'zcode'
+    };
+    if (engine === 'kimi') return {
+        letter: 'K',
+        title: 'Kimi Code',
+        kind: 'kimi'
+    };
     return {
         letter: 'X',
         title: 'Codex',

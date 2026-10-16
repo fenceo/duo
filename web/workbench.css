@@ -180,6 +180,8 @@ body.dock-dragging .dock.dock-target.hidden{display:none!important}
 .task-engine-harness{background:#22303c;color:#9fd0ff}
 .task-engine-mimo{background:#2c2438;color:#d4b8ff}
 .task-engine-opencode{background:#24332c;color:#a8e6c0}
+.task-engine-zcode{background:#2a2830;color:#e8c9ff}
+.task-engine-kimi{background:#302c22;color:#ffe2a8}
 .task-state-mark{font-size:11px;line-height:1;flex:none;width:12px;text-align:center}
 .task-state-mark.running{color:var(--accent);font-weight:700}
 .task-state-mark.ready{color:var(--muted)}

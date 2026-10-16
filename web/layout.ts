@@ -7,6 +7,8 @@ function taskEngineMark(engine?:string):{letter:string;title:string;kind:string}
  if(engine==='deepseek-harness')return {letter:'H',title:'DeepSeek Harness',kind:'harness'};
  if(engine==='mimo')return {letter:'M',title:'MiMo Code',kind:'mimo'};
  if(engine==='opencode')return {letter:'O',title:'OpenCode',kind:'opencode'};
+ if(engine==='zcode')return {letter:'Z',title:'ZCode（Z.ai / GLM）',kind:'zcode'};
+ if(engine==='kimi')return {letter:'K',title:'Kimi Code',kind:'kimi'};
  return {letter:'X',title:'Codex',kind:'codex'};
 }
 function taskStateMark(status?:string):{glyph:string;className:string;title:string}{

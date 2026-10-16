@@ -95,6 +95,8 @@ assert.match(list,/task-state-mark task-state-ready/);
 assert.match(list,/task-engine-mark task-engine-codex"[^>]*>X</);
 assert.match(layout.workspaceTaskList([task('a',{engine:'deepseek-harness',status:'running'})]),/task-state-mark task-state-running/);
 assert.match(layout.workspaceTaskList([task('a',{engine:'deepseek-harness',status:'running'})]),/task-engine-mark task-engine-harness"[^>]*>H</);
+assert.match(layout.workspaceTaskList([task('a',{engine:'zcode'})]),/task-engine-mark task-engine-zcode"[^>]*>Z</);
+assert.match(layout.workspaceTaskList([task('a',{engine:'kimi'})]),/task-engine-mark task-engine-kimi"[^>]*>K</);
 assert.match(layout.workspaceTaskList([task('a',{status:'failed'})]),/task-state-mark task-state-failed/);
 assert.match(list,/<span class="task-environment-name">WSL<\/span>/);
 const grouped=layout.workspaceTaskList([task('a'),task('c',{workspace:'/work/a'}),{...task('d'),environment:{id:'e2',name:'Windows',type:'local',host:'',distro:'',user:''},workspace:'/other'}]);
