@@ -9169,7 +9169,6 @@ async function saveHarnessAPI() {
 let engineCenterTab = 'codex';
 let engineCenterEnvPicks = {};
 let engineCenterSelectedCred = '';
-let engineCenterShowAddKey = false;
 function engineCenterCredList(engine, profiles) {
     const rows = profiles.map((p)=>`<button type="button" class="engine-center-cred ${engineCenterSelectedCred === p.id ? 'is-selected' : ''}" data-engine-center-cred="${escapeHTML(p.id)}"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></button>`).join('');
     const hint = engineCenterSelectedCred ? '<p class="muted">已选用：' + escapeHTML(profiles.find((p)=>p.id === engineCenterSelectedCred)?.name || '') + '</p>' : '<p class="muted">点选一条 Key/账号，再配置到环境。</p>';
@@ -9204,19 +9203,34 @@ function engineCenterSelectedEnvs(kind, engine) {
     ].map((x)=>x.dataset.engineCenterEnv.slice(prefix.length));
     return live;
 }
-function engineCenterAddKeyForm(engine) {
-    if (!engineCenterShowAddKey) return '';
-    return `<div class="engine-center-key-form">
-  <label>名称 <input id="engine-center-key-name" maxlength="60" placeholder="例如 DeepSeek 工作 Key"></label>
-  <label>服务预设 <select id="engine-center-key-provider">
-   <option value="deepseek">DeepSeek</option><option value="zai">Z.ai · GLM</option><option value="moonshot">Moonshot · Kimi</option>
-   <option value="minimax">MiniMax</option><option value="mimo">MiMo</option><option value="custom">自定义第三方</option>
-  </select></label>
-  <label>API 根地址 <input id="engine-center-key-url" type="url" placeholder="https://api.example.com/v1"></label>
-  <label>API key <input id="engine-center-key-secret" type="password" maxlength="16000" autocomplete="off"></label>
-  <label>模型 ID（可选） <input id="engine-center-key-model" maxlength="120" placeholder="添加后可再选"></label>
-  <div class="actions"><button type="button" class="primary" data-engine-center-save-key>保存 Key</button><button type="button" data-engine-center-cancel-key>取消</button></div>
- </div>`;
+function engineCenterAddKeyDialog() {
+    return `<dialog id="engine-center-key-dialog" class="engine-center-key-dialog">
+  <h3>添加 API Key</h3>
+  <div class="engine-center-key-form">
+   <label>名称 <input id="engine-center-key-name" maxlength="60" placeholder="例如 DeepSeek 工作 Key"></label>
+   <label>服务预设 <select id="engine-center-key-provider">
+    <option value="deepseek">DeepSeek</option><option value="zai">Z.ai · GLM</option><option value="moonshot">Moonshot · Kimi</option>
+    <option value="minimax">MiniMax</option><option value="mimo">MiMo</option><option value="custom">自定义第三方</option>
+   </select></label>
+   <label>API 根地址 <input id="engine-center-key-url" type="url" placeholder="https://api.example.com/v1"></label>
+   <label>API key <input id="engine-center-key-secret" type="password" maxlength="16000" autocomplete="off"></label>
+   <label>模型 ID（可选） <input id="engine-center-key-model" maxlength="120" placeholder="添加后可再选"></label>
+   <p id="engine-center-key-status" class="muted" role="status"></p>
+  </div>
+  <div class="dialog-footer"><button type="button" id="engine-center-key-cancel">取消</button><button type="button" class="primary" id="engine-center-key-save">保存 Key</button></div>
+ </dialog>`;
+}
+function openEngineCenterKeyDialog(engine) {
+    const dialog = element('engine-center-key-dialog');
+    if (!dialog) return;
+    input('engine-center-key-name').value = '';
+    input('engine-center-key-url').value = '';
+    input('engine-center-key-secret').value = '';
+    input('engine-center-key-model').value = '';
+    element('engine-center-key-status').textContent = '';
+    dialog.showModal();
+    button('engine-center-key-save').onclick = ()=>void engineCenterSaveKey(engine);
+    button('engine-center-key-cancel').onclick = ()=>dialog.close();
 }
 function renderEngineCenterPanel() {
     const host = element('engine-center-body');
@@ -9247,16 +9261,14 @@ function renderEngineCenterPanel() {
     <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key → 配置到环境</h4></div>
     <p class="muted">添加或点选 Key，勾选环境后一键写入该引擎的原生配置。列表不回显 Key。</p>
     <div id="engine-center-creds" class="engine-center-creds">${engineCenterCredList(current.id, profiles)}</div>
-    ${engineCenterAddKeyForm(current.id)}
     <div class="engine-center-envs">${engineCenterEnvCheckboxes('configure', current.id)}</div>
-    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">${engineCenterShowAddKey ? '收起表单' : '＋ 添加 API Key'}</button><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
+    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加 API Key</button><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
    </li>
   </ol>
   <p id="engine-center-status" class="engine-center-status" role="status"></p>
  </section>`;
     tabs?.querySelectorAll('[data-engine-center-tab]').forEach((b)=>b.onclick = ()=>{
             engineCenterTab = b.dataset.engineCenterTab;
-            engineCenterShowAddKey = false;
             renderEngineCenterPanel();
         });
     host.querySelectorAll('[data-engine-center-env]').forEach((cb)=>cb.onchange = ()=>{
@@ -9273,20 +9285,12 @@ function renderEngineCenterPanel() {
             engineCenterSelectedCred = b.dataset.engineCenterCred;
             renderEngineCenterPanel();
         }));
-    host.querySelector('[data-engine-center-add]')?.addEventListener('click', ()=>{
-        engineCenterShowAddKey = !engineCenterShowAddKey;
-        renderEngineCenterPanel();
-    });
-    host.querySelector('[data-engine-center-cancel-key]')?.addEventListener('click', ()=>{
-        engineCenterShowAddKey = false;
-        renderEngineCenterPanel();
-    });
-    host.querySelector('[data-engine-center-save-key]')?.addEventListener('click', ()=>void engineCenterSaveKey(current.id));
+    host.querySelector('[data-engine-center-add]')?.addEventListener('click', ()=>openEngineCenterKeyDialog(current.id));
     host.querySelector('[data-engine-center-open-accounts]')?.addEventListener('click', ()=>void openAccountCenter());
     void engineCenterRefreshStatus(current.id);
 }
 async function engineCenterSaveKey(engine) {
-    const status = element('engine-center-status');
+    const status = element('engine-center-key-status');
     const name = input('engine-center-key-name').value.trim(), provider = input('engine-center-key-provider').value;
     const presets = {
         deepseek: {
@@ -9333,7 +9337,7 @@ async function engineCenterSaveKey(engine) {
     try {
         const saved = await api('api-credentials', 'PUT', body);
         engineCenterSelectedCred = saved.id || '';
-        engineCenterShowAddKey = false;
+        element('engine-center-key-dialog')?.close();
         if (status) status.textContent = 'Key 已保存，可勾选环境后配置。';
         renderEngineCenterPanel();
     } catch (e) {
@@ -9420,7 +9424,8 @@ function installEngineCenter() {
     </main>
    </div>
   </div>
- </dialog>`);
+ </dialog>
+ ${engineCenterAddKeyDialog()}`);
     button('engine-center-close').onclick = ()=>element('engine-center-dialog').close();
     button('engine-center-detect').onclick = ()=>void refreshEngineStatus();
     button('engine-center-discover-ssh').onclick = ()=>void openDiscovery((endpoint)=>{

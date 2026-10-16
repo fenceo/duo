@@ -1,6 +1,6 @@
 {
  "name":"duo",
- "version":"0.34.47",
+ "version":"0.34.48",
  "private":true,
  "type":"module",
  "scripts":{"check":"tsc --noEmit","build":"node scripts/build.mjs"},
