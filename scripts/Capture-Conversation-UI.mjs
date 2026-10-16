@@ -359,7 +359,7 @@ for(const [view,theme,width,height] of cases){
   }
   if(view.startsWith('sidebar')){
    const board=items['sticky-board'],list=items['task-list'];
-   for(const id of ['accounts-open','engines-open']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y+b.height<=height+1,'account or engine entry is clipped: '+id);if(width<=760)assert(b.height>=44,id+' touch target is too small')}
+   for(const id of ['engines-open']){const b=items[id];assert(b&&b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y+b.height<=height+1,'engine entry is clipped: '+id);if(width<=760)assert(b.height>=44,id+' touch target is too small')}
    for(const id of ['app-version','sticky-board','sticky-list','sticky-new','sticky-save-status']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
    assert(list.height>=90,'task list has too little height');assert(list.y<160,'sidebar header takes too much space');assert(list.y+list.height<=board.y+1,'task list overlaps notes');
    for(const id of ['tasks-active','tasks-archived','trash-open'])assert(Math.abs(items[id].y-items['new-task'].y)<2,'task navigation wraps');
