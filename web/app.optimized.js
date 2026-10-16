@@ -9198,13 +9198,30 @@ function renderEngineCenterPanel() {
     const profiles = (engineCatalog?.profiles || []).filter((p)=>p.engine === current.id);
     const creds = (engineCatalog?.profiles || []).filter((p)=>p.engine === current.id);
     host.innerHTML = `<section class="engine-center-panel">
-  <header><h3>${escapeHTML(current.name)}</h3><p class="muted">${escapeHTML(current.description || '')}</p><p class="muted">${current.runnable ? '可用于 Duo 任务' : '适配器尚未开放运行'}</p></header>
-  <div class="engine-center-grid">
-   <div class="engine-center-card"><h4>1 · 安装 CLI</h4><p class="muted">${escapeHTML(current.install_description || '')}</p><div class="engine-center-envs">${engineCenterEnvCheckboxes('install', current.id)}</div><div class="actions"><button type="button" data-engine-center-install="${escapeHTML(current.id)}" ${current.auto_install ? '' : 'disabled'}>一键安装到勾选环境</button>${current.documentation_url ? '<a href="' + escapeHTML(current.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : ''}</div></div>
-   <div class="engine-center-card"><h4>2 · 账号 / API Key</h4><div id="engine-center-creds">${profiles.length ? profiles.map((p)=>`<div class="engine-center-cred"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></div>`).join('') : '<p class="muted">尚未添加账号或 Key。</p>'}</div><div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加账号 / Key</button><button type="button" data-engine-center-open-accounts>账号管理</button></div></div>
-   <div class="engine-center-card"><h4>3 · 一键配置到环境</h4><p class="muted">把已添加的账号或 API Key 写入勾选环境的原生配置。</p><div class="engine-center-envs">${engineCenterEnvCheckboxes('configure', current.id)}</div><div class="actions"><button type="button" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-api="${escapeHTML(current.id)}">配置 API</button></div></div>
-  </div>
-  <p id="engine-center-status" role="status"></p>
+  <header class="engine-center-panel-head">
+   <div class="engine-center-panel-title"><h3>${escapeHTML(current.name)}</h3><span class="engine-center-badge ${current.runnable ? 'is-ready' : 'is-pending'}">${current.runnable ? '可运行' : '未开放'}</span></div>
+   <p class="muted">${escapeHTML(current.description || '')}</p>
+  </header>
+  <ol class="engine-center-steps">
+   <li class="engine-center-step">
+    <div class="engine-center-step-head"><span class="engine-center-step-num">1</span><h4>安装 CLI</h4></div>
+    <p class="muted">${escapeHTML(current.install_description || '')}</p>
+    <div class="engine-center-envs">${engineCenterEnvCheckboxes('install', current.id)}</div>
+    <div class="actions"><button type="button" class="primary" data-engine-center-install="${escapeHTML(current.id)}" ${current.auto_install ? '' : 'disabled'}>一键安装到勾选环境</button>${current.documentation_url ? '<a href="' + escapeHTML(current.documentation_url) + '" target="_blank" rel="noopener noreferrer">文档 ↗</a>' : ''}</div>
+   </li>
+   <li class="engine-center-step">
+    <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key</h4></div>
+    <div id="engine-center-creds" class="engine-center-creds">${profiles.length ? profiles.map((p)=>`<div class="engine-center-cred"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></div>`).join('') : '<p class="muted">尚未添加账号或 Key。</p>'}</div>
+    <div class="actions"><button type="button" data-engine-center-add="${escapeHTML(current.id)}">＋ 添加账号 / Key</button><button type="button" data-engine-center-open-accounts>账号管理</button></div>
+   </li>
+   <li class="engine-center-step">
+    <div class="engine-center-step-head"><span class="engine-center-step-num">3</span><h4>配置到环境</h4></div>
+    <p class="muted">把已添加的账号或 API Key 写入勾选环境的原生配置。</p>
+    <div class="engine-center-envs">${engineCenterEnvCheckboxes('configure', current.id)}</div>
+    <div class="actions"><button type="button" class="primary" data-engine-center-configure="${escapeHTML(current.id)}">配置到勾选环境</button><button type="button" data-engine-center-api="${escapeHTML(current.id)}">配置 API</button></div>
+   </li>
+  </ol>
+  <p id="engine-center-status" class="engine-center-status" role="status"></p>
  </section>`;
     tabs?.querySelectorAll('[data-engine-center-tab]').forEach((b)=>b.onclick = ()=>{
             engineCenterTab = b.dataset.engineCenterTab;
@@ -9303,7 +9320,29 @@ function uidLike() {
     return 'job-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 function installEngineCenter() {
-    element('root').insertAdjacentHTML('beforeend', '<dialog id="engine-center-dialog" class="engine-center-dialog"><header class="engine-center-heading"><h2>环境与引擎</h2><button type="button" id="engine-center-close">关闭</button></header><p class="muted">默认 Windows；可检测 WSL、发现局域网 SSH 或手动添加。环境就绪后，新建任务、配置 API、切换账号都可选择对应环境。</p><section class="engine-center-envs-manage"><h3>执行环境</h3><div id="engine-center-env-list"></div><div class="actions"><button type="button" id="engine-center-detect">检测 WSL 与本机环境</button><button type="button" id="engine-center-discover-ssh">发现局域网 SSH</button><button type="button" id="engine-center-add-ssh">手动添加 SSH</button><button type="button" id="engine-center-add-wsl">添加 WSL</button></div></section><nav id="engine-center-tabs" class="engine-center-tabs"></nav><div id="engine-center-body"></div></dialog>');
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="engine-center-dialog" class="engine-center-dialog">
+  <div class="engine-center-shell">
+   <header class="engine-center-heading">
+    <div><h2>环境与引擎</h2><p class="muted">默认 Windows；可检测 WSL、发现局域网 SSH 或手动添加。环境就绪后，新建任务、配置 API、切换账号都可选择对应环境。</p></div>
+    <button type="button" id="engine-center-close" class="engine-center-close">关闭</button>
+   </header>
+   <div class="engine-center-layout">
+    <aside class="engine-center-side">
+     <div class="engine-center-side-head"><h3>执行环境</h3><div class="engine-center-side-actions">
+      <button type="button" id="engine-center-detect" title="检测本机 Windows 与 WSL">检测</button>
+      <button type="button" id="engine-center-add-wsl">＋ WSL</button>
+      <button type="button" id="engine-center-add-ssh">＋ SSH</button>
+      <button type="button" id="engine-center-discover-ssh" title="扫描局域网 SSH">发现</button>
+     </div></div>
+     <div id="engine-center-env-list" class="engine-center-env-list"></div>
+    </aside>
+    <main class="engine-center-main">
+     <nav id="engine-center-tabs" class="engine-center-tabs"></nav>
+     <div id="engine-center-body"></div>
+    </main>
+   </div>
+  </div>
+ </dialog>`);
     button('engine-center-close').onclick = ()=>element('engine-center-dialog').close();
     button('engine-center-detect').onclick = ()=>void refreshEngineStatus();
     button('engine-center-discover-ssh').onclick = ()=>void openDiscovery((endpoint)=>{
@@ -9320,7 +9359,10 @@ function renderEngineCenterEnvironments() {
     const host = element('engine-center-env-list');
     if (!host) return;
     const envs = settings?.config?.environments || [];
-    host.innerHTML = envs.map((e)=>`<div class="engine-center-env-row"><strong>${escapeHTML(e.name)}</strong><span>${escapeHTML(e.type.toUpperCase())}${e.distro ? ' · ' + escapeHTML(e.distro) : ''}${e.host ? ' · ' + escapeHTML(e.host) : ''}</span>${e.id === settings?.config?.default_environment ? '<span class="task-state-mark task-state-ready">默认</span>' : ''}</div>`).join('') || '<p class="muted">暂无环境，请添加。</p>';
+    host.innerHTML = envs.map((e)=>`<div class="engine-center-env-card ${e.id === settings?.config?.default_environment ? 'is-default' : ''}">
+  <div class="engine-center-env-name"><strong>${escapeHTML(e.name)}</strong>${e.id === settings?.config?.default_environment ? '<span class="engine-center-env-tag">默认</span>' : ''}</div>
+  <small>${escapeHTML(e.type.toUpperCase())}${e.distro ? ' · ' + escapeHTML(e.distro) : ''}${e.host ? ' · ' + escapeHTML(e.host) : ''}${e.user ? ' · ' + escapeHTML(e.user) : ''}</small>
+ </div>`).join('') || '<p class="muted">暂无环境，请添加。</p>';
 }
 function showEngineCenter() {
     installEngineCenter();
