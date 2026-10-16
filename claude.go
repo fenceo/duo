@@ -13,7 +13,7 @@ import (
 )
 
 func validEngine(engine string) bool {
-	return engine == "codex" || engine == "claude" || engine == "deepseek-harness" || engine == "mimo" || engine == "opencode"
+	return engine == "codex" || engine == "claude" || engine == "deepseek-harness" || engine == "mimo" || engine == "opencode" || engine == "zcode"
 }
 func engineName(engine string) string {
 	if engine == "opencode" {
@@ -28,6 +28,9 @@ func engineName(engine string) string {
 	if engine == "deepseek-harness" {
 		return "DeepSeek Harness"
 	}
+	if engine == "zcode" {
+		return "ZCode"
+	}
 	return "Codex"
 }
 func validEngineReasoning(engine, effort string) bool {
@@ -36,6 +39,9 @@ func validEngineReasoning(engine, effort string) bool {
 		return effort == ""
 	}
 	if engine == "mimo" {
+		return effort == ""
+	}
+	if engine == "zcode" {
 		return effort == ""
 	}
 	if engine == "codex" {
@@ -120,6 +126,9 @@ func engineCommand(c Config, t Task) (*exec.Cmd, error) {
 	}
 	if engine == "opencode" {
 		return nil, errors.New("此引擎必须通过原生 ACP 运行")
+	}
+	if engine == "zcode" {
+		return nil, errors.New("此引擎必须通过 ZCode 无提示词接口运行")
 	}
 	args := codexArgs(c, t)
 	binary := c.Codex

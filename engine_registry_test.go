@@ -31,11 +31,11 @@ func TestBuiltinEngineDefinitionsAndInstallPlan(t *testing.T) {
 		t.Fatal("OpenCode engine/reasoning admission is inconsistent")
 	}
 	zcode, ok := builtinEngine("zcode")
-	if !ok || zcode.Runnable || zcode.AutoInstall || !slices.Contains(zcode.Targets, "windows") {
-		t.Fatalf("ZCode must stay detection-only until its headless contract is verified: %+v", zcode)
+	if !ok || !zcode.Runnable || zcode.AutoInstall || !slices.Contains(zcode.Targets, "windows") {
+		t.Fatalf("ZCode must be runnable via headless JSON once its contract is verified: %+v", zcode)
 	}
-	if validEngine("zcode") {
-		t.Fatal("a detection-only engine must not be selectable for tasks")
+	if !validEngine("zcode") || validEngineReasoning("zcode", "high") || !validEngineReasoning("zcode", "") {
+		t.Fatal("ZCode engine/reasoning admission is inconsistent")
 	}
 	env := Environment{ID: "wsl", Name: "WSL", Type: "wsl", Codex: "codex", Workspaces: []string{"/work"}}
 	plan, err := engineInstallPlan(env, "codex")

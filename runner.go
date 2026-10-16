@@ -209,6 +209,9 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 	if t.Engine == "opencode" {
 		return runOpenCodeACP(ctx, c, t, input, emit)
 	}
+	if t.Engine == "zcode" {
+		return runZCodePrompt(ctx, c, t, input, emit)
+	}
 	cmd, commandErr := engineCommand(c, t)
 	if commandErr != nil {
 		return t.Session, "", commandErr

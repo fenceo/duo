@@ -71,7 +71,7 @@ function modeOptions(select:HTMLSelectElement,snapshot?:WorkMode){
 }
 function modesForEngine(engine?:string){if(engine==='mimo')return workCatalog.modes.filter(m=>['work','mimo:plan','full'].includes(m.id));return workCatalog.modes.filter(m=>m.id!=='mimo:plan'&&(engine==='deepseek-harness'?m.id==='harness:workspace'||m.id==='full'||!m.builtin&&m.id!=='work'&&m.id!=='plan'&&m.id!=='codex:auto'&&m.id!=='harness:read':m.id!=='harness:read'&&m.id!=='harness:workspace'))}
 function modeApproval(mode:WorkMode){return mode.approval||(mode.permission==='workspace'?'request':'never')}
-function modeSupportsEngine(mode:WorkMode,engine?:string){return (mode.id!=='mimo:plan'||engine==='mimo')&&(!['harness:read','harness:workspace'].includes(mode.id)||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(!['deepseek-harness','mimo','opencode'].includes(engine||'')||mode.allow_network!==false)}
+function modeSupportsEngine(mode:WorkMode,engine?:string){return (mode.id!=='mimo:plan'||engine==='mimo')&&(!['harness:read','harness:workspace'].includes(mode.id)||engine==='deepseek-harness')&&(engine==='codex'||modeApproval(mode)!=='auto')&&(!['deepseek-harness','mimo','opencode','zcode'].includes(engine||'')||mode.allow_network!==false)}
 function modeLabel(mode:WorkMode,engine?:string){
  if(engine==='opencode')return mode.permission==='read'?'只读 · 自动拒绝工具授权':mode.permission==='full'?'完全访问 · 工具请求仍单次确认':'工作区 · 工具请求单次确认';
  if(engine==='mimo')return mode.permission==='read'?'计划 · 原生只读代理':mode.permission==='full'?'完全访问 · 原生 allow 权限':'构建 · 原生工具审批';

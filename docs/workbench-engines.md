@@ -12,7 +12,7 @@ GPT 是 OpenAI 的模型系列，Codex 是调用模型、管理原生会话并�
 | MiMo Code | 官方 CLI 的 `mimo acp` | Windows / WSL / SSH 检测与一键安装 | 每环境配置 API 地址、协议、Key，验证后读取模型目录；不提供账号登录 | 原生 Build/Plan/allow 档位；支持批准或拒绝本次；授权设备后按轮挂载 Duo 硬件工具 |
 | OpenCode | 官方 CLI 的 `opencode acp` | Windows / WSL / SSH 检测与一键安装 | 引用环境中原生 `opencode auth login` 的登录状态；Duo 不保存 Key | 无原生档位；只读模式自动拒绝工具授权请求，其他模式单次批准或拒绝 |
 | Kimi Code | 预留 ACP 适配器 | 仅检测已配置 CLI，提供安装指引 | 引用已有原生配置 | 尚未开放任务运行 |
-| ZCode（Z.ai / GLM） | 官方 `zcode` CLI 或 ZCode 桌面内置 CLI | 仅检测 CLI；未开放安装 | 引用原生 `zcode login` 的 Z.AI OAuth 登录状态；Duo 不保存 Key | 尚未开放任务运行；当前请用 Claude Code 的 Z.ai/GLM 预设或 OpenCode 的原生供应商调用 GLM |
+| ZCode（Z.ai / GLM） | 官方 `zcode` 无提示词 JSON（`--prompt --json`） | 检测 PATH / ZCode 桌面内置 CLI；暂不提供一键安装 | 引用原生 `zcode login` 的 Z.AI OAuth 登录状态；Duo 不保存 Key | 工作区 / 只读计划 / 完全访问映射到 `--mode build/plan/yolo`；无原生单次审批 |
 
 ## 环境与账号
 
@@ -39,4 +39,4 @@ MiMo Code 已接入原生 ACP 的创建/恢复、流式输出、模型切换、�
 
 OpenCode 通过 `opencode acp` 接入：原生会话创建与恢复、模型切换（目录来自 `opencode models` 与本机显式配置）、附件与图片、单次审批、取消，以及 Duo 桌面/硬件工具。OpenCode 不提供 ACP 权限档位，因此只读任务以自动拒绝工具授权请求实现，其他任务在选择完全访问时也仍会为每次工具请求确认；这不等于操作系统沙箱或禁用联网保证。独立知识整理尚未接入。
 
-ZCode 是智谱 Z.ai / GLM 的官方 CLI，随 ZCode 桌面安装（Windows 上是 `resources/glm/zcode.cjs`，需要 Node；也可自行放置 `zcode` 到 PATH）。Duo 目前只检测它是否可用，不安装、不登录、不运行任务：它的自有协议、会话存储与 `--prompt/--json` 输出结构尚未在真实模型调用下核实，只有核实后才能按“已接入并验证”的标准开放运行。要用 GLM 完成任务，请用 Claude Code 的 Z.ai/GLM（Anthropic 兼容）预设，或在目标环境用 `opencode auth login` 配置 Z.ai 后选择 OpenCode，模型目录由 `opencode models` 读取，Duo 不保存 Key。
+ZCode 是智谱 Z.ai / GLM 的官方 CLI，随 ZCode 桌面安装（Windows 上是 `resources/glm/zcode.cjs`，需要 Node；也可自行放置 `zcode` 到 PATH）。Duo 通过 `zcode --prompt --json` 无提示词接口运行任务并续接 `sess_` 会话；权限映射为 plan/build/yolo。在目标环境执行 `zcode login` 后可用，Duo 不保存 Key。独立知识整理与单次工具审批尚未接入；需要完整交互审批时仍可使用 Claude Code 的 Z.ai/GLM 预设或 OpenCode。

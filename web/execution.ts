@@ -22,12 +22,12 @@ const modelPickers:Record<ModelPickerTarget,{root:string;button:string;label:str
  create:{root:'model-picker',button:'model-picker-button',label:'model-picker-label',menu:'model-menu',search:'model-search',list:'model-list'},
  task:{root:'task-model',button:'task-model-button',label:'task-model-label',menu:'task-model-menu',search:'task-model-search',list:'task-model-list'}
 };
-function taskEngineName(engine?:string){return engine==='opencode'?'OpenCode':engine==='mimo'?'MiMo Code':engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':'Codex'}
-function engineDefaultModel(env:Environment,engine:string){if(engine==='opencode')return '';if(engine==='mimo')return env.mimo_model||'';return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
+function taskEngineName(engine?:string){return engine==='opencode'?'OpenCode':engine==='mimo'?'MiMo Code':engine==='claude'?'Claude Code':engine==='deepseek-harness'?'DeepSeek Harness':engine==='zcode'?'ZCode':'Codex'}
+function engineDefaultModel(env:Environment,engine:string){if(engine==='opencode')return '';if(engine==='mimo')return env.mimo_model||'';if(engine==='zcode')return '';return engine==='claude'?(env.claude_model||''):engine==='deepseek-harness'?(env.harness_model||'deepseek-flash'):env.model}
 const harnessSessionHint='Harness 支持在任务空闲时切换模型；停止、闲置或服务重启后，发送消息会恢复原生会话。恢复依赖原执行环境和原生会话文件，Duo 不会静默清空上下文。权限可在下次发送时切换；更换工作目录请新建任务。';
 const harnessKnowledgeHint='Harness 用独立会话整理已有知识和最近最多 8 轮已完成对话的文本摘录，全部工具操作被拒绝，不改变当前聊天和权限；长文本可能截断，图片及工具记录不纳入。整理会调用当前模型，完成后可审阅并保存草稿。';
 function effortLevels(engine:string,model?:EngineModel):string[]{
- if(engine==='mimo'||engine==='opencode')return [];
+ if(engine==='mimo'||engine==='opencode'||engine==='zcode')return [];
  if(engine==='deepseek-harness')return (model?.reasoning_levels||[]).filter(level=>['off','low','high','max'].includes(level));
  if(model&&Array.isArray(model.reasoning_levels))return model.reasoning_levels;
  return engine==='claude'?['low','medium','high','xhigh','max']:['low','medium','high','xhigh'];
@@ -56,7 +56,7 @@ function validProbeModel(id:string){return !!id&&id!=='__custom__'&&id.length<=1
 function taskModelProbeMismatch(){
  if(!detail)return '';
  const previous=detail.task.environment,current=settings.config.environments.find(env=>env.id===previous.id),engine=detail.task.engine||'codex';
- const path=(env:Environment)=>engine==='mimo'?(env.mimo||'mimo'):engine==='opencode'?(env.opencode||'opencode'):engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex');
+ const path=(env:Environment)=>engine==='mimo'?(env.mimo||'mimo'):engine==='opencode'?(env.opencode||'opencode'):engine==='zcode'?(env.zcode||'zcode'):engine==='claude'?(env.claude||'claude'):engine==='deepseek-harness'?(env.harness||'dsh'):(env.codex||'codex');
  const target=(env:Environment)=>[env.id,env.type,env.distro||'',env.user||'',env.host||'',env.port||0,env.identity||''];
  const managed=current?.managed_tools?.[engine],sameTarget=!!current&&JSON.stringify(target(previous))===JSON.stringify(target(current));
  const followsUpdate=sameTarget&&managed?.path===path(current!)&&managed.previous_paths.includes(path(previous));

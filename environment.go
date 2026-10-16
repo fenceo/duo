@@ -30,6 +30,7 @@ type Environment struct {
 	MimoModel       string                       `json:"mimo_model,omitempty"`
 	MimoConfig      string                       `json:"mimo_config,omitempty"`
 	OpenCode        string                       `json:"opencode,omitempty"`
+	ZCode           string                       `json:"zcode,omitempty"`
 	HarnessModel    string                       `json:"harness_model"`
 	HarnessProvider string                       `json:"harness_provider"`
 	ClaudeModel     string                       `json:"claude_model"`
@@ -239,6 +240,7 @@ func runtimeConfig(c Config, e Environment) Config {
 	c.Harness = managedEnginePath(c, e, "deepseek-harness")
 	c.Mimo = managedEnginePath(c, e, "mimo")
 	c.OpenCode = managedEnginePath(c, e, "opencode")
+	c.ZCode = managedEnginePath(c, e, "zcode")
 	c.HarnessModel = e.HarnessModel
 	c.HarnessProvider = e.HarnessProvider
 	if c.Claude == "" {

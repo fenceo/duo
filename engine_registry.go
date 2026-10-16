@@ -108,12 +108,12 @@ func builtinEngineDefinitions() []EngineDefinition {
 			DocumentationURL:   "https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command",
 		},
 		{
-			ID: "zcode", Name: "ZCode", Description: "智谱 Z.ai / GLM 官方 CLI（ZCode 桌面内置 zcode.cjs），自有 ZCode Protocol 与会话存储",
-			Transport: "cli", Runnable: false, AutoInstall: false,
+			ID: "zcode", Name: "ZCode", Description: "智谱 Z.ai / GLM 官方 CLI（ZCode 桌面内置 zcode.cjs），无提示词 JSON 接口与原生会话续接",
+			Transport: "cli_json", Runnable: true, AutoInstall: false,
 			Targets:            []string{"windows", "wsl", "ssh"},
-			Capabilities:       []string{"headless_prompt", "resume", "session_store"},
+			Capabilities:       []string{"stream", "resume", "session_store"},
 			CredentialKinds:    []string{"native"},
-			InstallDescription: "当前只检测 ZCode CLI（PATH 上的 zcode，或 ZCode 桌面内置的 resources/glm/zcode.cjs）；配好账号后可改用 Claude Code 的 Z.ai/GLM 预设或 OpenCode 的原生供应商。",
+			InstallDescription: "检测 PATH 上的 zcode 或 ZCode 桌面内置 zcode.cjs；在目标环境执行 zcode login 后可运行任务。暂不提供一键安装。",
 			DocumentationURL:   "https://docs.z.ai/devpack/tool/others",
 		},
 		{

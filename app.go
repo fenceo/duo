@@ -286,6 +286,14 @@ func (a *App) submitWithOptions(id, input, kind, source string, options SubmitOp
 			return Run{}, errors.New("OpenCode 独立知识整理尚未接入")
 		}
 	}
+	if task.Engine == "zcode" {
+		if err := zcodeInvocation(Task{Mode: &mode}); err != nil {
+			return Run{}, err
+		}
+		if kind == "knowledge" {
+			return Run{}, errors.New("ZCode 独立知识整理尚未接入")
+		}
+	}
 	if task.Engine == "deepseek-harness" {
 		if _, err := harnessPolicy(Task{Mode: &mode, Workspace: task.Workspace}); err != nil {
 			return Run{}, err
