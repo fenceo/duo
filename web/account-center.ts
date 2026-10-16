@@ -11,6 +11,11 @@ function installCodexAccountInfo(){
  element('account-center-dialog').querySelector('.account-center-toolbar')!.insertAdjacentHTML('beforeend','<select id="account-plan-filter" aria-label="按套餐筛选"><option value="">全部套餐</option></select><select id="account-state-filter" aria-label="按账号状态筛选"><option value="">全部状态</option>'+Object.entries(accountStateLabels).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')+'</select><select id="account-tag-filter" aria-label="按标签筛选"><option value="">全部标签</option></select>');
  for(const id of ['account-plan-filter','account-state-filter','account-tag-filter'])element(id).onchange=renderAccountCenter;
  element('account-center-dialog').querySelector('.account-center-commandbar')!.insertAdjacentHTML('afterend','<div class="account-batchbar"><label><input type="checkbox" id="account-select-all"> 选择当前结果</label><span id="account-selected-count"></span><button type="button" id="account-refresh-info">刷新 Codex 账号</button><span id="account-info-progress" role="status"></span></div>');
+ try{
+  element('account-center-commandbar')!.insertAdjacentHTML('afterend','<div class="api-credential-vault"><h3>API Key 凭据库</h3><p class="muted">集中录入服务商 Key，可下发到多个引擎与 Windows / WSL / SSH 环境。列表不回显 Key，只显示指纹。</p><div id="api-credential-list"></div><div class="api-credential-form"><label for="api-cred-name">名称</label><input id="api-cred-name" maxlength="60" placeholder="例如 DeepSeek 工作 Key"><label for="api-cred-provider">服务预设</label><select id="api-cred-provider"><option value="deepseek">DeepSeek</option><option value="zai">Z.ai · GLM</option><option value="moonshot">Moonshot · Kimi</option><option value="minimax">MiniMax</option><option value="mimo">MiMo</option><option value="custom">自定义第三方</option></select><label for="api-cred-url">API 根地址</label><input id="api-cred-url" type="url" placeholder="https://api.example.com/v1"><label for="api-cred-key">API key</label><input id="api-cred-key" type="password" maxlength="16000" autocomplete="off"><label for="api-cred-model">默认模型 ID（可选）</label><input id="api-cred-model" maxlength="120"><button type="button" id="api-cred-save" class="primary">保存凭据</button><p id="api-cred-status" role="status"></p></div><div class="api-credential-apply"><label for="api-cred-apply-engine">下发到引擎</label><select id="api-cred-apply-engine"><option value="claude">Claude Code</option><option value="mimo">MiMo Code</option><option value="opencode">OpenCode</option></select><div id="api-cred-envs"></div><button type="button" id="api-cred-apply">应用到勾选环境</button><p id="api-cred-apply-status" role="status"></p></div></div>');
+  button('api-cred-save').onclick=()=>void saveApiCredential();
+  button('api-cred-apply').onclick=()=>void applyApiCredential();
+ }catch{/* Optional vault UI; account center must still mount. */}
  input('account-select-all').onchange=()=>{for(const id of accountVisibleIDs){if(input('account-select-all').checked)accountSelected.add(id);else accountSelected.delete(id)}renderAccountCenter()};
  button('account-refresh-info').onclick=()=>void refreshCodexAccounts(true);
  element('root').insertAdjacentHTML('beforeend','<dialog id="account-organization-dialog"><form id="account-organization-form"><h2>账号备注与标签</h2><label for="account-organization-note">备注</label><textarea id="account-organization-note" maxlength="1000" placeholder="例如用途、所属团队；不要填写密码或令牌"></textarea><label for="account-organization-tags">标签（逗号分隔，最多 12 个）</label><input id="account-organization-tags" maxlength="380"><p id="account-organization-status" role="status"></p><div class="dialog-footer"><button type="button" id="account-organization-cancel">取消</button><button type="submit" id="account-organization-save" class="primary">保存</button></div></form></dialog>');
@@ -119,6 +124,7 @@ function openAccountEditor(importing:boolean){
 }
 async function openAccountCenter(){
  const dialog=element<HTMLDialogElement>('account-center-dialog');if(!dialog.open)dialog.showModal();
+ try{void loadApiCredentials()}catch{/* vault optional */}
  await refreshAccountCenter();
 }
 async function refreshAccountCenter(){
@@ -190,4 +196,40 @@ async function removeAccountReference(){
  try{await api('engine-profiles/'+encodeURIComponent(id),'DELETE',{});if(!shellCurrent(epoch))return;element<HTMLDialogElement>('account-remove-dialog').close();invalidateModelCatalogs();await loadEngineSettings()}
  catch(e){if(shellCurrent(epoch))element('account-remove-status').textContent=(e as Error).message}
  finally{if(shellCurrent(epoch))setAccountMutationBusy(false)}
+}
+
+type ApiCredentialView={id:string;name:string;provider:string;api_protocol:string;base_url:string;auth_mode:string;model?:string;key_configured:boolean;key_fingerprint?:string};
+let apiCredentialSelected='';
+const apiCredentialPresets:Record<string,{url:string;protocol:string;auth:string}>={
+ deepseek:{url:'https://api.deepseek.com/v1',protocol:'openai-chat',auth:'api-key'},
+ zai:{url:'https://api.z.ai/api/anthropic',protocol:'anthropic-messages',auth:'auth-token'},
+ moonshot:{url:'https://api.moonshot.cn/v1',protocol:'openai-chat',auth:'api-key'},
+ minimax:{url:'https://api.minimaxi.com/v1',protocol:'openai-chat',auth:'auth-token'},
+ mimo:{url:'https://api.xiaomimimo.com/v1',protocol:'openai-chat',auth:'auth-token'},
+ custom:{url:'',protocol:'openai-chat',auth:'api-key'},
+};
+async function loadApiCredentials(){
+ try{
+  const data=await api<{credentials:ApiCredentialView[]}>('api-credentials');
+  const list=element('api-credential-list');
+  if(!list)return;
+  list.innerHTML=(data.credentials||[]).map(c=>`<div class="api-credential-row" data-cred="${escapeHTML(c.id)}"><strong>${escapeHTML(c.name)}</strong><small>${escapeHTML(c.provider)} · ${escapeHTML(c.base_url||'官方')}</small><code>${c.key_configured?'已保存 · '+escapeHTML(c.key_fingerprint||''):'未保存 Key'}</code><button type="button" data-cred-use="${escapeHTML(c.id)}">选用</button><button type="button" data-cred-del="${escapeHTML(c.id)}">删除</button></div>`).join('')||'<p class="muted">还没有 API 凭据。</p>';
+  list.querySelectorAll<HTMLButtonElement>('[data-cred-use]').forEach(b=>b.onclick=()=>{apiCredentialSelected=b.dataset.credUse!;element('api-cred-apply-status').textContent='已选用：'+(data.credentials.find(c=>c.id===apiCredentialSelected)?.name||'')});
+  list.querySelectorAll<HTMLButtonElement>('[data-cred-del]').forEach(b=>b.onclick=async()=>{if(!confirm('删除这条 API 凭据？'))return;try{await api('api-credentials/'+encodeURIComponent(b.dataset.credDel!),'DELETE');void loadApiCredentials()}catch(e){element('api-cred-status').textContent=(e as Error).message}});
+  const envs=element('api-cred-envs');
+  if(envs&&settings?.config?.environments)envs.innerHTML=settings.config.environments.map(e=>`<label class="check-row"><input type="checkbox" data-cred-env="${escapeHTML(e.id)}" checked> ${escapeHTML(e.name)}</label>`).join('');
+ }catch(e){const status=element('api-cred-status');if(status)status.textContent=(e as Error).message}
+}
+async function saveApiCredential(){
+ const name=input('api-cred-name').value.trim(),provider=input('api-cred-provider').value;
+ const preset=apiCredentialPresets[provider]||apiCredentialPresets.custom;
+ const body={name,provider,api_protocol:preset.protocol,base_url:input('api-cred-url').value.trim()||preset.url,auth_mode:preset.auth,api_key:input('api-cred-key').value,model:input('api-cred-model').value.trim()};
+ try{await api('api-credentials','PUT',body);input('api-cred-key').value='';element('api-cred-status').textContent='已保存。';void loadApiCredentials()}catch(e){element('api-cred-status').textContent=(e as Error).message}
+}
+async function applyApiCredential(){
+ if(!apiCredentialSelected){element('api-cred-apply-status').textContent='请先在列表中点「选用」一条凭据。';return}
+ const engine=input('api-cred-apply-engine').value;
+ const envs=[...document.querySelectorAll<HTMLInputElement>('[data-cred-env]:checked')].map(x=>x.dataset.credEnv!);
+ if(!envs.length){element('api-cred-apply-status').textContent='请勾选目标环境。';return}
+ try{const out=await api<{message:string}>('api-credentials/'+encodeURIComponent(apiCredentialSelected)+'/apply','POST',{engine,environments:envs});element('api-cred-apply-status').textContent=out.message||'已应用。'}catch(e){element('api-cred-apply-status').textContent=(e as Error).message}
 }

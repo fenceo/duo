@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	s.terminalRoutes(m)
 	s.discoveryRoutes(m)
 	s.codexApprovalRoutes(m)
+	s.apiCredentialRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/note/adopt", s.secure(s.adoptKnowledge))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		// v0.18.x update helpers expect the historical -portable health version
