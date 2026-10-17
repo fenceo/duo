@@ -78,6 +78,7 @@ Windows 安装版和便携版共用版本查询、来源约束、SHA-256 校验�
 
 使用 `dsh --profile acp` 的原生会话接口，已在本机 `@deepseek-ai/dsh 0.1.5-rc.2` 验证。
 启动握手要求 ACP v1 及 `session/resume`、`session/close` 能力；旧版接口不满足时明确要求升级。
+DeepSeek 官方建议 V4.1 搭配 `@deepseek-ai/dsh 0.2.1-rc.1+`（成本与输出长度优化）；Duo 的“更新 CLI”会安装官方最新版并验证后切换。Search / Fetch 工具单独计费，与模型 token 分开结算。
 模型路由保留 Windows 原生配置解析，使用 ACP 的 `session/set_config_option` 设置 provider/model，
 推理强度只接受当前模型声明的选项；更换模型会清除旧的推理覆盖。
 

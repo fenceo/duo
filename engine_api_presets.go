@@ -24,7 +24,7 @@ type EngineAPIPreset struct {
 var engineAPIPresets = []EngineAPIPreset{
 	{ID: "anthropic", Name: "Anthropic 官方 API", Kind: "official", Protocol: "anthropic-messages", BaseURL: "", AuthMode: "api-key", Hint: "Claude Code 官方入口；模型 ID 以订阅或控制台为准。"},
 	{ID: "openai", Name: "OpenAI 官方 API", Kind: "official", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", AuthMode: "api-key", Hint: "OpenAI Chat Completions；Codex 账号请用账号管理 OAuth。"},
-	{ID: "deepseek", Name: "DeepSeek 官方 API", Kind: "official", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1", AuthMode: "api-key", Hint: "官方 OpenAI 兼容接口，常用模型 deepseek-chat / deepseek-reasoner。", EngineHint: "deepseek-harness"},
+	{ID: "deepseek", Name: "DeepSeek 官方 API", Kind: "official", Protocol: "openai-chat", BaseURL: "https://api.deepseek.com/v1", AuthMode: "api-key", Hint: "官方 OpenAI 兼容接口；V4.1 系列可用 deepseek-v4.1-flash / deepseek-chat / deepseek-reasoner。Search / Fetch 工具单独计费。", EngineHint: "deepseek-harness"},
 	{ID: "zai", Name: "Z.ai · GLM", Kind: "official", Protocol: "anthropic-messages", BaseURL: "https://api.z.ai/api/anthropic", AuthMode: "auth-token", Hint: "智谱 GLM 官方 Anthropic 兼容入口；也可用 OpenAI 兼容地址。"},
 	{ID: "moonshot", Name: "Moonshot · Kimi", Kind: "official", Protocol: "openai-chat", BaseURL: "https://api.moonshot.cn/v1", AuthMode: "api-key", Hint: "Kimi 官方 OpenAI 兼容接口。", EngineHint: "kimi"},
 	{ID: "minimax", Name: "MiniMax 官方 API", Kind: "official", Protocol: "openai-chat", BaseURL: "https://api.minimaxi.com/v1", AuthMode: "auth-token", Hint: "MiniMax 开放平台；请按控制台选择国际或国内域名。"},

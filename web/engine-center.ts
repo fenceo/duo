@@ -49,7 +49,7 @@ function engineCenterAddKeyDialog():string{
    <div class="engine-center-key-models">
     <button type="button" id="engine-center-key-detect">检测可用模型</button>
     <label>模型 <select id="engine-center-key-model-select"><option value="">（先检测或手动填写）</option></select></label>
-    <label>或手动填写模型 ID <input id="engine-center-key-model" maxlength="120" placeholder="模型 ID"></label>
+    <label>或手动填写模型 ID <input id="engine-center-key-model" maxlength="120" placeholder="例如 deepseek-v4.1-flash"></label>
    </div>
    <p id="engine-center-key-status" class="muted" role="status"></p>
   </div>
