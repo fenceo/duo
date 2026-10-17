@@ -9203,6 +9203,38 @@ function engineCenterSelectedEnvs(kind, engine) {
     ].map((x)=>x.dataset.engineCenterEnv.slice(prefix.length));
     return live;
 }
+const engineCenterKeyPresets = {
+    deepseek: {
+        url: 'https://api.deepseek.com/v1',
+        protocol: 'openai-chat',
+        auth: 'api-key'
+    },
+    zai: {
+        url: 'https://api.z.ai/api/anthropic',
+        protocol: 'anthropic-messages',
+        auth: 'auth-token'
+    },
+    moonshot: {
+        url: 'https://api.moonshot.cn/v1',
+        protocol: 'openai-chat',
+        auth: 'api-key'
+    },
+    minimax: {
+        url: 'https://api.minimaxi.com/v1',
+        protocol: 'openai-chat',
+        auth: 'auth-token'
+    },
+    mimo: {
+        url: 'https://api.xiaomimimo.com/v1',
+        protocol: 'openai-chat',
+        auth: 'auth-token'
+    },
+    custom: {
+        url: '',
+        protocol: 'openai-chat',
+        auth: 'api-key'
+    }
+};
 function engineCenterAddKeyDialog() {
     return `<dialog id="engine-center-key-dialog" class="engine-center-key-dialog">
   <h3>添加 API Key</h3>
@@ -9212,9 +9244,13 @@ function engineCenterAddKeyDialog() {
     <option value="deepseek">DeepSeek</option><option value="zai">Z.ai · GLM</option><option value="moonshot">Moonshot · Kimi</option>
     <option value="minimax">MiniMax</option><option value="mimo">MiMo</option><option value="custom">自定义第三方</option>
    </select></label>
-   <label>API 根地址 <input id="engine-center-key-url" type="url" placeholder="https://api.example.com/v1"></label>
+   <label>API 根地址 <input id="engine-center-key-url" type="url" placeholder="选择预设后自动填写"></label>
    <label>API key <input id="engine-center-key-secret" type="password" maxlength="16000" autocomplete="off"></label>
-   <label>模型 ID（可选） <input id="engine-center-key-model" maxlength="120" placeholder="添加后可再选"></label>
+   <div class="engine-center-key-models">
+    <button type="button" id="engine-center-key-detect">检测可用模型</button>
+    <label>模型 <select id="engine-center-key-model-select"><option value="">（先检测或手动填写）</option></select></label>
+    <label>或手动填写模型 ID <input id="engine-center-key-model" maxlength="120" placeholder="模型 ID"></label>
+   </div>
    <p id="engine-center-key-status" class="muted" role="status"></p>
   </div>
   <div class="dialog-footer"><button type="button" id="engine-center-key-cancel">取消</button><button type="button" class="primary" id="engine-center-key-save">保存 Key</button></div>
@@ -9224,13 +9260,67 @@ function openEngineCenterKeyDialog(engine) {
     const dialog = element('engine-center-key-dialog');
     if (!dialog) return;
     input('engine-center-key-name').value = '';
-    input('engine-center-key-url').value = '';
     input('engine-center-key-secret').value = '';
     input('engine-center-key-model').value = '';
+    const select = element('engine-center-key-model-select');
+    if (select) select.innerHTML = '<option value="">（先检测或手动填写）</option>';
+    const provider = input('engine-center-key-provider');
+    provider.value = 'deepseek';
+    const applyPreset = ()=>{
+        const p = engineCenterKeyPresets[provider.value] || engineCenterKeyPresets.custom;
+        input('engine-center-key-url').value = p.url;
+    };
+    provider.onchange = applyPreset;
+    applyPreset();
     element('engine-center-key-status').textContent = '';
     dialog.showModal();
     button('engine-center-key-save').onclick = ()=>void engineCenterSaveKey(engine);
     button('engine-center-key-cancel').onclick = ()=>dialog.close();
+    button('engine-center-key-detect').onclick = ()=>void engineCenterDetectModels(engine);
+}
+async function engineCenterDetectModels(engine) {
+    const status = element('engine-center-key-status');
+    const key = input('engine-center-key-secret').value;
+    const url = input('engine-center-key-url').value.trim();
+    if (!key) {
+        if (status) status.textContent = '请先填写 API key。';
+        return;
+    }
+    const envs = settings?.config?.environments || [];
+    if (!envs.length) {
+        if (status) status.textContent = '请先添加执行环境。';
+        return;
+    }
+    const target = {
+        codex: 'claude',
+        claude: 'claude',
+        'deepseek-harness': 'mimo',
+        mimo: 'mimo',
+        opencode: 'opencode',
+        kimi: 'claude',
+        zcode: 'claude'
+    }[engine] || 'claude';
+    const provider = input('engine-center-key-provider').value;
+    const preset = engineCenterKeyPresets[provider] || engineCenterKeyPresets.custom;
+    if (status) status.textContent = '正在检测可用模型…';
+    try {
+        const view = await api('environments/' + encodeURIComponent(envs[0].id) + '/engines/' + target + '/api', 'GET');
+        const result = await api('environments/' + encodeURIComponent(envs[0].id) + '/engines/' + target + '/api/models', 'POST', {
+            target: view.target || '',
+            engine: target,
+            api_protocol: preset.protocol,
+            base_url: url,
+            api_key: key,
+            auth_mode: preset.auth,
+            model: ''
+        });
+        const select = element('engine-center-key-model-select');
+        const models = result.models || [];
+        select.innerHTML = '<option value="">（选择模型）</option>' + models.map((m)=>`<option value="${escapeHTML(m.id)}">${escapeHTML(m.name || m.id)}</option>`).join('');
+        if (status) status.textContent = models.length ? '检测到 ' + models.length + ' 个模型，请选择。' + (result.message ? ' ' + result.message : '') : result.message || '未检测到模型，可手动填写模型 ID。';
+    } catch (e) {
+        if (status) status.textContent = '检测失败：' + e.message + '；可手动填写模型 ID。';
+    }
 }
 function renderEngineCenterPanel() {
     const host = element('engine-center-body');
@@ -9292,39 +9382,8 @@ function renderEngineCenterPanel() {
 async function engineCenterSaveKey(engine) {
     const status = element('engine-center-key-status');
     const name = input('engine-center-key-name').value.trim(), provider = input('engine-center-key-provider').value;
-    const presets = {
-        deepseek: {
-            url: 'https://api.deepseek.com/v1',
-            protocol: 'openai-chat',
-            auth: 'api-key'
-        },
-        zai: {
-            url: 'https://api.z.ai/api/anthropic',
-            protocol: 'anthropic-messages',
-            auth: 'auth-token'
-        },
-        moonshot: {
-            url: 'https://api.moonshot.cn/v1',
-            protocol: 'openai-chat',
-            auth: 'api-key'
-        },
-        minimax: {
-            url: 'https://api.minimaxi.com/v1',
-            protocol: 'openai-chat',
-            auth: 'auth-token'
-        },
-        mimo: {
-            url: 'https://api.xiaomimimo.com/v1',
-            protocol: 'openai-chat',
-            auth: 'auth-token'
-        },
-        custom: {
-            url: '',
-            protocol: 'openai-chat',
-            auth: 'api-key'
-        }
-    };
-    const preset = presets[provider] || presets.custom;
+    const preset = engineCenterKeyPresets[provider] || engineCenterKeyPresets.custom;
+    const model = input('engine-center-key-model').value.trim() || input('engine-center-key-model-select').value;
     const body = {
         name,
         provider,
@@ -9332,7 +9391,7 @@ async function engineCenterSaveKey(engine) {
         base_url: input('engine-center-key-url').value.trim() || preset.url,
         auth_mode: preset.auth,
         api_key: input('engine-center-key-secret').value,
-        model: input('engine-center-key-model').value.trim()
+        model
     };
     try {
         const saved = await api('api-credentials', 'PUT', body);

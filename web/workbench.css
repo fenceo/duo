@@ -812,6 +812,8 @@ main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 .engine-center-key-form{display:grid;gap:8px;margin:0 0 12px}
 .engine-center-key-form label{display:flex;flex-direction:column;gap:4px;font-size:12px}
 .engine-center-key-form input,.engine-center-key-form select{min-height:34px;font-size:12px}
+.engine-center-key-models{display:grid;gap:6px;padding:8px;border:1px dashed var(--line);border-radius:8px}
+.engine-center-key-models>button{justify-self:start;font-size:12px;padding:6px 10px}
 .engine-center-key-dialog .dialog-footer{display:flex;justify-content:flex-end;gap:8px}
 @media(max-width:760px) {
  .engine-center-layout{grid-template-columns:minmax(0,1fr)}
