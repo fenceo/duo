@@ -85,6 +85,16 @@ func TestScanBindsVerifiedIdentityAndTask(t *testing.T) {
 	if count != 1 {
 		t.Fatal("menu not deduplicated", count)
 	}
+	if err = f.receiveMenu("menu2", "owner", "jianzuo.create"); err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	if err = a.store.QueryRow("SELECT text FROM outbox ORDER BY rowid DESC LIMIT 1").Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "请直接发送要做的事") {
+		t.Fatal("create menu reply:", text)
+	}
 }
 func TestCancelledScanCannotCommitLateResult(t *testing.T) {
 	a, f := mockSetup(t)

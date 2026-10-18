@@ -92,6 +92,13 @@ func (f *Feishu) restart() {
 	if !cfg.Enabled {
 		return
 	}
+	// Refresh the bot menu so existing installs pick up new entries (e.g. 新建任务)
+	// without re-registering. Failure must not block the message connection.
+	go func(c FeishuConfig) {
+		ctx, cancel := context.WithTimeout(f.app.ctx, 15*time.Second)
+		defer cancel()
+		_ = syncFeishuBotMenu(ctx, c)
+	}(cfg)
 	ctx, stop := context.WithCancel(f.app.ctx)
 	handler := dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 		if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Sender == nil || event.Event.Sender.SenderId == nil {

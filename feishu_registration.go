@@ -209,6 +209,28 @@ func (f *Feishu) runSetup(ctx context.Context, id string) {
 	})
 }
 
+func feishuBotMenus() []*appv7.BotMenuNode {
+	menus := []*appv7.BotMenuNode{}
+	for i, item := range []struct{ key, name string }{{"create", "新建任务"}, {"tasks", "我的任务"}, {"knowledge", "整理知识"}} {
+		menus = append(menus, appv7.NewBotMenuNodeBuilder().MenuId("jianzuo_"+item.key).Sort(i+1).DefaultName(item.name).I18nName(map[string]string{"zh_cn": item.name}).MenuContentType(2).EventKey("jianzuo."+item.key).Build())
+	}
+	return menus
+}
+
+// syncFeishuBotMenu refreshes the bot menu only, without re-publishing the app.
+// Safe to call on every Feishu restart so existing installs pick up new entries.
+func syncFeishuBotMenu(ctx context.Context, c FeishuConfig) error {
+	client := lark.NewClient(c.AppID, c.Secret)
+	ability, err := client.Application.V7.ApplicationAbility.Patch(ctx, appv7.NewPatchApplicationAbilityReqBuilder().AppId(c.AppID).Body(appv7.NewPatchApplicationAbilityReqBodyBuilder().Bot(appv7.NewAppAbilityBotBuilder().Enable(true).BotMenuEnable(true).BotMenus(feishuBotMenus()).BotMenuDisplayStrategy(1).Build()).Build()).Build())
+	if err != nil {
+		return err
+	}
+	if !ability.Success() {
+		return fmt.Errorf("menu rejected: %d", ability.Code)
+	}
+	return nil
+}
+
 func initializeFeishuMenu(ctx context.Context, c FeishuConfig) error {
 	client := lark.NewClient(c.AppID, c.Secret)
 	cfg, err := client.Application.V7.ApplicationConfig.Patch(ctx, appv7.NewPatchApplicationConfigReqBuilder().AppId(c.AppID).Body(appv7.NewPatchApplicationConfigReqBodyBuilder().Callback(appv7.NewAppConfigCallbackBuilder().CallbackType("websocket").AddCallbacks([]string{"card.action.trigger"}).Build()).Event(appv7.NewAppConfigEventBuilder().SubscriptionType("websocket").AddEvents([]string{"im.message.receive_v1", "application.bot.menu_v6"}).Build()).Build()).Build())
@@ -218,16 +240,8 @@ func initializeFeishuMenu(ctx context.Context, c FeishuConfig) error {
 	if !cfg.Success() {
 		return fmt.Errorf("config rejected: %d", cfg.Code)
 	}
-	menus := []*appv7.BotMenuNode{}
-	for i, item := range []struct{ key, name string }{{"create", "新建任务"}, {"tasks", "我的任务"}, {"knowledge", "整理知识"}} {
-		menus = append(menus, appv7.NewBotMenuNodeBuilder().MenuId("jianzuo_"+item.key).Sort(i+1).DefaultName(item.name).I18nName(map[string]string{"zh_cn": item.name}).MenuContentType(2).EventKey("jianzuo."+item.key).Build())
-	}
-	ability, err := client.Application.V7.ApplicationAbility.Patch(ctx, appv7.NewPatchApplicationAbilityReqBuilder().AppId(c.AppID).Body(appv7.NewPatchApplicationAbilityReqBodyBuilder().Bot(appv7.NewAppAbilityBotBuilder().Enable(true).BotMenuEnable(true).BotMenus(menus).BotMenuDisplayStrategy(1).Build()).Build()).Build())
-	if err != nil {
+	if err := syncFeishuBotMenu(ctx, c); err != nil {
 		return err
-	}
-	if !ability.Success() {
-		return fmt.Errorf("menu rejected: %d", ability.Code)
 	}
 	published, err := client.Application.V7.ApplicationPublish.Create(ctx, appv7.NewCreateApplicationPublishReqBuilder().AppId(c.AppID).Body(appv7.NewCreateApplicationPublishReqBodyBuilder().MobileDefaultAbility("bot").PcDefaultAbility("bot").Remark("Duo首次初始化").Changelog("启用私聊任务与机器人菜单").Build()).Build())
 	if err != nil {
