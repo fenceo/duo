@@ -27,13 +27,13 @@ func initializePortable(dir string, reader io.Reader) error {
 		return e
 	}
 	if strings.TrimSpace(v.Password) != v.Password || len(v.Password) < 6 || len(v.Password) > 72 {
-		return errors.New("密码须为 6�?2 字节，且首尾没有空白")
+		return errors.New("密码须为 6–72 字节，且首尾没有空白")
 	}
 	if _, e := os.Stat(filepath.Join(dir, "jianzuo.db")); !os.IsNotExist(e) {
-		return errors.New("数据目录已经初始化，不会覆盖密码或任�?)
+		return errors.New("数据目录已经初始化，不会覆盖密码或任务")
 	}
 	if v.Config.Feishu.Enabled || v.Config.Feishu.Secret != "" {
-		return errors.New("首次初始化不导入飞书凭据，请启动后扫码配�?)
+		return errors.New("首次初始化不导入飞书凭据，请启动后扫码配置")
 	}
 	// The first-run UI can finish with only a password while discovery is
 	// running. Keep that minimal initialization local by default; the user can
