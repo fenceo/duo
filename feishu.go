@@ -186,7 +186,7 @@ func (f *Feishu) receive(messageID, sender, chat, text string) error {
 		if e := f.app.store.set("feishu_chat", chat); e != nil {
 			return e
 		}
-		return f.enqueue(chat, "已配对Duo。发送 /任务 查看网页任务；发送 /新建 标题 | 要求 创建任务。")
+		return f.enqueue(chat, "已配对Duo。发送 /任务 查看网页任务；直接发要求即可新建任务，或发送 /新建 标题 | 要求。")
 	}
 	if c.Feishu.Owner != sender {
 		return nil
@@ -232,40 +232,26 @@ func (f *Feishu) handle(chat, text string) (string, error) {
 	a := f.app
 	id := a.bound(chat)
 	text = strings.TrimSpace(text)
-	switch text {
-	case "我的任务", "查看任务", "任务列表":
-		text = "/任务"
-	case "继续", "继续任务":
-		text = "/继续"
-	}
 	command, arg, _ := strings.Cut(text, " ")
 	arg = strings.TrimSpace(arg)
 	switch command {
-	case "/帮助":
-		return "直接发消息：继续当前任务\n/新建 标题 | 要求\n/任务：列出任务\n/查看 任务ID：查看进展\n/切换 任务ID：选择已有任务\n/继续 [任务ID或要求]\n/停止：停止当前任务及排队消息\n/知识：整理当前任务知识（网页检查后保存）", nil
-	case "/任务":
+	case "我的任务", "查看任务", "任务列表", "/任务":
 		return f.taskList(chat, arg)
-	case "/查看", "/切换":
-		target, err := f.findTask(arg, id)
-		if err != nil {
-			return err.Error(), nil
-		}
-		if command == "/切换" {
-			if err = a.bind(chat, target.ID); err != nil {
-				return "", err
-			}
-			return "已切换到：" + target.Title + "\n" + f.taskSummary(target) + "\n直接发送要求即可继续。", nil
-		}
-		return f.taskSummary(target) + "\n切换到此任务：/切换 " + target.ID[:8], nil
-	case "/新建":
+	case "帮助", "help", "/help", "/帮助":
+		return "直接发消息：未选任务时自动新建并执行；已选任务时继续当前任务\n/新建 要求（自动取标题）\n/新建 标题 | 要求\n/任务：列出任务\n/查看 任务ID：查看进展\n/切换 任务ID：选择已有任务\n/继续 [任务ID或要求]\n/停止：停止当前任务及排队消息\n/知识：整理当前任务知识（网页检查后保存）", nil
+	case "新建", "新建任务", "新任务", "/新建任务", "/新任务", "/新建":
 		if arg == "" {
-			return "用法：/新建 标题 | 要求", nil
+			return "请直接发送要做的事，我会新建任务并开始。\n也可指定标题：/新建 标题 | 要求", nil
 		}
 		title, input, ok := strings.Cut(arg, "|")
 		if !ok {
 			input = title
+			title = feishuAutoTitle(title)
 		}
 		c := a.config.get()
+		if len(c.Workspaces) == 0 {
+			return "尚未配置工作目录。请先在网页“设置 → 数据与存储”或任务页添加工作目录，再从飞书新建任务。", nil
+		}
 		model := c.Model
 		if env, err := c.environment(""); err == nil {
 			switch env.DefaultEngine {
@@ -285,22 +271,34 @@ func (f *Feishu) handle(chat, text string) (string, error) {
 			return "", e
 		}
 		if strings.TrimSpace(input) == "" {
-			return "已创建：" + t.Title, nil
+			return "已创建：" + t.Title + "\n直接发送要求即可开始。", nil
 		}
 		_, e = a.submit(t.ID, input, "chat", "feishu")
 		return "", e
-	case "/停止":
+	case "/查看", "/切换":
+		target, err := f.findTask(arg, id)
+		if err != nil {
+			return err.Error(), nil
+		}
+		if command == "/切换" {
+			if err = a.bind(chat, target.ID); err != nil {
+				return "", err
+			}
+			return "已切换到：" + target.Title + "\n" + f.taskSummary(target) + "\n直接发送要求即可继续。", nil
+		}
+		return f.taskSummary(target) + "\n切换到此任务：/切换 " + target.ID[:8], nil
+	case "停止", "停止任务", "/停止":
 		if id == "" {
 			return "尚未选择任务，请发送 /任务。", nil
 		}
 		return "已请求停止当前任务。", a.stop(id)
-	case "/知识":
+	case "知识", "整理知识", "/知识":
 		if id == "" {
 			return "尚未选择任务，请发送 /任务。", nil
 		}
 		_, e := a.knowledge(id, "feishu")
 		return "", e
-	case "/继续":
+	case "继续", "继续任务", "/继续":
 		if arg != "" {
 			if target, err := f.findTask(arg, ""); err == nil {
 				if err = a.bind(chat, target.ID); err != nil {
@@ -328,11 +326,58 @@ func (f *Feishu) handle(chat, text string) (string, error) {
 		return "", nil
 	}
 	if id == "" {
-		list, err := f.taskList(chat, "")
-		return "尚未选择任务。请先切换已有任务；新任务请发送 /新建 标题 | 要求。\n" + list, err
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "停止" || trimmed == "停止任务" || strings.HasPrefix(trimmed, "继续") || strings.HasPrefix(trimmed, "请继续") {
+			list, err := f.taskList(chat, "")
+			return "尚未选择任务。请先切换已有任务，或发送 /新建 开始新任务。\n" + list, err
+		}
+		c := a.config.get()
+		if len(c.Workspaces) == 0 {
+			list, err := f.taskList(chat, "")
+			return "尚未选择任务，且未配置工作目录。请先在网页添加工作目录。\n" + list, err
+		}
+		model := c.Model
+		if env, err := c.environment(""); err == nil {
+			switch env.DefaultEngine {
+			case "claude":
+				model = env.ClaudeModel
+			case "deepseek-harness":
+				model = env.HarnessModel
+			case "mimo":
+				model = env.MimoModel
+			}
+		}
+		t, e := a.create(feishuAutoTitle(text), c.Workspaces[0], model)
+		if e != nil {
+			return "", e
+		}
+		if e = a.bind(chat, t.ID); e != nil {
+			return "", e
+		}
+		_, e = a.submit(t.ID, text, "chat", "feishu")
+		if e != nil {
+			return "", e
+		}
+		return "已新建任务：" + t.Title + "，开始执行。", nil
 	}
 	_, e := a.submit(id, text, "chat", "feishu")
 	return "", e
+}
+func feishuAutoTitle(text string) string {
+	title := strings.TrimSpace(text)
+	title = strings.ReplaceAll(title, "\r", " ")
+	title = strings.ReplaceAll(title, "\n", " ")
+	for strings.Contains(title, "  ") {
+		title = strings.ReplaceAll(title, "  ", " ")
+	}
+	runes := []rune(title)
+	if len(runes) > 40 {
+		title = string(runes[:40]) + "…"
+	}
+	if title == "" {
+		return "新任务"
+	}
+	return title
 }
 func (f *Feishu) enqueue(chat, text string) error {
 	runes := []rune(text)
@@ -411,7 +456,7 @@ func (f *Feishu) outboxLoop() {
 }
 
 func (f *Feishu) receiveMenu(eventID, sender, key string) error {
-	command := map[string]string{"jianzuo.tasks": "/任务", "jianzuo.continue": "/继续", "jianzuo.knowledge": "/知识"}[key]
+	command := map[string]string{"jianzuo.create": "/新建", "jianzuo.tasks": "/任务", "jianzuo.continue": "/继续", "jianzuo.knowledge": "/知识"}[key]
 	if command == "" || eventID == "" || sender == "" || sender != f.app.config.get().Feishu.Owner {
 		return nil
 	}
@@ -448,7 +493,7 @@ func (f *Feishu) taskList(chat, query string) (string, error) {
 		lines = append(lines, t.Title+" ["+feishuTaskStatus(t.Status)+"]"+mark, "查看：/查看 "+t.ID[:8], "选择：/切换 "+t.ID[:8], "")
 	}
 	if count == 0 {
-		lines = append(lines, "没有匹配任务。新建：/新建 标题 | 要求")
+		lines = append(lines, "没有匹配任务。直接发送要求即可新建任务，或 /新建 标题 | 要求")
 	}
 	lines = append(lines, "选择任务后直接发送要求。也可发送 /继续 任务ID。")
 	return strings.Join(lines, "\n"), nil

@@ -219,7 +219,7 @@ func initializeFeishuMenu(ctx context.Context, c FeishuConfig) error {
 		return fmt.Errorf("config rejected: %d", cfg.Code)
 	}
 	menus := []*appv7.BotMenuNode{}
-	for i, item := range []struct{ key, name string }{{"tasks", "我的任务"}, {"knowledge", "整理知识"}} {
+	for i, item := range []struct{ key, name string }{{"create", "新建任务"}, {"tasks", "我的任务"}, {"knowledge", "整理知识"}} {
 		menus = append(menus, appv7.NewBotMenuNodeBuilder().MenuId("jianzuo_"+item.key).Sort(i+1).DefaultName(item.name).I18nName(map[string]string{"zh_cn": item.name}).MenuContentType(2).EventKey("jianzuo."+item.key).Build())
 	}
 	ability, err := client.Application.V7.ApplicationAbility.Patch(ctx, appv7.NewPatchApplicationAbilityReqBuilder().AppId(c.AppID).Body(appv7.NewPatchApplicationAbilityReqBodyBuilder().Bot(appv7.NewAppAbilityBotBuilder().Enable(true).BotMenuEnable(true).BotMenus(menus).BotMenuDisplayStrategy(1).Build()).Build()).Build())

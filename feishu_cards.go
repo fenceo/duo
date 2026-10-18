@@ -91,6 +91,10 @@ func (f *Feishu) taskListCard(chat, query string, offset int) (map[string]any, e
 	if len(nav) > 0 {
 		elements = append(elements, map[string]any{"tag": "action", "actions": nav})
 	}
+	if create, e := f.cardButton(chat, "", "create", "＋ 新建任务", "", 0); e == nil {
+		create["type"] = "primary_text"
+		elements = append(elements, map[string]any{"tag": "action", "actions": []any{create}})
+	}
 	elements = append(elements, f.panelLinks("")...)
 	return taskCard(fmt.Sprintf("我的任务 · 共 %d 项", len(tasks)), elements), nil
 }
@@ -267,6 +271,11 @@ func (f *Feishu) applyCardAction(chat, token string) (*cb.CardActionTriggerRespo
 	message := "已打开"
 	if action == "list" {
 		card, err = f.taskListCard(chat, query, offset)
+	} else if action == "create" {
+		if err := f.enqueue(chat, "请直接发送要做的事，我会新建任务并开始。\n也可指定标题：/新建 标题 | 要求"); err != nil {
+			return cardToast("error", "操作未完成，请重试"), nil
+		}
+		return cardToast("info", "已发送新建说明"), nil
 	} else {
 		var task Task
 		task, err = f.app.store.task(taskID)
