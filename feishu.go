@@ -463,6 +463,24 @@ func (f *Feishu) outboxLoop() {
 }
 
 func (f *Feishu) receiveMenu(eventID, sender, key string) error {
+	if key == "jianzuo.menu" {
+		if eventID == "" || sender == "" || sender != f.app.config.get().Feishu.Owner {
+			return nil
+		}
+		chat := f.app.store.setting("feishu_chat")
+		if chat == "" {
+			return nil
+		}
+		_, err := f.app.store.Exec("INSERT OR IGNORE INTO seen VALUES(?,?)", "menu:"+eventID, now())
+		if err != nil {
+			return err
+		}
+		card, err := f.taskActionsCard(chat)
+		if err != nil {
+			return err
+		}
+		return f.enqueueCard(chat, card)
+	}
 	command := map[string]string{"jianzuo.create": "/新建", "jianzuo.tasks": "/任务", "jianzuo.continue": "/继续", "jianzuo.knowledge": "/知识"}[key]
 	if command == "" || eventID == "" || sender == "" || sender != f.app.config.get().Feishu.Owner {
 		return nil

@@ -211,7 +211,7 @@ func (f *Feishu) runSetup(ctx context.Context, id string) {
 
 func feishuBotMenus() []*appv7.BotMenuNode {
 	menus := []*appv7.BotMenuNode{}
-	for i, item := range []struct{ key, name string }{{"create", "新建任务"}, {"tasks", "我的任务"}, {"knowledge", "整理知识"}} {
+	for i, item := range []struct{ key, name string }{{"menu", "任务操作"}, {"create", "新建任务"}, {"tasks", "我的任务"}} {
 		menus = append(menus, appv7.NewBotMenuNodeBuilder().MenuId("jianzuo_"+item.key).Sort(i+1).DefaultName(item.name).I18nName(map[string]string{"zh_cn": item.name}).MenuContentType(2).EventKey("jianzuo."+item.key).Build())
 	}
 	return menus

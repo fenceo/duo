@@ -98,6 +98,63 @@ func (f *Feishu) taskListCard(chat, query string, offset int) (map[string]any, e
 	elements = append(elements, f.panelLinks("")...)
 	return taskCard(fmt.Sprintf("我的任务 · 共 %d 项", len(tasks)), elements), nil
 }
+
+// taskActionsCard is the dynamic "任务操作" menu surface. Feishu's bot menu is a
+// static app-level config, so per-task menus are delivered as a card whose
+// buttons follow the current binding state.
+func (f *Feishu) taskActionsCard(chat string) (map[string]any, error) {
+	id := f.app.bound(chat)
+	elements := []any{}
+	add := func(specs ...struct{ action, label, query string }) {
+		buttons := []any{}
+		for _, b := range specs {
+			btn, e := f.cardButton(chat, id, b.action, b.label, b.query, 0)
+			if e != nil {
+				continue
+			}
+			if b.action == "continue" || b.action == "create" {
+				btn["type"] = "primary_text"
+			}
+			buttons = append(buttons, btn)
+		}
+		if len(buttons) > 0 {
+			elements = append(elements, map[string]any{"tag": "action", "actions": buttons})
+		}
+	}
+	if id == "" {
+		elements = append(elements, cardLine("当前未进入任务。直接发送要求即可新建任务，或从列表选择已有任务。"))
+		add(struct{ action, label, query string }{"create", "＋ 新建任务", ""},
+			struct{ action, label, query string }{"list", "任务列表", ""})
+		elements = append(elements, f.panelLinks("")...)
+		return taskCard("任务操作 · 未进入任务", elements), nil
+	}
+	t, err := f.app.store.task(id)
+	if err != nil {
+		return f.taskListCard(chat, "", 0)
+	}
+	elements = append(elements, cardLine("当前任务："+t.Title+" ["+feishuTaskStatus(t.Status)+"]"))
+	runs, err := f.app.store.runs(t.ID)
+	if err != nil {
+		return nil, err
+	}
+	busy := t.Status == "running" || t.Status == "queued"
+	lastRun := ""
+	if len(runs) > 0 {
+		lastRun = runs[len(runs)-1].ID
+	}
+	if busy {
+		add(struct{ action, label, query string }{"stop", "停止执行", lastRun})
+	} else {
+		add(struct{ action, label, query string }{"continue", "▶ 继续执行", ""})
+	}
+	add(struct{ action, label, query string }{"view", "查看详情", ""},
+		struct{ action, label, query string }{"knowledge", "整理知识", ""})
+	add(struct{ action, label, query string }{"list", "切换任务", ""},
+		struct{ action, label, query string }{"exit", "退出任务", ""})
+	elements = append(elements, cardLine("直接发送要求即可继续当前任务。"))
+	elements = append(elements, f.panelLinks(t.ID, "")...)
+	return taskCard("任务操作 · 已进入任务", elements), nil
+}
 func (f *Feishu) taskDetailCard(chat string, t Task) (map[string]any, error) {
 	selected := f.app.bound(chat) == t.ID
 	banner := feishuTaskStatus(t.Status)
@@ -271,6 +328,8 @@ func (f *Feishu) applyCardAction(chat, token string) (*cb.CardActionTriggerRespo
 	message := "已打开"
 	if action == "list" {
 		card, err = f.taskListCard(chat, query, offset)
+	} else if action == "menu" {
+		card, err = f.taskActionsCard(chat)
 	} else if action == "create" {
 		if err := f.enqueue(chat, "请直接发送要做的事，我会新建任务并开始。\n也可指定标题：/新建 标题 | 要求"); err != nil {
 			return cardToast("error", "操作未完成，请重试"), nil
@@ -344,6 +403,14 @@ func (f *Feishu) applyCardAction(chat, token string) (*cb.CardActionTriggerRespo
 				}
 				err = f.app.stop(task.ID)
 				message = "已请求停止执行"
+			case "knowledge":
+				if f.app.bound(chat) != task.ID {
+					return cardToast("info", "当前任务已改变，请在当前任务卡片中操作"), nil
+				}
+				_, err = f.app.knowledge(task.ID, "feishu")
+				if err == nil {
+					return cardToast("success", "已请求整理当前任务知识，稍后查看结果"), nil
+				}
 			case "view":
 			default:
 				err = errors.New("unknown action")
