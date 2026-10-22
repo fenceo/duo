@@ -1,10 +1,52 @@
 import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
 import {runInContext} from 'node:vm';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {stripTypeScriptTypes} from 'node:module';
 const {ctx,document}=await createWebShellFixture(),run=code=>runInContext(code,ctx),el=id=>document.getElementById(id);
 const view={environment_id:'fixture',target:'fixture-target',api:'openai-completions',base_url:'https://api.example/v1',model:'fixture-model',key_configured:false};
 run(`engineCatalog={engines:[{id:'deepseek-harness',name:'Harness',targets:['wsl'],runnable:true}],profiles:[],active_profile:{}};renderEngineCatalog()`);
 assert(el('engine-catalog').querySelector('[data-harness-api="fixture"]'));
+// Exercise the visible engine center, not just its older hidden catalog.
+run(stripTypeScriptTypes(await readFile(new URL('../web/engine-center.ts',import.meta.url),'utf8'),{mode:'transform'}));
+run(`installEngineCenter();engineCenterTab='deepseek-harness';settings.config.environments.push({...settings.config.environments[0],id:'fixture second & " API',name:'Second <WSL>'});engineCatalog.engines.push({id:'codex',name:'Codex',targets:['wsl'],runnable:true});engineCatalog.profiles=[{id:'separate-harness',name:'Separate Harness account',environment_id:'fixture',engine:'deepseek-harness',kind:'dsh_home',reference:'/fixture/harness-profile',created:0,updated:0}]`);
+const settle=async()=>{for(let n=0;n<8;n++)await new Promise(resolve=>setImmediate(resolve))};
+const catalog=run('engineCatalog');let statusReads=0;
+ctx.api=async(path,method,body,signal)=>{
+ if(path==='engines')return catalog;
+ if(path==='engine-setup')return [];
+ assert.equal(path,'engine-status');assert.equal(method,'GET');assert.equal(signal,run('shellController.signal'));statusReads++;
+ return {items:[{environment_id:'fixture',harness:{state:'ready',path:'fixture-dsh'}}]};
+};
+ctx.showEngineCenter();await settle();assert.equal(statusReads,1,el('engine-catalog').textContent);await settle();assert.equal(statusReads,1);
+assert.equal(document.querySelectorAll('#engine-center-dialog').length,1);
+run('renderEngineCenterPanel();renderEngineCenterPanel()');
+el('engine-center-tabs').querySelector('[data-engine-center-tab="codex"]').dispatchEvent(new ctx.Event('click'));
+el('engine-center-tabs').querySelector('[data-engine-center-tab="deepseek-harness"]').dispatchEvent(new ctx.Event('click'));
+await settle();assert.equal(statusReads,1);
+const center=el('engine-center-body'),centerButtons=()=>Array.from(center.querySelectorAll('[data-engine-center-harness-api]'));
+assert.equal(centerButtons().length,2);assert.match(center.textContent,/独立 Harness 账号目录仍使用各自配置/);
+assert(center.querySelector('[data-engine-center-open-accounts]'));assert.match(el('engine-center-creds').textContent,/Separate Harness account/);
+let resolveClosedStatus;ctx.api=async()=>new Promise(resolve=>resolveClosedStatus=resolve);
+const closedStatus=ctx.engineCenterRefreshStatus();el('engine-center-dialog').close();
+const closedHTML=center.innerHTML,closedStatuses=run('JSON.stringify(engineEnvironmentStatuses)');
+resolveClosedStatus({items:[]});await closedStatus;assert.equal(center.innerHTML,closedHTML);assert.equal(run('JSON.stringify(engineEnvironmentStatuses)'),closedStatuses);
+const failedCatalogPaths=[];ctx.api=async(path)=>{failedCatalogPaths.push(path);throw Error('fixture catalog offline')};
+ctx.showEngineCenter();await settle();assert.deepEqual(failedCatalogPaths,['engines']);assert.equal(statusReads,1);assert.equal(center.innerHTML,closedHTML);
+assert.equal(document.querySelectorAll('#engine-center-dialog').length,1);el('engine-center-dialog').close();
+let centerReads=[];
+ctx.api=async(path,method)=>{centerReads.push({path,method});return {...view,environment_id:'fixture second & " API'}};
+centerButtons()[1].dispatchEvent(new ctx.Event('click'));
+for(let n=0;n<3;n++)await new Promise(resolve=>setImmediate(resolve));
+assert.deepEqual(centerReads,[{path:'environments/'+encodeURIComponent('fixture second & " API')+'/harness-api',method:'GET'}]);
+assert(el('harness-api-dialog').open);assert.match(el('harness-api-target').textContent,/Second <WSL>/);el('harness-api-dialog').close();
+for(const busy of ['engineSetupBusy','harnessAPIBusy','environmentAPIBusy','accountImportBusy','accountSyncBusy']){
+ run(`${busy}=true;renderEngineCenterPanel()`);assert(centerButtons().every(b=>b.disabled));
+ centerButtons()[0].dispatchEvent(new ctx.Event('click'));assert.equal(centerReads.length,1);run(`${busy}=false`);
+}
+run(`engineCenterTab='codex';renderEngineCenterPanel()`);
+assert.equal(centerButtons().length,0);assert(center.querySelector('[data-engine-center-configure]'));
+run(`settings.config.environments.pop();engineCatalog.profiles=[];engineCenterTab='deepseek-harness'`);
 let resolveGet;ctx.api=async()=>new Promise(resolve=>resolveGet=resolve);
 const first=ctx.openHarnessAPI('fixture');assert(el('harness-api-save').disabled);el('harness-api-dialog').close();resolveGet(view);await first;assert.equal(run('harnessAPIView'),null);
 ctx.api=async()=>view;await ctx.openHarnessAPI('fixture');assert(el('harness-api-key').required);assert(!el('harness-api-save').disabled);
@@ -39,5 +81,9 @@ el('harness-api-key').value='synthetic-capability-key';el('harness-api-input').v
 ctx.api=async(path,method,body)=>{capabilityPayload=body;assert.deepEqual(Array.from(body.input),['text','image']);return {...capable,base_url:body.base_url,key_configured:true}};
 await ctx.saveHarnessAPI();assert.equal(capabilityPayload.api_key,'');assert.equal(el('harness-api-key').value,'');
 el('harness-api-input').value='';ctx.api=async(path,method,body)=>{assert.equal(body.input,undefined);return view};await ctx.saveHarnessAPI();
-ctx.api=async()=>new Promise(resolve=>resolveRead=resolve);const stale=ctx.readHarnessAPIModels();run('renewShellScope()');resolveRead({status:'ready',models:[{id:'stale-model'}],message:'stale result'});await stale;assert.equal(run('harnessAPIView'),null);assert.equal(el('harness-api-key').value,'');assert(!el('harness-api-model-list').textContent.includes('stale-model'));
-console.log('PASS: environment Harness API entry, model/endpoint image declarations, stale loading isolation, duplicate save lock, route metadata, failure draft, key clearing and logout disposal. No real credentials or model calls.');
+let resolveScopeStatus,statusSignal;ctx.api=async(path,method,body,signal)=>new Promise(resolve=>{if(path==='engine-status'){resolveScopeStatus=resolve;statusSignal=signal}else resolveRead=resolve});
+el('engine-center-dialog').showModal();const scopeHTML=center.innerHTML,scopeStatuses=run('JSON.stringify(engineEnvironmentStatuses)'),scopeStatus=ctx.engineCenterRefreshStatus();
+const stale=ctx.readHarnessAPIModels();run('renewShellScope()');assert(statusSignal.aborted);
+resolveRead({status:'ready',models:[{id:'stale-model'}],message:'stale result'});resolveScopeStatus({items:[]});await Promise.all([stale,scopeStatus]);
+assert.equal(center.innerHTML,scopeHTML);assert.equal(run('JSON.stringify(engineEnvironmentStatuses)'),scopeStatuses);assert.equal(run('harnessAPIView'),null);assert.equal(el('harness-api-key').value,'');assert(!el('harness-api-model-list').textContent.includes('stale-model'));
+console.log('PASS: visible Harness engine-center entries target the exact environment and honor busy guards; status refresh runs once without render/tab loops and ignores closed/logout responses; account controls, model/endpoint image declarations, stale loading isolation, duplicate save lock, route metadata, failure draft and key clearing. No real credentials or model calls.');

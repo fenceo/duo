@@ -8285,6 +8285,7 @@ async function loadEngineSettings() {
         populateEngineOnboarding();
         void resumeEngineSetup();
         if (catalog.accounts && element('account-center-dialog').open) void refreshCodexAccounts(false, true);
+        return true;
     } catch (e) {
         if (shellCurrent(epoch) && request === engineSettingsRequest) element('engine-catalog').textContent = e.message;
     }
@@ -9169,6 +9170,7 @@ async function saveHarnessAPI() {
 let engineCenterTab = 'codex';
 let engineCenterEnvPicks = {};
 let engineCenterSelectedCred = '';
+let engineCenterRequest = 0;
 function engineCenterCredList(engine, profiles) {
     const rows = profiles.map((p)=>`<button type="button" class="engine-center-cred ${engineCenterSelectedCred === p.id ? 'is-selected' : ''}" data-engine-center-cred="${escapeHTML(p.id)}"><strong>${escapeHTML(p.name)}</strong><small>${escapeHTML(engineCredentialLabel(p.kind))}</small></button>`).join('');
     const hint = engineCenterSelectedCred ? '<p class="muted">已选用：' + escapeHTML(profiles.find((p)=>p.id === engineCenterSelectedCred)?.name || '') + '</p>' : '<p class="muted">点选一条 Key/账号，再配置到环境。</p>';
@@ -9335,6 +9337,14 @@ function renderEngineCenterPanel() {
     const tabs = element('engine-center-tabs');
     if (tabs) tabs.innerHTML = engines.map((e)=>`<button type="button" data-engine-center-tab="${escapeHTML(e.id)}" class="${e.id === current.id ? 'selected' : ''}">${escapeHTML(e.name)}</button>`).join('');
     const profiles = (engineCatalog?.profiles || []).filter((p)=>p.engine === current.id);
+    const harness = current.id === 'deepseek-harness';
+    const harnessBusy = engineSetupBusy || harnessAPIBusy || environmentAPIBusy || accountImportBusy || accountSyncBusy;
+    const harnessEnvironments = harness ? (settings?.config?.environments || []).filter((env)=>current.targets.includes(env.type)).map((env)=>`<div class="engine-environment-row"><div><strong>${escapeHTML(env.name)}</strong><small>${escapeHTML([
+            env.type,
+            env.distro,
+            env.user,
+            env.host
+        ].filter(Boolean).join(' / '))}</small></div><div class="engine-actions"><button type="button" data-engine-center-harness-api="${escapeHTML(env.id)}" aria-label="配置 ${escapeHTML(env.name)} 的 Harness API" ${harnessBusy ? 'disabled' : ''}>配置 API</button></div></div>`).join('') : '';
     host.innerHTML = `<section class="engine-center-panel">
   <header class="engine-center-panel-head">
    <div class="engine-center-panel-title"><h3>${escapeHTML(current.name)}</h3><span class="engine-center-badge ${current.runnable ? 'is-ready' : 'is-pending'}">${current.runnable ? '可运行' : '未开放'}</span></div>
@@ -9349,6 +9359,7 @@ function renderEngineCenterPanel() {
    </li>
    <li class="engine-center-step">
     <div class="engine-center-step-head"><span class="engine-center-step-num">2</span><h4>账号 / API Key → 配置到环境</h4></div>
+    ${harness ? `<p class="muted">按任务的执行环境配置 Harness API、模型及图片输入能力。此入口管理该环境默认用户的原生配置；独立 Harness 账号目录仍使用各自配置。</p><div class="engine-center-envs">${harnessEnvironments || '<p class="muted">请先添加执行环境。</p>'}</div>` : ''}
     <p class="muted">添加或点选 Key，勾选环境后一键写入该引擎的原生配置。列表不回显 Key。</p>
     <div id="engine-center-creds" class="engine-center-creds">${engineCenterCredList(current.id, profiles)}</div>
     <div class="engine-center-envs">${engineCenterEnvCheckboxes('configure', current.id)}</div>
@@ -9371,13 +9382,13 @@ function renderEngineCenterPanel() {
         });
     host.querySelector('[data-engine-center-install]')?.addEventListener('click', ()=>void engineCenterInstall(current.id));
     host.querySelector('[data-engine-center-configure]')?.addEventListener('click', ()=>void engineCenterConfigure(current.id));
+    host.querySelectorAll('[data-engine-center-harness-api]').forEach((b)=>b.addEventListener('click', ()=>void openHarnessAPI(b.dataset.engineCenterHarnessApi)));
     host.querySelectorAll('[data-engine-center-cred]').forEach((b)=>b.addEventListener('click', ()=>{
             engineCenterSelectedCred = b.dataset.engineCenterCred;
             renderEngineCenterPanel();
         }));
     host.querySelector('[data-engine-center-add]')?.addEventListener('click', ()=>openEngineCenterKeyDialog(current.id));
     host.querySelector('[data-engine-center-open-accounts]')?.addEventListener('click', ()=>void openAccountCenter());
-    void engineCenterRefreshStatus(current.id);
 }
 async function engineCenterSaveKey(engine) {
     const status = element('engine-center-key-status');
@@ -9403,11 +9414,15 @@ async function engineCenterSaveKey(engine) {
         if (status) status.textContent = e.message;
     }
 }
-async function engineCenterRefreshStatus(engine) {
+async function engineCenterRefreshStatus() {
+    const dialog = element('engine-center-dialog');
+    if (!dialog?.open) return;
+    const epoch = shellEpoch, request = ++engineCenterRequest, signature = engineEnvironmentSignature();
     try {
-        const data = await api('engine-status', 'GET');
+        const data = await api('engine-status', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== engineCenterRequest || !dialog.open || !dialog.isConnected || signature !== engineEnvironmentSignature()) return;
         engineEnvironmentStatuses = data.items || [];
-        engineStatusSignature = engineEnvironmentSignature();
+        engineStatusSignature = signature;
         renderEngineCenterPanel();
     } catch  {}
 }
@@ -9486,6 +9501,9 @@ function installEngineCenter() {
  </dialog>
  ${engineCenterAddKeyDialog()}`);
     button('engine-center-close').onclick = ()=>element('engine-center-dialog').close();
+    element('engine-center-dialog').addEventListener('close', ()=>{
+        engineCenterRequest++;
+    });
     button('engine-center-detect').onclick = ()=>void refreshEngineStatus();
     button('engine-center-discover-ssh').onclick = ()=>void openDiscovery((endpoint)=>{
             void addEnvironment('ssh');
@@ -9507,13 +9525,16 @@ function renderEngineCenterEnvironments() {
  </div>`).join('') || '<p class="muted">暂无环境，请添加。</p>';
 }
 function showEngineCenter() {
-    installEngineCenter();
+    if (!element('engine-center-dialog')) installEngineCenter();
     renderEngineCenterEnvironments();
     const dialog = element('engine-center-dialog');
+    const epoch = shellEpoch, request = ++engineCenterRequest;
     if (dialog && !dialog.open) dialog.showModal();
-    void loadEngineSettings().then(()=>{
+    void loadEngineSettings().then((loaded)=>{
+        if (!loaded || !shellCurrent(epoch) || request !== engineCenterRequest || !dialog.open || !dialog.isConnected) return;
         renderEngineCenterEnvironments();
         renderEngineCenterPanel();
+        void engineCenterRefreshStatus();
     });
 }
 async function openEngineCenter() {

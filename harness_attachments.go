@@ -10,7 +10,7 @@ import (
 
 const harnessTextFileLimit = 256 * 1024
 const harnessTextBatchLimit = 512 * 1024
-const harnessUnsupportedImageMessage = "当前 Harness CLI 或所选模型未声明图片输入能力；请升级 dsh 并选择原生配置中支持图片的模型，或移除图片。不会将图片降级为文字路径继续执行"
+const harnessUnsupportedImageMessage = "当前 Harness CLI 或所选模型未声明图片输入能力。使用 Duo API 时，请在“环境与引擎”→Harness→对应环境的“配置 API”中，选择任务使用的模型，将“所选模型输入能力”设为“文字和图片”（须 API 和模型实际支持）；独立原生账号须在该账号配置目录设置。旧版 CLI 可升级 dsh，或移除图片后重试。不会将图片降级为文字路径继续执行"
 
 func harnessHasImages(files []RuntimeAttachment) bool {
 	for _, f := range files {
