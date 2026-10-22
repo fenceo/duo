@@ -35,6 +35,32 @@ func TestDecodeWSLDiagnosticWithBinaryPrefix(t *testing.T) {
 		t.Fatalf("diagnostic = %q, want %q", got, text)
 	}
 }
+
+func TestCommandFailureTextUsesBothWSLStreams(t *testing.T) {
+	text := "错误代码: Wsl/Service/E_ACCESSDENIED\r\n"
+	stdout := []byte{0xd2, 0x62, 0xdd, 0x7e, 0xbf, 0x8b, 0xee, 0x95, 0x02, 0x30}
+	for _, u := range utf16.Encode([]rune(text)) {
+		stdout = binary.LittleEndian.AppendUint16(stdout, u)
+	}
+	got := commandFailureText(Environment{Type: "wsl"}, stdout, []byte("additional detail\r\n"), errors.New("exit status 1"))
+	if got != strings.TrimSpace(text)+"\nadditional detail" {
+		t.Fatalf("diagnostic lost or corrupted command streams: %q", got)
+	}
+	if got := friendlyEnvironmentDiagnostic(Environment{Type: "wsl"}, got); !strings.Contains(got, "开始菜单") {
+		t.Fatalf("access-denied diagnostic lacks recovery guidance: %q", got)
+	}
+	if got := commandFailureText(Environment{Type: "wsl"}, stdout, stdout, errors.New("exit status 1")); got != strings.TrimSpace(text) {
+		t.Fatalf("duplicate diagnostic not removed: %q", got)
+	}
+	failure := errors.New("executable not found")
+	if got := commandFailureText(Environment{Type: "wsl"}, nil, nil, failure); got != failure.Error() {
+		t.Fatalf("empty output lost command error: %q", got)
+	}
+	if got := commandFailureText(Environment{Type: "ssh"}, []byte("plain stdout"), []byte("plain stderr"), failure); got != "plain stdout\nplain stderr" {
+		t.Fatalf("non-WSL output was changed: %q", got)
+	}
+}
+
 func TestDetectedAuthConservative(t *testing.T) {
 	for _, c := range []struct {
 		path, out string

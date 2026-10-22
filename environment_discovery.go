@@ -74,10 +74,7 @@ func runEnvironmentCommand(ctx context.Context, env Environment, args ...string)
 			return lastStdout, []byte(commandDiagnosticText(variant, lastStderr)), variant, nil
 		}
 		lastErr = err
-		output := strings.TrimSpace(strings.Join([]string{
-			commandDiagnosticText(variant, lastStdout),
-			commandDiagnosticText(variant, lastStderr),
-		}, "\n"))
+		output := commandFailureText(variant, lastStdout, lastStderr, err)
 		if text := strings.TrimSpace(output); text != "" {
 			user := variant.User
 			if user == "" {
@@ -95,7 +92,7 @@ func runEnvironmentCommand(ctx context.Context, env Environment, args ...string)
 	if len(diagnostics) > 0 {
 		lastStderr = []byte(strings.Join(diagnostics, "\n"))
 	} else {
-		lastStderr = []byte(commandDiagnosticText(lastEnv, lastStderr))
+		lastStderr = []byte(commandFailureText(lastEnv, lastStdout, lastStderr, lastErr))
 	}
 	if lastErr == nil {
 		lastErr = errors.New("环境命令执行失败")
@@ -156,6 +153,36 @@ func commandDiagnosticText(env Environment, data []byte) string {
 		return string(data)
 	}
 	return decodeWSLText(data)
+}
+
+// commandFailureText keeps diagnostics emitted on either stream. wsl.exe has
+// emitted service errors on stdout in some Windows builds, so looking only at
+// stderr turns useful failures into an opaque exit status.
+func commandFailureText(env Environment, stdout, stderr []byte, err error) string {
+	parts := make([]string, 0, 2)
+	for _, data := range [][]byte{stdout, stderr} {
+		text := strings.TrimSpace(commandDiagnosticText(env, data))
+		if text == "" {
+			continue
+		}
+		duplicate := false
+		for _, previous := range parts {
+			if previous == text {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+	if err != nil {
+		return strings.TrimSpace(err.Error())
+	}
+	return "环境命令执行失败"
 }
 
 func friendlyEnvironmentDiagnostic(env Environment, text string) string {

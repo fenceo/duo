@@ -204,7 +204,16 @@ func (a *App) stageRuntimeFiles(ctx context.Context, t Task, result []RuntimeAtt
 		cmd.Stdout = out
 		cmd.Stderr = errout
 		if err := cmd.Run(); err != nil {
-			return nil, nil, fmt.Errorf("附件传入执行环境失败：%s (%v)", errout.String(), err)
+			diagnostic := commandFailureText(*t.Environment, out.Bytes(), errout.Bytes(), err)
+			cause := err
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				diagnostic = fmt.Sprintf("环境命令超时（最多等待 20 秒）：%s", diagnostic)
+				cause = errors.Join(ctx.Err(), err)
+			} else if errors.Is(ctx.Err(), context.Canceled) {
+				diagnostic = fmt.Sprintf("环境命令已取消：%s", diagnostic)
+				cause = errors.Join(ctx.Err(), err)
+			}
+			return nil, nil, fmt.Errorf("附件传入执行环境失败：%s: %w", friendlyEnvironmentDiagnostic(*t.Environment, diagnostic), cause)
 		}
 		var staged struct {
 			Root  string   `json:"root"`

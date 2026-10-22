@@ -320,7 +320,8 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 		close(w.done)
 		cleanup()
 	}()
-	initctx, cancel := context.WithTimeout(ctx, modelProbeStageTimeout(ctx, 60*time.Second))
+	stageTimeout := modelProbeStageTimeout(ctx, 60*time.Second)
+	initctx, cancel := context.WithTimeout(ctx, stageTimeout)
 	defer cancel()
 	if len(bootstrap) > 0 {
 		if err = w.write(initctx, append(bootstrap, '\n')); err != nil {
@@ -383,7 +384,21 @@ func startHarness(ctx context.Context, c Config, t Task, emit func(string, strin
 			err = fmt.Errorf("%w：%s", err, diagnostic)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("Harness ACP 握手超时（%s / %s，最多等待 60 秒）；请检查此环境的 dsh --profile acp 启动、账号目录权限及安装状态：%w", provider, model, err)
+			// Keep the effective timeout visible. Latency probes may
+			// intentionally extend startup beyond the normal 60-second budget.
+			// If the child already exited, prefer its exit/diagnostic details over
+			// the generic timeout so startup failures remain actionable.
+			childExited := false
+			select {
+			case <-w.done:
+				childExited = true
+			default:
+			}
+			if childExited {
+				err = fmt.Errorf("Harness ACP 启动失败（%s / %s）：%w", provider, model, w.failure())
+			} else {
+				err = fmt.Errorf("Harness ACP 握手超时（%s / %s，最多等待 %s）；请检查此环境的 dsh --profile acp 启动、账号目录权限及安装状态：%w", provider, model, stageTimeout.Round(time.Second), err)
+			}
 		}
 		stopErr := w.stop()
 		if stopErr != nil {
