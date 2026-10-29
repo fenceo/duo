@@ -5,7 +5,7 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve
 const tick=()=>new Promise(r=>setImmediate(r));
 const {ctx,document}=await createWebShellFixture();
 const node=id=>document.getElementById(id),run=code=>runInContext(code,ctx);
-assert.deepEqual(Array.from(document.querySelectorAll('[data-library-layer]')).map(b=>b.dataset.libraryLayer),['tasks','consensus','system','project','knowledge','all']);
+assert.deepEqual(Array.from(document.querySelectorAll('[data-library-layer]')).map(b=>b.dataset.libraryLayer),['consensus','system','project','tasks','knowledge','all']);
 assert.match(node('settings-knowledge').textContent,/工作区.*共识.*系统.*项目/);
 assert.match(node('settings-knowledge').textContent,/\.duo\/tasks\//);
 const source={id:'knowledge:source',hash:'source-v1',title:'NFS 调试约定',content:'运行 mount -t nfs <server>:/srv/nfs <device>/mnt',task_id:'one',kind:'knowledge',status:'observed',tags:['NFS']};
@@ -28,7 +28,7 @@ const memory=deferred();ctx.api=()=>memory.promise;const reading=ctx.loadWorkspa
 assert.equal(node('workspace-memory-state').textContent,'new task','late workspace status cannot leak into another task');
 const sync=deferred();calls=[];ctx.api=async(path,method,body)=>{calls.push({path,method,body});return sync.promise};const pending=ctx.loadWorkspaceMemory(true);await ctx.loadWorkspaceMemory(true);assert.equal(calls.length,1);assert.equal(calls[0].method,'POST');
 sync.resolve({enabled:true,task_directory:'.duo/tasks/two',exported:2,unchanged:1,tasks:[{title:'<unsafe>',path:'.duo/tasks/two/README.md'}],warnings:['retained'],conflicts:[]});await pending;assert.match(node('workspace-memory-state').textContent,/写入 2.*retained/);assert(!node('workspace-memory-tasks').innerHTML.includes('<unsafe>'));assert.match(node('workspace-memory-tasks').innerHTML,/&lt;unsafe&gt;/);
-const previousSync=deferred();ctx.api=(path,method)=>method==='POST'?previousSync.promise:Promise.resolve({enabled:true,task_directory:'.duo/tasks/three',exported:0,unchanged:0,tasks:[],warnings:[],conflicts:[]});
+const previousSync=deferred();ctx.api=(path,method)=>method==='POST'?previousSync.promise:Promise.resolve({enabled:true,task_directory:'.duo/tasks/three',main_document:'.duo/tasks/three/任务记录.md',documents:[{path:'.duo/tasks/three/任务记录.md'}],exported:0,unchanged:0,tasks:[],warnings:[],conflicts:[]});
 const oldTaskSync=ctx.loadWorkspaceMemory(true);run("chosen='three';selection=3;toolsTab='note'");await ctx.loadWorkspaceMemory();assert.match(node('workspace-memory-state').textContent,/tasks\/three/,'new task reads its own status during another task sync');
 previousSync.resolve({enabled:true,task_directory:'.duo/tasks/two',exported:1,tasks:[],warnings:[],conflicts:[]});await oldTaskSync;await tick();assert(!node('workspace-memory-sync').disabled,'finishing old task releases sync button on new task');assert.match(node('workspace-memory-state').textContent,/tasks\/three/);
 await tick();

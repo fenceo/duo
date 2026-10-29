@@ -25,7 +25,7 @@ function installLibrary(){
  element('vault-settings').insertAdjacentHTML('beforebegin',`<details id="automatic-knowledge-settings"><summary>对话自动积累</summary><p>对话自动保存到任务资料夹。自动整理在同一轮 AI 回复中提取摘要、前提、共识、疑问和有依据的通用知识，不另外启动模型。模型未提供整理结果时，保留原对话。</p><label><input type="checkbox" id="automatic-capture" disabled>自动记录后续对话的问题与最终回复</label><label><input type="checkbox" id="automatic-organize" disabled>随正常对话自动整理摘要、共识与通用知识（增加少量本轮输出）</label><label><input type="checkbox" id="automatic-recall" disabled>新建会话时自动补回当前任务知识</label><p>新会话优先补回本任务的前提、共识与未决问题；没有摘要时使用最近记录。只补回有限片段，其他任务需选择引用；引用文字计入模型输入。</p><button type="button" id="automatic-save" disabled>保存设置</button><p id="automatic-status" role="status"></p></details>`);
  input('vault-runs').closest('label')!.insertAdjacentHTML('afterend','<label><input type="checkbox" id="vault-automatic">同步自动整理的任务资料、通用知识与主题索引</label>');
  installLibrarySettings();
- const headerActions=document.createElement('div');headerActions.className='library-header-actions';headerActions.innerHTML='<button type="button" id="library-manage-task">管理本任务知识</button>';
+ const headerActions=document.createElement('div');headerActions.className='library-header-actions';headerActions.innerHTML='<button type="button" id="library-manage-task">打开任务记录</button>';
  button('library-close').before(headerActions);headerActions.append(button('library-close'));
  headerActions.insertAdjacentHTML('afterbegin','<button type="button" id="library-refresh-files">刷新文件</button>');
  button('library-refresh-files').onclick=async()=>{const epoch=shellEpoch,b=button('library-refresh-files');if(b.disabled)return;b.disabled=true;try{const report=await api<VaultReport>('library/vault/refresh','POST',{});if(!shellCurrent(epoch))return;if(report.error)throw new Error(report.error);if(element<HTMLDialogElement>('library-dialog').open){await searchLibrary();void loadLibraryOverview();if(report.conflicts?.length)notify('文件同步存在冲突，已保留两端内容；请在知识库设置查看详情。')}}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{if(shellCurrent(epoch))b.disabled=false}};
@@ -34,7 +34,7 @@ function installLibrary(){
  element('notebook').querySelector('h2')!.textContent='本任务知识';
  element('notebook').querySelector('.note-head')!.insertAdjacentHTML('afterend','<p class="muted knowledge-panel-help">这里保留本任务的原始摘录和手工笔记。摘要、前提与共识、对话目录可以直接打开文档查看，无需手动分类。</p>');
  button('summarize').textContent='手动整理';button('summarize').title='调用本任务的 AI 整理知识，完成后可检查并保存';
- button('knowledge-library-open').textContent='打开本任务文档';button('knowledge-library-open').onclick=()=>void openLibrary(chosen);
+ button('knowledge-library-open').textContent='查找其他任务资料';button('knowledge-library-open').onclick=()=>void openLibrary(chosen);
  button('automatic-save').onclick=()=>void saveAutomaticKnowledge();
  for(const id of ['library-open','library-task','library-create'])button(id).onclick=()=>void openLibrary();
  button('library-close').onclick=()=>element<HTMLDialogElement>('library-dialog').close();
@@ -164,7 +164,7 @@ async function openLibrary(taskScope?:string,page:'browse'|'settings'='browse'){
  const epoch=shellEpoch;
  libraryTarget={task:chosen,create:creatingTask,selection,epoch:shellEpoch};
  const scope=element<HTMLSelectElement>('library-scope'),previousScope=scope.value;scope.innerHTML='<option value="">所有任务与文件</option>'+tasks.filter(t=>!t.deleted).map(t=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');scope.value=tasks.some(t=>t.id===previousScope&&!t.deleted)?previousScope:'';
- if(taskScope){scope.value=taskScope;input('library-layer').value='tasks';element('library-dialog').querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>{const on=b.dataset.libraryLayer==='tasks';b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))})}
+ if(taskScope){scope.value=taskScope;input('library-layer').value='tasks';element<HTMLDetailsElement>('library-history').open=true;element('library-dialog').querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>{const on=b.dataset.libraryLayer==='tasks';b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))})}
  showLibraryPage(page);const dialog=element<HTMLDialogElement>('library-dialog');if(!dialog.open)dialog.showModal();
  button('library-manage-task').disabled=!chosen||creatingTask||!detail;
  if(page==='settings'){button('library-settings-open').focus();await loadKnowledgeSettings();return}
@@ -294,19 +294,24 @@ async function followLibraryLink(href:string){
 }
 
 type CuratedKnowledge={id:string;layer:string;scope_key:string;title:string;content:string;status:string;source_id:string;source_hash:string;source_task_id:string;applicability:string;evidence:string;credential_ref:string;tags:string[];revision:number;created:number;updated:number};
-type WorkspaceMemoryReport={enabled:boolean;directory:string;task_directory:string;exported:number;unchanged:number;tasks:{id:string;title:string;path:string;updated:number;excerpt:string}[];documents?:{path:string;title:string;kind:string}[];conflicts:string[];warnings:string[];error?:string};
+type WorkspaceMemoryReport={enabled:boolean;directory:string;task_directory:string;main_document?:string;exported:number;unchanged:number;tasks:{id:string;title:string;path:string;updated:number;excerpt:string}[];documents?:{path:string;title:string;kind:string}[];conflicts:string[];warnings:string[];error?:string;error_code?:string};
+type WorkspaceDocument={path:string;content:string;revision?:string;editable?:boolean};
+type WorkspaceDocumentDraft=WorkspaceDocument&{task:string;dirty:boolean;editing:boolean;saving:boolean;status:string};
+const workspaceDocumentDrafts=new Map<string,WorkspaceDocumentDraft>(),workspaceInitialSync=new Set<string>();
+function workspaceDraftKey(task:string,path:string){return task+'\n'+path}
+function workspaceDraftsPending(){return Array.from(workspaceDocumentDrafts.values()).some(d=>d.dirty||d.saving)}
 let libraryPreviewDocument:LibraryDocument|null=null,curatedDraft:Partial<CuratedKnowledge>|null=null,curatedDirty=false,curatedSaving=false,curatedRequest=0,workspaceMemoryRequest=0,workspaceMemorySaving=false;
 function installKnowledgeLayers(){
- element('library-open').insertAdjacentHTML('afterend','<button type="button" id="library-consensus-open">平台共识</button><button type="button" id="library-system-open">系统知识</button><button type="button" id="library-project-open">项目知识</button>');
- for(const layer of ['consensus','system','project'])button('library-'+layer+'-open').onclick=()=>void openKnowledgeLayer(layer);
  const nav=element('library-dialog').querySelector('.library-layers')!;
- nav.innerHTML=[['tasks','任务过程'],['consensus','平台共识'],['system','系统知识'],['project','项目知识'],['knowledge','候选结论'],['all','全部资料']].map(([id,title])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id==='tasks'}" class="${id==='tasks'?'selected':''}">${title}</button>`).join('');
+ const layerButton=([id,title]:string[])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id==='consensus'}" class="${id==='consensus'?'selected':''}">${title}</button>`;
+ nav.innerHTML=[['consensus','平台共识'],['system','系统知识'],['project','项目知识']].map(layerButton).join('')+'<details id="library-history" class="library-history"><summary>历史资料</summary><div>'+[['tasks','任务资料'],['knowledge','候选结论'],['all','全部资料']].map(layerButton).join('')+'</div></details>';
+ input('library-layer').value='consensus';
  nav.querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>b.onclick=()=>{input('library-layer').value=b.dataset.libraryLayer!;input('library-kind').value='';input('library-source').value='';input('library-scope').value='';nav.querySelectorAll<HTMLButtonElement>('button').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b))});void searchLibrary()});
  element('library-preview').querySelector('.library-preview-actions')!.insertAdjacentHTML('beforeend','<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
  element('library-search-form').insertAdjacentHTML('afterend','<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><button type="button" id="library-extract">一键提取已有资料</button><button type="button" id="library-ai-extract">AI 整理并提取本任务</button><span class="muted">已有候选可直接提取；AI 整理会发送本任务历史并消耗模型额度。</span></div><p id="library-extraction-state" class="muted" role="status"></p>');
  button('library-extract').onclick=()=>void extractRecordedKnowledge();button('library-ai-extract').onclick=()=>void extractTaskKnowledgeWithAI();
  button('library-curated-new').onclick=()=>openCuratedEditor();button('library-promote').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);button('library-curated-edit').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);
- element('library-dialog').querySelector('.library-header p')!.textContent='任务过程、平台共识、系统知识和项目知识分层管理，保留原始来源。';
+ element('library-dialog').querySelector('.library-header p')!.textContent='在这里查找和编辑平台共识、系统知识、项目知识。每个任务的连续记录从左侧任务菜单打开。';
  element('library-dialog').querySelector('.library-help p')!.textContent='连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
  element('settings-knowledge').querySelector('p')!.textContent='过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
  const guide=element('settings-knowledge').querySelector('.knowledge-directory-guide')!;
@@ -319,9 +324,22 @@ function installKnowledgeLayers(){
  input('automatic-recall').closest('label')!.lastChild!.textContent='新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
  element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent='同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
  element('notebook').querySelector('.knowledge-panel-help')!.textContent='这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
- element('notebook').querySelector('.knowledge-panel-help')!.insertAdjacentHTML('afterend','<section class="workspace-memory-panel"><strong>工作区过程资料</strong><p id="workspace-memory-state" role="status">打开本任务知识时读取目录。</p><div id="workspace-memory-tasks"></div><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button></section>');
+ const notebook=element('notebook'),head=notebook.querySelector('.note-head')!;
+ head.querySelector('h2')!.textContent='任务记录';button('note-tab').textContent='任务记录';
+ const history=document.createElement('details');history.id='task-record-history';history.className='task-record-history';history.innerHTML='<summary>逐轮来源与历史资料</summary>';
+ notebook.append(history);
+ for(const node of Array.from(notebook.children))if(node!==head&&node!==history)history.append(node);
+ history.querySelector('summary')!.after(element('note-status'),head.querySelector('.actions')!);
+ head.querySelector('div')!.insertAdjacentHTML('beforeend','<p>一个任务，一份 Markdown；按时间连续记录，可直接阅读和编辑。</p>');
+ head.insertAdjacentHTML('afterend','<section class="workspace-memory-panel"><p id="workspace-memory-state" role="status">正在读取任务记录…</p><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><div class="workspace-memory-actions"><button type="button" id="workspace-memory-read">阅读</button><button type="button" id="workspace-memory-edit">编辑 Markdown</button><button type="button" id="workspace-memory-save" class="primary">保存</button><button type="button" id="workspace-memory-discard">放弃修改 / 读取最新</button><button type="button" id="workspace-memory-reload">重新读取</button></div><p id="workspace-memory-document-state" role="status"></p><textarea id="workspace-memory-editor" aria-label="任务记录 Markdown 正文" class="hidden" spellcheck="false"></textarea><div id="workspace-memory-content" class="content"></div></section></section>');
+ history.querySelector('summary')!.insertAdjacentHTML('afterend','<div id="workspace-memory-tasks"></div><div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务历史记录文件"></div>');
  button('workspace-memory-sync').onclick=()=>void loadWorkspaceMemory(true);
- element('workspace-memory-tasks').insertAdjacentHTML('afterend','<div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务记录文件"></div><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><p id="workspace-memory-document-state" role="status"></p><div id="workspace-memory-content" class="content"></div></section>');
+ button('workspace-memory-read').onclick=()=>setWorkspaceDocumentEditing(false);
+ button('workspace-memory-edit').onclick=()=>setWorkspaceDocumentEditing(true);
+ button('workspace-memory-save').onclick=()=>void saveWorkspaceMemoryDocument();
+ button('workspace-memory-discard').onclick=()=>void discardWorkspaceMemoryDocument();
+ button('workspace-memory-reload').onclick=()=>void readWorkspaceMemoryDocument(workspaceDocumentPath,true);
+ input('workspace-memory-editor').oninput=()=>{const draft=activeWorkspaceDraft();if(!draft||draft.saving)return;draft.content=input('workspace-memory-editor').value;draft.dirty=true;draft.status='修改尚未保存；切换任务后草稿仍保留。';renderWorkspaceDocumentControls(draft)};
  element('workspace-memory-documents').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-workspace-document]');if(b)void readWorkspaceMemoryDocument(b.dataset.workspaceDocument||'')};
  element('workspace-memory-content').onclick=e=>{const link=(e.target as HTMLElement).closest<HTMLAnchorElement>('a');if(!link||!workspaceDocumentPath)return;const href=link.getAttribute('href')||'';if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href))return;e.preventDefault();const parts=workspaceDocumentPath.split('/').slice(0,-1);for(const part of href.split('#')[0].split('/')){if(!part||part==='.')continue;if(part==='..')parts.pop();else parts.push(part)}const target=parts.join('/');if(target.endsWith('.md'))void readWorkspaceMemoryDocument(target)};
  element('automatic-knowledge-settings').insertAdjacentHTML('beforeend','<div class="knowledge-extraction-settings"><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>自动提取三类知识（均保留来源、标签及待验证状态）</label><p>复用本轮正常回复中的分层结果，不额外调用模型。先配置上方根目录并开启同步；没有分类候选时保留原记录，不编造知识。此开关单独保存。</p><button type="button" id="knowledge-extraction-save" disabled>保存自动提取设置</button><p id="knowledge-extraction-settings-state" role="status"></p></div>');
@@ -336,7 +354,7 @@ function installKnowledgeLayers(){
  element('curated-form').onsubmit=e=>{e.preventDefault();void saveCuratedEditor()};
  button('curated-delete').onclick=()=>void deleteCuratedEditor();
  element('curated-dialog').addEventListener('cancel',e=>{if(curatedSaving)e.preventDefault()});
- disposeWithShell(()=>{curatedRequest++;workspaceMemoryRequest++;workspaceDocumentRequest++;knowledgeExtractionRequest++;knowledgeGraphRequest++;curatedDraft=null;curatedDirty=false;curatedSaving=false;workspaceMemorySaving=false;knowledgeExtractionBusy=false;knowledgeExtractionSettingsBusy=false;knowledgeExtractionSettingsReady=false;knowledgeExtractionSettingsDirty=false;knowledgeGraphOpen=false;knowledgeGraphDocuments=[];libraryPreviewDocument=null});
+ disposeWithShell(()=>{curatedRequest++;workspaceMemoryRequest++;workspaceDocumentRequest++;knowledgeExtractionRequest++;knowledgeGraphRequest++;curatedDraft=null;curatedDirty=false;curatedSaving=false;workspaceMemorySaving=false;workspaceDocumentDrafts.clear();workspaceInitialSync.clear();workspaceDocumentTask='';workspaceDocumentPath='';knowledgeExtractionBusy=false;knowledgeExtractionSettingsBusy=false;knowledgeExtractionSettingsReady=false;knowledgeExtractionSettingsDirty=false;knowledgeGraphOpen=false;knowledgeGraphDocuments=[];libraryPreviewDocument=null});
 }
 function openCuratedEditor(doc?:LibraryDocument){
  const dialog=element<HTMLDialogElement>('curated-dialog');
@@ -366,24 +384,63 @@ async function deleteCuratedEditor(){
 async function loadWorkspaceMemory(sync=false){
  if(!chosen||creatingTask||!detail||(sync&&workspaceMemorySaving))return;
  const task=chosen,selected=selection,epoch=shellEpoch,request=++workspaceMemoryRequest;
- if(workspaceDocumentTask!==task){workspaceDocumentRequest++;workspaceDocumentTask=task;workspaceDocumentPath='';element('workspace-memory-documents').textContent='';element('workspace-memory-reader').classList.add('hidden');element('workspace-memory-content').textContent=''}
- if(sync)workspaceMemorySaving=true;button('workspace-memory-sync').disabled=workspaceMemorySaving;element('workspace-memory-state').textContent=sync?'正在回填工作区资料…':'正在读取工作区资料…';element('workspace-memory-tasks').textContent='';
+ if(workspaceDocumentTask!==task){workspaceDocumentRequest++;workspaceDocumentTask=task;workspaceDocumentPath='';element('workspace-memory-documents').textContent='';element('workspace-memory-reader').classList.add('hidden');element('workspace-memory-content').textContent='';input('workspace-memory-editor').value=''}
+ let writing=sync;
+ if(sync)workspaceMemorySaving=true;button('workspace-memory-sync').disabled=workspaceMemorySaving;element('workspace-memory-state').textContent=sync?'正在回填工作区资料…':'正在读取任务记录…';element('workspace-memory-tasks').textContent='';
  const current=()=>shellCurrent(epoch)&&chosen===task&&selection===selected&&request===workspaceMemoryRequest;
- try{const report=await api<WorkspaceMemoryReport>('tasks/'+encodeURIComponent(task)+'/workspace-memory',sync?'POST':'GET',sync?{}:undefined,shellController.signal);if(!current())return;
-  element('workspace-memory-state').textContent=(report.enabled?'目录：'+report.task_directory:'工作区记录已关闭')+(sync?`；写入 ${report.exported}，未变化 ${report.unchanged}`:'')+[report.error,...(report.conflicts||[]),...(report.warnings||[])].filter(Boolean).map(s=>'；'+s).join('');
+ try{let report=await api<WorkspaceMemoryReport>('tasks/'+encodeURIComponent(task)+'/workspace-memory',sync?'POST':'GET',sync?{}:undefined,shellController.signal);if(!current())return;
+  const hasMain=(r:WorkspaceMemoryReport)=>!!r.main_document&&!!r.documents?.some(d=>d.path===r.main_document);
+  if(!sync&&!hasMain(report)&&report.enabled&&!report.error&&!workspaceMemorySaving&&!workspaceInitialSync.has(task)){
+   workspaceInitialSync.add(task);writing=true;workspaceMemorySaving=true;button('workspace-memory-sync').disabled=true;element('workspace-memory-state').textContent='正在将已有记录整理为本任务 Markdown…';
+   report=await api<WorkspaceMemoryReport>('tasks/'+encodeURIComponent(task)+'/workspace-memory','POST',{},shellController.signal);if(!current())return;
+  }
+  element('workspace-memory-state').textContent=(report.enabled?'目录：'+report.task_directory:'自动记录已关闭；已有文件仍可阅读和编辑')+(writing?`；写入 ${report.exported}，未变化 ${report.unchanged}`:'')+[report.error,...(report.conflicts||[]),...(report.warnings||[])].filter(Boolean).map(s=>'；'+s).join('');
   element('workspace-memory-tasks').innerHTML=(report.tasks||[]).map(t=>'<p><strong>'+escapeHTML(t.title)+'</strong> · <code>'+escapeHTML(t.path)+'</code></p>').join('');
-  element('workspace-memory-documents').innerHTML=(report.documents||[]).map(d=>'<button type="button" data-workspace-document="'+escapeHTML(d.path)+'">'+escapeHTML(d.title||d.kind||d.path)+'</button>').join('');
+  element('workspace-memory-documents').innerHTML=(report.documents||[]).filter(d=>d.path!==report.main_document).map(d=>'<button type="button" data-workspace-document="'+escapeHTML(d.path)+'">'+escapeHTML(d.title||d.kind||d.path)+'</button>').join('');
+  if(hasMain(report))await readWorkspaceMemoryDocument(report.main_document!);
+  else if(!workspaceDocumentPath)element('workspace-memory-state').textContent+='；尚无主任务记录。'+(report.enabled?'可点击“回填 / 同步本任务已有记录”重试。':'请在知识库的“积累设置”开启自动记录，再手动回填。');
  }catch(e){if(current())element('workspace-memory-state').textContent='工作区资料读取失败：'+(e as Error).message}
- finally{if(shellCurrent(epoch)){if(sync)workspaceMemorySaving=false;button('workspace-memory-sync').disabled=workspaceMemorySaving;if(sync&&!current()&&toolsTab==='note')void loadWorkspaceMemory()}}
+ finally{if(shellCurrent(epoch)){if(writing)workspaceMemorySaving=false;button('workspace-memory-sync').disabled=workspaceMemorySaving;if(writing&&!current()&&toolsTab==='note')void loadWorkspaceMemory()}}
 }
 
-async function readWorkspaceMemoryDocument(path:string){
+function activeWorkspaceDraft(){return workspaceDocumentTask===chosen?workspaceDocumentDrafts.get(workspaceDraftKey(chosen,workspaceDocumentPath)):undefined}
+function renderWorkspaceDocumentControls(draft:WorkspaceDocumentDraft){
+ element('workspace-memory-document-state').textContent=draft.status||(draft.editable?'工作区中的任务 Markdown；保存会直接更新此文件。':'历史来源文件只读；可在外部编辑器中查看。');
+ button('workspace-memory-edit').classList.toggle('hidden',!draft.editable);button('workspace-memory-save').classList.toggle('hidden',!draft.editable);button('workspace-memory-discard').classList.toggle('hidden',!draft.editable||!draft.dirty);
+ button('workspace-memory-save').disabled=!draft.dirty||draft.saving||!draft.revision;button('workspace-memory-edit').disabled=draft.saving;button('workspace-memory-read').disabled=draft.saving;button('workspace-memory-reload').disabled=draft.saving;button('workspace-memory-discard').disabled=draft.saving;
+ button('workspace-memory-read').setAttribute('aria-pressed',String(!draft.editing));button('workspace-memory-edit').setAttribute('aria-pressed',String(draft.editing));
+ input('workspace-memory-editor').disabled=draft.saving;
+}
+function renderWorkspaceDocument(draft:WorkspaceDocumentDraft){
+ workspaceDocumentTask=draft.task;workspaceDocumentPath=draft.path;element('workspace-memory-reader').classList.remove('hidden');element('workspace-memory-title').textContent=draft.path;
+ input('workspace-memory-editor').value=draft.content;input('workspace-memory-editor').classList.toggle('hidden',!draft.editing);element('workspace-memory-content').classList.toggle('hidden',draft.editing);element('workspace-memory-content').innerHTML=markdown(draft.content);renderWorkspaceDocumentControls(draft);
+}
+function setWorkspaceDocumentEditing(editing:boolean){const draft=activeWorkspaceDraft();if(!draft||draft.saving||editing&&!draft.editable)return;draft.editing=editing;renderWorkspaceDocument(draft);if(editing)input('workspace-memory-editor').focus()}
+async function readWorkspaceMemoryDocument(path:string,reload=false){
  if(!chosen||creatingTask||!path)return;
  const task=chosen,selected=selection,epoch=shellEpoch,request=++workspaceDocumentRequest;
- element('workspace-memory-reader').classList.remove('hidden');element('workspace-memory-title').textContent=path;element('workspace-memory-content').textContent='';element('workspace-memory-document-state').textContent='正在读取任务记录…';
+ const key=workspaceDraftKey(task,path),cached=workspaceDocumentDrafts.get(key);
+ if(cached&&(cached.dirty||cached.saving)){if(reload)cached.status='草稿尚未保存；请先保存，或选择“放弃修改 / 读取最新”。';renderWorkspaceDocument(cached);return}
+ workspaceDocumentTask=task;workspaceDocumentPath=path;element('workspace-memory-reader').classList.remove('hidden');element('workspace-memory-title').textContent=path;
+ if(cached)renderWorkspaceDocument(cached);else{element('workspace-memory-content').textContent='';input('workspace-memory-editor').value='';input('workspace-memory-editor').classList.add('hidden');element('workspace-memory-content').classList.remove('hidden');for(const id of ['workspace-memory-read','workspace-memory-edit','workspace-memory-save','workspace-memory-discard','workspace-memory-reload'])button(id).disabled=true}
+ element('workspace-memory-document-state').textContent='正在读取任务记录…';
  const current=()=>shellCurrent(epoch)&&chosen===task&&selection===selected&&request===workspaceDocumentRequest;
- try{const result=await api<{path:string;content:string}>('tasks/'+encodeURIComponent(task)+'/workspace-memory/document?'+new URLSearchParams({path}),'GET',undefined,shellController.signal);if(!current())return;workspaceDocumentPath=result.path;element('workspace-memory-title').textContent=result.path;element('workspace-memory-content').innerHTML=markdown(result.content||'');element('workspace-memory-document-state').textContent='工作区文件内容；可在外部编辑器中继续编辑。'}
+ try{const result=await api<WorkspaceDocument>('tasks/'+encodeURIComponent(task)+'/workspace-memory/document?'+new URLSearchParams({path}),'GET',undefined,shellController.signal);if(!current())return;if(result.path!==path)throw new Error('返回的文档路径不一致，请重新读取。');
+  const latest=workspaceDocumentDrafts.get(key);if(latest&&(latest.dirty||latest.saving)){renderWorkspaceDocument(latest);return}
+  const draft:WorkspaceDocumentDraft={...result,task,content:result.content||'',editable:result.editable===true&&!!result.revision,dirty:false,editing:cached?.editing||false,saving:false,status:''};workspaceDocumentDrafts.set(key,draft);renderWorkspaceDocument(draft);
+ }
  catch(e){if(current())element('workspace-memory-document-state').textContent='记录读取失败：'+(e as Error).message}
+}
+async function discardWorkspaceMemoryDocument(){const draft=activeWorkspaceDraft();if(!draft||draft.saving)return;workspaceDocumentDrafts.delete(workspaceDraftKey(draft.task,draft.path));await readWorkspaceMemoryDocument(draft.path,true)}
+async function saveWorkspaceMemoryDocument(){
+ const draft=activeWorkspaceDraft();if(!draft||!draft.editable||!draft.revision||!draft.dirty||draft.saving)return;
+ const task=draft.task,path=draft.path,selected=selection,epoch=shellEpoch,key=workspaceDraftKey(task,path),content=draft.content,revision=draft.revision;
+ draft.saving=true;draft.status='正在保存任务记录…';renderWorkspaceDocumentControls(draft);
+ const current=()=>shellCurrent(epoch)&&chosen===task&&selection===selected&&workspaceDocumentPath===path;
+ try{const result=await api<WorkspaceDocument>('tasks/'+encodeURIComponent(task)+'/workspace-memory/document','PUT',{path,content,revision},shellController.signal);if(!shellCurrent(epoch))return;if(result.path!==path||!result.revision)throw new Error('保存结果缺少文件版本，请重新核对文件。');
+  if(workspaceDocumentDrafts.get(key)!==draft)return;draft.content=result.content??content;draft.revision=result.revision;draft.dirty=false;draft.status='已保存到任务 Markdown。';if(current())renderWorkspaceDocument(draft);
+ }catch(e){if(!shellCurrent(epoch))return;draft.status=(e as {status?:number}).status===409?'文件已被其他窗口或自动记录更新。你的草稿仍保留；请复制需要的内容，再放弃修改并读取最新版本合并。':'保存失败，草稿已保留：'+(e as Error).message;if(current())renderWorkspaceDocumentControls(draft)}
+ finally{if(shellCurrent(epoch)){draft.saving=false;if(current())renderWorkspaceDocumentControls(draft)}}
 }
 
 async function openKnowledgeLayer(layer:string){

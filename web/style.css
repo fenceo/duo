@@ -124,6 +124,21 @@
 .workspace-memory-panel{border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0;overflow-wrap:anywhere}
 .workspace-memory-panel p{margin:8px 0}
 .workspace-memory-panel code{white-space:normal;overflow-wrap:anywhere}
+.library-history{align-self:flex-start;font-size:12px;min-width:0}
+.library-history summary{cursor:pointer;min-height:36px;display:flex;align-items:center;padding:6px 12px;border:1px solid var(--line);border-radius:8px}
+.library-history summary::after{content:'▾';margin-left:8px}
+.library-history>div{display:flex;gap:6px;flex-wrap:wrap;padding-top:6px}
+.task-record-history{border-top:1px solid var(--line);padding-top:12px;min-width:0}
+.task-record-history>summary{cursor:pointer;padding:8px 0;color:var(--muted);font-size:13px}
+.task-record-history>div,.task-record-history>p,.task-record-history>.actions{margin-top:12px}
+.task-record-history>.actions{display:flex;flex-wrap:wrap;gap:6px}
+#notebook>.workspace-memory-panel{border:0;padding:0;margin:0;min-width:0}
+#notebook .workspace-memory-reader{border:0;padding:0;background:transparent;margin:12px 0 0;min-width:0}
+.workspace-memory-actions{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.workspace-memory-actions button{font-size:12px;min-height:36px;max-width:100%;white-space:normal}
+#workspace-memory-editor{display:block;box-sizing:border-box;flex:none;min-width:0;width:100%;height:55vh;min-height:280px;resize:vertical;line-height:1.7;tab-size:2;white-space:pre-wrap;overflow-wrap:anywhere}
+#notebook #workspace-memory-content{max-height:none;overflow:visible;min-height:180px}
+@media(max-width:760px){.library-history summary,#notebook .workspace-memory-actions button{min-height:44px}.workspace-memory-actions button{flex:1 1 90px}#workspace-memory-editor{height:52vh;min-height:300px}}
 .curated-metadata{border-bottom:1px solid var(--line);margin-bottom:16px;padding-bottom:8px;overflow-wrap:anywhere;white-space:pre-wrap}
 .library-dialog:has(.preview-open) .library-overview,.library-dialog:has(.preview-open) .library-help,.library-dialog:has(.preview-open) #library-curated-actions{display:none}
 @media(max-width:600px){.curated-dialog{padding:16px}.curated-dialog .actions{flex-wrap:wrap}}

@@ -67,6 +67,7 @@ cases.push(['taskmenu','light',1280,800],['taskmenubottom','dark',1024,600]);
 for(const theme of ['light','dark'])cases.push(['taskmenushortbottom',theme,320,420]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['curated',theme,width,width===1280?800:844],['curatedbottom',theme,width,width===1280?800:844]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['librarygraph',theme,width,width===1280?800:844],['knowledgerecord',theme,width,width===1280?800:844],['createname',theme,width,width===1280?800:844]);
+for(const theme of ['light','dark'])for(const width of [1280,390,320])for(const view of ['knowledgerecordlong','knowledgerecordedit','knowledgerecordconflict'])cases.push([view,theme,width,width===1280?800:844]);
 const measurements=[],failures=[];
 for(const view of ['editorwindows','editorwsl','editorssh'])cases.push([view,'light',1280,800],[view,'dark',320,844]);
 cases.push(['editorfiles','light',1280,800],['editorfiles','dark',390,844],['editorfiles','light',320,844]);
@@ -275,19 +276,23 @@ for(const [view,theme,width,height] of cases){
   ctx.previewEntries=entries;
   runInContext('knowledgeItems=previewEntries;renderKnowledgeList()',ctx);
   if(view.startsWith('knowledge')){
-   const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?entries:route.endsWith('/workspace-memory')?{enabled:true,directory:'.duo',task_directory:'.duo/tasks/Duo优化-a1b2c3d4/',exported:0,unchanged:3,tasks:[{id:'layout-preview',title:'Duo 优化',path:'.duo/tasks/Duo优化-a1b2c3d4/README.md'},{id:'earlier-task',title:'同工作区的此前调试记录',path:'.duo/tasks/同工作区的此前调试记录-e5f6a7b8/README.md'}],documents:[{path:'.duo/tasks/Duo优化-a1b2c3d4/README.md',title:'任务说明与索引',kind:'index'},{path:'.duo/tasks/Duo优化-a1b2c3d4/handoff.md',title:'接续交接摘要',kind:'index'},{path:'.duo/tasks/Duo优化-a1b2c3d4/runs/synthetic.md',title:'最近一轮：检查 NFS 调试方式与验证结果',kind:'run'}],conflicts:[],warnings:[]}:route.includes('/workspace-memory/document?')?{path:'.duo/tasks/Duo优化-a1b2c3d4/README.md',content:'# Duo 优化 · 任务记录\n\n## 当前目标\n完成任务资料、平台共识、系统知识和项目知识的分层复用。\n\n## 已完成\n- 合成资料可在 Duo 内阅读。\n- 引擎切换后自动补入交接提示。\n\n## 实际验证\n这里只进行合成界面检查，不代表执行过真实硬件或模型验证。\n\n## 尚未解决\n真实 SSH 主机接续行为仍待验证。'}:baseAPI(route,...args);
+   const main='.duo/tasks/Duo优化-a1b2c3d4/任务记录.md';
+   const body='# Duo 优化 · 任务记录\n\n## 当前目标\n完成任务过程与知识分层，保留一份按时间连续记录的主文档。\n\n## 2026-10-29 10:00 · 阅读与编辑\n\n### 本轮问题\n任务记录应直接打开 Markdown，便于阅读与修改。\n\n### 处理与验证\n合成资料可在 Duo 内阅读和编辑；这里只检查界面，不代表真实硬件或模型验证。\n\n### 尚未解决\n真实 SSH 主机接续行为仍待验证。\n\n';
+   const content=view==='knowledgerecordlong'?body+Array.from({length:40},(_,i)=>'## 2026-10-29 '+(11+Math.floor(i/6))+':'+String(i%6*10).padStart(2,'0')+' · 进展 '+(i+1)+'\n\n保持人工编辑，按轮次来源去重追加。\n\n```text\nsynthetic log with a deliberately long line '+('workspace/path/'.repeat(10))+'\n```\n\n').join(''):body;
+   const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?entries:route.endsWith('/workspace-memory')?{enabled:true,directory:'.duo',task_directory:'.duo/tasks/Duo优化-a1b2c3d4/',main_document:main,exported:0,unchanged:3,tasks:[{id:'layout-preview',title:'Duo 优化',path:main},{id:'earlier-task',title:'同工作区的此前调试记录',path:'.duo/tasks/同工作区的此前调试记录-e5f6a7b8/任务记录.md'}],documents:[{path:main,title:'任务记录',kind:'main'},{path:'.duo/tasks/Duo优化-a1b2c3d4/handoff.md',title:'接续交接摘要',kind:'index'},{path:'.duo/tasks/Duo优化-a1b2c3d4/runs/synthetic.md',title:'最近一轮：检查 NFS 调试方式与验证结果',kind:'run'}],conflicts:[],warnings:[]}:route.includes('/workspace-memory/document?')?{path:main,content,revision:'synthetic-v1',editable:true}:route.endsWith('/workspace-memory/document')&&args[0]==='PUT'?Promise.reject(Object.assign(Error('synthetic conflict'),{status:409})):baseAPI(route,...args);
    // The DOM fixture has no MutationObserver; explicitly settle the same dock
    // visibility that the live shell updates after a tab switch.
    runInContext("switchTab('note');syncDocks()",ctx);await ctx.loadWorkspaceMemory();assert(!document.getElementById('notice').textContent.includes('Unexpected fixture request'),'workspace memory preview must not have unmocked requests');
+   if(!view.startsWith('knowledgerecord')){document.getElementById('task-record-history').open=true;document.querySelector('.workspace-memory-panel').classList.add('hidden')}
    if(view==='knowledgeexpanded')document.querySelector('[data-knowledge-toggle]').onclick();
-   if(view==='knowledgerecord')await ctx.readWorkspaceMemoryDocument('.duo/tasks/Duo优化-a1b2c3d4/README.md');
+   if(view==='knowledgerecordedit'||view==='knowledgerecordconflict'){document.getElementById('workspace-memory-edit').onclick();document.getElementById('workspace-memory-editor').value=content+'## 人工补充\n\n保留这段尚未保存的编辑。';document.getElementById('workspace-memory-editor').oninput();if(view==='knowledgerecordconflict')await ctx.saveWorkspaceMemoryDocument()}
   }else{
    const baseAPI=ctx.api;
    ctx.api=async(route,...args)=>{
-    if(route.startsWith('library/search'))return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:'task',layer:'tasks',path:'tasks/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4};
+    if(route.startsWith('library/search')){const layer=new URLSearchParams(route.split('?')[1]).get('layer')||'consensus',formal=['consensus','system','project'].includes(layer);return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:formal?'curated':'task',layer,path:(formal?layer:'tasks')+'/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4}}
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
     if(route.startsWith('library/document'))return {content:entries[0].content};
-    if(route==='library/curated')return Array.from({length:15},(_,i)=>({id:'graph-'+i,layer:['consensus','system','project'][i%3],scope_key:i%3===0?'':'开发板调试',title:['NFS 调试与共享目录','烧录前的镜像检查','串口问题的逐步定位','保持文档与验证依据同步','任务接续与工作习惯'][i%5]+' '+(i+1),content:entries[i%entries.length].content,status:'observed',tags:[['NFS','烧录','串口'][i%3],i%2?'调试':'知识积累'],source_task_id:'layout-preview',revision:1,updated:1790310000000}));
+    if(route==='library/curated')return Array.from({length:18},(_,i)=>({id:'graph-'+i,layer:i<15?'consensus':['system','project','project'][i-15],scope_key:i<15?'':'开发板调试',title:['NFS 调试与共享目录','烧录前的镜像检查','串口问题的逐步定位','保持文档与验证依据同步','任务接续与工作习惯'][i%5]+' '+(i+1),content:entries[i%entries.length].content,status:'observed',tags:[['NFS','烧录','串口'][i%3],i%2?'调试':'知识积累'],source_task_id:'layout-preview',revision:1,updated:1790310000000}));
     return baseAPI(route,...args);
    };
    await ctx.openLibrary();
@@ -353,7 +358,7 @@ for(const [view,theme,width,height] of cases){
  script.textContent=script.textContent.replace("const ids=['curated-dialog'","const ids=['preview-workspace-memory-panel','workspace-memory-state','workspace-memory-tasks','workspace-memory-sync','curated-dialog'");
  script.textContent=script.textContent.replace("'preview-task-menu-handoff','preview-task-menu-reset-session'","'preview-task-menu-records','preview-task-menu-session-info'");
  script.textContent=script.textContent.replace('const ids=[',"const ids=['knowledge-graph-accessible',");
- script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='knowledgerecord')document.getElementById('workspace-memory-reader').scrollIntoView({block:'start',inline:'nearest'});const ids=['create-name','task-engine-select','knowledge-graph-panel','knowledge-graph-viewport','knowledge-graph','knowledge-graph-plus','knowledge-graph-minus','knowledge-graph-refresh','library-graph-open','workspace-memory-reader','workspace-memory-content','workspace-memory-documents','vault-consensus-directory','vault-system-directory','vault-project-directory','knowledge-extraction-save',`);
+ script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}.startsWith('knowledgerecord'))document.getElementById('workspace-memory-reader').scrollIntoView({block:'start',inline:'nearest'});const ids=['workspace-memory-editor','workspace-memory-save','workspace-memory-discard','workspace-memory-edit','workspace-memory-read','create-name','task-engine-select','knowledge-graph-panel','knowledge-graph-viewport','knowledge-graph','knowledge-graph-plus','knowledge-graph-minus','knowledge-graph-refresh','library-graph-open','workspace-memory-reader','workspace-memory-content','workspace-memory-documents','vault-consensus-directory','vault-system-directory','vault-project-directory','knowledge-extraction-save',`);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  for(const control of document.querySelectorAll('fieldset'))if(typeof control.disabled==='boolean')control.toggleAttribute('disabled',control.disabled);
@@ -375,8 +380,8 @@ for(const [view,theme,width,height] of cases){
    const {bar,toolbar,buttons,focusReachable,focusOutline,directory,replacesSettings,noDuplicateNavigation,noSeparateRow,layout,noKnowledgeCategory}=metrics.settingsNavigation;
    assert(replacesSettings&&noDuplicateNavigation&&noSeparateRow&&layout==='contents','settings categories must replace the original entry without duplicate controls or a separate row');
    assert(noKnowledgeCategory,'knowledge accumulation must be inside the single knowledge library');
-   assert.equal(buttons.length,12,'global navigation must contain exactly one entry for each global action and knowledge layer');
-   assert.deepEqual(metrics.taskNavigation.globalOrder,['library-open','library-consensus-open','library-system-open','library-project-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu order must separate knowledge layers, environments, connections, data and utility actions');
+   assert.equal(buttons.length,9,'global navigation must contain exactly one knowledge library entry and each global action');
+   assert.deepEqual(metrics.taskNavigation.globalOrder,['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu order must separate knowledge layers, environments, connections, data and utility actions');
    if(width>760||['appmenu','navigation'].includes(view)){
     assert(bar.visible&&bar.x>=0&&bar.x+bar.width<=width+1,'top settings navigation exceeds viewport');
     assert(toolbar.height<=(width<=760?210:112),'expanded global menu consumes too much height');
@@ -471,9 +476,12 @@ for(const [view,theme,width,height] of cases){
    if(view==='librarysettingsbottom'){const b=items['automatic-save'];assert(b.visible&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'automatic accumulation save cannot be reached by scrolling')}
   }
   if(view.startsWith('knowledge')){
-   const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'task knowledge search is unusable');
-   const memory=items['preview-workspace-memory-panel'];assert(memory.visible&&memory.width>=120&&memory.scrollWidth<=memory.clientWidth+1,'workspace memory paths overflow their task panel');assert(items['workspace-memory-sync'].width>=44,'workspace memory backfill action is too narrow');
-   if(view==='knowledgerecord'){const reader=items['workspace-memory-content'];assert(reader.visible&&reader.width>=120&&reader.height>=150&&reader.x>=0&&reader.x+reader.width<=width+1,'task record has no readable inline document area');assert(reader.scrollWidth<=reader.clientWidth+1,'task record content overflows horizontally')}
+   const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');
+   if(!view.startsWith('knowledgerecord'))assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'legacy task knowledge search is unusable');
+   else{const memory=items['preview-workspace-memory-panel'];assert(memory.visible&&memory.width>=120&&memory.scrollWidth<=memory.clientWidth+1,'workspace memory paths overflow their task panel');assert(items['workspace-memory-sync'].width>=44,'workspace memory backfill action is too narrow');
+    const editing=view==='knowledgerecordedit'||view==='knowledgerecordconflict',reader=items[editing?'workspace-memory-editor':'workspace-memory-content'];assert(reader.visible&&reader.width>=120&&reader.height>=150&&reader.x>=0&&reader.x+reader.width<=width+1,'task record has no readable document area');assert(reader.scrollWidth<=reader.clientWidth+1,'task record content overflows horizontally');
+    if(editing)for(const id of ['workspace-memory-read','workspace-memory-edit','workspace-memory-save','workspace-memory-discard']){const b=items[id];assert(b.visible&&b.width>=44&&b.x>=0&&b.x+b.width<=width+1,'task Markdown action is clipped: '+id);if(width<=760)assert(b.height>=44,'task Markdown action has a small touch target: '+id)}
+   }
   }
   if(view.startsWith('sidebar')){
    const list=items['task-list'];

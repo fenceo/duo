@@ -89,7 +89,7 @@ runInContext(`detail.task.archived=false;detail.task.engine='codex';delete detai
 node('note-tab').onclick();
 assert(!node('notebook').classList.contains('hidden'),'one click opens task knowledge');
 assert.equal(node('note-tab').getAttribute('aria-pressed'),'true');
-assert(node('tool-title').textContent.includes('本任务知识'));
+assert(node('tool-title').textContent.includes('任务记录'));
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 runInContext('authenticated=false;renewShellScope()',ctx);
 console.log('PASS: task records and binding in task row menus, unified engine/model picker, advanced session recovery, sidebar notes, preserved session information/focus and reset/send guards. No model calls.');

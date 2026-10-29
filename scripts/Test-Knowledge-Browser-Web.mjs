@@ -22,8 +22,8 @@ ctx.api=async(path,method='GET',body)=>{
 run("chosen='task';tasks=[{id:chosen,title:'合成任务'}];detail={task:tasks[0],runs:[],events:[]}");
 node('vault-directory').value='unsaved path';
 await ctx.openLibrary();
-assert.equal(node('library-layer').value,'tasks','the library starts with task documents');
-assert(calls.find(c=>c.path.startsWith('library/search')).path.includes('layer=tasks'));
+assert.equal(node('library-layer').value,'consensus','the library starts with reusable platform consensus');
+assert(calls.find(c=>c.path.startsWith('library/search')).path.includes('layer=consensus'));
 assert.equal(node('vault-directory').value,'unsaved path','overview cannot overwrite settings drafts');
 assert.match(node('library-overview').textContent,/不自动补回/);
 assert.equal(document.querySelector('#library-results img'),null,'listing escapes titles');

@@ -491,6 +491,15 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					// A brief recovery already carries the reviewed local recall.
 					// Do not silently add a second set of knowledge to that scope.
 					if handoffInput == "" || task.Binding == nil || task.Binding.HistoryMode != "brief" {
+						worklogCtx, worklogCancel := context.WithTimeout(runCtx, 8*time.Second)
+						worklogText, worklogID, worklogErr := a.workspaceWorklogContext(worklogCtx, task)
+						worklogCancel()
+						if worklogErr != nil {
+							_ = a.store.event(id, r.ID, "progress", "本任务 Markdown 记录读取失败，本轮继续使用已取得的上下文。")
+						} else if worklogText != "" {
+							input = worklogText + input
+							_ = a.store.event(id, r.ID, "progress", "已读取本任务 Markdown 记录（来源 ID）："+worklogID)
+						}
 						contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
 						if recallErr != nil {
 							_ = a.store.event(id, r.ID, "progress", "自动恢复任务知识失败，本轮继续使用原始要求。")

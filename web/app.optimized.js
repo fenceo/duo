@@ -21,7 +21,7 @@ function installLibrary() {
     installLibrarySettings();
     const headerActions = document.createElement('div');
     headerActions.className = 'library-header-actions';
-    headerActions.innerHTML = '<button type="button" id="library-manage-task">管理本任务知识</button>';
+    headerActions.innerHTML = '<button type="button" id="library-manage-task">打开任务记录</button>';
     button('library-close').before(headerActions);
     headerActions.append(button('library-close'));
     headerActions.insertAdjacentHTML('afterbegin', '<button type="button" id="library-refresh-files">刷新文件</button>');
@@ -54,7 +54,7 @@ function installLibrary() {
     element('notebook').querySelector('.note-head').insertAdjacentHTML('afterend', '<p class="muted knowledge-panel-help">这里保留本任务的原始摘录和手工笔记。摘要、前提与共识、对话目录可以直接打开文档查看，无需手动分类。</p>');
     button('summarize').textContent = '手动整理';
     button('summarize').title = '调用本任务的 AI 整理知识，完成后可检查并保存';
-    button('knowledge-library-open').textContent = '打开本任务文档';
+    button('knowledge-library-open').textContent = '查找其他任务资料';
     button('knowledge-library-open').onclick = ()=>void openLibrary(chosen);
     button('automatic-save').onclick = ()=>void saveAutomaticKnowledge();
     for (const id of [
@@ -400,6 +400,7 @@ async function openLibrary(taskScope, page = 'browse') {
     if (taskScope) {
         scope.value = taskScope;
         input('library-layer').value = 'tasks';
+        element('library-history').open = true;
         element('library-dialog').querySelectorAll('[data-library-layer]').forEach((b)=>{
             const on = b.dataset.libraryLayer === 'tasks';
             b.classList.toggle('selected', on);
@@ -809,20 +810,18 @@ async function followLibraryLink(href) {
         if (request === libraryPreviewRequest && shellCurrent(epoch)) element('library-preview-status').textContent = '无法打开来源文档：' + e.message;
     }
 }
+const workspaceDocumentDrafts = new Map(), workspaceInitialSync = new Set();
+function workspaceDraftKey(task, path) {
+    return task + '\n' + path;
+}
+function workspaceDraftsPending() {
+    return Array.from(workspaceDocumentDrafts.values()).some((d)=>d.dirty || d.saving);
+}
 let libraryPreviewDocument = null, curatedDraft = null, curatedDirty = false, curatedSaving = false, curatedRequest = 0, workspaceMemoryRequest = 0, workspaceMemorySaving = false;
 function installKnowledgeLayers() {
-    element('library-open').insertAdjacentHTML('afterend', '<button type="button" id="library-consensus-open">平台共识</button><button type="button" id="library-system-open">系统知识</button><button type="button" id="library-project-open">项目知识</button>');
-    for (const layer of [
-        'consensus',
-        'system',
-        'project'
-    ])button('library-' + layer + '-open').onclick = ()=>void openKnowledgeLayer(layer);
     const nav = element('library-dialog').querySelector('.library-layers');
+    const layerButton = ([id, title])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id === 'consensus'}" class="${id === 'consensus' ? 'selected' : ''}">${title}</button>`;
     nav.innerHTML = [
-        [
-            'tasks',
-            '任务过程'
-        ],
         [
             'consensus',
             '平台共识'
@@ -834,6 +833,11 @@ function installKnowledgeLayers() {
         [
             'project',
             '项目知识'
+        ]
+    ].map(layerButton).join('') + '<details id="library-history" class="library-history"><summary>历史资料</summary><div>' + [
+        [
+            'tasks',
+            '任务资料'
         ],
         [
             'knowledge',
@@ -843,7 +847,8 @@ function installKnowledgeLayers() {
             'all',
             '全部资料'
         ]
-    ].map(([id, title])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id === 'tasks'}" class="${id === 'tasks' ? 'selected' : ''}">${title}</button>`).join('');
+    ].map(layerButton).join('') + '</div></details>';
+    input('library-layer').value = 'consensus';
     nav.querySelectorAll('[data-library-layer]').forEach((b)=>b.onclick = ()=>{
             input('library-layer').value = b.dataset.libraryLayer;
             input('library-kind').value = '';
@@ -862,7 +867,7 @@ function installKnowledgeLayers() {
     button('library-curated-new').onclick = ()=>openCuratedEditor();
     button('library-promote').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
     button('library-curated-edit').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
-    element('library-dialog').querySelector('.library-header p').textContent = '任务过程、平台共识、系统知识和项目知识分层管理，保留原始来源。';
+    element('library-dialog').querySelector('.library-header p').textContent = '在这里查找和编辑平台共识、系统知识、项目知识。每个任务的连续记录从左侧任务菜单打开。';
     element('library-dialog').querySelector('.library-help p').textContent = '连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
     element('settings-knowledge').querySelector('p').textContent = '过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
     const guide = element('settings-knowledge').querySelector('.knowledge-directory-guide');
@@ -886,9 +891,33 @@ function installKnowledgeLayers() {
     input('automatic-recall').closest('label').lastChild.textContent = '新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
     element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent = '同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
     element('notebook').querySelector('.knowledge-panel-help').textContent = '这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
-    element('notebook').querySelector('.knowledge-panel-help').insertAdjacentHTML('afterend', '<section class="workspace-memory-panel"><strong>工作区过程资料</strong><p id="workspace-memory-state" role="status">打开本任务知识时读取目录。</p><div id="workspace-memory-tasks"></div><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button></section>');
+    const notebook = element('notebook'), head = notebook.querySelector('.note-head');
+    head.querySelector('h2').textContent = '任务记录';
+    button('note-tab').textContent = '任务记录';
+    const history1 = document.createElement('details');
+    history1.id = 'task-record-history';
+    history1.className = 'task-record-history';
+    history1.innerHTML = '<summary>逐轮来源与历史资料</summary>';
+    notebook.append(history1);
+    for (const node of Array.from(notebook.children))if (node !== head && node !== history1) history1.append(node);
+    history1.querySelector('summary').after(element('note-status'), head.querySelector('.actions'));
+    head.querySelector('div').insertAdjacentHTML('beforeend', '<p>一个任务，一份 Markdown；按时间连续记录，可直接阅读和编辑。</p>');
+    head.insertAdjacentHTML('afterend', '<section class="workspace-memory-panel"><p id="workspace-memory-state" role="status">正在读取任务记录…</p><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><div class="workspace-memory-actions"><button type="button" id="workspace-memory-read">阅读</button><button type="button" id="workspace-memory-edit">编辑 Markdown</button><button type="button" id="workspace-memory-save" class="primary">保存</button><button type="button" id="workspace-memory-discard">放弃修改 / 读取最新</button><button type="button" id="workspace-memory-reload">重新读取</button></div><p id="workspace-memory-document-state" role="status"></p><textarea id="workspace-memory-editor" aria-label="任务记录 Markdown 正文" class="hidden" spellcheck="false"></textarea><div id="workspace-memory-content" class="content"></div></section></section>');
+    history1.querySelector('summary').insertAdjacentHTML('afterend', '<div id="workspace-memory-tasks"></div><div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务历史记录文件"></div>');
     button('workspace-memory-sync').onclick = ()=>void loadWorkspaceMemory(true);
-    element('workspace-memory-tasks').insertAdjacentHTML('afterend', '<div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务记录文件"></div><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><p id="workspace-memory-document-state" role="status"></p><div id="workspace-memory-content" class="content"></div></section>');
+    button('workspace-memory-read').onclick = ()=>setWorkspaceDocumentEditing(false);
+    button('workspace-memory-edit').onclick = ()=>setWorkspaceDocumentEditing(true);
+    button('workspace-memory-save').onclick = ()=>void saveWorkspaceMemoryDocument();
+    button('workspace-memory-discard').onclick = ()=>void discardWorkspaceMemoryDocument();
+    button('workspace-memory-reload').onclick = ()=>void readWorkspaceMemoryDocument(workspaceDocumentPath, true);
+    input('workspace-memory-editor').oninput = ()=>{
+        const draft = activeWorkspaceDraft();
+        if (!draft || draft.saving) return;
+        draft.content = input('workspace-memory-editor').value;
+        draft.dirty = true;
+        draft.status = '修改尚未保存；切换任务后草稿仍保留。';
+        renderWorkspaceDocumentControls(draft);
+    };
     element('workspace-memory-documents').onclick = (e)=>{
         const b = e.target.closest('[data-workspace-document]');
         if (b) void readWorkspaceMemoryDocument(b.dataset.workspaceDocument || '');
@@ -948,6 +977,10 @@ function installKnowledgeLayers() {
         curatedDirty = false;
         curatedSaving = false;
         workspaceMemorySaving = false;
+        workspaceDocumentDrafts.clear();
+        workspaceInitialSync.clear();
+        workspaceDocumentTask = '';
+        workspaceDocumentPath = '';
         knowledgeExtractionBusy = false;
         knowledgeExtractionSettingsBusy = false;
         knowledgeExtractionSettingsReady = false;
@@ -1073,38 +1106,108 @@ async function loadWorkspaceMemory(sync = false) {
         element('workspace-memory-documents').textContent = '';
         element('workspace-memory-reader').classList.add('hidden');
         element('workspace-memory-content').textContent = '';
+        input('workspace-memory-editor').value = '';
     }
+    let writing = sync;
     if (sync) workspaceMemorySaving = true;
     button('workspace-memory-sync').disabled = workspaceMemorySaving;
-    element('workspace-memory-state').textContent = sync ? '正在回填工作区资料…' : '正在读取工作区资料…';
+    element('workspace-memory-state').textContent = sync ? '正在回填工作区资料…' : '正在读取任务记录…';
     element('workspace-memory-tasks').textContent = '';
     const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === workspaceMemoryRequest;
     try {
-        const report = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory', sync ? 'POST' : 'GET', sync ? {} : undefined, shellController.signal);
+        let report = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory', sync ? 'POST' : 'GET', sync ? {} : undefined, shellController.signal);
         if (!current()) return;
-        element('workspace-memory-state').textContent = (report.enabled ? '目录：' + report.task_directory : '工作区记录已关闭') + (sync ? `；写入 ${report.exported}，未变化 ${report.unchanged}` : '') + [
+        const hasMain = (r)=>!!r.main_document && !!r.documents?.some((d)=>d.path === r.main_document);
+        if (!sync && !hasMain(report) && report.enabled && !report.error && !workspaceMemorySaving && !workspaceInitialSync.has(task)) {
+            workspaceInitialSync.add(task);
+            writing = true;
+            workspaceMemorySaving = true;
+            button('workspace-memory-sync').disabled = true;
+            element('workspace-memory-state').textContent = '正在将已有记录整理为本任务 Markdown…';
+            report = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory', 'POST', {}, shellController.signal);
+            if (!current()) return;
+        }
+        element('workspace-memory-state').textContent = (report.enabled ? '目录：' + report.task_directory : '自动记录已关闭；已有文件仍可阅读和编辑') + (writing ? `；写入 ${report.exported}，未变化 ${report.unchanged}` : '') + [
             report.error,
             ...report.conflicts || [],
             ...report.warnings || []
         ].filter(Boolean).map((s)=>'；' + s).join('');
         element('workspace-memory-tasks').innerHTML = (report.tasks || []).map((t)=>'<p><strong>' + escapeHTML(t.title) + '</strong> · <code>' + escapeHTML(t.path) + '</code></p>').join('');
-        element('workspace-memory-documents').innerHTML = (report.documents || []).map((d)=>'<button type="button" data-workspace-document="' + escapeHTML(d.path) + '">' + escapeHTML(d.title || d.kind || d.path) + '</button>').join('');
+        element('workspace-memory-documents').innerHTML = (report.documents || []).filter((d)=>d.path !== report.main_document).map((d)=>'<button type="button" data-workspace-document="' + escapeHTML(d.path) + '">' + escapeHTML(d.title || d.kind || d.path) + '</button>').join('');
+        if (hasMain(report)) await readWorkspaceMemoryDocument(report.main_document);
+        else if (!workspaceDocumentPath) element('workspace-memory-state').textContent += '；尚无主任务记录。' + (report.enabled ? '可点击“回填 / 同步本任务已有记录”重试。' : '请在知识库的“积累设置”开启自动记录，再手动回填。');
     } catch (e) {
         if (current()) element('workspace-memory-state').textContent = '工作区资料读取失败：' + e.message;
     } finally{
         if (shellCurrent(epoch)) {
-            if (sync) workspaceMemorySaving = false;
+            if (writing) workspaceMemorySaving = false;
             button('workspace-memory-sync').disabled = workspaceMemorySaving;
-            if (sync && !current() && toolsTab === 'note') void loadWorkspaceMemory();
+            if (writing && !current() && toolsTab === 'note') void loadWorkspaceMemory();
         }
     }
 }
-async function readWorkspaceMemoryDocument(path) {
+function activeWorkspaceDraft() {
+    return workspaceDocumentTask === chosen ? workspaceDocumentDrafts.get(workspaceDraftKey(chosen, workspaceDocumentPath)) : undefined;
+}
+function renderWorkspaceDocumentControls(draft) {
+    element('workspace-memory-document-state').textContent = draft.status || (draft.editable ? '工作区中的任务 Markdown；保存会直接更新此文件。' : '历史来源文件只读；可在外部编辑器中查看。');
+    button('workspace-memory-edit').classList.toggle('hidden', !draft.editable);
+    button('workspace-memory-save').classList.toggle('hidden', !draft.editable);
+    button('workspace-memory-discard').classList.toggle('hidden', !draft.editable || !draft.dirty);
+    button('workspace-memory-save').disabled = !draft.dirty || draft.saving || !draft.revision;
+    button('workspace-memory-edit').disabled = draft.saving;
+    button('workspace-memory-read').disabled = draft.saving;
+    button('workspace-memory-reload').disabled = draft.saving;
+    button('workspace-memory-discard').disabled = draft.saving;
+    button('workspace-memory-read').setAttribute('aria-pressed', String(!draft.editing));
+    button('workspace-memory-edit').setAttribute('aria-pressed', String(draft.editing));
+    input('workspace-memory-editor').disabled = draft.saving;
+}
+function renderWorkspaceDocument(draft) {
+    workspaceDocumentTask = draft.task;
+    workspaceDocumentPath = draft.path;
+    element('workspace-memory-reader').classList.remove('hidden');
+    element('workspace-memory-title').textContent = draft.path;
+    input('workspace-memory-editor').value = draft.content;
+    input('workspace-memory-editor').classList.toggle('hidden', !draft.editing);
+    element('workspace-memory-content').classList.toggle('hidden', draft.editing);
+    element('workspace-memory-content').innerHTML = markdown(draft.content);
+    renderWorkspaceDocumentControls(draft);
+}
+function setWorkspaceDocumentEditing(editing) {
+    const draft = activeWorkspaceDraft();
+    if (!draft || draft.saving || editing && !draft.editable) return;
+    draft.editing = editing;
+    renderWorkspaceDocument(draft);
+    if (editing) input('workspace-memory-editor').focus();
+}
+async function readWorkspaceMemoryDocument(path, reload = false) {
     if (!chosen || creatingTask || !path) return;
     const task = chosen, selected = selection, epoch = shellEpoch, request = ++workspaceDocumentRequest;
+    const key = workspaceDraftKey(task, path), cached = workspaceDocumentDrafts.get(key);
+    if (cached && (cached.dirty || cached.saving)) {
+        if (reload) cached.status = '草稿尚未保存；请先保存，或选择“放弃修改 / 读取最新”。';
+        renderWorkspaceDocument(cached);
+        return;
+    }
+    workspaceDocumentTask = task;
+    workspaceDocumentPath = path;
     element('workspace-memory-reader').classList.remove('hidden');
     element('workspace-memory-title').textContent = path;
-    element('workspace-memory-content').textContent = '';
+    if (cached) renderWorkspaceDocument(cached);
+    else {
+        element('workspace-memory-content').textContent = '';
+        input('workspace-memory-editor').value = '';
+        input('workspace-memory-editor').classList.add('hidden');
+        element('workspace-memory-content').classList.remove('hidden');
+        for (const id of [
+            'workspace-memory-read',
+            'workspace-memory-edit',
+            'workspace-memory-save',
+            'workspace-memory-discard',
+            'workspace-memory-reload'
+        ])button(id).disabled = true;
+    }
     element('workspace-memory-document-state').textContent = '正在读取任务记录…';
     const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === workspaceDocumentRequest;
     try {
@@ -1112,12 +1215,65 @@ async function readWorkspaceMemoryDocument(path) {
             path
         }), 'GET', undefined, shellController.signal);
         if (!current()) return;
-        workspaceDocumentPath = result.path;
-        element('workspace-memory-title').textContent = result.path;
-        element('workspace-memory-content').innerHTML = markdown(result.content || '');
-        element('workspace-memory-document-state').textContent = '工作区文件内容；可在外部编辑器中继续编辑。';
+        if (result.path !== path) throw new Error('返回的文档路径不一致，请重新读取。');
+        const latest = workspaceDocumentDrafts.get(key);
+        if (latest && (latest.dirty || latest.saving)) {
+            renderWorkspaceDocument(latest);
+            return;
+        }
+        const draft = {
+            ...result,
+            task,
+            content: result.content || '',
+            editable: result.editable === true && !!result.revision,
+            dirty: false,
+            editing: cached?.editing || false,
+            saving: false,
+            status: ''
+        };
+        workspaceDocumentDrafts.set(key, draft);
+        renderWorkspaceDocument(draft);
     } catch (e) {
         if (current()) element('workspace-memory-document-state').textContent = '记录读取失败：' + e.message;
+    }
+}
+async function discardWorkspaceMemoryDocument() {
+    const draft = activeWorkspaceDraft();
+    if (!draft || draft.saving) return;
+    workspaceDocumentDrafts.delete(workspaceDraftKey(draft.task, draft.path));
+    await readWorkspaceMemoryDocument(draft.path, true);
+}
+async function saveWorkspaceMemoryDocument() {
+    const draft = activeWorkspaceDraft();
+    if (!draft || !draft.editable || !draft.revision || !draft.dirty || draft.saving) return;
+    const task = draft.task, path = draft.path, selected = selection, epoch = shellEpoch, key = workspaceDraftKey(task, path), content = draft.content, revision = draft.revision;
+    draft.saving = true;
+    draft.status = '正在保存任务记录…';
+    renderWorkspaceDocumentControls(draft);
+    const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && workspaceDocumentPath === path;
+    try {
+        const result = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory/document', 'PUT', {
+            path,
+            content,
+            revision
+        }, shellController.signal);
+        if (!shellCurrent(epoch)) return;
+        if (result.path !== path || !result.revision) throw new Error('保存结果缺少文件版本，请重新核对文件。');
+        if (workspaceDocumentDrafts.get(key) !== draft) return;
+        draft.content = result.content ?? content;
+        draft.revision = result.revision;
+        draft.dirty = false;
+        draft.status = '已保存到任务 Markdown。';
+        if (current()) renderWorkspaceDocument(draft);
+    } catch (e) {
+        if (!shellCurrent(epoch)) return;
+        draft.status = e.status === 409 ? '文件已被其他窗口或自动记录更新。你的草稿仍保留；请复制需要的内容，再放弃修改并读取最新版本合并。' : '保存失败，草稿已保留：' + e.message;
+        if (current()) renderWorkspaceDocumentControls(draft);
+    } finally{
+        if (shellCurrent(epoch)) {
+            draft.saving = false;
+            if (current()) renderWorkspaceDocumentControls(draft);
+        }
     }
 }
 async function openKnowledgeLayer(layer) {
@@ -4146,7 +4302,7 @@ async function stopCodexApprovalRun(card) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="records" data-task-id="${escapeHTML(t.id)}">任务记录与知识</button><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与恢复</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="records" data-task-id="${escapeHTML(t.id)}">任务记录</button><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与恢复</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function taskEngineMark(engine) {
     if (engine === 'claude') return {
@@ -4408,9 +4564,6 @@ function installSettingsNavigation() {
     element('settings-open').replaceWith(nav);
     const order = [
         '#library-open',
-        '#library-consensus-open',
-        '#library-system-open',
-        '#library-project-open',
         '#engines-open',
         '[data-settings="feishu"]',
         '[data-settings="access"]',
@@ -11204,7 +11357,7 @@ function renderShell() {
             notify('便签尚未保存，请等待保存完成或重试后再退出。');
             return;
         }
-        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving) {
+        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving || workspaceDraftsPending()) {
             notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');
             return;
         }
@@ -11503,7 +11656,7 @@ function switchTab(tab) {
     }
     button('chat-tab').classList.toggle('selected', !open);
     element('tool-title').textContent = ({
-        note: '本任务知识',
+        note: '任务记录',
         scratch: '待办',
         hardware: '硬件调试',
         files: '文件与改动',
@@ -11699,7 +11852,7 @@ function renderTask() {
     const knowledge = latestKnowledgeRun(), saved = knowledge ? knowledgeForRun(knowledge.id) : null, pending = !!knowledge && (!saved || !knowledgeSummaryOnly && saved.content !== knowledge.result);
     element('draft-banner').classList.toggle('hidden', !pending);
     element('draft-preview').classList.toggle('hidden', !pending);
-    button('note-tab').textContent = '本任务知识' + (knowledgeItems.length ? ' · ' + knowledgeItems.length : '');
+    button('note-tab').textContent = '任务记录';
     button('summarize').disabled = active;
     if (knowledge && pending) {
         const preview = element('draft-content');
@@ -11740,7 +11893,7 @@ function renderTask() {
         knowledgeHint = document.createElement('p');
         knowledgeHint.id = 'harness-knowledge-hint';
         knowledgeHint.className = 'muted';
-        element('notebook').querySelector('.note-head').after(knowledgeHint);
+        element('task-record-history').querySelector('summary').after(knowledgeHint);
     }
     knowledgeHint.textContent = harnessKnowledgeHint;
     knowledgeHint.classList.toggle('hidden', !harness);
@@ -12715,7 +12868,7 @@ async function setBinding(bind) {
     }
 }
 window.addEventListener('beforeunload', (e)=>{
-    if (dirty || stickyDirty || stickySaving || automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving) {
+    if (dirty || stickyDirty || stickySaving || automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving || workspaceDraftsPending()) {
         e.preventDefault();
         e.returnValue = '';
     }

@@ -17,6 +17,13 @@ func workspaceMemoryLegacyFixture(t *testing.T, a *App, task Task) string {
 	}
 	current := workspaceMemoryTaskBase(task)
 	legacy := path.Join(".duo", "tasks", task.ID)
+	legacyFiles := files[:0]
+	for _, file := range files {
+		if !file.AppendWorklog {
+			legacyFiles = append(legacyFiles, file)
+		}
+	}
+	files = legacyFiles
 	for i := range files {
 		files[i].Path = strings.ReplaceAll(files[i].Path, current, legacy)
 		content := strings.Split(files[i].Content, "\n<!-- duo-workspace-generated:")[0]
@@ -41,7 +48,7 @@ func TestWorkspaceMemoryReadableDirectoriesStableRenameAndLegacyMigration(t *tes
 	if err != nil || len(report.Tasks) != 1 || report.TaskDirectory != base || !strings.Contains(base, "375-调试-NFS-烧录-") || strings.Contains(base, task.ID) {
 		t.Fatal(report, base, err)
 	}
-	if len(report.Documents) != 3 {
+	if len(report.Documents) != 4 || report.MainDocument != path.Join(base, workspaceWorklogFilename) {
 		t.Fatal("task documents not discoverable", report.Documents)
 	}
 	canonical := path.Join(base, "runs", run.ID+".md")

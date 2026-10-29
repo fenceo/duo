@@ -140,7 +140,7 @@ function renderShell(){
  installTools();installWorkspace();installConversationFilter();installSettingsSections();installEngineSettings();installProductivity();installEditor();installTerminal();installExecution();installDiscovery();installLayout();installEnvironmentDiscovery();installWorkflow();installCodexApprovals();installStickyBoard();installAppearance();installPanelLayout();installUpdates();installLibrary();installDesktopSharing();installUsageDashboard();installSettingsNavigation();
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
- button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
+ button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving||workspaceDraftsPending()){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
@@ -203,7 +203,7 @@ function switchTab(tab:string){
  element('workspace').classList.toggle('tool-open',open);element('workspace').classList.toggle('tool-full',open&&toolFullscreen);
  element('tool-dock').classList.toggle('hidden',!open);element('conversation').classList.remove('hidden');element('composer-wrap').classList.toggle('hidden',!chosen);
  for(const [key,panel] of [['note','notebook'],['scratch','scratch-panel'],['hardware','hardware-panel'],['files','files-panel'],['terminal','terminal-panel']]){element(panel).classList.toggle('hidden',tab!==key);const entry=document.getElementById(key+'-tab');entry?.classList.toggle('selected',tab===key);entry?.setAttribute('aria-pressed',String(tab===key))}
- button('chat-tab').classList.toggle('selected',!open);element('tool-title').textContent=({note:'本任务知识',scratch:'待办',hardware:'硬件调试',files:'文件与改动',terminal:'终端'} as Record<string,string>)[tab]||'任务工具';
+ button('chat-tab').classList.toggle('selected',!open);element('tool-title').textContent=({note:'任务记录',scratch:'待办',hardware:'硬件调试',files:'文件与改动',terminal:'终端'} as Record<string,string>)[tab]||'任务工具';
  renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();if(tab==='note'&&detail){void loadKnowledge();void loadWorkspaceMemory()}
 }
 
@@ -276,13 +276,13 @@ function renderTask(){
  const active=detail.runs.some(r=>['running','queued'].includes(r.status));const queued=detail.runs.filter(r=>r.status==='queued').length;const latest=detail.runs.at(-1);
  element('run-status').textContent=detail.approvals?.length?'等待你处理 '+detail.approvals.length+' 个 '+taskEngineName(t.engine)+' 请求':active?'正在执行'+(queued?' · '+queued+' 条要求排队中':''):latest?.error||names[t.status]||t.status;
  element('run-status').classList.toggle('error',!active&&!!latest?.error);button('stop').classList.toggle('hidden',!active);button('send').disabled=sending;input('message').placeholder=active?'追加要求将排队，也可以停止当前执行…':'下一步，要做什么？';
- const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||!knowledgeSummaryOnly&&saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='本任务知识'+(knowledgeItems.length?' · '+knowledgeItems.length:'');button('summarize').disabled=active;
+ const knowledge=latestKnowledgeRun(),saved=knowledge?knowledgeForRun(knowledge.id):null,pending=!!knowledge&&(!saved||!knowledgeSummaryOnly&&saved.content!==knowledge.result);element('draft-banner').classList.toggle('hidden',!pending);element('draft-preview').classList.toggle('hidden',!pending);button('note-tab').textContent='任务记录';button('summarize').disabled=active;
  if(knowledge&&pending){const preview=element('draft-content');if(preview.dataset.run!==knowledge.id){preview.innerHTML=markdown(knowledge.result);preview.dataset.run=knowledge.id}element('draft-label').textContent=saved?'这轮执行的总结已保存，草稿可编辑合并':'执行总结 · 未保存';button('save-draft').disabled=!!saved}
  input('message').disabled=t.archived;button('send').disabled=sending||t.archived;button('summarize').disabled=active||t.archived||['mimo','opencode','zcode'].includes(t.engine);if(t.archived)element('run-status').textContent='任务已归档，记录保留；恢复后可以继续执行。';
  if(harnessSessionClosed()){element('run-status').textContent='当前运行会话不可继续，请先新建会话。已输入的要求会保留。';element('run-status').classList.add('error');input('message').placeholder='可先写下要求，新建会话后再发送…'}
  element('run-status').classList.toggle('hidden',!active&&!latest?.error&&!detail.approvals?.length&&!t.archived&&!harnessSessionClosed());
  const harness=t.engine==='deepseek-harness';button('summarize').disabled=active||t.archived||['mimo','opencode','zcode'].includes(t.engine);button('summarize').title=harness?harnessKnowledgeHint:['mimo','opencode','zcode'].includes(t.engine)?'此引擎的独立知识整理尚未接入':'根据任务记录生成知识草稿';
- let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('notebook').querySelector('.note-head')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
+ let knowledgeHint=element('harness-knowledge-hint');if(!knowledgeHint){knowledgeHint=document.createElement('p');knowledgeHint.id='harness-knowledge-hint';knowledgeHint.className='muted';element('task-record-history').querySelector('summary')!.after(knowledgeHint)}knowledgeHint.textContent=harnessKnowledgeHint;knowledgeHint.classList.toggle('hidden',!harness);
  renderWorkflow();renderTerminal();const i=tasks.findIndex(x=>x.id===t.id);if(i>=0)tasks[i]=t;renderList();
 }
 function appendEvents(events:EventRecord[]){
@@ -558,7 +558,7 @@ async function setBinding(bind:boolean){
  catch(e){if(bindingTarget===target&&bindingCurrent())notify((e as Error).message)}
  finally{bindingSaving=false;if(bindingTarget===target&&bindingCurrent()){button('bind').disabled=!target.chat;button('unbind').disabled=!detail?.chat;button('bind-setup').disabled=false}}
 }
-window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving){e.preventDefault();e.returnValue=''}});
+window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving||workspaceDraftsPending()){e.preventDefault();e.returnValue=''}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll()});
 setInterval(()=>void poll(true),1000);
 setInterval(()=>void pollSettingsStatus(),5000);

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const workspaceMemoryDirectory = ".duo"
@@ -67,6 +68,10 @@ type WorkspaceMemoryReport struct {
 	Enabled       bool                      `json:"enabled"`
 	Directory     string                    `json:"directory"`
 	TaskDirectory string                    `json:"task_directory"`
+	MainDocument  string                    `json:"main_document"`
+	Revision      string                    `json:"revision,omitempty"`
+	Editable      bool                      `json:"editable"`
+	ErrorCode     string                    `json:"error_code,omitempty"`
 	Exported      int                       `json:"exported"`
 	Unchanged     int                       `json:"unchanged"`
 	Tasks         []WorkspaceMemoryTask     `json:"tasks"`
@@ -92,9 +97,13 @@ type workspaceMemoryMigration struct {
 }
 
 type workspaceMemoryFile struct {
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-	CreateOnly bool   `json:"create_only,omitempty"`
+	Path             string                  `json:"path"`
+	Content          string                  `json:"content"`
+	CreateOnly       bool                    `json:"create_only,omitempty"`
+	AppendWorklog    bool                    `json:"append_worklog,omitempty"`
+	Entries          []workspaceWorklogEntry `json:"entries,omitempty"`
+	ReplaceDocument  bool                    `json:"-"`
+	ExpectedRevision string                  `json:"-"`
 }
 
 type workspaceMemoryPayload struct {
@@ -104,11 +113,14 @@ type workspaceMemoryPayload struct {
 	TaskID        string                     `json:"task_id,omitempty"`
 	TaskDirectory string                     `json:"task_directory,omitempty"`
 	Path          string                     `json:"path,omitempty"`
+	Content       string                     `json:"content,omitempty"`
+	Revision      string                     `json:"revision,omitempty"`
 	Migrations    []workspaceMemoryMigration `json:"migrations,omitempty"`
 }
 
 func workspaceMemoryReport(task Task) WorkspaceMemoryReport {
-	return WorkspaceMemoryReport{Directory: workspaceMemoryDirectory, TaskDirectory: workspaceMemoryTaskBase(task), Tasks: []WorkspaceMemoryTask{}, Conflicts: []string{}, Warnings: []string{}, Documents: []WorkspaceMemoryDocument{}}
+	base := workspaceMemoryTaskBase(task)
+	return WorkspaceMemoryReport{Directory: workspaceMemoryDirectory, TaskDirectory: base, MainDocument: path.Join(base, workspaceWorklogFilename), Tasks: []WorkspaceMemoryTask{}, Conflicts: []string{}, Warnings: []string{}, Documents: []WorkspaceMemoryDocument{}}
 }
 
 // Keep names readable while the suffix identifies the stable task, independent
@@ -178,7 +190,7 @@ func workspaceMemoryDocumentPath(relative string) bool {
 			return false
 		}
 	}
-	return len(parts) == 4 && (parts[3] == "README.md" || parts[3] == "handoff.md") || len(parts) == 5 && parts[3] == "runs" && strings.HasSuffix(parts[4], ".md") && archiveIDPattern.MatchString(strings.TrimSuffix(parts[4], ".md"))
+	return len(parts) == 4 && (parts[3] == "README.md" || parts[3] == "handoff.md" || parts[3] == workspaceWorklogFilename) || len(parts) == 5 && parts[3] == "runs" && strings.HasSuffix(parts[4], ".md") && archiveIDPattern.MatchString(strings.TrimSuffix(parts[4], ".md"))
 }
 
 func workspaceMemoryLink(from, to string) string {
@@ -323,18 +335,21 @@ func (s *Store) workspaceMemoryFiles(ctx context.Context, task Task) ([]workspac
 			}
 		}
 	}
-	rows, err := s.QueryContext(ctx, `SELECT id,substr(input,1,100001),kind,status,substr(result,1,140001),substr(error,1,4001),created,finished FROM runs
-WHERE task_id=? AND status IN ('done','failed','interrupted') ORDER BY created DESC,id DESC LIMIT 2001`, task.ID)
+	rows, err := s.QueryContext(ctx, `SELECT r.id,substr(r.input,1,100001),r.kind,r.status,substr(r.result,1,140001),substr(r.error,1,4001),r.created,r.finished,coalesce(substr(m.payload,1,100001),'') FROM runs r
+LEFT JOIN task_memories m ON m.run_id=r.id AND m.task_id=r.task_id
+WHERE r.task_id=? AND r.status IN ('done','failed','interrupted') ORDER BY r.created DESC,r.rowid DESC LIMIT 2001`, task.ID)
 	if err != nil {
 		return nil, nil, err
 	}
 	runs := []Run{}
+	memories := map[string]*taskMemory{}
 	loaded := 0
 	loadLimited := false
 	for rows.Next() {
 		var r Run
+		var memoryRaw string
 		r.TaskID = task.ID
-		if err = rows.Scan(&r.ID, &r.Input, &r.Kind, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished); err != nil {
+		if err = rows.Scan(&r.ID, &r.Input, &r.Kind, &r.Status, &r.Result, &r.Error, &r.Created, &r.Finished, &memoryRaw); err != nil {
 			break
 		}
 		if loaded+len(r.Input)+len(r.Result)+len(r.Error) > workspaceMemoryBatchLimit {
@@ -343,6 +358,10 @@ WHERE task_id=? AND status IN ('done','failed','interrupted') ORDER BY created D
 		}
 		loaded += len(r.Input) + len(r.Result) + len(r.Error)
 		runs = append(runs, r)
+		var memory taskMemory
+		if json.Unmarshal([]byte(memoryRaw), &memory) == nil {
+			memories[r.ID] = &memory
+		}
 	}
 	if err == nil {
 		err = rows.Err()
@@ -364,6 +383,8 @@ WHERE task_id=? AND status IN ('done','failed','interrupted') ORDER BY created D
 	var index strings.Builder
 	fmt.Fprintf(&index, "# %s\n\n任务 ID：`%s`\n\n[工作区任务索引](../../README.md) · [交接记忆](handoff.md)\n\n本目录保存脱敏后的初级任务资料。自动记录不等于经过验证的知识；原始数据库及引擎原生会话仍由 Duo 保存。切换引擎沿用稳定来源 ID，不复制同一轮记录。\n\n## 逐轮记录\n\n", markdownTitle(title), task.ID)
 	files := []workspaceMemoryFile{}
+	worklog := []workspaceWorklogEntry{}
+	worklogTags := []string{}
 	sources := []WorkspaceMemorySource{}
 	seen := map[string]bool{}
 	bytes := 0
@@ -429,6 +450,10 @@ WHERE task_id=? AND status IN ('done','failed','interrupted') ORDER BY created D
 			break
 		}
 		files = append(files, workspaceMemoryFile{Path: file, Content: content, CreateOnly: originTask != task.ID})
+		worklog = append(worklog, workspaceWorklogEntry{ID: identity, Content: workspaceWorklogEntryContent(task, r, memories[r.ID], workspaceMemoryLink(path.Join(base, workspaceWorklogFilename), file))})
+		if memory := memories[r.ID]; memory != nil {
+			worklogTags = append(worklogTags, memory.Tags...)
+		}
 		bytes += len(content)
 		fmt.Fprintf(&index, "- [%s · %s](%s) · `%s`\n", memoryDate(r.Created), r.Status, link, identity)
 		if len(sources) < 6 && r.Kind == "chat" {
@@ -465,6 +490,14 @@ WHERE task_id=? AND status IN ('done','failed','interrupted') ORDER BY created D
 	metadata.Excerpt, _ = clipContinuation(clean(handoff.String()), 2400)
 	raw, _ := json.Marshal(metadata)
 	files = append(files, workspaceMemoryFile{Path: path.Join(base, "README.md"), Content: workspaceMemoryManaged(index.String())}, workspaceMemoryFile{Path: path.Join(base, "handoff.md"), Content: workspaceMemoryManaged("<!-- duo-workspace-task:" + string(raw) + " -->\n\n" + handoff.String())})
+	for left, right := 0, len(worklog)-1; left < right; left, right = left+1, right-1 {
+		worklog[left], worklog[right] = worklog[right], worklog[left]
+	}
+	goal, _, err := s.taskWorklogGoal(ctx, task.ID, task.Workspace)
+	if err != nil {
+		return nil, warnings, err
+	}
+	files = append(files, workspaceMemoryFile{Path: path.Join(base, workspaceWorklogFilename), Content: workspaceWorklogHeader(task, workspaceWorklogText(goal, task.Workspace, 1800), worklogTags...), AppendWorklog: true, Entries: worklog})
 	return files, warnings, nil
 }
 
@@ -516,6 +549,16 @@ func workspaceMemoryIndex(tasks []WorkspaceMemoryTask) string {
 
 func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemoryPayload) (WorkspaceMemoryReport, error) {
 	report := workspaceMemoryReport(task)
+	if payload.Action == "save_document" || payload.Action == "document" && path.Base(payload.Path) == workspaceWorklogFilename {
+		canonical, err := workspaceMemoryLocal(ctx, task, workspaceMemoryPayload{Action: "read"})
+		if err != nil {
+			return report, err
+		}
+		report.TaskDirectory, report.MainDocument = canonical.TaskDirectory, canonical.MainDocument
+		if payload.Path != report.MainDocument {
+			return report, errors.New("只能查看或编辑本任务的主 Markdown 记录")
+		}
+	}
 	if !filepath.IsAbs(task.Workspace) {
 		return report, errors.New("工作区记忆需要实际工作区的绝对路径")
 	}
@@ -565,12 +608,18 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 		}
 		defer f.Close()
 		info, err := f.Stat()
-		if err != nil || !info.Mode().IsRegular() || info.Size() > workspaceMemoryFileLimit {
-			return "", errors.New("工作区记忆不是普通文件或超过 1 MiB")
+		if err != nil || !info.Mode().IsRegular() {
+			return "", errors.New("工作区记忆不是普通文件")
+		}
+		if info.Size() > workspaceMemoryFileLimit {
+			return "", errWorkspaceMemoryTooLarge
 		}
 		raw, err := io.ReadAll(io.LimitReader(f, workspaceMemoryFileLimit+1))
 		if len(raw) > workspaceMemoryFileLimit {
-			return "", errors.New("工作区记忆超过 1 MiB")
+			return "", errWorkspaceMemoryTooLarge
+		}
+		if !utf8.Valid(raw) || strings.ContainsRune(string(raw), '\x00') {
+			return "", errors.New("任务 Markdown 不是有效 UTF-8 文本或包含 NUL，未读取或改写原文件")
 		}
 		return string(raw), err
 	}
@@ -585,8 +634,31 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			return err
 		}
 		old, err := read(file.Path)
+		existed := err == nil
+		if file.AppendWorklog && errors.Is(err, errWorkspaceMemoryTooLarge) {
+			report.Warnings = append(report.Warnings, "任务记录超过 1 MiB，已保留原文并停止追加；原始记录仍在 Duo 数据库中。")
+			report.Unchanged++
+			return nil
+		}
 		if err != nil && !os.IsNotExist(err) {
 			return err
+		}
+		if file.ReplaceDocument && (err != nil || !validWorkspaceMemoryRevision(file.ExpectedRevision) || file.ExpectedRevision != workspaceMemoryHash(old)) {
+			report.ErrorCode = "conflict"
+			return errWorkspaceDocumentConflict
+		}
+		if file.AppendWorklog {
+			if path.Base(file.Path) != workspaceWorklogFilename || !workspaceMemoryTaskDirectory(task.ID, path.Dir(file.Path)) {
+				return errors.New("任务记录追加路径无效")
+			}
+			var limited bool
+			file.Content, limited, err = appendWorkspaceWorklog(old, err == nil, file.Content, file.Entries)
+			if err != nil {
+				return err
+			}
+			if limited {
+				report.Warnings = append(report.Warnings, "任务记录达到 1 MiB，已保留原文，尚未追加的轮次仍在原始记录和 Duo 数据库中。")
+			}
 		}
 		if err == nil && file.CreateOnly {
 			report.Unchanged++
@@ -596,7 +668,7 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			report.Unchanged++
 			return nil
 		}
-		if err == nil && !workspaceMemoryUnmodified(old) {
+		if err == nil && !file.AppendWorklog && !file.ReplaceDocument && !workspaceMemoryUnmodified(old) {
 			file.Path = path.Join(workspaceMemoryDirectory, "conflicts", strings.ReplaceAll(strings.TrimPrefix(file.Path, workspaceMemoryDirectory+"/"), "/", "_")+"-"+workspaceMemoryHash(file.Content)[:16]+".md")
 			report.Conflicts = append(report.Conflicts, file.Path)
 			if e := check(file.Path, true); e != nil {
@@ -612,6 +684,7 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 				return e
 			}
 			old = ""
+			existed = false
 		}
 		// Temp files are exclusive and confined to os.Root; an old file is never
 		// truncated in place. os.Root also prevents an ancestor race escaping it.
@@ -634,8 +707,12 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 		}
 		if err == nil {
 			current, readErr := read(file.Path)
-			if (readErr != nil && !os.IsNotExist(readErr)) || (readErr == nil && current != old) || (os.IsNotExist(readErr) && old != "") {
+			if !workspaceMemorySnapshotMatches(old, existed, current, readErr) {
 				err = errors.New("写入前文档发生外部修改；已保留原文件，请重新同步")
+				if file.ReplaceDocument {
+					report.ErrorCode = "conflict"
+					err = errWorkspaceDocumentConflict
+				}
 			}
 		}
 		if err == nil {
@@ -645,6 +722,20 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			report.Exported++
 		}
 		return err
+	}
+	if payload.Action == "save_document" {
+		if !workspaceMemoryDocumentPath(payload.Path) || payload.Path != report.MainDocument {
+			return report, errors.New("只能编辑本任务的主 Markdown 记录")
+		}
+		if !utf8.ValidString(payload.Content) || strings.ContainsRune(payload.Content, '\x00') || len(payload.Content) > workspaceMemoryFileLimit {
+			return report, errors.New("任务记录必须是不超过 1 MiB 的 UTF-8 文本，且不能包含 NUL")
+		}
+		if err := write(workspaceMemoryFile{Path: payload.Path, Content: payload.Content, ReplaceDocument: true, ExpectedRevision: payload.Revision}); err != nil {
+			return report, err
+		}
+		report.Path, report.Content = payload.Path, payload.Content
+		report.Revision, report.Editable = workspaceMemoryHash(payload.Content), true
+		return report, nil
 	}
 	// A legacy directory is moved only as a complete, untouched generated set.
 	// Redirect documents preserve old Markdown links without copying transcripts.
@@ -743,6 +834,9 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 		}
 		report.Content, err = read(payload.Path)
 		report.Path = payload.Path
+		if payload.Path == report.MainDocument && err == nil {
+			report.Revision, report.Editable = workspaceMemoryHash(report.Content), true
+		}
 		return report, err
 	}
 	if err = check(workspaceMemoryDirectory+"/tasks", false); err != nil {
@@ -801,10 +895,15 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			break
 		}
 	}
-	for _, name := range []string{"README.md", "handoff.md"} {
+	report.MainDocument = workspaceWorklogPath(report)
+	for _, name := range []string{workspaceWorklogFilename, "README.md", "handoff.md"} {
 		relative := path.Join(report.TaskDirectory, name)
 		if _, e := read(relative); e == nil {
-			report.Documents = append(report.Documents, WorkspaceMemoryDocument{relative, name, "index"})
+			kind := "index"
+			if name == workspaceWorklogFilename {
+				kind = "worklog"
+			}
+			report.Documents = append(report.Documents, WorkspaceMemoryDocument{relative, name, kind})
 		}
 	}
 	if e := check(path.Join(report.TaskDirectory, "runs", "_"), false); e == nil {
@@ -855,6 +954,9 @@ func workspaceMemoryIORequest(ctx context.Context, task Task, payload workspaceM
 		return report, errors.New("工作区记忆返回无效或超限的响应，请检查远端 Python 3")
 	}
 	if report.Error != "" {
+		if report.ErrorCode == "conflict" {
+			return report, errWorkspaceDocumentConflict
+		}
 		return report, errors.New(report.Error)
 	}
 	report.Tasks = workspaceMemorySanitizeTasks(report.Tasks, task.Workspace)
@@ -882,6 +984,7 @@ func workspaceMemoryIORequest(ctx context.Context, task Task, payload workspaceM
 	if report.TaskDirectory == "" {
 		report.TaskDirectory = payload.TaskDirectory
 	}
+	report.MainDocument = workspaceWorklogPath(report)
 	return report, nil
 }
 
@@ -1090,6 +1193,49 @@ func (s *Server) workspaceMemoryRoutes(m *http.ServeMux) {
 			fail(w, 400, err.Error())
 			return
 		}
-		jsonOut(w, 200, map[string]any{"path": report.Path, "content": workspaceMemoryText(report.Content, task.Workspace), "truncated": false})
+		content := report.Content
+		if !report.Editable {
+			content = workspaceMemoryText(content, task.Workspace)
+		}
+		jsonOut(w, 200, map[string]any{"path": report.Path, "content": content, "revision": report.Revision, "editable": report.Editable, "main_document": report.MainDocument, "truncated": false})
+	}))
+	m.HandleFunc("PUT /api/tasks/{id}/workspace-memory/document", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		task, err := s.app.store.task(r.PathValue("id"))
+		if err != nil || task.Deleted {
+			fail(w, 404, "任务不存在")
+			return
+		}
+		var v struct {
+			Path     string `json:"path"`
+			Content  string `json:"content"`
+			Revision string `json:"revision"`
+		}
+		// JSON escaping may expand an otherwise valid 1 MiB UTF-8 document.
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 6*workspaceMemoryFileLimit+4096))
+		var extra any
+		if decoder.Decode(&v) != nil || decoder.Decode(&extra) != io.EOF || !workspaceMemoryDocumentPath(v.Path) || path.Base(v.Path) != workspaceWorklogFilename || !utf8.ValidString(v.Content) || strings.ContainsRune(v.Content, '\x00') || len(v.Content) > workspaceMemoryFileLimit {
+			fail(w, 400, "只能保存不超过 1 MiB 的本任务主 Markdown 记录")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		select {
+		case workspaceMemorySlot <- struct{}{}:
+			defer func() { <-workspaceMemorySlot }()
+		case <-ctx.Done():
+			fail(w, http.StatusRequestTimeout, "任务记录正忙，请稍后重试；当前编辑未覆盖")
+			return
+		}
+		report, err := workspaceMemoryIORequest(ctx, task, workspaceMemoryPayload{Action: "save_document", Path: v.Path, Content: v.Content, Revision: v.Revision})
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errWorkspaceDocumentConflict) || report.ErrorCode == "conflict" {
+				status = http.StatusConflict
+			}
+			fail(w, status, err.Error())
+			return
+		}
+		s.app.changed()
+		jsonOut(w, 200, map[string]any{"path": report.Path, "content": report.Content, "revision": report.Revision, "editable": report.Editable, "main_document": report.MainDocument})
 	}))
 }

@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import {runInContext} from 'node:vm';
 import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
 const {ctx,document}=await createWebShellFixture();
@@ -25,7 +25,7 @@ ctx.api=async(path,method='GET',body)=>{
  throw Error('Unexpected request '+path);
 };
 run("tasks=[{id:'one',title:'Readable task',engine:'codex'}];chosen='one';selection=1;creatingTask=false;detail={task:tasks[0],runs:[],events:[]}");
-assert(node('library-consensus-open')&&node('library-system-open')&&node('library-project-open'));
+assert(!node('library-consensus-open')&&!node('library-system-open')&&!node('library-project-open')); assert.equal(document.querySelectorAll('#workspace-settings #library-open').length,1); assert(node('library-history').contains(document.querySelector('[data-library-layer=tasks]')));
 await ctx.extractRecordedKnowledge();
 assert(!calls.some(c=>c.path==='library/extract'),'missing directory cannot silently use fallback');
 assert(!node('settings-knowledge').classList.contains('hidden'));assert.match(node('vault-status').textContent,/Obsidian/);

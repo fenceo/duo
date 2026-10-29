@@ -62,7 +62,7 @@ func TestWorkspaceMemoryStableFilesRedactionAndNoModelCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := a.syncWorkspaceMemory(context.Background(), task.ID)
-	if err != nil || report.Exported != 4 || len(report.Tasks) != 1 || !report.Enabled {
+	if err != nil || report.Exported != 5 || len(report.Tasks) != 1 || !report.Enabled {
 		t.Fatal(report, err)
 	}
 	file := filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "runs", run.ID+".md")
@@ -76,7 +76,7 @@ func TestWorkspaceMemoryStableFilesRedactionAndNoModelCalls(t *testing.T) {
 	before, _ := os.Stat(file)
 	report, err = a.syncWorkspaceMemory(context.Background(), task.ID)
 	after, _ := os.Stat(file)
-	if err != nil || report.Exported != 0 || report.Unchanged != 4 || !before.ModTime().Equal(after.ModTime()) {
+	if err != nil || report.Exported != 0 || report.Unchanged != 5 || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatal("non-idempotent synchronization", report, err)
 	}
 	if data, _ := os.ReadFile(agentFile); string(data) != "user owned instructions\n" {

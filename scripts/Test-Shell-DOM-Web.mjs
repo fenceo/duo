@@ -12,7 +12,7 @@ for(const id of ['vault-settings','automatic-knowledge-settings'])assert.equal(d
 assert.equal(document.querySelectorAll('#vault-directory').length,1,'directory controls must not be duplicated');
 assert.equal(document.querySelectorAll('[data-settings="knowledge"]').length,0);
 assert(document.getElementById('library-dialog').contains(document.getElementById('vault-settings')),'library contains the unique settings editor');
-assert.equal(document.getElementById('note-tab').textContent,'本任务知识');
+assert.equal(document.getElementById('note-tab').textContent,'任务记录');
 assert.equal(typeof document.getElementById('knowledge-library-open').onclick,'function');
 assert.equal(typeof document.getElementById('library-manage-task').onclick,'function');
 assert.match(document.getElementById('knowledge-data-directory').parentElement.textContent,/共用此目录中的数据库/);
@@ -47,7 +47,7 @@ assert.equal(document.getElementById('scratch-tab'),null,'task to-do entry is re
 assert.equal(document.getElementById('settings-open'),null);
 assert.equal(document.getElementById('workspace-settings').parentElement.id,'app-menu-items');
 assert.equal(document.getElementById('workspace-settings').closest('details'),null);
-assert.deepEqual([...document.getElementById('workspace-settings').children].filter(node=>node.tagName==='BUTTON').map(node=>node.dataset.settings||node.id),['library-open','library-consensus-open','library-system-open','library-project-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global controls have one ordered home');
+assert.deepEqual([...document.getElementById('workspace-settings').children].filter(node=>node.tagName==='BUTTON').map(node=>node.dataset.settings||node.id),['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global controls have one ordered home');
 assert.equal(document.querySelectorAll('#app-menu-toggle').length,1,'one phone menu toggle');
 assert.equal(document.getElementById('app-menu-toggle').getAttribute('aria-expanded'),'false');
 assert.equal(document.getElementById('sidebar-footer'),null);

@@ -11,6 +11,18 @@ LIMIT = 1024 * 1024
 TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 MARKER = "\n<!-- duo-workspace-generated:"
 TASK_MARKER = "<!-- duo-workspace-task:"
+WORKLOG_NAME = "任务记录.md"
+WORKLOG_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}$")
+WORKLOG_SOURCE = re.compile(r"(?m)^<!-- duo:worklog:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
+CONFLICT_MESSAGE = "任务记录已被修改，请重新读取后合并；当前编辑未覆盖"
+
+
+class DocumentConflict(ValueError):
+    pass
+
+
+class MemoryFileTooLarge(ValueError):
+    pass
 
 
 def digest(text):
@@ -45,7 +57,7 @@ def valid_document(relative):
         return True
     if len(parts) not in (4, 5) or parts[:2] != [".duo", "tasks"] or not parts[2] or len(parts[2]) > 96 or not all(c.isalpha() or c.isdecimal() or c in "_-" for c in parts[2]):
         return False
-    return (len(parts) == 4 and parts[3] in ("README.md", "handoff.md")) or (len(parts) == 5 and parts[3] == "runs" and parts[4].endswith(".md") and bool(TASK_ID.fullmatch(parts[4][:-3])))
+    return (len(parts) == 4 and parts[3] in ("README.md", "handoff.md", WORKLOG_NAME)) or (len(parts) == 5 and parts[3] == "runs" and parts[4].endswith(".md") and bool(TASK_ID.fullmatch(parts[4][:-3])))
 
 
 def document_link(source, target):
@@ -59,7 +71,8 @@ def main():
     if not os.path.isabs(root) or os.path.realpath(root) != os.path.abspath(root):
         raise ValueError("工作区记忆需要无符号链接的绝对工作区路径")
     report = {"enabled": True, "directory": ".duo", "task_directory": request.get("task_directory", ""), "exported": 0,
-              "unchanged": 0, "tasks": [], "conflicts": [], "warnings": [], "documents": [], "task_directories": []}
+              "unchanged": 0, "tasks": [], "conflicts": [], "warnings": [], "documents": [], "task_directories": [],
+              "main_document": "", "revision": "", "editable": False}
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
     def parent(relative, create=False):
@@ -91,16 +104,23 @@ def main():
             with os.fdopen(source_fd, "rb") as source:
                 stat = os.fstat(source.fileno())
                 import stat as stat_module
-                if not stat_module.S_ISREG(stat.st_mode) or stat.st_size > LIMIT:
-                    raise ValueError("工作区记忆不是普通文件或超过 1 MiB")
+                if not stat_module.S_ISREG(stat.st_mode):
+                    raise ValueError("工作区记忆不是普通文件")
+                if stat.st_size > LIMIT:
+                    raise MemoryFileTooLarge("工作区记忆超过 1 MiB")
                 raw = source.read(LIMIT + 1)
                 if len(raw) > LIMIT:
-                    raise ValueError("工作区记忆超过 1 MiB")
-                return raw.decode("utf-8")
+                    raise MemoryFileTooLarge("工作区记忆超过 1 MiB")
+                text = raw.decode("utf-8")
+                if "\x00" in text:
+                    raise ValueError("工作区记忆必须是无 NUL 的 UTF-8 文本")
+                return text
         finally:
             os.close(fd)
 
     def write(relative, text, create_only=False):
+        if "\x00" in text:
+            raise ValueError("工作区记忆必须是无 NUL 的 UTF-8 文本")
         encoded = text.encode("utf-8")
         if len(encoded) > LIMIT:
             raise ValueError("工作区记忆单文件超过 1 MiB")
@@ -160,6 +180,105 @@ def main():
         finally:
             os.close(fd)
 
+    def discover_task_directory():
+        task_id = request.get("task_id", "")
+        requested = request.get("task_directory", "")
+        if not valid_directory(task_id, requested):
+            return ""
+        try:
+            names = entries(".duo/tasks")[:500]
+        except FileNotFoundError:
+            return requested
+        matches = []
+        for name in names:
+            directory = ".duo/tasks/" + name
+            if not valid_directory(task_id, directory):
+                continue
+            try:
+                directory_fd, _ = parent(directory + "/_")
+                os.close(directory_fd)
+            except (OSError, ValueError):
+                continue
+            matches.append(directory)
+        # Prefer an existing named archive to a legacy redirect or a newly
+        # proposed name after the task was renamed. Every candidate remains
+        # confined to this task's stable ID/hash.
+        named = [item for item in matches if item.rsplit("/", 1)[-1] != task_id]
+        if requested in named:
+            return requested
+        if named:
+            return sorted(named)[0]
+        if requested in matches:
+            return requested
+        return sorted(matches)[0] if matches else requested
+
+    def plain_write(relative, text, old):
+        if "\x00" in text:
+            raise ValueError("任务记录必须是无 NUL 的 UTF-8 文本")
+        encoded = text.encode("utf-8")
+        if len(encoded) > LIMIT:
+            raise MemoryFileTooLarge("任务记录单文件超过 1 MiB；未写入，原文件保留")
+        if text == old:
+            report["unchanged"] += 1
+            return
+        fd, name = parent(relative, True)
+        temporary = ".duo-" + secrets.token_hex(12) + ".tmp"
+        try:
+            out_fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+            with os.fdopen(out_fd, "wb") as output:
+                output.write(encoded)
+                output.flush()
+                os.fsync(output.fileno())
+            try:
+                current = read(relative)
+            except FileNotFoundError:
+                current = None
+            if current != old:
+                raise DocumentConflict(CONFLICT_MESSAGE)
+            os.replace(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+            report["exported"] += 1
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=fd)
+            except FileNotFoundError:
+                pass
+            os.close(fd)
+
+    def append_worklog(file):
+        relative = file.get("path", "")
+        directory = relative.rsplit("/", 1)[0]
+        if directory != report["task_directory"] or not valid_directory(request.get("task_id", ""), directory) or relative != directory + "/" + WORKLOG_NAME:
+            raise ValueError("只能追加当前任务目录内的任务记录.md")
+        old = None
+        try:
+            old = read(relative)
+        except FileNotFoundError:
+            pass
+        except MemoryFileTooLarge:
+            report["warnings"].append("任务记录已超过 1 MiB；保留全部原文，本次停止追加：" + relative)
+            return
+        text = old if old is not None else file.get("content", "")
+        if not isinstance(text, str) or not isinstance(file.get("entries", []), list):
+            raise ValueError("任务记录内容格式无效")
+        seen = set(WORKLOG_SOURCE.findall(text))
+        for entry in file.get("entries", []):
+            identity, content = entry.get("id", ""), entry.get("content", "")
+            if not isinstance(identity, str) or not WORKLOG_ID.fullmatch(identity) or not isinstance(content, str):
+                raise ValueError("任务记录来源格式无效")
+            if identity in seen:
+                continue
+            separator = "" if not text or text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+            addition = separator + "<!-- duo:worklog:" + identity + " -->\n\n" + content.rstrip("\n") + "\n"
+            if len((text + addition).encode("utf-8")) > LIMIT:
+                report["warnings"].append("任务记录达到 1 MiB；保留全部原文，本次停止追加，完整执行记录仍在 Duo：" + relative)
+                break
+            text += addition
+            seen.add(identity)
+        if len(text.encode("utf-8")) > LIMIT:
+            report["warnings"].append("任务记录初始内容超过 1 MiB；未写入：" + relative)
+            return
+        plain_write(relative, text, old)
+
     def migrate(item):
         old, new, task_id = item["from"], item["to"], item["id"]
         if old != ".duo/tasks/" + task_id or old == new or not valid_directory(task_id, new):
@@ -214,14 +333,42 @@ def main():
     try:
         for item in request.get("migrations", []):
             migrate(item)
+        owned_directory = discover_task_directory()
+        if owned_directory:
+            report["task_directory"] = owned_directory
+            report["main_document"] = owned_directory + "/" + WORKLOG_NAME
         if request["action"] == "sync":
             for file in request.get("files", []):
-                write(file["path"], file["content"], file.get("create_only", False))
+                if file.get("append_worklog"):
+                    append_worklog(file)
+                else:
+                    write(file["path"], file["content"], file.get("create_only", False))
+        if request["action"] == "save_document":
+            relative, text, revision = request.get("path", ""), request.get("content"), request.get("revision", "")
+            if not owned_directory or relative != report["main_document"]:
+                raise ValueError("只能编辑当前任务目录内的任务记录.md")
+            if not isinstance(text, str):
+                raise ValueError("任务记录内容格式无效")
+            if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+                raise DocumentConflict(CONFLICT_MESSAGE)
+            try:
+                old = read(relative)
+            except FileNotFoundError:
+                raise DocumentConflict(CONFLICT_MESSAGE)
+            if digest(old) != revision:
+                raise DocumentConflict(CONFLICT_MESSAGE)
+            plain_write(relative, text, old)
+            report.update({"path": relative, "content": text, "revision": digest(text), "editable": True})
+            return report
         if request["action"] == "document":
             relative = request.get("path", "")
             if not valid_document(relative):
                 raise ValueError("只能读取工作区内的任务 Markdown 记录")
+            if relative.rsplit("/", 1)[-1] == WORKLOG_NAME and (not owned_directory or relative != report["main_document"]):
+                raise ValueError("只能查看或编辑本任务的主 Markdown 记录")
             report["path"], report["content"] = relative, read(relative)
+            report["revision"] = digest(report["content"])
+            report["editable"] = bool(owned_directory and relative == report["main_document"])
             return report
         try:
             fd, name = parent(".duo/tasks/_")
@@ -238,7 +385,7 @@ def main():
                 directory = ".duo/tasks/" + name
                 if valid_document(directory + "/README.md"):
                     report["task_directories"].append(directory)
-                if valid_directory(request.get("task_id", ""), directory) and (report["task_directory"] == request.get("task_directory") or name != request.get("task_id")):
+                if not owned_directory and valid_directory(request.get("task_id", ""), directory) and (report["task_directory"] == request.get("task_directory") or name != request.get("task_id")):
                     report["task_directory"] = directory
                 raw = read(".duo/tasks/" + name + "/handoff.md")
                 end = raw.index(" -->\n")
@@ -265,15 +412,19 @@ def main():
                 report["warnings"].append("无法读取任务 " + name + " 的交接记忆。")
         report["tasks"].sort(key=lambda task: task.get("updated", 0), reverse=True)
         for task in report["tasks"]:
-            if task["id"] == request.get("task_id"):
+            if not owned_directory and task["id"] == request.get("task_id"):
                 report["task_directory"] = task["path"].rsplit("/", 1)[0]
                 break
         directory = report["task_directory"]
         if directory:
-            for name in ("README.md", "handoff.md"):
+            for name in (WORKLOG_NAME, "README.md", "handoff.md"):
                 try:
-                    read(directory + "/" + name)
-                    report["documents"].append({"path": directory + "/" + name, "title": name, "kind": "index"})
+                    content = read(directory + "/" + name)
+                    report["documents"].append({"path": directory + "/" + name, "title": name, "kind": "worklog" if name == WORKLOG_NAME else "index"})
+                    if name == WORKLOG_NAME:
+                        report["main_document"] = directory + "/" + name
+                        report["revision"] = digest(content)
+                        report["editable"] = True
                 except (OSError, ValueError):
                     pass
             try:
@@ -293,5 +444,7 @@ def main():
 try:
     result = main()
 except Exception as error:
-    result = {"error": str(error), "directory": ".duo", "tasks": [], "conflicts": [], "warnings": []}
+    result = {"error": str(error), "error_code": "conflict" if isinstance(error, DocumentConflict) else "",
+              "directory": ".duo", "main_document": "", "revision": "", "editable": False,
+              "tasks": [], "conflicts": [], "warnings": []}
 json.dump(result, sys.stdout, ensure_ascii=False)
