@@ -46,6 +46,8 @@ const steerDraftAttempts=new Map<string,{run:string;text:string;id:string}>();
 let editingEnvironments:Environment[]=[],editingID="",modelRequest=0;
 let createFiles:File[]=[],creatingTask=false,createReturnTask='',createPermission:'request'|'auto'|'full'|'read'='auto';
 let createSubmitting=false,sessionResetTask='',settingsPolling=false;
+type TaskBindingTarget={task:string;selection:number;epoch:number;chat:string};
+let bindingTarget:TaskBindingTarget|null=null,bindingDialogTarget:TaskBindingTarget|null=null,bindingRequest=0,bindingSaving=false;
 // A mounted login/workbench shell owns its listeners and read-only requests.
 // Mutating requests are not implicitly cancelled: the server may have accepted them.
 let shellEpoch=0,shellController=new AbortController();
@@ -155,7 +157,9 @@ function renderShell(){
  element('settings-form').onsubmit=saveSettings;button('check-codex').onclick=async()=>{button('check-codex').disabled=true;try{const r=await api('check','POST',{environment_id:editingID});element('check-result').textContent=(r.ok?'检查通过\n':'检查失败\n')+r.output}catch(e){element('check-result').textContent=(e as Error).message}finally{button('check-codex').disabled=false}};
  button('pair-code').onclick=async()=>{try{const r=await api('feishu/pair','POST',{});element('pair-result').textContent='向机器人发送：\n/配对 '+r.code}catch(e){notify((e as Error).message)}};
  button('data-dir-switch').onclick=()=>void switchDataDirectory();button('workspace-export').onclick=()=>void downloadWorkspaceExport();button('workspace-import-file').onchange=()=>void chooseWorkspaceImport(input('workspace-import-file').files?.[0]||null);button('workspace-import').onclick=()=>void importWorkspaceData();
- button('setup-feishu').onclick=()=>openSetup('');button('bind-setup').onclick=()=>openSetup(chosen);button('setup-start').onclick=startSetup;button('setup-close').onclick=()=>element<HTMLDialogElement>('setup-dialog').close();button('setup-cancel').onclick=cancelSetup;button('bind-open').onclick=openBinding;button('bind').onclick=()=>setBinding(true);button('unbind').onclick=()=>setBinding(false);
+ button('setup-feishu').onclick=()=>openSetup('');button('bind-setup').onclick=()=>{if(bindingCurrent())openSetup(bindingTarget!.task)};button('setup-start').onclick=startSetup;button('setup-close').onclick=()=>element<HTMLDialogElement>('setup-dialog').close();button('setup-cancel').onclick=cancelSetup;button('bind-open').onclick=()=>void openBinding();button('bind').onclick=()=>void setBinding(true);button('unbind').onclick=()=>void setBinding(false);
+ element('bind-dialog').addEventListener('close',()=>{if(!element<HTMLDialogElement>('bind-dialog').open){const closed=bindingDialogTarget;bindingDialogTarget=null;if(closed&&bindingTarget===closed){bindingRequest++;bindingTarget=null}}});
+ disposeWithShell(()=>{bindingRequest++;bindingTarget=null;bindingDialogTarget=null});
 }
 function mayLeave(){if(createSubmitting){notify('正在创建任务，请等待提交完成。你的要求和附件会保留。');return false}return true}
 function setCreatePageVisible(visible:boolean){
@@ -182,7 +186,7 @@ function renderList(){
 async function choose(id:string,view='chat'){
  if(!mayLeave())return;invalidateModelTest();creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
  element('conversation').innerHTML='<p id="loading" class="muted">正在读取最近对话…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeSummaryOnly=true;knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
- for(const key of ['tabs','task-actions','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
+ for(const key of ['tabs','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
  const epoch=shellEpoch;
  try{const d=await api<Detail>('tasks/'+id+'?recent=1','GET',undefined,shellController.signal);if(token!==selection||!shellCurrent(epoch))return;polledTask=id;refreshTask=refreshKnowledge=Date.now();element('conversation').innerHTML='';receiveConversationDetail(d);renderTask();switchTab(view);if(view!=='note')void loadKnowledge(true);}
@@ -191,6 +195,7 @@ async function choose(id:string,view='chat'){
 function switchTab(tab:string){
  if(creatingTask){invalidateModelTest('create');creatingTask=false;createReturnTask=''}
  setCreatePageVisible(false);
+ syncDesktopTaskContext();syncTaskDialogContext();
  toolsTab=tab;const open=tab!=='chat';
  if(chosen){const query=new URLSearchParams({task:chosen});if(tab==='note')query.set('view','note');history.replaceState(null,'','/?'+query)}
  element('workspace').classList.toggle('tool-open',open);element('workspace').classList.toggle('tool-full',open&&toolFullscreen);
@@ -230,12 +235,12 @@ function renderSessionBanner(){
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
  const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'新会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'新会话已就绪';
- const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
+ const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 重建 AI 会话时可自动补回当前任务知识，可在“知识库 → 积累设置”关闭自动恢复。';
  element('session-summary').textContent=detail.task.archived?'任务已归档':title;
  element('session-location').textContent=[detail.task.environment?.name,detail.task.workspace].filter(Boolean).join(' · ');
  element('session-description').textContent=explanation;
  const context=element('session-context');context.textContent=taskContext.length?'工作目录有外部 AI 指令：'+taskContext.map(f=>f.label+' · '+f.name).join('、'):'';context.classList.toggle('hidden',!taskContext.length);
- const reset=button('session-reset');reset.classList.toggle('hidden',!detail.task.session||detail.task.archived);reset.disabled=busy||sessionResetTask===detail.task.id;reset.textContent=sessionResetTask===detail.task.id?'正在新建…':'新建会话';
+ const reset=button('session-reset');reset.classList.toggle('hidden',!detail.task.session||detail.task.archived);reset.disabled=busy||sessionResetTask===detail.task.id;reset.textContent=sessionResetTask===detail.task.id?'正在重建…':'重建 AI 会话';
  // Explanatory session information lives in a dialog. A session that
  // cannot continue still needs a visible recovery action above the chat.
  banner.dataset.state=closed?'closed':busy?'busy':'live';
@@ -246,9 +251,9 @@ function renderSessionBanner(){
  button('session-recover').disabled=reset.disabled||!detail.task.session;button('session-recover').onclick=()=>void resetSession();
 }
 async function resetSession(){
- if(!detail||!detail.task.session||sessionResetTask)return;
+ if(!detail||detail.task.archived||!detail.task.session||sessionResetTask)return;
  if(detail.runs.some(r=>r.status==='running'||r.status==='queued')){notify('请先停止执行并取消排队，再新建会话。');return}
- if(!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在设置 → 知识库 → 对话自动积累关闭自动恢复。'))return;
+ if(!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 积累设置 → 对话自动积累关闭自动恢复。'))return;
  const id=detail.task.id,token=++selection;sessionResetTask=id;renderTask();
  try{
   const task=await api<Task>('tasks/'+id+'/session/reset','POST',{});
@@ -314,11 +319,12 @@ async function showCreate(){
   const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;
   if(!creatingTask)createReturnTask=chosen;
   creatingTask=true;chosen='';detail=null;selection++;createFiles=[];
+  syncDesktopTaskContext();syncTaskDialogContext();
   input('create-input').value='';input('create-files').value='';input('create-error').textContent='';
   renderCreateEnvironmentOptions(settings.config.default_environment);
   setCreatePermission('auto');renderCreateFiles();setCreateSubmitState('idle');
   setCreatePageVisible(true);element('sidebar').classList.remove('open');
-  for(const id of ['tabs','task-actions','conversation','composer-wrap'])element(id).classList.add('hidden');
+  for(const id of ['tabs','conversation','composer-wrap'])element(id).classList.add('hidden');
   element('workspace').classList.remove('tool-open','tool-full');element('tool-dock').classList.add('hidden');
   element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录';element('task-workspace').title='';
   history.replaceState(null,'','/');renderList();input('create-input').focus();await loadCreateEnvironment();
@@ -337,7 +343,7 @@ function cancelCreate(){
  invalidateModelTest('create');
  const id=createReturnTask;creatingTask=false;createReturnTask='';createFiles=[];input('create-files').value='';renderCreateFiles();setCreatePageVisible(false);
  if(id&&tasks.some(t=>t.id===id)){void choose(id);return}
- chosen='';detail=null;selection++;resetConversation();for(const name of ['tabs','task-actions','composer-wrap'])element(name).classList.add('hidden');element('conversation').classList.remove('hidden');element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';history.replaceState(null,'','/');switchTab('chat');renderList();
+ chosen='';detail=null;selection++;resetConversation();for(const name of ['tabs','composer-wrap'])element(name).classList.add('hidden');element('conversation').classList.remove('hidden');element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';history.replaceState(null,'','/');switchTab('chat');renderList();
 }
 async function loadCreateEnvironment(keepWorkspace=false){
  if(createSubmitting)return;
@@ -525,11 +531,27 @@ async function pollSettingsStatus(){
   settings={...settings,feishu_status:latest.feishu_status,secret_configured:latest.secret_configured,chat:latest.chat,config:{...settings.config,feishu:{...settings.config.feishu,owner:latest.config.feishu.owner}}};updateFeishuStatus();
  }catch{/* A later status refresh can retry without interrupting the editor. */}finally{if(shellCurrent(epoch))settingsPolling=false}
 }
-async function openBinding(){
- try{settings=await api<Settings>('settings');element('bind-status').textContent=settings.chat?'已配对你的飞书私聊。'+(detail?.chat?'当前任务已连接。':'点击连接后可继续此任务。'):'可扫码创建机器人并绑定此任务，或到设置配对已有应用。';button('bind-setup').classList.toggle('hidden',!!settings.config.feishu.app_id||settings.secret_configured);button('bind').disabled=!settings.chat;button('unbind').disabled=!detail?.chat;element<HTMLDialogElement>('bind-dialog').showModal()}catch(e){notify((e as Error).message)}
+function bindingCurrent(){return !!bindingTarget&&bindingTarget.task===chosen&&bindingTarget.selection===selection&&shellCurrent(bindingTarget.epoch)}
+function syncTaskDialogContext(){
+ if(bindingTarget&&!bindingCurrent()){bindingRequest++;bindingTarget=null;element<HTMLDialogElement>('bind-dialog').close()}
+ element<HTMLDialogElement>('session-info-dialog').close();
+}
+async function openBinding(id=chosen){
+ if(!id||bindingSaving)return;if(chosen!==id)await choose(id);if(chosen!==id||detail?.task.id!==id)return;
+ const request=++bindingRequest,target={task:id,selection,epoch:shellEpoch,chat:''};bindingTarget=target;
+ try{
+  const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(request!==bindingRequest||bindingTarget!==target||!bindingCurrent())return;
+  target.chat=loaded.chat;
+  element('bind-status').textContent=loaded.chat?'已配对你的飞书私聊。'+(detail?.chat?'当前任务已连接。':'点击连接后可继续此任务。'):'可扫码创建机器人并绑定此任务，或到飞书连接配对已有应用。';
+  button('bind-setup').classList.toggle('hidden',!!loaded.config.feishu.app_id||loaded.secret_configured);button('bind-setup').disabled=false;button('bind').disabled=!loaded.chat;button('unbind').disabled=!detail?.chat;element<HTMLDialogElement>('session-info-dialog').close();bindingDialogTarget=target;element<HTMLDialogElement>('bind-dialog').showModal();
+ }catch(e){if(request===bindingRequest&&bindingCurrent())notify((e as Error).message)}
 }
 async function setBinding(bind:boolean){
- try{await api('tasks/'+chosen+'/bind',bind?'POST':'DELETE',bind?{chat:settings.chat}:{});element<HTMLDialogElement>('bind-dialog').close();notify(bind?'已连接到此任务':'已断开此任务');await poll()}catch(e){notify((e as Error).message)}
+ if(!bindingCurrent()||bindingSaving||bind&&!bindingTarget!.chat)return;
+ const target=bindingTarget!;bindingSaving=true;for(const id of ['bind','unbind','bind-setup'])button(id).disabled=true;
+ try{await api('tasks/'+target.task+'/bind',bind?'POST':'DELETE',bind?{chat:target.chat}:{});if(bindingTarget!==target||!bindingCurrent())return;element<HTMLDialogElement>('bind-dialog').close();notify(bind?'已连接到此任务':'已断开此任务');await poll()}
+ catch(e){if(bindingTarget===target&&bindingCurrent())notify((e as Error).message)}
+ finally{bindingSaving=false;if(bindingTarget===target&&bindingCurrent()){button('bind').disabled=!target.chat;button('unbind').disabled=!detail?.chat;button('bind-setup').disabled=false}}
 }
 window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving){e.preventDefault();e.returnValue=''}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll()});

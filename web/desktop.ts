@@ -3,10 +3,24 @@ type DesktopTarget={id:string;title:string};
 type DesktopFrame={id:string;image:string;bounds:{x:number;y:number;width:number;height:number}};
 let desktopHumanToken='',desktopFrame:DesktopFrame|null=null,desktopPreviewTimer=0,desktopCapturing=false;
 function clearDesktopHuman(){clearTimeout(desktopPreviewTimer);desktopHumanToken='';desktopFrame=null;desktopCapturing=false}
+function desktopTaskCurrent(task=desktopDialogTask){return !!task&&!creatingTask&&chosen===task&&detail?.task.id===task&&!detail.task.archived&&!detail.task.deleted}
+function clearDesktopTaskContext(){
+ if(!desktopDialogTask||desktopDialogTask===chosen&&!creatingTask)return;
+ const dialog=element<HTMLDialogElement>('desktop-dialog');
+ // Native dialog close events are queued. Capture the old task and token
+ // before clearing context, rather than relying on the later close handler.
+ void endDesktopHuman();if(dialog.open)dialog.close();
+ desktopRevision++;desktopBusy=false;desktopDialogTask='';clearDesktopHuman();
+ const img=element<HTMLImageElement>('desktop-preview-image');img.removeAttribute('src');img.classList.add('hidden');
+ input('desktop-text').value='';input('desktop-allow-control').checked=false;element('desktop-target').innerHTML='';element('desktop-status').textContent='';
+}
+// Called when the selected task or create page changes. AI sharing stays with
+// its original task; browser preview and manual control never follow it.
+function syncDesktopTaskContext(){renderDesktopSharing()}
 function renderDesktopHuman(){
  if(!button('desktop-manual'))return;
- const manual=!!desktopHumanToken,ready=manual&&!!desktopFrame&&(!desktopBusy||desktopCapturing);
- button('desktop-manual').textContent=manual?'结束手动控制':'我来操作';button('desktop-manual').disabled=!manual&&(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask||desktopDialogTask!==chosen||!!detail?.task.archived);
+ const manual=!!desktopHumanToken,ready=manual&&desktopTaskCurrent()&&!!desktopFrame&&(!desktopBusy||desktopCapturing);
+ button('desktop-manual').textContent=manual?'结束手动控制':'我来操作';button('desktop-manual').disabled=!manual&&(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask||!desktopTaskCurrent());
  element('desktop-manual-tools').classList.toggle('hidden',!manual);
  element('desktop-manual-tools').querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.disabled=!ready);
  const img=element<HTMLImageElement>('desktop-preview-image');img.classList.toggle('desktop-interactive',ready);img.setAttribute('aria-disabled',String(!ready));
@@ -14,7 +28,7 @@ function renderDesktopHuman(){
 function installDesktopHuman(){
  button('desktop-manual').onclick=()=>void toggleDesktopHuman();
  const dialog=element<HTMLDialogElement>('desktop-dialog'),img=element<HTMLImageElement>('desktop-preview-image');
- dialog.addEventListener('close',()=>{void endDesktopHuman();desktopRevision++;desktopBusy=false;desktopFrame=null;img.removeAttribute('src');img.classList.add('hidden')});
+ dialog.addEventListener('close',()=>{if(dialog.open)return;void endDesktopHuman();desktopRevision++;desktopBusy=false;desktopFrame=null;img.removeAttribute('src');img.classList.add('hidden')});
  dialog.addEventListener('cancel',event=>{if(desktopHumanToken){event.preventDefault();void endDesktopHuman()}});
  let pointerStart:{x:number;y:number}|null=null,dragged=false;
  img.onpointerdown=event=>{pointerStart={x:event.clientX,y:event.clientY};dragged=false};
@@ -39,11 +53,11 @@ function installDesktopHuman(){
 }
 async function toggleDesktopHuman(){
  if(desktopHumanToken){await endDesktopHuman();return}
- if(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask)return;
+ if(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask||!desktopTaskCurrent()||!element<HTMLDialogElement>('desktop-dialog').open)return;
  const task=desktopDialogTask,epoch=shellEpoch,revision=++desktopRevision;desktopBusy=true;renderDesktopSharing();
  try{
   const result=await api<{token:string;state:DesktopState}>(`tasks/${encodeURIComponent(task)}/desktop/control`,'POST',{enabled:true});
-  if(!shellCurrent(epoch)||revision!==desktopRevision||!element<HTMLDialogElement>('desktop-dialog').open){void api(`tasks/${encodeURIComponent(task)}/desktop/control`,'POST',{enabled:false,token:result.token}).catch(()=>{});return}
+  if(!shellCurrent(epoch)||revision!==desktopRevision||!desktopTaskCurrent(task)||!element<HTMLDialogElement>('desktop-dialog').open){void api(`tasks/${encodeURIComponent(task)}/desktop/control`,'POST',{enabled:false,token:result.token}).catch(()=>{});return}
   desktopFrame=null;desktopBusy=false;renderDesktopSharing(result.state);desktopHumanToken=result.token;renderDesktopHuman();await previewDesktop();
  }catch(e){if(shellCurrent(epoch)&&revision===desktopRevision)element('desktop-status').textContent=(e as Error).message}
  finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;renderDesktopSharing()}}
@@ -61,61 +75,66 @@ function desktopImagePoint(event:{clientX:number;clientY:number},img:HTMLImageEl
  return {x:Math.min(frame.bounds.width-1,Math.floor((event.clientX-left)*frame.bounds.width/width)),y:Math.min(frame.bounds.height-1,Math.floor((event.clientY-top)*frame.bounds.height/height))};
 }
 async function desktopPointerAction(action:string,event:{clientX:number;clientY:number},delta?:number){
- if(!desktopHumanToken||!desktopFrame||desktopBusy&&!desktopCapturing)return;
+ if(!desktopHumanToken||!desktopFrame||!desktopTaskCurrent()||!element<HTMLDialogElement>('desktop-dialog').open||desktopBusy&&!desktopCapturing)return;
  const point=desktopImagePoint(event,element<HTMLImageElement>('desktop-preview-image'),desktopFrame);if(!point)return;
  await desktopHumanAction({action,...point,...(delta===undefined?{}:{delta})});
 }
 async function desktopHumanAction(action:Record<string,unknown>){
- if(!desktopHumanToken||!desktopFrame||desktopBusy&&!desktopCapturing)return;
+ if(!desktopHumanToken||!desktopFrame||!desktopTaskCurrent()||!element<HTMLDialogElement>('desktop-dialog').open||desktopBusy&&!desktopCapturing)return;
  const task=desktopDialogTask,token=desktopHumanToken,frame=desktopFrame.id,epoch=shellEpoch,revision=++desktopRevision;
  clearTimeout(desktopPreviewTimer);desktopFrame=null;desktopCapturing=false;desktopBusy=true;renderDesktopSharing();
  try{
   await api(`tasks/${encodeURIComponent(task)}/desktop/control/action`,'POST',{token,action:{...action,frame}});
-  if(!shellCurrent(epoch)||revision!==desktopRevision)return;
+  if(!shellCurrent(epoch)||revision!==desktopRevision||!desktopTaskCurrent(task))return;
   desktopBusy=false;await previewDesktop();
  }catch(e){if(shellCurrent(epoch)&&revision===desktopRevision){element('desktop-status').textContent='操作未确认，已暂停自动刷新；请检查实际桌面并刷新画面，不会自动重试。'+(e as Error).message}}
  finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;renderDesktopSharing()}}
 }
 async function previewDesktop(){
- if(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask)return;
+ if(desktopBusy||!desktopState.active||desktopState.task_id!==desktopDialogTask||!desktopTaskCurrent()||!element<HTMLDialogElement>('desktop-dialog').open)return;
  clearTimeout(desktopPreviewTimer);
  const task=desktopDialogTask,token=desktopHumanToken,epoch=shellEpoch,revision=++desktopRevision;desktopBusy=true;desktopCapturing=true;renderDesktopSharing();
  try{
   const frame=await api<DesktopFrame>(`tasks/${encodeURIComponent(task)}/desktop/${token?'control/frame':'frame'}`,'POST',token?{token}:{});
-  if(!shellCurrent(epoch)||revision!==desktopRevision||desktopState.task_id!==task||token!==desktopHumanToken)return;
+  if(!shellCurrent(epoch)||revision!==desktopRevision||!desktopTaskCurrent(task)||desktopState.task_id!==task||token!==desktopHumanToken)return;
   const img=element<HTMLImageElement>('desktop-preview-image');img.src='data:image/png;base64,'+frame.image;
   if(typeof img.decode==='function')await img.decode();
-  if(!shellCurrent(epoch)||revision!==desktopRevision||token!==desktopHumanToken)return;
+  if(!shellCurrent(epoch)||revision!==desktopRevision||!desktopTaskCurrent(task)||token!==desktopHumanToken)return;
   img.classList.remove('hidden');desktopFrame=frame;
   element('desktop-status').textContent=token?'手动控制已开启：可点击画面操作，约每秒刷新；AI 暂停桌面操作。':'当前是只读预览。点击“我来操作”后，可在画面上使用鼠标。';
   if(token&&!document.hidden&&element<HTMLDialogElement>('desktop-dialog').open)desktopPreviewTimer=setTimeout(()=>{void previewDesktop()},1200);
  }catch(e){if(shellCurrent(epoch)&&revision===desktopRevision){desktopFrame=null;element('desktop-status').textContent='画面读取失败，请手动刷新：'+(e as Error).message}}
  finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;desktopCapturing=false;renderDesktopSharing()}}
 }
-let desktopState:DesktopState={active:false,control:false},desktopDialogTask='',desktopBusy=false,desktopRevision=0;
+let desktopState:DesktopState={active:false,control:false},desktopDialogTask='',desktopBusy=false,desktopStopping=false,desktopRevision=0;
 function installDesktopSharing(){
- desktopState={active:false,control:false};desktopDialogTask='';desktopBusy=false;desktopRevision++;clearDesktopHuman();
- const entry=document.createElement('button');entry.type='button';entry.id='desktop-open';entry.className='subtle';entry.textContent='桌面共享';element('settings-open').before(entry);entry.onclick=()=>void openDesktopSharing();
+ desktopState={active:false,control:false};desktopDialogTask='';desktopBusy=false;desktopStopping=false;desktopRevision++;clearDesktopHuman();
+ const entry=document.createElement('button');entry.type='button';entry.id='desktop-open';entry.textContent='桌面共享';element('tabs').append(entry);entry.onclick=()=>void openDesktopSharing();
+ const stop=document.createElement('button');stop.type='button';stop.id='desktop-quick-stop';stop.className='danger hidden';stop.textContent='停止桌面共享';stop.title='停止原任务的桌面共享，不会授权给其他任务';document.querySelector('.header-utilities')!.append(stop);stop.onclick=()=>void stopDesktopSharing();
  element('root').insertAdjacentHTML('beforeend',`<dialog id="desktop-dialog" class="desktop-dialog"><h2>共享服务电脑的桌面</h2><p>共享的是运行 Duo 的 Windows 桌面。选定窗口需保持前台；整个桌面可能包含其它应用内容。画面由当前任务的 AI 查看。</p><p id="desktop-owner" role="status"></p><div class="desktop-controls"><label for="desktop-target">共享范围</label><select id="desktop-target"></select><label class="check-row"><input type="checkbox" id="desktop-allow-control">允许 AI 操作真实键盘和鼠标</label><p class="muted">默认只查看。授权保持 30 分钟，重启服务后失效；可随时停止共享。开始共享后，从下一条任务消息生效。</p><div class="actions"><button type="button" id="desktop-start" class="primary">开始共享给当前任务</button><button type="button" id="desktop-preview">刷新画面</button><button type="button" id="desktop-manual">我来操作</button><button type="button" id="desktop-stop" class="danger">停止共享 / 接管</button></div></div><p id="desktop-status" role="status"></p><div id="desktop-manual-tools" class="hidden"><p>人工控制中，AI 暂停桌面操作。点击画面可定位，右键和滚轮直接发送；选择“双击”后点击一次。暂不支持拖拽。按 Escape 结束手动控制。</p><div class="actions"><select id="desktop-click-mode" aria-label="鼠标左键动作"><option value="click">单击</option><option value="double_click">双击</option></select><button type="button" data-desktop-key="enter">Enter</button><button type="button" data-desktop-key="tab">Tab</button><button type="button" data-desktop-key="ctrl+c">Ctrl+C</button><button type="button" data-desktop-key="alt+tab">Alt+Tab</button></div><label for="desktop-text">发送文字（支持中文）</label><div class="desktop-text-send"><textarea id="desktop-text" rows="2" maxlength="2000"></textarea><button type="button" id="desktop-text-send">发送文字</button></div></div><img id="desktop-preview-image" class="hidden" tabindex="0" draggable="false" alt="共享桌面预览；开启手动控制后可使用鼠标和键盘"><div class="dialog-footer"><button type="button" id="desktop-close">关闭面板</button></div></dialog>`);
- button('desktop-close').onclick=()=>element<HTMLDialogElement>('desktop-dialog').close();installDesktopHuman();
+ button('desktop-close').onclick=()=>{void endDesktopHuman();element<HTMLDialogElement>('desktop-dialog').close()};installDesktopHuman();
  button('desktop-start').onclick=()=>void startDesktopSharing();button('desktop-stop').onclick=()=>void stopDesktopSharing();button('desktop-preview').onclick=()=>void previewDesktop();
 }
 function renderDesktopSharing(state?:DesktopState){
+ clearDesktopTaskContext();
  if(state&&state.instance===desktopState.instance&&(state.revision||0)<(desktopState.revision||0))state=undefined;
  if(state){if(desktopHumanToken&&(!state.active||!state.human_control||state.task_id!==desktopDialogTask||state.instance!==desktopState.instance))clearDesktopHuman();desktopState=state;if(!state.active){const img=element<HTMLImageElement>('desktop-preview-image');img?.removeAttribute('src');img?.classList.add('hidden')}}
  renderDesktopHuman();
- const active=desktopState.active;button('desktop-open').textContent=active?'桌面接管':'桌面共享';button('desktop-open').title=active?'桌面正在共享，打开面板停止共享或接管':'选择画面并授权当前任务查看或控制桌面';
+ const active=desktopState.active,other=active&&desktopState.task_id!==chosen;button('desktop-open').textContent=active?(other?'桌面共享 · 其他任务':'桌面接管'):'桌面共享';button('desktop-open').title=active?'桌面正在共享，打开面板停止共享或接管':'选择画面并授权当前任务查看或控制桌面';
  button('desktop-open').classList.toggle('desktop-sharing',active);
+ button('desktop-open').disabled=!chosen||creatingTask||!detail;
+ button('desktop-quick-stop').classList.toggle('hidden',!active||!!chosen&&!creatingTask&&!!detail);button('desktop-quick-stop').disabled=desktopStopping;
  const task=tasks.find(t=>t.id===desktopState.task_id),label=task?.title||desktopState.task_id||'';
  element('desktop-owner').textContent=active?'正在共享给 '+label+' · '+(desktopState.human_control?'用户正在手动控制 · AI 暂停':desktopState.control?'允许 AI 键鼠控制':'AI 仅查看'):'当前未共享桌面';
- button('desktop-stop').disabled=!active;button('desktop-preview').disabled=desktopBusy||!active||desktopState.task_id!==desktopDialogTask;
- button('desktop-start').disabled=desktopBusy||!desktopDialogTask||desktopDialogTask!==chosen||!['codex','claude'].includes(detail?.task.engine||'')||!!detail?.task.archived||active&&desktopState.task_id!==desktopDialogTask;
+ button('desktop-stop').disabled=!active||desktopStopping;button('desktop-preview').disabled=desktopBusy||!active||desktopState.task_id!==desktopDialogTask||!desktopTaskCurrent();
+ button('desktop-start').disabled=desktopBusy||desktopStopping||!desktopTaskCurrent()||!['codex','claude'].includes(detail?.task.engine||'')||active&&desktopState.task_id!==desktopDialogTask;
 }
 async function openDesktopSharing(){
+ if(!chosen||creatingTask||!detail){notify('请先选择任务，再设置桌面共享。');return}
  const epoch=shellEpoch,revision=++desktopRevision;desktopDialogTask=chosen;desktopBusy=true;desktopFrame=null;input('desktop-allow-control').checked=false;
  element('desktop-status').textContent='正在读取桌面和窗口列表…';const img=element<HTMLImageElement>('desktop-preview-image');img.removeAttribute('src');img.classList.add('hidden');element<HTMLDialogElement>('desktop-dialog').showModal();renderDesktopSharing();
  try{
-  const [stateResult,targetsResult]=await Promise.allSettled([api<DesktopState>('desktop'),api<DesktopTarget[]>('desktop/targets')]);if(!shellCurrent(epoch)||revision!==desktopRevision)return;
+  const [stateResult,targetsResult]=await Promise.allSettled([api<DesktopState>('desktop'),api<DesktopTarget[]>('desktop/targets')]);if(!shellCurrent(epoch)||revision!==desktopRevision||desktopDialogTask!==chosen||creatingTask)return;
   if(stateResult.status==='fulfilled'){desktopState=stateResult.value;renderDesktopSharing()}
   if(stateResult.status==='rejected')throw stateResult.reason;
   if(targetsResult.status==='rejected')throw targetsResult.reason;
@@ -127,11 +146,13 @@ async function openDesktopSharing(){
  finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;renderDesktopSharing()}}
 }
 async function startDesktopSharing(){
- if(desktopBusy||!desktopDialogTask||desktopDialogTask!==chosen)return;
+ if(desktopBusy||desktopStopping||!desktopTaskCurrent()||!['codex','claude'].includes(detail?.task.engine||'')||desktopState.active&&desktopState.task_id!==desktopDialogTask)return;
  const task=desktopDialogTask,epoch=shellEpoch,revision=++desktopRevision;clearDesktopHuman();desktopFrame=null;desktopBusy=true;renderDesktopSharing();
- try{const state=await api<DesktopState>('tasks/'+encodeURIComponent(task)+'/desktop','PUT',{target:element<HTMLSelectElement>('desktop-target').value,control:input('desktop-allow-control').checked});if(!shellCurrent(epoch)||revision!==desktopRevision)return;renderDesktopSharing(state);element('desktop-status').textContent='已开始共享。发送下一条任务消息，AI 即可使用桌面工具。用户操作后，AI 必须重新观察画面。'}catch(e){if(shellCurrent(epoch)&&revision===desktopRevision)element('desktop-status').textContent=(e as Error).message}finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;renderDesktopSharing()}}
+ try{const state=await api<DesktopState>('tasks/'+encodeURIComponent(task)+'/desktop','PUT',{target:element<HTMLSelectElement>('desktop-target').value,control:input('desktop-allow-control').checked});if(!shellCurrent(epoch))return;if(revision!==desktopRevision||!desktopTaskCurrent(task)){renderDesktopSharing(state);return}renderDesktopSharing(state);element('desktop-status').textContent='已开始共享。发送下一条任务消息，AI 即可使用桌面工具。用户操作后，AI 必须重新观察画面。'}catch(e){if(shellCurrent(epoch)&&revision===desktopRevision)element('desktop-status').textContent=(e as Error).message}finally{if(shellCurrent(epoch)&&revision===desktopRevision){desktopBusy=false;renderDesktopSharing()}}
 }
 async function stopDesktopSharing(){
- const epoch=shellEpoch,revision=++desktopRevision;clearTimeout(desktopPreviewTimer);desktopFrame=null;button('desktop-stop').disabled=true;
- try{const state=await api<DesktopState>('desktop','DELETE');if(!shellCurrent(epoch)||revision!==desktopRevision)return;desktopBusy=false;renderDesktopSharing(state);element('desktop-status').textContent='共享已停止，AI 已失去桌面访问权限。'}catch(e){if(shellCurrent(epoch)&&revision===desktopRevision){element('desktop-status').textContent='停止失败，请重试：'+(e as Error).message;button('desktop-stop').disabled=false}}
+ if(desktopStopping)return;
+ const epoch=shellEpoch,revision=++desktopRevision;clearTimeout(desktopPreviewTimer);desktopFrame=null;desktopStopping=true;renderDesktopSharing();
+ try{const state=await api<DesktopState>('desktop','DELETE');if(!shellCurrent(epoch))return;desktopBusy=false;renderDesktopSharing(state);if(revision===desktopRevision)element('desktop-status').textContent='共享已停止，AI 已失去桌面访问权限。'}catch(e){if(shellCurrent(epoch)){const message='停止失败，请重试：'+(e as Error).message;if(element<HTMLDialogElement>('desktop-dialog').open)element('desktop-status').textContent=message;else notify(message)}}
+ finally{if(shellCurrent(epoch)){desktopStopping=false;renderDesktopSharing()}}
 }

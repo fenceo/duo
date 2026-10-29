@@ -13,6 +13,18 @@ assert.equal(node('settings-form').querySelector('.settings-nav'),null,'the dial
 assert.equal(node('settings-form').querySelector('[data-settings]'),null,'category buttons have moved out of the dialog');
 assert.equal(document.querySelector('.header').nextElementSibling,node('tabs'),'there is no standalone settings row');
 assert.equal(nav.closest('details'),null,'settings categories do not require opening a menu');
+assert.deepEqual([...nav.children].filter(button=>button.tagName==='BUTTON').map(button=>button.dataset.settings||button.id),['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu groups knowledge, engines, connections, storage, usage, appearance, updates and exit');
+assert.equal(document.querySelector('.sidebar-account-tools #engines-open'),null,'engines have one global entry rather than a second sidebar entry');
+assert.equal(document.querySelectorAll('#engines-open').length,1);
+const toggle=node('app-menu-toggle');
+assert(toggle,'phone navigation has an explicit menu button');
+assert.equal(toggle.getAttribute('aria-expanded'),'false','phone menu starts collapsed');
+assert(!node('app-menu-items').classList.contains('menu-open'));
+toggle.click();assert.equal(toggle.getAttribute('aria-expanded'),'true');assert(node('app-menu-items').classList.contains('menu-open'));
+toggle.click();assert.equal(toggle.getAttribute('aria-expanded'),'false');assert(!node('app-menu-items').classList.contains('menu-open'));
+let focusReturned=false;toggle.focus=()=>focusReturned=true;
+toggle.click();const escape=new ctx.Event('keydown');escape.key='Escape';document.dispatchEvent(escape);
+assert.equal(toggle.getAttribute('aria-expanded'),'false');assert(!node('app-menu-items').classList.contains('menu-open'));assert(focusReturned,'Escape restores focus to the visible menu button');
 const pages=[...nav.querySelectorAll('[data-settings]')].map(button=>button.dataset.settings);
 assert(pages.length>=4);
 assert(!pages.includes('knowledge'),'knowledge settings live inside the knowledge library');
@@ -35,7 +47,11 @@ for(const page of pages){
 }
 assert(updateLoads>0);
 await node('usage-open').onclick();assert.equal(usageOpens,1,'original usage button opens directly');
-assert.equal(node('bind-open').textContent,'任务绑定');
+toggle.click();node('usage-open').click();assert.equal(usageOpens,2);
+assert.equal(toggle.getAttribute('aria-expanded'),'false');assert(!node('app-menu-items').classList.contains('menu-open'),'choosing a global tool collapses the phone menu');
+assert.equal(node('bind-open').textContent,'绑定飞书私聊');
+assert.equal(node('bind-open').parentElement,node('tabs'),'task binding remains directly available in the task toolbar');
+assert.equal(node('bind-open').closest('dialog'),null);
 assert.equal([...document.querySelectorAll('.header button')].filter(button=>button.textContent==='飞书连接').length,1,'global Feishu configuration and task binding have distinct labels');
 
 // Changing the visible section must preserve edits and reuse the same editor.
@@ -79,7 +95,9 @@ for(const id of ['vault-enabled','vault-automatic','automatic-capture','automati
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');
 assert.match(css,/\.workspace-settings\{display:contents\}/,'moved categories share the original toolbar layout');
 assert.match(css,/\.header-global-actions\{[^}]*flex-wrap:wrap/,'desktop toolbar can wrap naturally');
-assert.match(css,/\.header-global-actions\{[^}]*display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/,'phone toolbar keeps all categories visible');
+assert.match(css,/\.header-global-actions\{order:1;display:none;/,'phone menu is collapsed until opened');
+assert.match(css,/\.header-global-actions\.menu-open\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/,'expanded phone menu uses readable three-column controls');
+assert.match(css,/#app-menu-toggle\{display:block;min-height:44px;min-width:44px;/,'phone menu toggle retains an accessible touch target');
 assert.match(css,/\.header \.workspace-settings>button\{min-height:44px/,'phone categories retain touch targets');
 
 ctx.location.search='?settings=access';await ctx.boot();
@@ -92,4 +110,4 @@ assert(!node('settings-dialog').open);
 assert(!node('settings-knowledge').classList.contains('hidden'));
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 run('authenticated=false;renewShellScope()');
-console.log('PASS: original category buttons replace settings in the existing toolbar without duplicated controls or a second navigation row; one editor preserves drafts, concurrent opens, task binding and access deep links. Synthetic only.');
+console.log('PASS: ordered global menu with one responsive phone toggle and three-column layout; one settings editor preserves drafts, concurrent opens, task binding and access deep links. Synthetic only.');

@@ -1907,7 +1907,6 @@ async function confirmTrashTask() {
             element('conversation').innerHTML = '<div class="empty"><h2>开始一个新任务</h2></div>';
             for (const name of [
                 'tabs',
-                'task-actions',
                 'composer-wrap'
             ])element(name).classList.add('hidden');
             element('task-title').textContent = 'Duo';
@@ -2046,13 +2045,16 @@ function parseAppearance(raw) {
     }
 }
 function installStickyBoard() {
-    element('hardware-tab').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+    element('trash-open').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+    element('sticky-tab').parentElement.classList.add('task-navigation');
     element('root').insertAdjacentHTML('beforeend', `<dialog id="sticky-dialog" aria-labelledby="sticky-title"><section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong id="sticky-title">便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="关闭便签" title="关闭便签">×</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section></dialog>`);
     button('sticky-tab').onclick = openStickyBoard;
     button('sticky-close').onclick = ()=>element('sticky-dialog').close();
     element('sticky-dialog').addEventListener('close', ()=>{
-        button('sticky-tab').setAttribute('aria-expanded', 'false');
-        button('sticky-tab').focus();
+        const entry = button('sticky-tab');
+        entry.setAttribute('aria-expanded', 'false');
+        const target = matchMedia('(max-width:760px)').matches && !element('sidebar').classList.contains('open') ? button('menu') : entry.classList.contains('hidden') ? button('tasks-active') : entry;
+        target.focus();
     });
     button('sticky-expand').onclick = ()=>{
         const board = element('sticky-board'), collapsed = board.dataset.collapsed !== 'true';
@@ -2118,6 +2120,7 @@ function installStickyBoard() {
 function openStickyBoard() {
     const dialog = element('sticky-dialog');
     if (dialog.open) return;
+    element('sidebar').classList.remove('open');
     button('sticky-tab').setAttribute('aria-expanded', 'true');
     dialog.showModal();
     fitQuickNotes();
@@ -3490,7 +3493,6 @@ function installLayout() {
     const footer = element('settings-open').parentElement;
     const utilities = document.createElement('div');
     utilities.className = 'header-utilities';
-    utilities.append(element('task-actions'));
     const globalActions = document.createElement('nav');
     globalActions.id = 'app-menu-items';
     globalActions.className = 'header-global-actions';
@@ -3506,17 +3508,25 @@ function installLayout() {
             globalActions.append(control);
         }
     }
-    const accountTools = document.createElement('nav');
-    accountTools.className = 'sidebar-account-tools';
-    accountTools.setAttribute('aria-label', '环境与引擎');
     const envEngineBtn = document.createElement('button');
     envEngineBtn.id = 'engines-open';
-    envEngineBtn.className = 'subtle';
     envEngineBtn.textContent = '环境与引擎';
     envEngineBtn.onclick = ()=>void openEngineCenter();
-    accountTools.append(envEngineBtn);
-    element('task-list').after(accountTools);
-    accountTools.addEventListener('click', ()=>element('sidebar').classList.remove('open'));
+    globalActions.append(envEngineBtn);
+    const menuToggle = document.createElement('button');
+    menuToggle.id = 'app-menu-toggle';
+    menuToggle.textContent = '菜单';
+    menuToggle.setAttribute('aria-controls', 'app-menu-items');
+    menuToggle.setAttribute('aria-expanded', 'false');
+    const closeGlobalMenu = ()=>{
+        globalActions.classList.remove('menu-open');
+        menuToggle.setAttribute('aria-expanded', 'false');
+    };
+    menuToggle.onclick = ()=>{
+        const open = globalActions.classList.toggle('menu-open');
+        menuToggle.setAttribute('aria-expanded', String(open));
+    };
+    utilities.append(menuToggle);
     utilities.append(globalActions);
     document.querySelector('.header').append(utilities);
     const brand = document.querySelector('#sidebar .brand');
@@ -3533,7 +3543,16 @@ function installLayout() {
     utilities.prepend(connection);
     footer.remove();
     globalActions.addEventListener('click', (e)=>{
-        if (e.target.closest('button')) element('sidebar').classList.remove('open');
+        if (e.target.closest('button')) {
+            element('sidebar').classList.remove('open');
+            closeGlobalMenu();
+        }
+    });
+    listenWithShell(document, 'keydown', (e)=>{
+        if (e.key === 'Escape' && globalActions.classList.contains('menu-open')) {
+            closeGlobalMenu();
+            menuToggle.focus();
+        }
     });
     button('theme-toggle').onclick = ()=>{
         const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
@@ -3549,27 +3568,16 @@ function installLayout() {
     tabs.append(element('note-tab'));
     button('files-tab').textContent = '文件';
     button('hardware-tab').textContent = '硬件';
-    const workspaceTools = document.createElement('nav');
-    workspaceTools.id = 'workspace-tools';
-    workspaceTools.className = 'workspace-tools';
-    workspaceTools.setAttribute('aria-label', '便签与硬件');
-    workspaceTools.append(element('hardware-tab'));
-    utilities.insertBefore(workspaceTools, globalActions);
     const model = element('task-model');
     element('composer').querySelector('.composer-bottom').prepend(model);
     element('task-model-button').title = '本任务使用的 AI 工具、模型和推理强度';
     element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="切换引擎、账号/API 和模型，接续当前任务">切换 AI</button>');
     button('task-handoff').onclick = ()=>void openHandoff();
-    const sessionActions = element('task-actions');
-    sessionActions.classList.add('header-session-actions');
-    sessionActions.setAttribute('role', 'group');
-    sessionActions.setAttribute('aria-label', '当前会话操作');
-    sessionActions.insertAdjacentHTML('afterbegin', '<button type="button" id="session-reset" class="hidden">新建会话</button>');
-    for (const id of [
-        'task-handoff',
-        'bind-open'
-    ])sessionActions.append(element(id));
-    button('bind-open').textContent = '任务绑定';
+    tabs.append(element('task-handoff'));
+    tabs.insertAdjacentHTML('beforeend', '<button type="button" id="session-reset" class="hidden" title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button>');
+    button('bind-open').textContent = '绑定飞书私聊';
+    tabs.append(element('bind-open'), element('hardware-tab'));
+    element('task-actions').remove();
     element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
     button('session-reset').onclick = ()=>void resetSession();
     button('session-info-close').onclick = ()=>element('session-info-dialog').close();
@@ -3610,7 +3618,8 @@ function installLayout() {
             return;
         }
         const box = details.getBoundingClientRect(), height = panel.offsetHeight, width = panel.offsetWidth;
-        const top = box.bottom + height + 12 > window.innerHeight && box.top > height + 12 ? box.top - height - 6 : box.bottom + 6;
+        const preferredTop = box.bottom + height + 12 > window.innerHeight && box.top > height + 12 ? box.top - height - 6 : box.bottom + 6;
+        const top = Math.max(8, Math.min(window.innerHeight - height - 8, preferredTop));
         panel.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - width - 8, box.right - width))) + 'px';
         panel.style.top = Math.round(top) + 'px';
         panel.classList.add('shown');
@@ -3640,6 +3649,21 @@ function installSettingsNavigation() {
     }
     nav.onclick = null;
     element('settings-open').replaceWith(nav);
+    const order = [
+        '#library-open',
+        '#engines-open',
+        '[data-settings="feishu"]',
+        '[data-settings="access"]',
+        '[data-settings="data"]',
+        '#usage-open',
+        '#theme-toggle',
+        '[data-settings="updates"]',
+        '#logout'
+    ];
+    for (const selector of order){
+        const entry = document.querySelector(selector);
+        if (entry) nav.append(entry);
+    }
     disposeWithShell(()=>{
         settingsPageRequest++;
         settingsOpening = null;
@@ -3968,11 +3992,34 @@ function clearDesktopHuman() {
     desktopFrame = null;
     desktopCapturing = false;
 }
+function desktopTaskCurrent(task = desktopDialogTask) {
+    return !!task && !creatingTask && chosen === task && detail?.task.id === task && !detail.task.archived && !detail.task.deleted;
+}
+function clearDesktopTaskContext() {
+    if (!desktopDialogTask || desktopDialogTask === chosen && !creatingTask) return;
+    const dialog = element('desktop-dialog');
+    void endDesktopHuman();
+    if (dialog.open) dialog.close();
+    desktopRevision++;
+    desktopBusy = false;
+    desktopDialogTask = '';
+    clearDesktopHuman();
+    const img = element('desktop-preview-image');
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    input('desktop-text').value = '';
+    input('desktop-allow-control').checked = false;
+    element('desktop-target').innerHTML = '';
+    element('desktop-status').textContent = '';
+}
+function syncDesktopTaskContext() {
+    renderDesktopSharing();
+}
 function renderDesktopHuman() {
     if (!button('desktop-manual')) return;
-    const manual = !!desktopHumanToken, ready = manual && !!desktopFrame && (!desktopBusy || desktopCapturing);
+    const manual = !!desktopHumanToken, ready = manual && desktopTaskCurrent() && !!desktopFrame && (!desktopBusy || desktopCapturing);
     button('desktop-manual').textContent = manual ? '结束手动控制' : '我来操作';
-    button('desktop-manual').disabled = !manual && (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask || desktopDialogTask !== chosen || !!detail?.task.archived);
+    button('desktop-manual').disabled = !manual && (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask || !desktopTaskCurrent());
     element('desktop-manual-tools').classList.toggle('hidden', !manual);
     element('desktop-manual-tools').querySelectorAll('button').forEach((b)=>b.disabled = !ready);
     const img = element('desktop-preview-image');
@@ -3983,6 +4030,7 @@ function installDesktopHuman() {
     button('desktop-manual').onclick = ()=>void toggleDesktopHuman();
     const dialog = element('desktop-dialog'), img = element('desktop-preview-image');
     dialog.addEventListener('close', ()=>{
+        if (dialog.open) return;
         void endDesktopHuman();
         desktopRevision++;
         desktopBusy = false;
@@ -4100,7 +4148,7 @@ async function toggleDesktopHuman() {
         await endDesktopHuman();
         return;
     }
-    if (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask) return;
+    if (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask || !desktopTaskCurrent() || !element('desktop-dialog').open) return;
     const task = desktopDialogTask, epoch = shellEpoch, revision = ++desktopRevision;
     desktopBusy = true;
     renderDesktopSharing();
@@ -4108,7 +4156,7 @@ async function toggleDesktopHuman() {
         const result = await api(`tasks/${encodeURIComponent(task)}/desktop/control`, 'POST', {
             enabled: true
         });
-        if (!shellCurrent(epoch) || revision !== desktopRevision || !element('desktop-dialog').open) {
+        if (!shellCurrent(epoch) || revision !== desktopRevision || !desktopTaskCurrent(task) || !element('desktop-dialog').open) {
             void api(`tasks/${encodeURIComponent(task)}/desktop/control`, 'POST', {
                 enabled: false,
                 token: result.token
@@ -4159,7 +4207,7 @@ function desktopImagePoint(event, img, frame) {
     };
 }
 async function desktopPointerAction(action, event, delta) {
-    if (!desktopHumanToken || !desktopFrame || desktopBusy && !desktopCapturing) return;
+    if (!desktopHumanToken || !desktopFrame || !desktopTaskCurrent() || !element('desktop-dialog').open || desktopBusy && !desktopCapturing) return;
     const point = desktopImagePoint(event, element('desktop-preview-image'), desktopFrame);
     if (!point) return;
     await desktopHumanAction({
@@ -4171,7 +4219,7 @@ async function desktopPointerAction(action, event, delta) {
     });
 }
 async function desktopHumanAction(action) {
-    if (!desktopHumanToken || !desktopFrame || desktopBusy && !desktopCapturing) return;
+    if (!desktopHumanToken || !desktopFrame || !desktopTaskCurrent() || !element('desktop-dialog').open || desktopBusy && !desktopCapturing) return;
     const task = desktopDialogTask, token = desktopHumanToken, frame = desktopFrame.id, epoch = shellEpoch, revision = ++desktopRevision;
     clearTimeout(desktopPreviewTimer);
     desktopFrame = null;
@@ -4186,7 +4234,7 @@ async function desktopHumanAction(action) {
                 frame
             }
         });
-        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        if (!shellCurrent(epoch) || revision !== desktopRevision || !desktopTaskCurrent(task)) return;
         desktopBusy = false;
         await previewDesktop();
     } catch (e) {
@@ -4201,7 +4249,7 @@ async function desktopHumanAction(action) {
     }
 }
 async function previewDesktop() {
-    if (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask) return;
+    if (desktopBusy || !desktopState.active || desktopState.task_id !== desktopDialogTask || !desktopTaskCurrent() || !element('desktop-dialog').open) return;
     clearTimeout(desktopPreviewTimer);
     const task = desktopDialogTask, token = desktopHumanToken, epoch = shellEpoch, revision = ++desktopRevision;
     desktopBusy = true;
@@ -4211,11 +4259,11 @@ async function previewDesktop() {
         const frame = await api(`tasks/${encodeURIComponent(task)}/desktop/${token ? 'control/frame' : 'frame'}`, 'POST', token ? {
             token
         } : {});
-        if (!shellCurrent(epoch) || revision !== desktopRevision || desktopState.task_id !== task || token !== desktopHumanToken) return;
+        if (!shellCurrent(epoch) || revision !== desktopRevision || !desktopTaskCurrent(task) || desktopState.task_id !== task || token !== desktopHumanToken) return;
         const img = element('desktop-preview-image');
         img.src = 'data:image/png;base64,' + frame.image;
         if (typeof img.decode === 'function') await img.decode();
-        if (!shellCurrent(epoch) || revision !== desktopRevision || token !== desktopHumanToken) return;
+        if (!shellCurrent(epoch) || revision !== desktopRevision || !desktopTaskCurrent(task) || token !== desktopHumanToken) return;
         img.classList.remove('hidden');
         desktopFrame = frame;
         element('desktop-status').textContent = token ? '手动控制已开启：可点击画面操作，约每秒刷新；AI 暂停桌面操作。' : '当前是只读预览。点击“我来操作”后，可在画面上使用鼠标。';
@@ -4238,7 +4286,7 @@ async function previewDesktop() {
 let desktopState = {
     active: false,
     control: false
-}, desktopDialogTask = '', desktopBusy = false, desktopRevision = 0;
+}, desktopDialogTask = '', desktopBusy = false, desktopStopping = false, desktopRevision = 0;
 function installDesktopSharing() {
     desktopState = {
         active: false,
@@ -4246,23 +4294,35 @@ function installDesktopSharing() {
     };
     desktopDialogTask = '';
     desktopBusy = false;
+    desktopStopping = false;
     desktopRevision++;
     clearDesktopHuman();
     const entry = document.createElement('button');
     entry.type = 'button';
     entry.id = 'desktop-open';
-    entry.className = 'subtle';
     entry.textContent = '桌面共享';
-    element('settings-open').before(entry);
+    element('tabs').append(entry);
     entry.onclick = ()=>void openDesktopSharing();
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.id = 'desktop-quick-stop';
+    stop.className = 'danger hidden';
+    stop.textContent = '停止桌面共享';
+    stop.title = '停止原任务的桌面共享，不会授权给其他任务';
+    document.querySelector('.header-utilities').append(stop);
+    stop.onclick = ()=>void stopDesktopSharing();
     element('root').insertAdjacentHTML('beforeend', `<dialog id="desktop-dialog" class="desktop-dialog"><h2>共享服务电脑的桌面</h2><p>共享的是运行 Duo 的 Windows 桌面。选定窗口需保持前台；整个桌面可能包含其它应用内容。画面由当前任务的 AI 查看。</p><p id="desktop-owner" role="status"></p><div class="desktop-controls"><label for="desktop-target">共享范围</label><select id="desktop-target"></select><label class="check-row"><input type="checkbox" id="desktop-allow-control">允许 AI 操作真实键盘和鼠标</label><p class="muted">默认只查看。授权保持 30 分钟，重启服务后失效；可随时停止共享。开始共享后，从下一条任务消息生效。</p><div class="actions"><button type="button" id="desktop-start" class="primary">开始共享给当前任务</button><button type="button" id="desktop-preview">刷新画面</button><button type="button" id="desktop-manual">我来操作</button><button type="button" id="desktop-stop" class="danger">停止共享 / 接管</button></div></div><p id="desktop-status" role="status"></p><div id="desktop-manual-tools" class="hidden"><p>人工控制中，AI 暂停桌面操作。点击画面可定位，右键和滚轮直接发送；选择“双击”后点击一次。暂不支持拖拽。按 Escape 结束手动控制。</p><div class="actions"><select id="desktop-click-mode" aria-label="鼠标左键动作"><option value="click">单击</option><option value="double_click">双击</option></select><button type="button" data-desktop-key="enter">Enter</button><button type="button" data-desktop-key="tab">Tab</button><button type="button" data-desktop-key="ctrl+c">Ctrl+C</button><button type="button" data-desktop-key="alt+tab">Alt+Tab</button></div><label for="desktop-text">发送文字（支持中文）</label><div class="desktop-text-send"><textarea id="desktop-text" rows="2" maxlength="2000"></textarea><button type="button" id="desktop-text-send">发送文字</button></div></div><img id="desktop-preview-image" class="hidden" tabindex="0" draggable="false" alt="共享桌面预览；开启手动控制后可使用鼠标和键盘"><div class="dialog-footer"><button type="button" id="desktop-close">关闭面板</button></div></dialog>`);
-    button('desktop-close').onclick = ()=>element('desktop-dialog').close();
+    button('desktop-close').onclick = ()=>{
+        void endDesktopHuman();
+        element('desktop-dialog').close();
+    };
     installDesktopHuman();
     button('desktop-start').onclick = ()=>void startDesktopSharing();
     button('desktop-stop').onclick = ()=>void stopDesktopSharing();
     button('desktop-preview').onclick = ()=>void previewDesktop();
 }
 function renderDesktopSharing(state) {
+    clearDesktopTaskContext();
     if (state && state.instance === desktopState.instance && (state.revision || 0) < (desktopState.revision || 0)) state = undefined;
     if (state) {
         if (desktopHumanToken && (!state.active || !state.human_control || state.task_id !== desktopDialogTask || state.instance !== desktopState.instance)) clearDesktopHuman();
@@ -4274,20 +4334,27 @@ function renderDesktopSharing(state) {
         }
     }
     renderDesktopHuman();
-    const active = desktopState.active;
-    button('desktop-open').textContent = active ? '桌面接管' : '桌面共享';
+    const active = desktopState.active, other = active && desktopState.task_id !== chosen;
+    button('desktop-open').textContent = active ? other ? '桌面共享 · 其他任务' : '桌面接管' : '桌面共享';
     button('desktop-open').title = active ? '桌面正在共享，打开面板停止共享或接管' : '选择画面并授权当前任务查看或控制桌面';
     button('desktop-open').classList.toggle('desktop-sharing', active);
+    button('desktop-open').disabled = !chosen || creatingTask || !detail;
+    button('desktop-quick-stop').classList.toggle('hidden', !active || !!chosen && !creatingTask && !!detail);
+    button('desktop-quick-stop').disabled = desktopStopping;
     const task = tasks.find((t)=>t.id === desktopState.task_id), label = task?.title || desktopState.task_id || '';
     element('desktop-owner').textContent = active ? '正在共享给 ' + label + ' · ' + (desktopState.human_control ? '用户正在手动控制 · AI 暂停' : desktopState.control ? '允许 AI 键鼠控制' : 'AI 仅查看') : '当前未共享桌面';
-    button('desktop-stop').disabled = !active;
-    button('desktop-preview').disabled = desktopBusy || !active || desktopState.task_id !== desktopDialogTask;
-    button('desktop-start').disabled = desktopBusy || !desktopDialogTask || desktopDialogTask !== chosen || ![
+    button('desktop-stop').disabled = !active || desktopStopping;
+    button('desktop-preview').disabled = desktopBusy || !active || desktopState.task_id !== desktopDialogTask || !desktopTaskCurrent();
+    button('desktop-start').disabled = desktopBusy || desktopStopping || !desktopTaskCurrent() || ![
         'codex',
         'claude'
-    ].includes(detail?.task.engine || '') || !!detail?.task.archived || active && desktopState.task_id !== desktopDialogTask;
+    ].includes(detail?.task.engine || '') || active && desktopState.task_id !== desktopDialogTask;
 }
 async function openDesktopSharing() {
+    if (!chosen || creatingTask || !detail) {
+        notify('请先选择任务，再设置桌面共享。');
+        return;
+    }
     const epoch = shellEpoch, revision = ++desktopRevision;
     desktopDialogTask = chosen;
     desktopBusy = true;
@@ -4304,7 +4371,7 @@ async function openDesktopSharing() {
             api('desktop'),
             api('desktop/targets')
         ]);
-        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        if (!shellCurrent(epoch) || revision !== desktopRevision || desktopDialogTask !== chosen || creatingTask) return;
         if (stateResult.status === 'fulfilled') {
             desktopState = stateResult.value;
             renderDesktopSharing();
@@ -4329,7 +4396,10 @@ async function openDesktopSharing() {
     }
 }
 async function startDesktopSharing() {
-    if (desktopBusy || !desktopDialogTask || desktopDialogTask !== chosen) return;
+    if (desktopBusy || desktopStopping || !desktopTaskCurrent() || ![
+        'codex',
+        'claude'
+    ].includes(detail?.task.engine || '') || desktopState.active && desktopState.task_id !== desktopDialogTask) return;
     const task = desktopDialogTask, epoch = shellEpoch, revision = ++desktopRevision;
     clearDesktopHuman();
     desktopFrame = null;
@@ -4340,7 +4410,11 @@ async function startDesktopSharing() {
             target: element('desktop-target').value,
             control: input('desktop-allow-control').checked
         });
-        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        if (!shellCurrent(epoch)) return;
+        if (revision !== desktopRevision || !desktopTaskCurrent(task)) {
+            renderDesktopSharing(state);
+            return;
+        }
         renderDesktopSharing(state);
         element('desktop-status').textContent = '已开始共享。发送下一条任务消息，AI 即可使用桌面工具。用户操作后，AI 必须重新观察画面。';
     } catch (e) {
@@ -4353,20 +4427,28 @@ async function startDesktopSharing() {
     }
 }
 async function stopDesktopSharing() {
+    if (desktopStopping) return;
     const epoch = shellEpoch, revision = ++desktopRevision;
     clearTimeout(desktopPreviewTimer);
     desktopFrame = null;
-    button('desktop-stop').disabled = true;
+    desktopStopping = true;
+    renderDesktopSharing();
     try {
         const state = await api('desktop', 'DELETE');
-        if (!shellCurrent(epoch) || revision !== desktopRevision) return;
+        if (!shellCurrent(epoch)) return;
         desktopBusy = false;
         renderDesktopSharing(state);
-        element('desktop-status').textContent = '共享已停止，AI 已失去桌面访问权限。';
+        if (revision === desktopRevision) element('desktop-status').textContent = '共享已停止，AI 已失去桌面访问权限。';
     } catch (e) {
-        if (shellCurrent(epoch) && revision === desktopRevision) {
-            element('desktop-status').textContent = '停止失败，请重试：' + e.message;
-            button('desktop-stop').disabled = false;
+        if (shellCurrent(epoch)) {
+            const message = '停止失败，请重试：' + e.message;
+            if (element('desktop-dialog').open) element('desktop-status').textContent = message;
+            else notify(message);
+        }
+    } finally{
+        if (shellCurrent(epoch)) {
+            desktopStopping = false;
+            renderDesktopSharing();
         }
     }
 }
@@ -10086,6 +10168,7 @@ const steerDraftAttempts = new Map();
 let editingEnvironments = [], editingID = "", modelRequest = 0;
 let createFiles = [], creatingTask = false, createReturnTask = '', createPermission = 'auto';
 let createSubmitting = false, sessionResetTask = '', settingsPolling = false;
+let bindingTarget = null, bindingDialogTarget = null, bindingRequest = 0, bindingSaving = false;
 let shellEpoch = 0, shellController = new AbortController();
 let shellCleanups = [];
 function shellCurrent(epoch) {
@@ -10437,13 +10520,30 @@ function renderShell() {
     button('workspace-import-file').onchange = ()=>void chooseWorkspaceImport(input('workspace-import-file').files?.[0] || null);
     button('workspace-import').onclick = ()=>void importWorkspaceData();
     button('setup-feishu').onclick = ()=>openSetup('');
-    button('bind-setup').onclick = ()=>openSetup(chosen);
+    button('bind-setup').onclick = ()=>{
+        if (bindingCurrent()) openSetup(bindingTarget.task);
+    };
     button('setup-start').onclick = startSetup;
     button('setup-close').onclick = ()=>element('setup-dialog').close();
     button('setup-cancel').onclick = cancelSetup;
-    button('bind-open').onclick = openBinding;
-    button('bind').onclick = ()=>setBinding(true);
-    button('unbind').onclick = ()=>setBinding(false);
+    button('bind-open').onclick = ()=>void openBinding();
+    button('bind').onclick = ()=>void setBinding(true);
+    button('unbind').onclick = ()=>void setBinding(false);
+    element('bind-dialog').addEventListener('close', ()=>{
+        if (!element('bind-dialog').open) {
+            const closed = bindingDialogTarget;
+            bindingDialogTarget = null;
+            if (closed && bindingTarget === closed) {
+                bindingRequest++;
+                bindingTarget = null;
+            }
+        }
+    });
+    disposeWithShell(()=>{
+        bindingRequest++;
+        bindingTarget = null;
+        bindingDialogTarget = null;
+    });
 }
 function mayLeave() {
     if (createSubmitting) {
@@ -10533,7 +10633,6 @@ async function choose(id, view = 'chat') {
     renderKnowledgeList();
     for (const key of [
         'tabs',
-        'task-actions',
         'composer-wrap',
         'conversation-filter'
     ])element(key).classList.remove('hidden');
@@ -10571,6 +10670,8 @@ function switchTab(tab) {
         createReturnTask = '';
     }
     setCreatePageVisible(false);
+    syncDesktopTaskContext();
+    syncTaskDialogContext();
     toolsTab = tab;
     const open = tab !== 'chat';
     if (chosen) {
@@ -10718,7 +10819,7 @@ function renderSessionBanner() {
     }) : '';
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
     const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
-    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 新建会话时可自动补回当前任务知识，可在“设置 → 知识库”关闭。';
+    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 重建 AI 会话时可自动补回当前任务知识，可在“知识库 → 积累设置”关闭自动恢复。';
     element('session-summary').textContent = detail.task.archived ? '任务已归档' : title;
     element('session-location').textContent = [
         detail.task.environment?.name,
@@ -10731,7 +10832,7 @@ function renderSessionBanner() {
     const reset = button('session-reset');
     reset.classList.toggle('hidden', !detail.task.session || detail.task.archived);
     reset.disabled = busy || sessionResetTask === detail.task.id;
-    reset.textContent = sessionResetTask === detail.task.id ? '正在新建…' : '新建会话';
+    reset.textContent = sessionResetTask === detail.task.id ? '正在重建…' : '重建 AI 会话';
     banner.dataset.state = closed ? 'closed' : busy ? 'busy' : 'live';
     banner.classList.toggle('hidden', !closed || !!detail.task.archived);
     if (!closed || detail.task.archived) return;
@@ -10741,12 +10842,12 @@ function renderSessionBanner() {
     button('session-recover').onclick = ()=>void resetSession();
 }
 async function resetSession() {
-    if (!detail || !detail.task.session || sessionResetTask) return;
+    if (!detail || detail.task.archived || !detail.task.session || sessionResetTask) return;
     if (detail.runs.some((r)=>r.status === 'running' || r.status === 'queued')) {
         notify('请先停止执行并取消排队，再新建会话。');
         return;
     }
-    if (!confirm('新建会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在设置 → 知识库 → 对话自动积累关闭自动恢复。')) return;
+    if (!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 积累设置 → 对话自动积累关闭自动恢复。')) return;
     const id = detail.task.id, token = ++selection;
     sessionResetTask = id;
     renderTask();
@@ -10940,6 +11041,8 @@ async function showCreate() {
         detail = null;
         selection++;
         createFiles = [];
+        syncDesktopTaskContext();
+        syncTaskDialogContext();
         input('create-input').value = '';
         input('create-files').value = '';
         input('create-error').textContent = '';
@@ -10951,7 +11054,6 @@ async function showCreate() {
         element('sidebar').classList.remove('open');
         for (const id of [
             'tabs',
-            'task-actions',
             'conversation',
             'composer-wrap'
         ])element(id).classList.add('hidden');
@@ -10993,7 +11095,6 @@ function cancelCreate() {
     resetConversation();
     for (const name of [
         'tabs',
-        'task-actions',
         'composer-wrap'
     ])element(name).classList.add('hidden');
     element('conversation').classList.remove('hidden');
@@ -11743,28 +11844,70 @@ async function pollSettingsStatus() {
         if (shellCurrent(epoch)) settingsPolling = false;
     }
 }
-async function openBinding() {
+function bindingCurrent() {
+    return !!bindingTarget && bindingTarget.task === chosen && bindingTarget.selection === selection && shellCurrent(bindingTarget.epoch);
+}
+function syncTaskDialogContext() {
+    if (bindingTarget && !bindingCurrent()) {
+        bindingRequest++;
+        bindingTarget = null;
+        element('bind-dialog').close();
+    }
+    element('session-info-dialog').close();
+}
+async function openBinding(id = chosen) {
+    if (!id || bindingSaving) return;
+    if (chosen !== id) await choose(id);
+    if (chosen !== id || detail?.task.id !== id) return;
+    const request = ++bindingRequest, target = {
+        task: id,
+        selection,
+        epoch: shellEpoch,
+        chat: ''
+    };
+    bindingTarget = target;
     try {
-        settings = await api('settings');
-        element('bind-status').textContent = settings.chat ? '已配对你的飞书私聊。' + (detail?.chat ? '当前任务已连接。' : '点击连接后可继续此任务。') : '可扫码创建机器人并绑定此任务，或到设置配对已有应用。';
-        button('bind-setup').classList.toggle('hidden', !!settings.config.feishu.app_id || settings.secret_configured);
-        button('bind').disabled = !settings.chat;
+        const loaded = await api('settings', 'GET', undefined, shellController.signal);
+        if (request !== bindingRequest || bindingTarget !== target || !bindingCurrent()) return;
+        target.chat = loaded.chat;
+        element('bind-status').textContent = loaded.chat ? '已配对你的飞书私聊。' + (detail?.chat ? '当前任务已连接。' : '点击连接后可继续此任务。') : '可扫码创建机器人并绑定此任务，或到飞书连接配对已有应用。';
+        button('bind-setup').classList.toggle('hidden', !!loaded.config.feishu.app_id || loaded.secret_configured);
+        button('bind-setup').disabled = false;
+        button('bind').disabled = !loaded.chat;
         button('unbind').disabled = !detail?.chat;
+        element('session-info-dialog').close();
+        bindingDialogTarget = target;
         element('bind-dialog').showModal();
     } catch (e) {
-        notify(e.message);
+        if (request === bindingRequest && bindingCurrent()) notify(e.message);
     }
 }
 async function setBinding(bind) {
+    if (!bindingCurrent() || bindingSaving || bind && !bindingTarget.chat) return;
+    const target = bindingTarget;
+    bindingSaving = true;
+    for (const id of [
+        'bind',
+        'unbind',
+        'bind-setup'
+    ])button(id).disabled = true;
     try {
-        await api('tasks/' + chosen + '/bind', bind ? 'POST' : 'DELETE', bind ? {
-            chat: settings.chat
+        await api('tasks/' + target.task + '/bind', bind ? 'POST' : 'DELETE', bind ? {
+            chat: target.chat
         } : {});
+        if (bindingTarget !== target || !bindingCurrent()) return;
         element('bind-dialog').close();
         notify(bind ? '已连接到此任务' : '已断开此任务');
         await poll();
     } catch (e) {
-        notify(e.message);
+        if (bindingTarget === target && bindingCurrent()) notify(e.message);
+    } finally{
+        bindingSaving = false;
+        if (bindingTarget === target && bindingCurrent()) {
+            button('bind').disabled = !target.chat;
+            button('unbind').disabled = !detail?.chat;
+            button('bind-setup').disabled = false;
+        }
     }
 }
 window.addEventListener('beforeunload', (e)=>{

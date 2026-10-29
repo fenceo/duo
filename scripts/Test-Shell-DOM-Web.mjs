@@ -33,14 +33,24 @@ for(const id of ['workspace-export','workspace-import-file','workspace-import-st
 assert.match(document.getElementById('settings-data').textContent,/不含工作台密码/);
 assert.match(document.getElementById('settings-data').textContent,/当前版本只支持追加/);
 assert.equal(document.getElementById('sticky-board').parentElement,document.getElementById('sticky-dialog'));
-assert.equal(document.getElementById('hardware-tab').parentElement,document.getElementById('workspace-tools'));
-assert.equal(document.getElementById('hardware-tab').nextElementSibling,document.getElementById('sticky-tab'));
+for(const id of ['task-handoff','hardware-tab','desktop-open','session-reset','bind-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('tabs'),id+' belongs to the task toolbar');
+assert.equal(document.getElementById('sticky-tab').parentElement,document.getElementById('tasks-active').parentElement,'notes share the task sidebar navigation');
+assert.equal(document.getElementById('sticky-tab').previousElementSibling,document.getElementById('trash-open'));
+assert.equal(document.getElementById('task-actions'),null,'the old hidden task action container is removed');
+assert.equal(document.getElementById('session-info-dialog').querySelector('.session-advanced-actions'),null,'task buttons are not hidden in session information');
+assert.equal(document.getElementById('workspace-tools'),null);
 assert.equal(document.getElementById('scratch-tab'),null,'task to-do entry is removed');
 assert.equal(document.getElementById('settings-open'),null);
 assert.equal(document.getElementById('workspace-settings').parentElement.id,'app-menu-items');
 assert.equal(document.getElementById('workspace-settings').closest('details'),null);
+assert.deepEqual([...document.getElementById('workspace-settings').children].filter(node=>node.tagName==='BUTTON').map(node=>node.dataset.settings||node.id),['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global controls have one ordered home');
+assert.equal(document.querySelectorAll('#app-menu-toggle').length,1,'one phone menu toggle');
+assert.equal(document.getElementById('app-menu-toggle').getAttribute('aria-expanded'),'false');
 assert.equal(document.getElementById('sidebar-footer'),null);
 assert.equal(document.querySelectorAll('#model-catalog-actions').length,1);
+assert.equal(document.querySelectorAll('#sticky-tab').length,1);
+assert.equal(document.querySelectorAll('#workspace-settings').length,1);
+assert.equal(document.querySelectorAll('#app-menu-toggle').length,1);
 assert.equal(document.querySelectorAll('#stop-model-test').length,1);
 // A fresh login mounts the same full shell again without losing detached nodes.
 await ctx.boot();

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const {ctx,document}=await createWebShellFixture();
 const node=id=>document.getElementById(id),state=code=>runInContext(code,ctx);
 const toolbar=node('tasks-active').parentElement;
-assert.deepEqual([...toolbar.children].map(n=>n.id),['tasks-active','tasks-archived','trash-open','new-task']);
+assert.deepEqual([...toolbar.children].map(n=>n.id),['tasks-active','tasks-archived','trash-open','sticky-tab','new-task']);
 assert.equal(node('new-task').textContent,'＋');assert.equal(node('new-task').getAttribute('aria-label'),'新建任务');
 const task=(id,environment,workspace,updated,pinned=false)=>({id,title:'任务 <同名>',environment,workspace,updated,pinned,status:'done',archived:false});
 const windows={id:'win',type:'windows',name:'电脑'};

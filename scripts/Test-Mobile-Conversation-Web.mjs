@@ -7,6 +7,18 @@ const node=id=>document.getElementById(id);
 runInContext('dockNarrow.matches=true;applyDockLayout()',ctx);
 assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'phone notes stay in their own drawer, preserving conversation space');
 assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true','notes default to expanded inside the drawer');
+assert.equal(node('sticky-tab').parentElement,node('tasks-active').parentElement,'phone notes share task, archive and trash navigation');
+assert.equal(node('sticky-tab').previousElementSibling,node('trash-open'));
+const matchMedia=ctx.matchMedia;ctx.matchMedia=()=>({matches:true});
+let focus='';node('menu').focus=()=>focus='menu';node('sticky-new').focus=()=>focus='sticky-new';
+const field=document.querySelector('[data-note-input]');if(field)field.focus=()=>focus='note-input';
+node('sidebar').classList.add('open');node('sticky-tab').onclick();
+assert(!node('sidebar').classList.contains('open'),'opening notes dismisses the phone task drawer');
+assert(node('sticky-dialog').open);assert(['note-input','sticky-new'].includes(focus),'opening puts focus inside the note dialog');
+node('sticky-close').onclick();assert.equal(focus,'menu','closing restores the visible phone task menu, not an offscreen sidebar entry');
+assert(!node('sticky-dialog').open);assert(!node('sidebar').classList.contains('open'));
+node('sticky-tab').onclick();assert(node('sticky-dialog').open,'notes reopen without losing the note input');assert.equal(document.querySelector('[data-note-input]'),field);
+node('sticky-close').onclick();ctx.matchMedia=matchMedia;
 for(const previous of ['left','right','bottom','sidebar']){
  ctx.localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:previous,tools:'left'}));
  runInContext('installDockLayout()',ctx);
@@ -26,6 +38,8 @@ node('sticky-resizer').ondblclick();
 assert.equal(ctx.localStorage.getItem('jianzuo-sticky-height'),null);
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');
 const mobile=css.slice(css.lastIndexOf('@media(max-width:760px){'));
+assert.match(css,/\.sidebar>\.task-navigation\{flex-wrap:wrap\}/,'narrow sidebars wrap the task navigation instead of clipping labels');
+assert.match(css,/\.sidebar>\.task-navigation>button:not\(#new-task\)\{flex-basis:44px;min-width:44px;min-height:44px\}/,'phone sidebar notes retain a 44px target');
 assert.match(mobile,/\.composer-tools\{display:grid;grid-template-columns:auto auto auto minmax\(0,1fr\) 44px;/);
 assert.match(mobile,/\.composer-tools button,\.composer-tools select\{[^}]*min-height:44px/);
 assert.match(mobile,/\.composer-tools \.mode-engine-hint\{grid-column:1 \/ -1\}/,'engine restrictions remain visible on their own row');
@@ -35,4 +49,4 @@ assert.match(mobile,/#chat-column \.composer textarea\{min-height:56px;max-heigh
 assert(!mobile.includes('.session-banner{display:none'),'do not conceal session boundaries');
 
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: fixed notes migrate old positions, preserve tool placement and height resizing; compact accessible phone controls. Browser geometry is checked separately.');
+console.log('PASS: sidebar notes dismiss the phone task drawer and restore visible focus; old note positions preserve tool placement and height resizing; compact accessible phone controls. Browser geometry is checked separately.');

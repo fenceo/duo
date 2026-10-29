@@ -11,11 +11,16 @@ function parseAppearance(raw:string|null):Appearance{
  try{const v=JSON.parse(raw||'{}');return {theme:['light','dark','system'].includes(v.theme)?v.theme:'light',accent:['blue','green','purple'].includes(v.accent)?v.accent:'blue',font:Math.max(12,Math.min(18,Number(v.font)||14)),sidebar:Math.max(180,Math.min(420,Number(v.sidebar)||248)),width:Math.max(640,Math.min(1100,Number(v.width)||820)),tool:Math.max(22,Math.min(75,Number(v.tool)||42)),notes:v.notes!==false,compact:v.compact===true,path:v.path!==false}}catch{return {...defaultAppearance}}
 }
 function installStickyBoard(){
- element('hardware-tab').insertAdjacentHTML('afterend','<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+ element('trash-open').insertAdjacentHTML('afterend','<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+ element('sticky-tab').parentElement!.classList.add('task-navigation');
  element('root').insertAdjacentHTML('beforeend',`<dialog id="sticky-dialog" aria-labelledby="sticky-title"><section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong id="sticky-title">便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="关闭便签" title="关闭便签">×</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color,label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section></dialog>`);
  button('sticky-tab').onclick=openStickyBoard;
  button('sticky-close').onclick=()=>element<HTMLDialogElement>('sticky-dialog').close();
- element('sticky-dialog').addEventListener('close',()=>{button('sticky-tab').setAttribute('aria-expanded','false');button('sticky-tab').focus()});
+ element('sticky-dialog').addEventListener('close',()=>{
+  const entry=button('sticky-tab');entry.setAttribute('aria-expanded','false');
+  const target=matchMedia('(max-width:760px)').matches&&!element('sidebar').classList.contains('open')?button('menu'):entry.classList.contains('hidden')?button('tasks-active'):entry;
+  target.focus();
+ });
  button('sticky-expand').onclick=()=>{
   const board=element('sticky-board'),collapsed=board.dataset.collapsed!=='true';board.dataset.collapsed=String(collapsed);element('sticky-body').classList.toggle('hidden',collapsed);
   button('sticky-expand').setAttribute('aria-expanded',String(!collapsed));button('sticky-expand').setAttribute('aria-label',collapsed?'展开便签':'收起便签');button('sticky-expand').title=collapsed?'展开便签':'收起便签';button('sticky-expand').textContent=collapsed?'›':'⌄';
@@ -35,6 +40,7 @@ function installStickyBoard(){
 }
 function openStickyBoard(){
  const dialog=element<HTMLDialogElement>('sticky-dialog');if(dialog.open)return;
+ element('sidebar').classList.remove('open');
  button('sticky-tab').setAttribute('aria-expanded','true');dialog.showModal();fitQuickNotes();
  const field=element('sticky-body').classList.contains('hidden')?button('sticky-expand'):element('sticky-list').querySelector<HTMLTextAreaElement>('textarea')||button('sticky-new');field.focus();
  void loadStickyBoard();

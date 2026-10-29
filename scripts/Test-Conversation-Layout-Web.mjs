@@ -12,21 +12,28 @@ assert.equal(node('library-create').parentElement,node('create-submit').parentEl
 assert.equal(node('message').previousElementSibling?.id,'composer-resizer','the only element above the draft is its thin resize edge');
 assert(node('task-title').parentElement.classList.contains('task-identity'));
 assert.equal(node('task-title').parentElement,node('task-workspace').parentElement);
-for(const id of ['session-reset','task-handoff','bind-open']){
-  assert.equal(node(id).parentElement,node('task-actions'));
-  assert.equal(node(id).closest('details'),null,'session actions are directly accessible');
-  assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
+assert.match(node('session-reset').textContent,/重建\s*AI\s*会话/);
+assert.equal(node('bind-open').textContent,'绑定飞书私聊');
+for(const id of ['task-handoff','hardware-tab','desktop-open','session-reset','bind-open']){
+ assert.equal(node(id).parentElement,node('tabs'),id+' belongs to the current task toolbar');
+ assert.equal(node(id).closest('.header'),null);
+ assert.equal(node(id).closest('dialog'),null,'task actions are visible outside the information dialog');
+ assert.equal(node(id).closest('details'),null,'task actions are visible without opening a menu');
+ assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
 }
+assert.equal(node('task-actions'),null,'obsolete action container is removed');
+assert.equal(node('session-info-dialog').querySelector('.session-advanced-actions'),null,'session information has no hidden action group');
 assert.equal(node('scratch-tab'),null,'task to-do entry is removed');
-assert.equal(node('hardware-tab').parentElement,node('workspace-tools'));
-assert.equal(node('hardware-tab').nextElementSibling,node('sticky-tab'),'notes and hardware remain adjacent in the header');
+assert.equal(node('workspace-tools'),null,'there is no global hardware and notes group');
+assert.equal(node('sticky-tab').parentElement,node('tasks-active').parentElement,'shared notes belong to the task sidebar navigation');
 assert.equal(node('task-link-copy'),null,'duplicate link action is removed from the header');
 assert.equal(node('session-info-open'),null,'diagnostics do not occupy a header button');
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="session-info"/);
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="copy-link"/);
-assert(!node('app-menu')&&!node('task-session-menu'),'header actions have no menu gate');
+assert.doesNotMatch(ctx.taskItemMenu({id:'fixture'}),/data-task-action="(?:reset-session|bind-feishu)"/,'visible task actions are not duplicated in the sidebar menu');
+assert(!node('app-menu')&&!node('task-session-menu'),'toolbar uses one responsive menu without nested menus');
 for(const id of ['theme-toggle','library-open','logout']){
- assert.equal(node(id).parentElement,node('app-menu-items'));
+ assert.equal(node(id).parentElement,node('workspace-settings'));
  assert.equal(node(id).closest('details'),null);
 }
 assert.equal(node('settings-open'),null,'direct categories replace the generic settings button');
@@ -41,6 +48,14 @@ assert(node('session-banner').classList.contains('hidden'),'ordinary sessions do
 assert(node('run-status').classList.contains('hidden'),'idle status does not reserve a second composer heading');
 assert(!node('session-reset').classList.contains('hidden'));
 assert.equal(node('session-reset').disabled,false);
+assert.match(node('session-reset').textContent,/重建\s*AI\s*会话/,'selecting or polling a task keeps the precise reset label');
+ctx.renderList();
+assert.equal(node('task-list').querySelector('[data-task-action="reset-session"],[data-task-action="bind-feishu"]'),null);
+const routed=[],resetSession=ctx.resetSession,openBinding=ctx.openBinding;
+ctx.resetSession=async()=>routed.push(['reset',runInContext('chosen',ctx)]);ctx.openBinding=async()=>routed.push(['bind',runInContext('chosen',ctx)]);
+node('session-reset').click();node('bind-open').click();
+assert.deepEqual(routed,[['reset','compact-fixture'],['bind','compact-fixture']],'visible task buttons preserve their original current-task actions');
+ctx.resetSession=resetSession;ctx.openBinding=openBinding;
 const reset=node('session-reset');await ctx.openSessionInfo();
 ctx.renderSessionBanner();
 assert.equal(node('session-info-dialog').open,true,'polling must not close session information');
@@ -67,4 +82,4 @@ assert.equal(node('note-tab').getAttribute('aria-pressed'),'true');
 assert(node('tool-title').textContent.includes('本任务知识'));
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: direct knowledge, compact composer references, preserved session actions/focus, escaped context, visible busy/closed/archived states and reset/send guards. No model calls.');
+console.log('PASS: direct task tools and reset/binding actions in the task toolbar, shared notes in the sidebar, ordered global tools, preserved session information/focus, escaped context, visible busy/closed/archived states and reset/send guards. No model calls.');

@@ -59,6 +59,13 @@ for(const selector of ['.model-manager','.engine-card']){
 }
 assert.equal(declarations('.configured-model').background,'var(--canvas)');
 assert.equal(declarations('.workspace-settings').display,'contents','settings categories share the existing toolbar instead of another row');
+assert.equal(declarations('.header-global-actions').display,'none','phone global menu is collapsed by default');
+assert.equal(declarations('.header-global-actions.menu-open').display,'grid');
+assert.equal(declarations('.header-global-actions.menu-open')['grid-template-columns'],'repeat(3,minmax(0,1fr))','expanded phone menu uses three readable columns');
+assert.equal(declarations('#app-menu-toggle')['min-height'],'44px');
+assert.equal(declarations('#app-menu-toggle')['min-width'],'44px');
+assert.equal(declarations('.sidebar>.task-navigation')['flex-wrap'],'wrap','narrow sidebars wrap rather than clip the added notes entry');
+assert.equal(declarations('.sidebar>.task-navigation>button:not(#new-task)')['min-height'],'44px');
 assert.equal(declarations('.model-add-row',mobile)['grid-template-columns'],'minmax(0,1fr)');
 assert.equal(declarations('.create-page',mobile).padding,'24px 16px 28px');
 console.log('PASS: narrow sidebar safety; readable task form, separate permissions, model truncation, themed settings, and phone touch/overflow rules.');
