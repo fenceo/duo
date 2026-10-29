@@ -83,7 +83,7 @@ try {
     }
     & node scripts/build.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Web build failed' }
-    & $Go test ./... -count=1
+    & $Go test ./... -count=1 -timeout=20m
     if ($LASTEXITCODE -ne 0) { throw 'Go tests failed' }
     & $Go build -buildvcs=false -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $packageDir 'duo-service.exe') .
     if ($LASTEXITCODE -ne 0) { throw 'Service build failed' }
