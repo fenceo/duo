@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type worker struct {
@@ -490,6 +491,22 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 							input = contextText + input
 							_ = a.store.event(id, r.ID, "progress", "已自动恢复当前任务知识（来源 ID）："+strings.Join(ids, "、"))
 						}
+						recallCtx, recallCancel := context.WithTimeout(runCtx, 8*time.Second)
+						workspaceText, workspaceIDs, workspaceErr := a.workspaceMemoryContext(recallCtx, task)
+						recallCancel()
+						if workspaceErr != nil {
+							_ = a.store.event(id, r.ID, "progress", "工作区交接资料读取失败，本轮继续使用已取得的上下文。")
+						} else if workspaceText != "" {
+							input = workspaceText + input
+							_ = a.store.event(id, r.ID, "progress", "已恢复同工作区交接（来源 ID）："+strings.Join(workspaceIDs, "、"))
+						}
+						consensusText, consensusIDs, consensusErr := a.store.curatedContext(runCtx, task)
+						if consensusErr != nil {
+							_ = a.store.event(id, r.ID, "progress", "平台共识读取失败，本轮继续使用已取得的上下文。")
+						} else if consensusText != "" {
+							input = consensusText + input
+							_ = a.store.event(id, r.ID, "progress", "已恢复已确认平台共识（来源 ID）："+strings.Join(consensusIDs, "、"))
+						}
 					}
 					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture && automatic.Organize {
 						input = memoryPrompt(r.ID) + input
@@ -642,6 +659,23 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 	}
 	_ = a.store.event(id, r.ID, "status", status+" "+failure)
 	a.changed()
+	if e == nil {
+		// Export after committing and releasing the app lock. A failed mirror
+		// never turns a completed model run into a failure.
+		memoryBase := a.ctx
+		if memoryBase == nil {
+			memoryBase = context.Background()
+		}
+		memoryCtx, cancel := context.WithTimeout(memoryBase, 8*time.Second)
+		report, syncErr := a.syncWorkspaceMemory(memoryCtx, id)
+		cancel()
+		if syncErr != nil || report.Error != "" {
+			_ = a.store.event(id, r.ID, "progress", "运行结果已保存，工作区过程同步未完成；可在本任务知识中重试。")
+		} else if len(report.Conflicts) > 0 || len(report.Warnings) > 0 {
+			_ = a.store.event(id, r.ID, "progress", "工作区过程已同步，存在待检查项目；请在本任务知识中查看。")
+		}
+		a.changed()
+	}
 }
 func (a *App) stop(id string) error {
 	a.mu.Lock()

@@ -1,4 +1,4 @@
-type LibraryDocument={tags?:string[];layer?:string;generated?:boolean;content?:string;id:string;kind:string;source?:string;task_id:string;task_title:string;title:string;status:string;revision:number;updated:number;origin:string;path?:string;hash:string;snippet:string};
+type LibraryDocument={scope_key?:string;source_id?:string;source_hash?:string;source_task_id?:string;applicability?:string;evidence?:string;credential_ref?:string;tags?:string[];layer?:string;generated?:boolean;content?:string;id:string;kind:string;source?:string;task_id:string;task_title:string;title:string;status:string;revision:number;updated:number;origin:string;path?:string;hash:string;snippet:string};
 type LibraryReference={document?:LibraryDocument;reference:string;preview?:string;truncated:boolean};
 type VaultConfig={enabled:boolean;directory:string;include_runs:boolean;include_automatic:boolean;task_folders?:boolean};
 type AutomaticKnowledgeConfig={capture:boolean;recall:boolean;organize?:boolean};
@@ -38,6 +38,7 @@ function installLibrary(){
  button('vault-save').onclick=()=>void saveVault();button('vault-refresh').onclick=()=>void refreshVault();
  installLibraryBrowser();
  installLibraryPages();
+ installKnowledgeLayers();
  disposeWithShell(()=>{libraryRequest++;libraryOverviewRequest++;libraryPreviewRequest++;libraryCitationRequest++;libraryCitationBusy=false;libraryLoading=false;libraryBrowseStarted=false;libraryTarget=null;libraryHits=[];knowledgeEditTarget=null;knowledgeSaving=false;knowledgeExpanded.clear();automaticSettingsRequest++;automaticSettingsReady=false;automaticSettingsSaving=false;automaticSettingsDirty=false;vaultSettingsRequest++;vaultSettingsReady=false;vaultSettingsSaving=false;vaultRefreshing=false;vaultSettingsDirty=false;knowledgeSettingsRequest++;knowledgeSettingsLoading=null});
 }
 function installLibraryBrowser(){
@@ -70,7 +71,7 @@ function installLibraryBrowser(){
  element('library-preview-content').onclick=e=>{const link=(e.target as HTMLElement).closest<HTMLAnchorElement>('a');if(!link)return;const href=link.getAttribute('href')||'';if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href))return;e.preventDefault();void followLibraryLink(href)};
  button('library-preview-back').onclick=()=>clearLibraryPreview(true);
  button('library-preview-cite').onclick=()=>void citeLibrary(libraryPreviewID);
- button('library-preview-source').onclick=()=>{const hit=libraryHits.find(d=>d.id===libraryPreviewID);if(!hit||!tasks.some(t=>t.id===hit.task_id&&!t.deleted))return;dialog.close();void choose(hit.task_id,hit.kind==='knowledge'?'note':'chat')};
+ button('library-preview-source').onclick=()=>{const hit=libraryHits.find(d=>d.id===libraryPreviewID),taskID=hit?.source_task_id||hit?.task_id;if(!hit||!taskID||!tasks.some(t=>t.id===taskID&&!t.deleted))return;dialog.close();void choose(taskID,hit.kind==='knowledge'||hit.kind==='curated'?'note':'chat')};
  element('library-results').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-library-reference],[data-library-preview]');if(!b)return;if(b.dataset.libraryReference)void citeLibrary(b.dataset.libraryReference);else void previewLibrary(b.dataset.libraryPreview||'')};
  dialog.addEventListener('close',()=>{libraryRequest++;libraryOverviewRequest++;libraryPreviewRequest++;libraryLoading=false;libraryTarget=null});
  element('knowledge-filter').classList.add('hidden');input('knowledge-state').closest('label')?.classList.add('hidden');
@@ -82,6 +83,7 @@ function clearLibraryPreview(returnFocus=false){
  libraryPreviewRequest++;libraryPreviewID='';libraryPreviewText='';button('library-read-more')?.classList.add('hidden');button('library-download')?.classList.add('hidden');element('library-workspace')?.classList.remove('preview-open');
  element('library-preview-title').textContent='选择一条资料';element('library-preview-meta').textContent='预览内容和来源后，再决定是否引用。';element('library-preview-content').textContent='';element('library-preview-status').textContent='';
  button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');
+ libraryPreviewDocument=null;button('library-promote')?.classList.add('hidden');button('library-curated-edit')?.classList.add('hidden');
  highlightLibraryPreview();
  if(returnFocus)Array.from(element('library-results').querySelectorAll<HTMLButtonElement>('[data-library-preview]')).find(b=>b.dataset.libraryPreview===previous)?.focus();
 }
@@ -194,21 +196,23 @@ async function searchLibrary(append=false){
  }catch(e){if(token===libraryRequest&&shellCurrent(epoch))element('library-state').textContent='检索失败，请重试：'+(e as Error).message}
  finally{if(token===libraryRequest&&shellCurrent(epoch)){libraryLoading=false;button('library-more').disabled=false}}
 }
-function libraryDescription(d:LibraryDocument){return ({tasks:'任务资料',knowledge:'通用知识',topics:'主题索引',history:'对话记录',notes:'任务笔记',files:'Markdown 文档'} as Record<string,string>)[d.layer||'']||(d.kind==='run'?'对话记录':'任务笔记')}
+function libraryDescription(d:LibraryDocument){return ({consensus:'平台共识',system:'系统知识',project:'项目知识',tasks:'任务资料',knowledge:'候选结论',topics:'主题索引',history:'对话记录',notes:'任务笔记',files:'Markdown 文档'} as Record<string,string>)[d.layer||'']||(d.kind==='run'?'对话记录':'任务笔记')}
 function renderLibraryHits(){
- element('library-results').innerHTML=libraryHits.length?libraryHits.map(d=>`<article class="library-card"${d.id===libraryPreviewID?' data-selected="true"':''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.task_title||'共用知识')}</p><code class="library-document-path">${escapeHTML(d.path||'')}</code><p class="library-tags">${(d.tags||[]).map(t=>'#'+escapeHTML(t)).join(' · ')}</p><footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create)?' disabled':''}>引用</button></footer></article>`).join(''):'<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>任务资料随对话保存；通用知识需要回复中有明确依据，主题索引在出现标签后自动形成。旧摘录可在“全部文档”查看。</p></div>';
+ element('library-results').innerHTML=libraryHits.length?libraryHits.map(d=>`<article class="library-card"${d.id===libraryPreviewID?' data-selected="true"':''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.scope_key||d.task_title||'共用知识')}</p><code class="library-document-path">${escapeHTML(d.path||'')}</code><p class="library-tags">${(d.tags||[]).map(t=>'#'+escapeHTML(t)).join(' · ')}</p><footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create)?' disabled':''}>引用</button></footer></article>`).join(''):'<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>任务过程随对话保存；可复用结论先保留为候选，再显式整理成平台共识、系统知识或项目知识。旧摘录及主题索引可在“全部资料”查看。</p></div>';
 }
 async function previewLibrary(id:string){
  const hit=libraryHits.find(d=>d.id===id);if(!hit)return;
  const token=++libraryPreviewRequest,epoch=shellEpoch;libraryPreviewID=id;
+ libraryPreviewDocument=null;button('library-promote').classList.add('hidden');button('library-curated-edit').classList.add('hidden');
  libraryPreviewText='';button('library-download').classList.add('hidden');button('library-read-more').classList.add('hidden');
  element('library-workspace').classList.add('preview-open');element('library-preview-title').textContent=hit.title;
  element('library-preview-meta').textContent=libraryDescription(hit)+' · '+(hit.task_title||'独立笔记')+(hit.path?' · Duo/'+hit.path:'');
  element('library-preview-content').textContent='';element('library-preview-status').textContent='正在读取预览…';button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');highlightLibraryPreview();
  try{const result=await api<LibraryDocument>('library/document?'+new URLSearchParams({id,hash:hit.hash}),'GET',undefined,shellController.signal);if(token!==libraryPreviewRequest||!shellCurrent(epoch))return;
-  libraryPreviewText=result.content||'';libraryPreviewLimit=20000;renderLibraryDocument();
+  libraryPreviewText=result.content||'';libraryPreviewLimit=20000;libraryPreviewDocument=result;renderLibraryDocument();
+  button('library-promote').classList.toggle('hidden',result.kind==='curated');button('library-curated-edit').classList.toggle('hidden',result.kind!=='curated');
   button('library-preview-cite').classList.remove('hidden');button('library-preview-cite').disabled=libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create);
-  button('library-preview-source').classList.toggle('hidden',!tasks.some(t=>t.id===hit.task_id&&!t.deleted));
+  button('library-preview-source').classList.toggle('hidden',!tasks.some(t=>t.id===(result.source_task_id||result.task_id)&&!t.deleted));
  }catch(e){if(token===libraryPreviewRequest&&shellCurrent(epoch))element('library-preview-status').textContent='预览失败，请重新检索后打开：'+(e as Error).message}
 }
 function knowledgeStateText(status:string){return status==='verified'?'已验证':status==='stale'?'已过时':'待验证'}
@@ -270,7 +274,9 @@ async function refreshVault(){
 
 function renderLibraryDocument(){
  const cut=libraryPreviewText.length>libraryPreviewLimit;
- element('library-preview-content').innerHTML=markdown(libraryPreviewText.slice(0,libraryPreviewLimit));
+ const d=libraryPreviewDocument;
+ const metadata=d?.kind==='curated'?'<section class="curated-metadata"><p><strong>'+escapeHTML(libraryDescription(d))+'</strong> · '+escapeHTML(knowledgeStateText(d.status))+(d.scope_key?' · '+escapeHTML(d.scope_key):'')+'</p>'+[['适用条件',d.applicability],['实际依据',d.evidence],['安全配置引用',d.credential_ref],['原始来源',d.source_id]].filter(([,value])=>value).map(([title,value])=>'<p><strong>'+title+'</strong><br>'+escapeHTML(value!)+'</p>').join('')+'</section>':'';
+ element('library-preview-content').innerHTML=metadata+markdown(libraryPreviewText.slice(0,libraryPreviewLimit));
  button('library-read-more').classList.toggle('hidden',!cut);button('library-download').classList.toggle('hidden',!libraryPreviewText);
  element('library-preview-status').textContent=cut?'长文档分段显示，可继续阅读或下载全文。':'已读取全文。引用到输入框时最多带入 6000 字符，并保留来源。';
 }
@@ -280,4 +286,72 @@ async function followLibraryLink(href:string){
  const relative=parts.join('/');if(!relative.endsWith('.md'))return;
  const request=++libraryPreviewRequest,epoch=shellEpoch;
  try{const doc=await api<LibraryDocument>('library/document?'+new URLSearchParams({id:'document:'+relative}));if(request!==libraryPreviewRequest||!shellCurrent(epoch))return;libraryHits=libraryHits.filter(d=>d.id!==doc.id);libraryHits.push(doc);await previewLibrary(doc.id)}catch(e){if(request===libraryPreviewRequest&&shellCurrent(epoch))element('library-preview-status').textContent='无法打开来源文档：'+(e as Error).message}
+}
+
+type CuratedKnowledge={id:string;layer:string;scope_key:string;title:string;content:string;status:string;source_id:string;source_hash:string;source_task_id:string;applicability:string;evidence:string;credential_ref:string;tags:string[];revision:number;created:number;updated:number};
+type WorkspaceMemoryReport={enabled:boolean;directory:string;task_directory:string;exported:number;unchanged:number;tasks:{id:string;title:string;path:string;updated:number;excerpt:string}[];conflicts:string[];warnings:string[];error?:string};
+let libraryPreviewDocument:LibraryDocument|null=null,curatedDraft:Partial<CuratedKnowledge>|null=null,curatedDirty=false,curatedSaving=false,curatedRequest=0,workspaceMemoryRequest=0,workspaceMemorySaving=false;
+function installKnowledgeLayers(){
+ const nav=element('library-dialog').querySelector('.library-layers')!;
+ nav.innerHTML=[['tasks','任务过程'],['consensus','平台共识'],['system','系统知识'],['project','项目知识'],['knowledge','候选结论'],['all','全部资料']].map(([id,title])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id==='tasks'}" class="${id==='tasks'?'selected':''}">${title}</button>`).join('');
+ nav.querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>b.onclick=()=>{input('library-layer').value=b.dataset.libraryLayer!;input('library-kind').value='';input('library-source').value='';input('library-scope').value='';nav.querySelectorAll<HTMLButtonElement>('button').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b))});void searchLibrary()});
+ element('library-preview').querySelector('.library-preview-actions')!.insertAdjacentHTML('beforeend','<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
+ element('library-search-form').insertAdjacentHTML('afterend','<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><span class="muted">自动资料保留来源；正式知识由你整理和确认。</span></div>');
+ button('library-curated-new').onclick=()=>openCuratedEditor();button('library-promote').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);button('library-curated-edit').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);
+ element('library-dialog').querySelector('.library-header p')!.textContent='任务过程、平台共识、系统知识和项目知识分层管理，保留原始来源。';
+ element('library-dialog').querySelector('.library-help p')!.textContent='连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
+ element('settings-knowledge').querySelector('p')!.textContent='过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
+ const guide=element('settings-knowledge').querySelector('.knowledge-directory-guide')!;
+ guide.innerHTML='<strong>分层目录</strong><p>工作区过程：<code>&lt;workspace&gt;/.duo/tasks/任务ID/</code>，每轮一个来源文件，另有任务索引和交接摘要。</p><p>平台共识：Duo 运行数据内保存，开启同步后镜像到 <code>Duo/consensus/</code>。</p><p>系统知识：<code>Duo/system/主题/</code>；项目知识：<code>Duo/projects/项目/</code>。旧版 <code>Duo/tasks/</code> 继续作为可选任务镜像。</p>';
+ element('automatic-knowledge-settings').querySelector('p')!.textContent='自动记录开启后，每轮结束会将任务过程镜像到任务实际工作区的 .duo/，失败不影响执行结果。自动整理只复用正常回复生成摘要和候选结论，不另起模型。旧记录可在“本任务知识”手动回填。只有显式整理后才成为正式知识。';
+ input('automatic-recall').closest('label')!.lastChild!.textContent='新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
+ element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent='同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
+ element('notebook').querySelector('.knowledge-panel-help')!.textContent='这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
+ element('notebook').querySelector('.knowledge-panel-help')!.insertAdjacentHTML('afterend','<section class="workspace-memory-panel"><strong>工作区过程资料</strong><p id="workspace-memory-state" role="status">打开本任务知识时读取目录。</p><div id="workspace-memory-tasks"></div><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button></section>');
+ button('workspace-memory-sync').onclick=()=>void loadWorkspaceMemory(true);
+ element('root').insertAdjacentHTML('beforeend',`<dialog id="curated-dialog" class="curated-dialog" aria-labelledby="curated-heading"><div class="library-header"><h2 id="curated-heading">整理正式知识</h2><button type="button" id="curated-close">关闭</button></div><p>凭据保留在设备或受保护配置，正文只写配置引用。整理和标记状态不会启动模型或独立验证内容。</p><form id="curated-form"><label>知识层级<select id="curated-layer"><option value="consensus">平台共识</option><option value="system">系统知识</option><option value="project">项目知识</option></select></label><label>主题 / 项目名称<input id="curated-scope" maxlength="80" placeholder="平台共识无需填写"></label><label>标题<input id="curated-title" required maxlength="200"></label><label>正文<textarea id="curated-content" required rows="10"></textarea></label><label>适用条件<textarea id="curated-applicability" rows="2"></textarea></label><label>实际依据 / 验证结果<textarea id="curated-evidence" rows="2" placeholder="未验证时明确写出"></textarea></label><label>安全配置引用<input id="curated-credential" placeholder="仅设备或配置名称，不填写密码"></label><label>标签<input id="curated-tags" placeholder="用逗号分隔"></label><label>状态<select id="curated-status"><option value="observed">待验证</option><option value="verified">已验证（用户确认）</option><option value="stale">已过时</option></select></label><label><input type="checkbox" id="curated-confirm">我确认已填写实际依据和适用条件，并明确将此条标为已验证</label><p id="curated-source" class="muted"></p><p id="curated-state" role="status"></p><div class="actions"><button type="submit" id="curated-save" class="primary">保存正式知识</button><button type="button" id="curated-delete" class="danger hidden">移除正式条目</button></div></form></dialog>`);
+ button('curated-close').onclick=()=>{if(!curatedSaving)element<HTMLDialogElement>('curated-dialog').close()};
+ button('curated-close').insertAdjacentHTML('beforebegin','<button type="button" id="curated-discard">放弃草稿</button>');
+ button('curated-discard').onclick=()=>{if(curatedSaving)return;curatedDirty=false;curatedDraft=null;element<HTMLDialogElement>('curated-dialog').close()};
+ element('curated-form').oninput=()=>{curatedDirty=true;element('curated-state').textContent='草稿尚未保存。'};
+ element('curated-form').onsubmit=e=>{e.preventDefault();void saveCuratedEditor()};
+ button('curated-delete').onclick=()=>void deleteCuratedEditor();
+ element('curated-dialog').addEventListener('cancel',e=>{if(curatedSaving)e.preventDefault()});
+ disposeWithShell(()=>{curatedRequest++;workspaceMemoryRequest++;curatedDraft=null;curatedDirty=false;curatedSaving=false;workspaceMemorySaving=false;libraryPreviewDocument=null});
+}
+function openCuratedEditor(doc?:LibraryDocument){
+ const dialog=element<HTMLDialogElement>('curated-dialog');
+ if(curatedSaving)return;
+ if(curatedDirty){if(!dialog.open)dialog.showModal();element('curated-state').textContent='保留了尚未保存的草稿，请先完成这份知识整理。';return}
+ const edit=doc?.kind==='curated';
+ curatedDraft=edit?{...doc,id:doc.id.replace(/^curated:/,'')}:{layer:['consensus','system','project'].includes(input('library-layer').value)?input('library-layer').value:'consensus',source_id:doc?.id||'',source_hash:doc?.hash||'',source_task_id:doc?.task_id||'',status:'observed'};
+ for(const [id,value] of Object.entries({'curated-layer':curatedDraft.layer||'consensus','curated-scope':doc?.scope_key||'','curated-title':doc?.title||'','curated-content':doc?.content||'','curated-applicability':doc?.applicability||'','curated-evidence':doc?.evidence||'','curated-credential':doc?.credential_ref||'','curated-tags':(doc?.tags||[]).join(', '),'curated-status':edit?doc!.status:'observed'}))input(id).value=value;
+ input('curated-confirm').checked=false;button('curated-delete').classList.toggle('hidden',!edit);element('curated-source').textContent=curatedDraft.source_id?'来源：'+curatedDraft.source_id:'手工创建；建议在正文或依据中记录出处。';element('curated-state').textContent='';if(!dialog.open)dialog.showModal();input('curated-title').focus();
+}
+function setCuratedBusy(busy:boolean){for(const node of element('curated-form').querySelectorAll<HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement|HTMLButtonElement>('input,textarea,select,button'))node.disabled=busy;button('curated-close').disabled=busy;button('curated-discard').disabled=busy}
+async function saveCuratedEditor(){
+ if(!curatedDraft||curatedSaving)return;
+ const draft=curatedDraft,epoch=shellEpoch,request=++curatedRequest;curatedSaving=true;setCuratedBusy(true);
+ const payload={...draft,layer:input('curated-layer').value,scope_key:input('curated-scope').value,title:input('curated-title').value,content:input('curated-content').value,applicability:input('curated-applicability').value,evidence:input('curated-evidence').value,credential_ref:input('curated-credential').value,tags:input('curated-tags').value.split(/[,，]/).map(t=>t.trim()).filter(Boolean),status:input('curated-status').value,confirm_verified:input('curated-confirm').checked};
+ try{await api<CuratedKnowledge>('library/curated'+(draft.id?'/'+encodeURIComponent(draft.id):''),draft.id?'PUT':'POST',payload);if(!shellCurrent(epoch)||request!==curatedRequest)return;curatedDirty=false;curatedDraft=null;element<HTMLDialogElement>('curated-dialog').close();notify('正式知识已保存；同一来源在同一层级与范围内不会重复提升。');await searchLibrary();void loadLibraryOverview()}
+ catch(e){if(shellCurrent(epoch)&&request===curatedRequest)element('curated-state').textContent='保存失败，草稿已保留：'+(e as Error).message}
+ finally{if(shellCurrent(epoch)&&request===curatedRequest){curatedSaving=false;setCuratedBusy(false)}}
+}
+async function deleteCuratedEditor(){
+ if(!curatedDraft?.id||curatedSaving)return;
+ const draft=curatedDraft,epoch=shellEpoch,request=++curatedRequest;curatedSaving=true;setCuratedBusy(true);
+ try{await api('library/curated/'+encodeURIComponent(draft.id!),'DELETE',{revision:draft.revision});if(!shellCurrent(epoch)||request!==curatedRequest)return;curatedDraft=null;curatedDirty=false;element<HTMLDialogElement>('curated-dialog').close();notify('正式条目已移除，任务原始资料继续保留。');await searchLibrary()}
+ catch(e){if(shellCurrent(epoch)&&request===curatedRequest)element('curated-state').textContent=(e as Error).message}
+ finally{if(shellCurrent(epoch)&&request===curatedRequest){curatedSaving=false;setCuratedBusy(false)}}
+}
+async function loadWorkspaceMemory(sync=false){
+ if(!chosen||creatingTask||!detail||(sync&&workspaceMemorySaving))return;
+ const task=chosen,selected=selection,epoch=shellEpoch,request=++workspaceMemoryRequest;
+ if(sync)workspaceMemorySaving=true;button('workspace-memory-sync').disabled=workspaceMemorySaving;element('workspace-memory-state').textContent=sync?'正在回填工作区资料…':'正在读取工作区资料…';element('workspace-memory-tasks').textContent='';
+ const current=()=>shellCurrent(epoch)&&chosen===task&&selection===selected&&request===workspaceMemoryRequest;
+ try{const report=await api<WorkspaceMemoryReport>('tasks/'+encodeURIComponent(task)+'/workspace-memory',sync?'POST':'GET',sync?{}:undefined,shellController.signal);if(!current())return;
+  element('workspace-memory-state').textContent=(report.enabled?'目录：'+report.task_directory:'工作区记录已关闭')+(sync?`；写入 ${report.exported}，未变化 ${report.unchanged}`:'')+[report.error,...(report.conflicts||[]),...(report.warnings||[])].filter(Boolean).map(s=>'；'+s).join('');
+  element('workspace-memory-tasks').innerHTML=(report.tasks||[]).map(t=>'<p><strong>'+escapeHTML(t.title)+'</strong> · <code>'+escapeHTML(t.path)+'</code></p>').join('');
+ }catch(e){if(current())element('workspace-memory-state').textContent='工作区资料读取失败：'+(e as Error).message}
+ finally{if(shellCurrent(epoch)){if(sync)workspaceMemorySaving=false;button('workspace-memory-sync').disabled=workspaceMemorySaving;if(sync&&!current()&&toolsTab==='note')void loadWorkspaceMemory()}}
 }

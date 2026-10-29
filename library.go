@@ -22,33 +22,43 @@ CREATE TABLE IF NOT EXISTS library_links(id TEXT PRIMARY KEY,path TEXT NOT NULL,
 
 // Portable documents are evidence, never executable tasks or native sessions.
 type LibraryDocument struct {
-	Tags      []string `json:"tags,omitempty" yaml:"-"`
-	Layer     string   `json:"layer,omitempty" yaml:"duo_layer,omitempty"`
-	Generated bool     `json:"generated,omitempty" yaml:"duo_generated,omitempty"`
-	Automatic bool     `json:"-" yaml:"-"`
-	Source    string   `json:"source,omitempty" yaml:"-"`
-	ID        string   `json:"id" yaml:"duo_id"`
-	Kind      string   `json:"kind" yaml:"duo_kind"`
-	TaskID    string   `json:"task_id" yaml:"duo_task"`
-	TaskTitle string   `json:"task_title" yaml:"duo_task_title"`
-	RunID     string   `json:"run_id" yaml:"duo_run"`
-	Title     string   `json:"title" yaml:"title"`
-	Status    string   `json:"status" yaml:"status"`
-	Revision  int64    `json:"revision" yaml:"duo_revision"`
-	Updated   int64    `json:"updated" yaml:"duo_updated"`
-	Content   string   `json:"content,omitempty" yaml:"-"`
-	Path      string   `json:"path,omitempty" yaml:"-"`
-	Origin    string   `json:"origin" yaml:"-"`
-	Hash      string   `json:"hash" yaml:"-"`
-	Snippet   string   `json:"snippet,omitempty" yaml:"-"`
-	Score     int      `json:"-" yaml:"-"`
+	ScopeKey      string   `json:"scope_key,omitempty" yaml:"duo_scope_key,omitempty"`
+	SourceID      string   `json:"source_id,omitempty" yaml:"duo_source_id,omitempty"`
+	SourceHash    string   `json:"source_hash,omitempty" yaml:"duo_source_hash,omitempty"`
+	SourceTaskID  string   `json:"source_task_id,omitempty" yaml:"duo_source_task,omitempty"`
+	Applicability string   `json:"applicability,omitempty" yaml:"duo_applicability,omitempty"`
+	Evidence      string   `json:"evidence,omitempty" yaml:"duo_evidence,omitempty"`
+	CredentialRef string   `json:"credential_ref,omitempty" yaml:"duo_credential_ref,omitempty"`
+	Tags          []string `json:"tags,omitempty" yaml:"-"`
+	Layer         string   `json:"layer,omitempty" yaml:"duo_layer,omitempty"`
+	Generated     bool     `json:"generated,omitempty" yaml:"duo_generated,omitempty"`
+	Automatic     bool     `json:"-" yaml:"-"`
+	Source        string   `json:"source,omitempty" yaml:"-"`
+	ID            string   `json:"id" yaml:"duo_id"`
+	Kind          string   `json:"kind" yaml:"duo_kind"`
+	TaskID        string   `json:"task_id" yaml:"duo_task"`
+	TaskTitle     string   `json:"task_title" yaml:"duo_task_title"`
+	RunID         string   `json:"run_id" yaml:"duo_run"`
+	Title         string   `json:"title" yaml:"title"`
+	Status        string   `json:"status" yaml:"status"`
+	Revision      int64    `json:"revision" yaml:"duo_revision"`
+	Updated       int64    `json:"updated" yaml:"duo_updated"`
+	Content       string   `json:"content,omitempty" yaml:"-"`
+	Path          string   `json:"path,omitempty" yaml:"-"`
+	Origin        string   `json:"origin" yaml:"-"`
+	Hash          string   `json:"hash" yaml:"-"`
+	Snippet       string   `json:"snippet,omitempty" yaml:"-"`
+	Score         int      `json:"-" yaml:"-"`
 }
 
 func documentHash(d LibraryDocument) string {
 	// Source is display/filter metadata. Keep existing citation and Vault hashes
 	// stable when introducing it; portable files do not establish local origin.
 	d.Source = ""
-	d.Tags, d.Layer, d.Generated = nil, "", false
+	d.Tags, d.Generated = nil, false
+	if d.Kind != "curated" {
+		d.Layer = ""
+	}
 	d.Content = strings.TrimSpace(strings.ReplaceAll(d.Content, "\r\n", "\n"))
 	d.Path, d.Origin, d.Hash, d.Snippet, d.Score = "", "", "", "", 0
 	b, _ := json.Marshal(d)
@@ -80,7 +90,15 @@ WHERE r.status IN ('done','failed','interrupted') AND NOT EXISTS(SELECT 1 FROM t
 		d.Hash = documentHash(d)
 		docs = append(docs, d)
 	}
-	return docs, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	curated, err := s.curatedDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(curated, docs...), nil
 }
 
 func (s *Store) libraryDocuments(ctx context.Context, layers ...string) ([]LibraryDocument, error) {
@@ -98,6 +116,10 @@ func (s *Store) libraryDocuments(ctx context.Context, layers ...string) ([]Libra
 		return nil, err
 	}
 	docs = append(notebooks, docs...)
+	curatedIDs, err := s.knownCuratedIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.QueryContext(ctx, "SELECT path,document FROM library_files ORDER BY path")
 	if err != nil {
 		return nil, err
@@ -111,6 +133,13 @@ func (s *Store) libraryDocuments(ctx context.Context, layers ...string) ([]Libra
 		var d LibraryDocument
 		if err = json.Unmarshal([]byte(raw), &d); err != nil {
 			return nil, err
+		}
+		if d.Kind == "curated" && curatedIDs[d.ID] {
+			// A mirror is not a second result, including after local deletion.
+			continue
+		}
+		if d.Kind == "curated" {
+			d.Status = "observed"
 		}
 		// Hide a mirror of a deleted local task even before the next vault refresh.
 		d.Path = path
@@ -216,13 +245,13 @@ func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, sta
 			}
 		}
 		if filter.Source == "auto" && (d.Origin != "local" || d.Source != "auto") ||
-			filter.Source == "manual" && (d.Origin != "local" || d.Kind != "knowledge" || d.Source == "auto") ||
+			filter.Source == "manual" && (d.Origin != "local" || (d.Kind != "knowledge" && d.Kind != "curated") || d.Source == "auto") ||
 			filter.Source == "vault" && d.Origin != "vault" {
 			continue
 		}
 		d.Score = 0
 		matches := 0
-		body, title := strings.ToLower(d.Content), strings.ToLower(d.Title+" "+d.TaskTitle+" "+strings.Join(d.Tags, " "))
+		body, title := strings.ToLower(d.Content+"\n"+d.Applicability+"\n"+d.Evidence+"\n"+d.CredentialRef), strings.ToLower(d.Title+" "+d.TaskTitle+" "+d.ScopeKey+" "+strings.Join(d.Tags, " "))
 		for _, term := range terms {
 			if strings.Contains(body, term) || strings.Contains(title, term) {
 				matches++
@@ -238,10 +267,13 @@ func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, sta
 		if len(terms) > 0 && strings.Contains(title+"\n"+body, strings.ToLower(query)) {
 			d.Score += 30
 		}
-		if d.Kind == "knowledge" && d.Status == "verified" {
+		if (d.Kind == "knowledge" || d.Kind == "curated") && d.Status == "verified" {
 			d.Score += 5
 		}
 		key := d.Kind + "\x00" + d.TaskID + "\x00" + d.Title + "\x00" + d.Content
+		if d.Kind == "curated" {
+			key = d.Layer + "\x00" + d.ScopeKey + "\x00" + key
+		}
 		if seen[key] {
 			continue
 		}
@@ -277,6 +309,28 @@ func (s *Store) libraryDocument(ctx context.Context, id string) (LibraryDocument
 	var d LibraryDocument
 	var err error
 	switch {
+	case strings.HasPrefix(id, "curated-index:"):
+		docs, e := s.curatedDocuments(ctx)
+		err = e
+		if err == nil {
+			err = sql.ErrNoRows
+			for _, doc := range docs {
+				if doc.ID == id {
+					d, err = doc, nil
+					break
+				}
+			}
+		}
+	case strings.HasPrefix(id, "curated:"):
+		var item CuratedKnowledge
+		item, err = s.curatedKnowledge(ctx, id)
+		if err == nil {
+			d = curatedDocument(item)
+			var tracked string
+			if e := s.QueryRowContext(ctx, "SELECT path FROM library_links WHERE id=?", d.ID).Scan(&tracked); e == nil && validCuratedTrackedPath(tracked) {
+				d.Path = tracked
+			}
+		}
 	case strings.HasPrefix(id, "document:"):
 		rel := strings.TrimPrefix(id, "document:")
 		if rel == "" || path.Clean(rel) != rel || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "../") || strings.ContainsAny(rel, "\\\x00:") {
@@ -308,6 +362,17 @@ func (s *Store) libraryDocument(ctx context.Context, id string) (LibraryDocument
 					return d, errors.New("来源任务不匹配")
 				}
 				return doc, nil
+			}
+		}
+		if parts[0] == "consensus" || parts[0] == "system" || parts[0] == "projects" {
+			docs, e := s.curatedDocuments(ctx)
+			if e != nil {
+				return d, e
+			}
+			for _, doc := range docs {
+				if doc.Path == rel {
+					return s.libraryDocument(ctx, doc.ID)
+				}
 			}
 		}
 		return s.libraryDocument(ctx, "notebook:"+rel)
@@ -342,6 +407,17 @@ AND NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1
 		if err == nil {
 			err = json.Unmarshal([]byte(raw), &d)
 		}
+		if err == nil && d.Kind == "curated" {
+			var known int
+			if err = s.QueryRowContext(ctx, "SELECT count(*) FROM curated_knowledge WHERE id=?", strings.TrimPrefix(d.ID, "curated:")).Scan(&known); err != nil {
+				break
+			}
+			if known > 0 {
+				return s.libraryDocument(ctx, d.ID)
+			}
+			// Not yet imported portable content cannot self-declare verification.
+			d.Status = "observed"
+		}
 		if err == nil {
 			var deleted int
 			err = s.QueryRowContext(ctx, "SELECT count(*) FROM task_options WHERE task_id=? AND deleted=1", d.TaskID).Scan(&deleted)
@@ -373,7 +449,11 @@ func (s *Store) libraryReference(ctx context.Context, id, expected string) (Libr
 	if expected != "" && expected != d.Hash {
 		return d, "", false, errConflict
 	}
-	content, cut := clipContinuation(portableKnowledge(d.Content, ""), 6000)
+	content := portableKnowledge(d.Content, "")
+	if d.Kind == "curated" {
+		content = fmt.Sprintf("## 知识范围与依据\n\n- 层级：%s\n- 范围：%s\n- 状态：%s\n- 适用条件：%s\n- 实际依据：%s\n- 受保护配置引用：%s\n- 来源记录：%s\n- 来源快照：%s\n\n%s", d.Layer, d.ScopeKey, knowledgeStateLabel(d.Status), d.Applicability, d.Evidence, d.CredentialRef, d.SourceID, d.SourceHash, d.Content)
+	}
+	content, cut := clipContinuation(content, 6000)
 	source := d.ID
 	if d.Path != "" {
 		source = d.Path + "（" + d.ID + "）"
@@ -411,7 +491,9 @@ func (s *Server) libraryRoutes(m *http.ServeMux) {
 			fail(w, 409, "文档已更新，请刷新列表")
 			return
 		}
-		d.Content = portableKnowledge(d.Content, "")
+		if d.Kind != "curated" {
+			d.Content = portableKnowledge(d.Content, "")
+		}
 		jsonOut(w, 200, d)
 	}))
 	m.HandleFunc("GET /api/library/reference", s.secure(func(w http.ResponseWriter, r *http.Request) {
@@ -431,12 +513,17 @@ func (s *Server) libraryRoutes(m *http.ServeMux) {
 				return
 			}
 		}
-		preview, _ := clipContinuation(redactContinuation(d.Content), 6000)
+		previewText := redactContinuation(d.Content)
+		if d.Kind == "curated" {
+			previewText = d.Content
+		}
+		preview, _ := clipContinuation(previewText, 6000)
 		d.Content = ""
 		jsonOut(w, 200, map[string]any{"document": d, "reference": text, "preview": preview, "truncated": cut})
 	}))
 	s.vaultRoutes(m)
 	s.automaticKnowledgeRoutes(m)
+	s.knowledgeLayerRoutes(m)
 }
 
 func decorateLibraryDocument(d *LibraryDocument) {

@@ -32,11 +32,13 @@ assert(document.getElementById('settings-data'),'settings must include the data 
 for(const id of ['workspace-export','workspace-import-file','workspace-import-strategy','workspace-import'])assert(document.getElementById(id),'workspace transfer control missing: '+id);
 assert.match(document.getElementById('settings-data').textContent,/不含工作台密码/);
 assert.match(document.getElementById('settings-data').textContent,/当前版本只支持追加/);
-assert.equal(document.getElementById('sticky-board').parentElement,document.getElementById('sticky-dialog'));
-for(const id of ['task-handoff','hardware-tab','desktop-open','session-reset','bind-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('tabs'),id+' belongs to the task toolbar');
+assert.equal(document.getElementById('sticky-board').parentElement,document.getElementById('sidebar'));
+assert.equal(document.getElementById('sticky-dialog'),null);
+for(const id of ['hardware-tab','desktop-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('tabs'),id+' belongs to the task toolbar');
+for(const id of ['task-handoff','session-reset','bind-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('task-actions'),id+' retains hidden state for the task row menu');
 assert.equal(document.getElementById('sticky-tab').parentElement,document.getElementById('tasks-active').parentElement,'notes share the task sidebar navigation');
 assert.equal(document.getElementById('sticky-tab').previousElementSibling,document.getElementById('trash-open'));
-assert.equal(document.getElementById('task-actions'),null,'the old hidden task action container is removed');
+assert(document.getElementById('task-actions').classList.contains('hidden'),'low-frequency action state never appears in a toolbar');
 assert.equal(document.getElementById('session-info-dialog').querySelector('.session-advanced-actions'),null,'task buttons are not hidden in session information');
 assert.equal(document.getElementById('workspace-tools'),null);
 assert.equal(document.getElementById('scratch-tab'),null,'task to-do entry is removed');

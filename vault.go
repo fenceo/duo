@@ -167,12 +167,19 @@ func parseVaultFile(path, raw string) (vaultFile, error) {
 	if d.Title == "" {
 		d.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	if d.Kind != "knowledge" && d.Kind != "run" && d.Kind != "task" && d.Kind != "insight" && d.Kind != "topic" && d.Kind != "index" {
+	if d.Kind != "knowledge" && d.Kind != "run" && d.Kind != "task" && d.Kind != "insight" && d.Kind != "topic" && d.Kind != "index" && d.Kind != "curated" {
 		d.Kind = "note"
 		d.Status = knowledgeState(d.Status)
 	}
 	if d.Kind == "knowledge" {
 		d.Status = knowledgeState(d.Status)
+	}
+	if d.Kind == "curated" {
+		candidate := curatedFromDocument(*d)
+		candidate.Status = "observed"
+		if err := prepareCurated(&candidate); err != nil {
+			return f, fmt.Errorf("正式知识文件无效：%w", err)
+		}
 	}
 	if d.ID == "" {
 		d.ID = "note:" + hash(path)
@@ -406,6 +413,12 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 	if err != nil {
 		return report, err
 	}
+	curatedWarnings, imported, err := a.store.importNewCuratedFiles(ctx, files)
+	if err != nil {
+		return report, err
+	}
+	report.Warnings = append(report.Warnings, curatedWarnings...)
+	report.Imported += imported
 	docs, err := a.store.localLibrary(ctx)
 	if err != nil {
 		return report, err
@@ -420,6 +433,14 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 	for _, d := range docs {
 		if err = ctx.Err(); err != nil {
 			return report, err
+		}
+		if strings.HasPrefix(d.ID, "curated-index:") {
+			// Earlier entries in this pass may have imported external edits and
+			// downgraded verification; the reading index must show that state now.
+			d, err = a.store.libraryDocument(ctx, d.ID)
+			if err != nil {
+				return report, err
+			}
 		}
 		if d.Kind == "run" && !c.IncludeRuns {
 			continue
@@ -439,7 +460,10 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 			}
 		}
 		localHash := documentHash(d)
-		if c.TaskFolders {
+		if d.Kind == "curated" {
+			// Explicit user-maintained procedures may include meaningful device
+			// paths (/srv/nfs, /mnt, flash targets). Credential checks happen on save.
+		} else if c.TaskFolders {
 			d.Title = portableKnowledge(d.Title, "")
 			d.TaskTitle = portableKnowledge(d.TaskTitle, "")
 			d.Content = portableKnowledge(d.Content, "")
@@ -460,7 +484,14 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 			continue
 		}
 		rel := d.Kind + "/" + name + ".md"
-		if c.TaskFolders {
+		if strings.HasPrefix(d.ID, "curated-index:") {
+			rel = d.Path
+		} else if d.Kind == "curated" {
+			rel = curatedPath(d)
+			if rel == "" {
+				continue
+			}
+		} else if c.TaskFolders {
 			rel = notebookPath(d)
 			if rel == "" {
 				continue
@@ -533,11 +564,33 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 				report.Conflicts = append(report.Conflicts, rel+"：自动文档与外部编辑都已变化，保留外部文件")
 				continue
 			}
-			if localHash != link.Local && (strings.TrimSpace(file.Document.Content) != strings.TrimSpace(d.Content) || file.Document.Title != d.Title || file.Document.Status != d.Status) {
+			if localHash != link.Local && ((d.Kind == "curated" && !sameCuratedContent(d, file.Document)) || (d.Kind != "curated" && (strings.TrimSpace(file.Document.Content) != strings.TrimSpace(d.Content) || file.Document.Title != d.Title || file.Document.Status != d.Status))) {
 				report.Conflicts = append(report.Conflicts, rel+"：Duo 和 Obsidian 都已修改")
 				continue
 			}
-			if d.Kind == "knowledge" {
+			if d.Kind == "curated" {
+				if e = validateCuratedIdentity(d, file.Document); e != nil {
+					report.Conflicts = append(report.Conflicts, rel+"："+e.Error())
+					continue
+				}
+				d, e = a.store.importCuratedFile(ctx, d, file.Document)
+				if e != nil {
+					report.Conflicts = append(report.Conflicts, rel+"："+e.Error())
+					continue
+				}
+				localHash = documentHash(d)
+				report.Imported++
+				// Show the same verification state in Obsidian after an external
+				// substantive edit, retaining unknown user properties and the body.
+				if refreshed, renderErr := renderVaultFile(d, file.Properties); renderErr == nil && refreshed != file.Raw {
+					if writeErr := writeVaultFile(root, rel, fileHash, refreshed); writeErr != nil {
+						report.Conflicts = append(report.Conflicts, rel+"："+writeErr.Error())
+						continue
+					}
+					fileHash = hash(refreshed)
+					report.Exported++
+				}
+			} else if d.Kind == "knowledge" {
 				// Redacted exports cannot safely replace private local originals.
 				original := d
 				original.Hash = ""

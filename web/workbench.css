@@ -527,7 +527,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .sidebar>.task-views #new-task{flex:0 0 30px;min-width:30px;padding:0;min-height:30px;font-size:21px;font-weight:400;box-shadow:none}
 .sidebar #search{padding:7px 9px;min-height:32px;font-size:12px}
 .sidebar>.task-views{gap:3px}.sidebar>.task-views button{padding:5px 2px;min-height:30px;font-size:11px;white-space:nowrap}
-.sidebar>.task-navigation{flex-wrap:wrap}.sidebar>.task-navigation>button:not(#new-task){flex:1 0 42px;min-width:42px}.sidebar>.task-navigation #sticky-tab[aria-expanded="true"]{border-color:var(--accent);color:var(--accent);background:var(--tint)}
+.sidebar>.task-navigation{flex-wrap:wrap}.sidebar>.task-navigation>button:not(#new-task){flex:1 0 42px;min-width:42px}.sidebar>.task-navigation #sticky-tab[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:var(--tint)}
 .sidebar .task-list{gap:2px;min-height:90px;container-type:inline-size}
 .sidebar .task-row{flex:none;min-height:36px}.sidebar .task{padding:7px 8px;min-height:36px;gap:6px}
 .sidebar .task-environment{margin:0;flex:0 1 auto;max-width:44%;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
@@ -560,9 +560,10 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
  .header-global-actions{flex:1 0 100%;border:0;padding:0}
  .header-utilities #connection{flex-basis:100%;max-width:none}
 }
-#sticky-dialog{position:fixed;inset:72px 16px auto auto;margin:0;padding:0;width:min(420px,calc(100vw - 32px));max-width:none;max-height:calc(100dvh - 96px);border:0;border-radius:10px;background:transparent;box-shadow:0 12px 48px #0003;overflow:visible}
-#sticky-dialog::backdrop{background:#0002}
-#sticky-board.quick-notes{--sticky-surface:var(--surface);--sticky-row:var(--canvas);height:var(--sticky-height,480px);min-height:180px;max-height:calc(100dvh - 96px);flex:none;padding:0;border:1px solid var(--line);border-radius:9px;background:var(--sticky-surface);box-shadow:none;overflow:visible}
+#sticky-board.quick-notes{--sticky-surface:var(--surface);--sticky-row:var(--canvas);height:auto;min-height:0;max-height:none;flex:1;padding:0;border:1px solid var(--line);border-radius:9px;background:var(--sticky-surface);box-shadow:none;overflow:hidden}
+.sidebar>#sticky-board.quick-notes[data-sized="1"]{height:auto}
+.sidebar>#sticky-board>#sticky-resizer{display:none}
+.task-action-state{display:none}
 #sticky-board.quick-notes[data-color="yellow"]{--sticky-surface:#fbf5dd;--sticky-row:#fffcf0}
 #sticky-board.quick-notes[data-color="blue"]{--sticky-surface:#eaf2fb;--sticky-row:#f7faff}
 #sticky-board.quick-notes[data-color="green"]{--sticky-surface:#eaf4ec;--sticky-row:#f6fcf7}
@@ -596,8 +597,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 @media (max-width:760px){
  .sidebar{position:fixed;inset:0 auto 0 0;padding:10px;gap:7px;width:min(310px,88vw)}.sidebar #search{min-height:40px}.sidebar>.task-views button{min-height:44px}.sidebar>.task-views #new-task{flex-basis:44px;min-width:44px;min-height:44px}.sidebar .task{min-height:40px}
  .sidebar>.task-navigation>button:not(#new-task){flex-basis:44px;min-width:44px;min-height:44px}
- #sticky-dialog{inset:16px 12px auto auto;width:calc(100vw - 24px);max-height:calc(100dvh - 32px)}
- #sticky-board.quick-notes{height:var(--sticky-height,480px);min-height:min(208px,calc(100dvh - 32px));max-height:calc(100dvh - 32px)}#sticky-board.quick-notes>header{min-height:44px;grid-template-columns:auto minmax(0,1fr) 44px 44px}
+ #sticky-board.quick-notes>header{min-height:44px;grid-template-columns:auto minmax(0,1fr) 44px 44px}
  #sticky-board.quick-notes #sticky-expand,#sticky-board.quick-notes #sticky-close{min-height:44px;min-width:44px}#sticky-board.quick-notes #sticky-palette button{width:32px;height:32px;min-height:32px}
  #sticky-board .quick-note{grid-template-columns:28px minmax(0,1fr) 32px}#sticky-board .quick-note input[type="checkbox"]{width:18px;height:18px;min-height:18px;padding:0;margin:9px 4px}
  #sticky-board .quick-note textarea{font-size:14px;min-height:38px;padding-top:8px;padding-bottom:8px}#sticky-board .quick-note button{width:32px;min-height:38px}

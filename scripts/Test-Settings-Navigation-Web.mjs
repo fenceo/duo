@@ -50,8 +50,9 @@ await node('usage-open').onclick();assert.equal(usageOpens,1,'original usage but
 toggle.click();node('usage-open').click();assert.equal(usageOpens,2);
 assert.equal(toggle.getAttribute('aria-expanded'),'false');assert(!node('app-menu-items').classList.contains('menu-open'),'choosing a global tool collapses the phone menu');
 assert.equal(node('bind-open').textContent,'绑定飞书私聊');
-assert.equal(node('bind-open').parentElement,node('tabs'),'task binding remains directly available in the task toolbar');
-assert.equal(node('bind-open').closest('dialog'),null);
+assert.equal(node('bind-open').parentElement,node('task-actions'),'binding state is retained for the task row menu');
+assert(node('task-actions').classList.contains('hidden'));
+assert.match(ctx.taskItemMenu({id:'settings-fixture'}),/data-task-action="bind-feishu"/);
 assert.equal([...document.querySelectorAll('.header button')].filter(button=>button.textContent==='飞书连接').length,1,'global Feishu configuration and task binding have distinct labels');
 
 // Changing the visible section must preserve edits and reuse the same editor.
@@ -88,8 +89,8 @@ node('library-dialog').close();
 const section=node('settings-knowledge'),panels=[...section.children];
 assert(panels.indexOf(node('vault-settings'))<panels.indexOf(node('automatic-knowledge-settings')));
 assert(panels.indexOf(section.querySelector('.knowledge-storage-info'))>panels.indexOf(node('automatic-knowledge-settings')));
-assert.match(section.textContent,/一任务一篇主文档/);assert.match(section.textContent,/Duo\/tasks\/任务名-短ID\.md/);
-assert.match(section.textContent,/可留空使用默认目录/);assert.match(node('automatic-knowledge-settings').textContent,/还需开启/);
+assert.match(section.textContent,/工作区过程/);assert.match(section.textContent,/\.duo\/tasks\/任务ID\//);assert.match(section.textContent,/Duo\/consensus\//);assert.match(section.textContent,/Duo\/system\//);assert.match(section.textContent,/Duo\/projects\//);
+assert.match(section.textContent,/可留空使用默认目录/);assert.match(node('automatic-knowledge-settings').textContent,/只有显式整理后才成为正式知识/);
 for(const id of ['vault-enabled','vault-automatic','automatic-capture','automatic-organize'])assert(node(id));
 
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');

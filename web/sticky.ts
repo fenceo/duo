@@ -3,6 +3,7 @@ type QuickNoteBoard={revision:number;color:string;items:QuickNote[]};
 let quickNotes:QuickNoteBoard={revision:0,color:'neutral',items:[]};
 let stickyLoading=false,stickyReady=false,stickyDirty=false,stickySaving=false,stickyConflict=false,stickyError='',stickySaved='',stickyRequest=0,stickyGeneration=0,stickySequence=0;
 let stickyTimer:ReturnType<typeof setTimeout>;
+let stickyReturnView='active';
 const stickyColors=[['neutral','默认'],['yellow','奶黄'],['blue','浅蓝'],['green','浅绿'],['purple','淡紫']];
 type Appearance={theme:'light'|'dark'|'system';accent:string;font:number;sidebar:number;width:number;tool:number;notes:boolean;compact:boolean;path:boolean};
 const defaultAppearance:Appearance={theme:'light',accent:'blue',font:14,sidebar:248,width:820,tool:42,notes:true,compact:false,path:true};
@@ -11,16 +12,12 @@ function parseAppearance(raw:string|null):Appearance{
  try{const v=JSON.parse(raw||'{}');return {theme:['light','dark','system'].includes(v.theme)?v.theme:'light',accent:['blue','green','purple'].includes(v.accent)?v.accent:'blue',font:Math.max(12,Math.min(18,Number(v.font)||14)),sidebar:Math.max(180,Math.min(420,Number(v.sidebar)||248)),width:Math.max(640,Math.min(1100,Number(v.width)||820)),tool:Math.max(22,Math.min(75,Number(v.tool)||42)),notes:v.notes!==false,compact:v.compact===true,path:v.path!==false}}catch{return {...defaultAppearance}}
 }
 function installStickyBoard(){
- element('trash-open').insertAdjacentHTML('afterend','<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+ element('trash-open').insertAdjacentHTML('afterend','<button id="sticky-tab" type="button" aria-controls="sticky-board" aria-pressed="false">便签</button>');
  element('sticky-tab').parentElement!.classList.add('task-navigation');
- element('root').insertAdjacentHTML('beforeend',`<dialog id="sticky-dialog" aria-labelledby="sticky-title"><section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong id="sticky-title">便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="关闭便签" title="关闭便签">×</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color,label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section></dialog>`);
+ element('task-list').insertAdjacentHTML('afterend',`<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color,label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
  button('sticky-tab').onclick=openStickyBoard;
- button('sticky-close').onclick=()=>element<HTMLDialogElement>('sticky-dialog').close();
- element('sticky-dialog').addEventListener('close',()=>{
-  const entry=button('sticky-tab');entry.setAttribute('aria-expanded','false');
-  const target=matchMedia('(max-width:760px)').matches&&!element('sidebar').classList.contains('open')?button('menu'):entry.classList.contains('hidden')?button('tasks-active'):entry;
-  target.focus();
- });
+ button('sticky-close').onclick=()=>closeStickyBoard();
+ const showTrash=button('trash-open').onclick;button('trash-open').onclick=e=>{if(taskView==='sticky')closeStickyBoard(false);showTrash?.call(button('trash-open'),e)};
  button('sticky-expand').onclick=()=>{
   const board=element('sticky-board'),collapsed=board.dataset.collapsed!=='true';board.dataset.collapsed=String(collapsed);element('sticky-body').classList.toggle('hidden',collapsed);
   button('sticky-expand').setAttribute('aria-expanded',String(!collapsed));button('sticky-expand').setAttribute('aria-label',collapsed?'展开便签':'收起便签');button('sticky-expand').title=collapsed?'展开便签':'收起便签';button('sticky-expand').textContent=collapsed?'›':'⌄';
@@ -37,13 +34,20 @@ function installStickyBoard(){
  }
  // A temporary logout may interrupt a save; keep its draft in memory.
  if(stickyDirty){stickyError='便签草稿尚未保存，请重试';renderStickyBoard()}else {stickyReady=false;void loadStickyBoard()}
+ syncStickySidebar();
 }
 function openStickyBoard(){
- const dialog=element<HTMLDialogElement>('sticky-dialog');if(dialog.open)return;
- element('sidebar').classList.remove('open');
- button('sticky-tab').setAttribute('aria-expanded','true');dialog.showModal();fitQuickNotes();
+ if(taskView!=='sticky')stickyReturnView=taskView==='archived'?'archived':'active';
+ taskView='sticky';button('search-clear').click();renderList();syncStickySidebar();fitQuickNotes();
  const field=element('sticky-body').classList.contains('hidden')?button('sticky-expand'):element('sticky-list').querySelector<HTMLTextAreaElement>('textarea')||button('sticky-new');field.focus();
  void loadStickyBoard();
+}
+function closeStickyBoard(focus=true){taskView=stickyReturnView;renderList();syncStickySidebar();if(focus)button('tasks-'+stickyReturnView).focus()}
+function syncStickySidebar(){
+ const board=element('sticky-board');if(!board)return;
+ const active=taskView==='sticky';board.classList.toggle('hidden',!active);element('task-list').classList.toggle('hidden',active);input('search').classList.toggle('hidden',active);
+ if(active){element('search-summary').classList.add('hidden');button('search-clear').classList.add('hidden')}
+ button('sticky-tab').classList.toggle('selected',active);button('sticky-tab').setAttribute('aria-pressed',String(active));
 }
 function stickyPayload(){return {color:quickNotes.color,items:quickNotes.items.filter(n=>n.content.trim()).map(n=>({...n}))}}
 function stickyFingerprint(){return JSON.stringify(stickyPayload())}
@@ -116,7 +120,7 @@ function renderStickyBoard(){
  syncStickyState();
 }
 setInterval(()=>{if(authenticated&&!document.hidden&&element('sticky-board'))void loadStickyBoard()},5000);
-function applyAppearance(value:Appearance){const root=document.documentElement;root.dataset.theme=value.theme==='system'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):value.theme;root.dataset.accent=value.accent;root.dataset.density=value.compact?'compact':'normal';root.style.setProperty('--chat-font',value.font+'px');root.style.setProperty('--sidebar-width',value.sidebar+'px');if(element('sidebar'))element('sidebar').dataset.narrow=String(value.sidebar<220);root.style.setProperty('--chat-width',value.width+'px');element('workspace')?.style.setProperty('--tool-width',value.tool+'%');element('sticky-tab')?.classList.toggle('hidden',!value.notes);if(!value.notes&&element<HTMLDialogElement>('sticky-dialog')?.open)element<HTMLDialogElement>('sticky-dialog').close();element('task-workspace')?.classList.toggle('hidden',!value.path)}
+function applyAppearance(value:Appearance){const root=document.documentElement;root.dataset.theme=value.theme==='system'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):value.theme;root.dataset.accent=value.accent;root.dataset.density=value.compact?'compact':'normal';root.style.setProperty('--chat-font',value.font+'px');root.style.setProperty('--sidebar-width',value.sidebar+'px');if(element('sidebar'))element('sidebar').dataset.narrow=String(value.sidebar<220);root.style.setProperty('--chat-width',value.width+'px');element('workspace')?.style.setProperty('--tool-width',value.tool+'%');element('sticky-tab')?.classList.toggle('hidden',!value.notes);if(!value.notes&&taskView==='sticky')closeStickyBoard();element('task-workspace')?.classList.toggle('hidden',!value.path)}
 function installAppearance(){try{appearance=parseAppearance(localStorage.getItem('jianzuo-appearance-v1'));if(!localStorage.getItem('jianzuo-appearance-v1')&&localStorage.getItem('jianzuo-theme')==='dark')appearance.theme='dark'}catch{}applyAppearance(appearance);
  element('root').insertAdjacentHTML('beforeend',`<dialog id="appearance-dialog"><form id="appearance-form"><h2>调整界面</h2><div class="form-grid"><div><label for="appearance-theme">主题</label><select id="appearance-theme"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div><div><label for="appearance-accent">强调色</label><select id="appearance-accent"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option></select></div></div><label for="appearance-font">对话字号</label><input id="appearance-font" type="range" min="12" max="18" step="1"><label for="appearance-sidebar">任务侧栏宽度</label><input id="appearance-sidebar" type="range" min="180" max="420" step="5"><label for="appearance-tool">左右工具栏宽度</label><input id="appearance-tool" type="range" min="22" max="75" step="1"><label for="appearance-width">对话内容宽度</label><input id="appearance-width" type="range" min="640" max="1100" step="20"><label class="check-row"><input id="appearance-notes" type="checkbox">显示便签入口</label><label class="check-row"><input id="appearance-compact" type="checkbox">紧凑布局</label><label class="check-row"><input id="appearance-path" type="checkbox">显示任务工作路径</label><p>即时预览，保存到当前浏览器。</p><div class="dialog-footer"><button type="button" id="appearance-layout">恢复默认布局</button><button type="button" id="appearance-reset">恢复默认</button><button type="button" id="appearance-cancel">取消</button><button class="primary">保存</button></div></form></dialog>`);
  button('theme-toggle').onclick=()=>{fillAppearance(appearance);element<HTMLDialogElement>('appearance-dialog').showModal()};element('appearance-form').oninput=()=>applyAppearance(readAppearance());element('appearance-form').onsubmit=e=>{e.preventDefault();appearance=readAppearance();try{localStorage.setItem('jianzuo-appearance-v1',JSON.stringify(appearance));localStorage.setItem('jianzuo-theme',appearance.theme)}catch{}applyAppearance(appearance);element<HTMLDialogElement>('appearance-dialog').close()};button('appearance-layout').onclick=()=>{resetPanelLayout();fillAppearance(appearance)};button('appearance-reset').onclick=()=>{fillAppearance(defaultAppearance);applyAppearance(defaultAppearance)};button('appearance-cancel').onclick=()=>{applyAppearance(appearance);element<HTMLDialogElement>('appearance-dialog').close()};element('appearance-dialog').addEventListener('cancel',()=>applyAppearance(appearance));

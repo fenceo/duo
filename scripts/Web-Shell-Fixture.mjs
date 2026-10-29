@@ -28,6 +28,8 @@ const ctx=createContext({
  fetch:async(path,options)=>{
   requests.push({path,method:options?.method||'GET'});
   const responses={'/api/auth':{authenticated:true,csrf:'synthetic-token',version:'0.24.1'},'/api/tasks':[], '/api/settings':{config:configuration,data_dir:'C:/fixture/data',secret_configured:false,feishu_status:'disabled',chat:''}, '/api/workbench':{modes:[{id:'work',name:'Work',permission:'workspace',approval:'request',allow_network:true,prompt:''},{id:'codex:auto',name:'Auto',permission:'workspace',approval:'auto',allow_network:true,prompt:''}],commands:[]},'/api/sticky':{revision:0,color:'neutral',items:[]},'/api/scratch':[], '/api/library/automatic':{capture:true,recall:true},'/api/library/vault':{config:{enabled:false,directory:'',include_runs:false,include_automatic:false},report:{conflicts:[],warnings:[]},document_directory:''}};
+  responses['/api/library/curated']=[];responses['/api/library/layers']={layers:[],vault:{},credential_policy:'',promotion:''};
+  const memory=path.match(/^\/api\/tasks\/([^/?]+)\/workspace-memory(?:\?.*)?$/);if(memory)responses[path]={enabled:true,directory:'.duo',task_directory:'.duo/tasks/'+memory[1],exported:0,unchanged:0,tasks:[],conflicts:[],warnings:[]};
   if(!(path in responses))throw new Error('Unexpected fixture request: '+path);
   return {ok:true,status:200,json:async()=>structuredClone(responses[path])};
  }

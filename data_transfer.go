@@ -7,6 +7,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,7 @@ type workspaceArchive struct {
 	// records.
 	Workbench workspaceArchiveWorkbench `json:"workbench,omitempty"`
 	Sticky    *StickyBoard              `json:"sticky,omitempty"`
+	Curated   []CuratedKnowledge        `json:"curated,omitempty"`
 }
 
 type workspaceArchiveWorkbench struct {
@@ -392,6 +394,13 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 		return workspaceArchive{}, nil, err
 	}
 	rows.Close()
+	a.Curated, err = s.curatedKnowledgeList(context.Background(), "", "")
+	if err != nil {
+		return workspaceArchive{}, nil, err
+	}
+	if len(a.Curated) > workspaceMaxKnowledge {
+		return workspaceArchive{}, nil, errors.New("正式知识条目超过导出上限")
+	}
 	rows, err = s.Query("SELECT s.id,s.task_id,s.title,s.content,s.status,s.due,s.done_at,s.revision,s.updated,COALESCE(c.color,'yellow') FROM scratch s LEFT JOIN scratch_colors c ON c.id=s.id ORDER BY s.updated,s.id")
 	if err != nil {
 		return workspaceArchive{}, nil, err
@@ -444,6 +453,11 @@ func mustJSON(v any) string {
 }
 
 func marshalWorkspaceArchive(a workspaceArchive) ([]byte, error) {
+	for _, item := range a.Curated {
+		if err := prepareCurated(&item); err != nil {
+			return nil, fmt.Errorf("正式知识无法导出：%w", err)
+		}
+	}
 	b, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
 		return nil, err
@@ -619,8 +633,18 @@ func validateWorkspaceArchive(a workspaceArchive) error {
 			return err
 		}
 	}
-	if len(a.Tasks) > workspaceMaxTasks || len(a.Runs) > workspaceMaxRuns || len(a.Events) > workspaceMaxEvents || len(a.Knowledge) > workspaceMaxKnowledge || len(a.Scratch) > workspaceMaxScratch {
+	if len(a.Tasks) > workspaceMaxTasks || len(a.Runs) > workspaceMaxRuns || len(a.Events) > workspaceMaxEvents || len(a.Knowledge) > workspaceMaxKnowledge || len(a.Curated) > workspaceMaxKnowledge || len(a.Scratch) > workspaceMaxScratch {
 		return errors.New("工作区内容超过导入上限")
+	}
+	curatedIDs := map[string]bool{}
+	for _, item := range a.Curated {
+		if !archiveIDPattern.MatchString(item.ID) || curatedIDs[item.ID] {
+			return errors.New("正式知识标识无效或重复")
+		}
+		curatedIDs[item.ID] = true
+		if err := prepareCurated(&item); err != nil {
+			return fmt.Errorf("正式知识无效：%w", err)
+		}
 	}
 	if len(a.Workbench.Modes) > workspaceMaxModes || len(a.Workbench.Commands) > workspaceMaxCommands {
 		return errors.New("工作台模式或快捷指令超过导入上限")
@@ -803,7 +827,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	taskIDs, runIDs := map[string]string{}, map[string]string{}
+	taskIDs, runIDs, knowledgeIDs := map[string]string{}, map[string]string{}, map[string]string{}
 	for _, task := range data.Archive.Tasks {
 		id := uid()
 		taskIDs[task.ID] = id
@@ -884,6 +908,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range data.Archive.Knowledge {
 		id := uid()
+		knowledgeIDs[k.ID] = id
 		runID := ""
 		if k.RunID != "" {
 			runID = runIDs[k.RunID]
@@ -892,6 +917,10 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 			rollback("导入知识失败")
 			return
 		}
+	}
+	if err = importArchiveCurated(tx, data.Archive.Curated, taskIDs, runIDs, knowledgeIDs); err != nil {
+		rollback("导入正式知识失败：" + err.Error())
+		return
 	}
 	for _, run := range data.Archive.Runs {
 		if run.Memory != nil {

@@ -5,27 +5,27 @@ import assert from 'node:assert/strict';
 const {ctx,document}=await createWebShellFixture();
 const node=id=>document.getElementById(id);
 runInContext('dockNarrow.matches=true;applyDockLayout()',ctx);
-assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'phone notes stay in their own drawer, preserving conversation space');
-assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true','notes default to expanded inside the drawer');
+assert.equal(node('sticky-board').parentElement,node('sidebar'),'phone notes stay in the task sidebar');
+assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true','notes default to expanded inside the sidebar');
 assert.equal(node('sticky-tab').parentElement,node('tasks-active').parentElement,'phone notes share task, archive and trash navigation');
 assert.equal(node('sticky-tab').previousElementSibling,node('trash-open'));
 const matchMedia=ctx.matchMedia;ctx.matchMedia=()=>({matches:true});
-let focus='';node('menu').focus=()=>focus='menu';node('sticky-new').focus=()=>focus='sticky-new';
+let focus='';node('tasks-active').focus=()=>focus='tasks-active';node('sticky-new').focus=()=>focus='sticky-new';
 const field=document.querySelector('[data-note-input]');if(field)field.focus=()=>focus='note-input';
 node('sidebar').classList.add('open');node('sticky-tab').onclick();
-assert(!node('sidebar').classList.contains('open'),'opening notes dismisses the phone task drawer');
-assert(node('sticky-dialog').open);assert(['note-input','sticky-new'].includes(focus),'opening puts focus inside the note dialog');
-node('sticky-close').onclick();assert.equal(focus,'menu','closing restores the visible phone task menu, not an offscreen sidebar entry');
-assert(!node('sticky-dialog').open);assert(!node('sidebar').classList.contains('open'));
-node('sticky-tab').onclick();assert(node('sticky-dialog').open,'notes reopen without losing the note input');assert.equal(document.querySelector('[data-note-input]'),field);
+assert(node('sidebar').classList.contains('open'),'switching notes keeps the phone task sidebar open');
+assert(!node('sticky-board').classList.contains('hidden'));assert(['note-input','sticky-new'].includes(focus),'opening puts focus inside the sidebar notes');
+node('sticky-close').onclick();assert.equal(focus,'tasks-active','returning restores the task view in the same sidebar');
+assert(node('sticky-board').classList.contains('hidden'));assert(node('sidebar').classList.contains('open'));
+node('sticky-tab').onclick();assert(!node('sticky-board').classList.contains('hidden'),'notes reopen without losing the note input');assert.equal(document.querySelector('[data-note-input]'),field);
 node('sticky-close').onclick();ctx.matchMedia=matchMedia;
 for(const previous of ['left','right','bottom','sidebar']){
  ctx.localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:previous,tools:'left'}));
  runInContext('installDockLayout()',ctx);
- assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'old note positions cannot move notes out of their drawer');
+ assert.equal(node('sticky-board').parentElement,node('sidebar'),'old note positions cannot move notes out of their sidebar');
  assert.deepEqual(JSON.parse(ctx.localStorage.getItem('jianzuo-dock-layout-v1')),{sticky:'sidebar',tools:'left'},'migration keeps tool panel preferences');
  runInContext("moveDockPanel('sticky','right')",ctx);
- assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'notes cannot be moved accidentally');
+ assert.equal(node('sticky-board').parentElement,node('sidebar'),'notes cannot be moved accidentally');
 }
 assert(!document.querySelector('[data-dock-grip="sticky"]'));
 assert(!node('appearance-sticky-zone'));
@@ -49,4 +49,4 @@ assert.match(mobile,/#chat-column \.composer textarea\{min-height:56px;max-heigh
 assert(!mobile.includes('.session-banner{display:none'),'do not conceal session boundaries');
 
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: sidebar notes dismiss the phone task drawer and restore visible focus; old note positions preserve tool placement and height resizing; compact accessible phone controls. Browser geometry is checked separately.');
+console.log('PASS: sidebar notes switch in place on phones and restore task focus; old note positions preserve tool placement; compact accessible phone controls. Browser geometry is checked separately.');

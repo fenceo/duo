@@ -65,10 +65,12 @@ cases.push(['sidebarnarrow','dark',1280,800],['sidebar','light',320,844],['sideb
 for(const theme of ['light','dark'])for(const width of [390,320])cases.push(['taskmenu',theme,width,844],['taskmenubottom',theme,width,844]);
 cases.push(['taskmenu','light',1280,800],['taskmenubottom','dark',1024,600]);
 for(const theme of ['light','dark'])cases.push(['taskmenushortbottom',theme,320,420]);
+for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['curated',theme,width,width===1280?800:844],['curatedbottom',theme,width,width===1280?800:844]);
 const measurements=[],failures=[];
 for(const view of ['editorwindows','editorwsl','editorssh'])cases.push([view,'light',1280,800],[view,'dark',320,844]);
 cases.push(['editorfiles','light',1280,800],['editorfiles','dark',390,844],['editorfiles','light',320,844]);
 if(process.env.DUO_UI_VIEWS){const requested=new Set(process.env.DUO_UI_VIEWS.split(','));const selected=cases.filter(([view])=>requested.has(view));if(!selected.length)throw Error('No matching synthetic UI views');cases.splice(0,cases.length,...selected)}
+if(process.env.DUO_UI_CASES){const requested=new Set(process.env.DUO_UI_CASES.split(','));const selected=cases.filter(([view,theme,width])=>requested.has(`${view}-${theme}-${width}`));if(!selected.length)throw Error('No matching synthetic UI cases');cases.splice(0,cases.length,...selected)}
 const renderer=await startFixtureBrowser(browser,output);
 try{
 for(const [view,theme,width,height] of cases){
@@ -91,8 +93,7 @@ for(const [view,theme,width,height] of cases){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
   const menus=[...document.querySelectorAll('.task-item-menu')],menu=view.endsWith('bottom')?menus.at(-1):menus[0];
   menu.id='preview-task-menu';menu.querySelector('div').id='preview-task-menu-panel';
-  for(const action of ['editor','handoff','trash']){const control=menu.querySelector('[data-task-action="'+action+'"]');assert(control,'task menu must retain '+action);control.id='preview-task-menu-'+action}
-  assert(!menu.querySelector('[data-task-action="reset-session"],[data-task-action="bind-feishu"]'),'direct session actions must not be duplicated in the overflow menu');
+  for(const action of ['editor','handoff','reset-session','bind-feishu','trash']){const control=menu.querySelector('[data-task-action="'+action+'"]');assert(control,'task menu must retain '+action);control.id='preview-task-menu-'+action}
   // Exercise the production popup-position handler in a real viewport. This
   // one UI-only listener has no requests, credentials or device side effects.
   const layout=await fs.readFile(new URL('layout.ts',webRoot),'utf8'),start=layout.indexOf("element('task-list').addEventListener('toggle',");
@@ -204,14 +205,14 @@ for(const [view,theme,width,height] of cases){
   if(view==='sidebarnarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
   if(view==='sidebarwide')runInContext('appearance.sidebar=380;applyAppearance(appearance)',ctx);
   if(view==='sidebarmigrated')runInContext("localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:'right',tools:'left'}));installDockLayout()",ctx);
-  assert.equal(document.getElementById('sticky-board').parentElement.id,'sticky-dialog');
-  assert(!document.getElementById('sidebar').contains(document.getElementById('sticky-board')),'notes no longer reserve task-list space');
+  assert.equal(document.getElementById('sticky-board').parentElement.id,'sidebar');
+  assert(document.getElementById('sticky-board').classList.contains('hidden'),'notes do not share task-list space');
   assert(!document.querySelector('[data-dock-grip="sticky"]'));
   assert(!document.querySelector('.workspace-heading'));
  }
  if(view.startsWith('sticky')){
   runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='stickyempty'?0:view==='stickyfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版便签与硬件入口','记录下次要验证的问题','补充发布说明和未解决问题','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard();`,ctx);
-  ctx.loadStickyBoard=async()=>{};ctx.openStickyBoard();
+  ctx.loadStickyBoard=async()=>{};if(width<=760)document.getElementById('sidebar').classList.add('open');ctx.openStickyBoard();
   assert(document.getElementById('tabs').contains(document.getElementById('hardware-tab')),'hardware belongs to the selected task');
   assert(document.querySelector('#sidebar .task-views').contains(document.getElementById('sticky-tab')),'notes belong to the task-list navigation');
   assert(!document.getElementById('scratch-tab'),'task to-do shortcut must not return');
@@ -228,6 +229,10 @@ for(const [view,theme,width,height] of cases){
   // deviceLog decodes raw bytes; set only the synthetic output text for capture.
   document.getElementById('device-console').textContent=Array.from({length:12},(_,i)=>'12:00:'+String(i).padStart(2,'0')+' RX  [fixture] board ready').join('\n');
   assert(!document.querySelector('.hardware-ai-overview'));
+ }
+ if(view.startsWith('curated')){
+  ctx.openCuratedEditor({id:'curated-synthetic',kind:'curated',layer:'project',scope_key:'开发板调试',title:'开发板 NFS 调试与烧录操作约定',content:('# 调试前提\n\n仅使用合成资料检查知识编辑器。\n\n'+('1. 检查工作目录与设备配置引用。\n2. 记录实际输出和适用条件，尚未验证的内容不能写成已验证。\n\n')).repeat(12),status:'verified',applicability:'适用于当前开发板与调试镜像；切换硬件版本前重新确认。',evidence:'合成 fixture：这里只验证编辑器展示与交互，不代表进行了硬件或模型验证。',credential_ref:'开发板配置 / synthetic-profile',tags:['调试','NFS','烧录'],revision:3});
+  runInContext("input('curated-confirm').checked=true;input('curated-status').value='verified';",ctx);
  }
  if(view==='create'||view==='createbottom')runInContext(`for(const id of ['tabs','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
  if(['accounts','accountlist','accountfilter','accountquota','accounterror','accountimport','accountmanager','accountsetup'].includes(view)){
@@ -269,9 +274,10 @@ for(const [view,theme,width,height] of cases){
   ctx.previewEntries=entries;
   runInContext('knowledgeItems=previewEntries;renderKnowledgeList()',ctx);
   if(view.startsWith('knowledge')){
+   const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?entries:route.endsWith('/workspace-memory')?{enabled:true,directory:'.duo',task_directory:'.duo/tasks/layout-preview/',exported:0,unchanged:3,tasks:[{id:'layout-preview',title:'Duo 优化',path:'.duo/tasks/layout-preview/summary.md'},{id:'earlier-task',title:'同工作区的此前调试记录',path:'.duo/tasks/earlier-task-with-a-long-stable-identifier/summary.md'}],conflicts:[],warnings:[]}:baseAPI(route,...args);
    // The DOM fixture has no MutationObserver; explicitly settle the same dock
    // visibility that the live shell updates after a tab switch.
-   runInContext("switchTab('note');syncDocks()",ctx);
+   runInContext("switchTab('note');syncDocks()",ctx);await ctx.loadWorkspaceMemory();assert(!document.getElementById('notice').textContent.includes('Unexpected fixture request'),'workspace memory preview must not have unmocked requests');
    if(view==='knowledgeexpanded')document.querySelector('[data-knowledge-toggle]').onclick();
   }else{
    const baseAPI=ctx.api;
@@ -315,7 +321,7 @@ for(const [view,theme,width,height] of cases){
  // Static fixtures keep only the request-free popup-position listener above.
  // Restore modal geometry and scroll positions for the exercised DOM state.
  script.textContent=script.textContent.replace("==='settings'?'settings-dialog':'library-dialog'","==='settings'?'library-dialog':'library-dialog'");
- script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}.startsWith('sticky')){const d=document.getElementById('sticky-dialog');d.removeAttribute('open');d.showModal()}if(${JSON.stringify(view)}==='librarysettingsbottom'){const panel=document.getElementById('settings-knowledge');panel.scrollTop=panel.scrollHeight}const ids=['preview-task-menu-panel','preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-trash','app-menu-toggle','hardware-tab','desktop-open','sticky-tab','sticky-dialog','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
+ script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='librarysettingsbottom'){const panel=document.getElementById('settings-knowledge');panel.scrollTop=panel.scrollHeight}if(${JSON.stringify(view)}.startsWith('curated')){const dialog=document.getElementById('curated-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}==='curatedbottom')document.getElementById('curated-save').scrollIntoView({block:'end'})}const ids=['curated-dialog','curated-form','curated-title','curated-content','curated-applicability','curated-evidence','curated-credential','curated-status','curated-confirm','curated-save','curated-close','preview-task-menu-panel','preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu','preview-task-menu-trash','app-menu-toggle','hardware-tab','desktop-open','sticky-tab','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
  script.textContent=script.textContent.replace('scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:','scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight,visible:');
  const settingsMetrics=document.createElement('script');settingsMetrics.textContent=`window.addEventListener('load',()=>{
   const pre=document.getElementById('layout-metrics'),nav=document.getElementById('workspace-settings');if(!pre||!nav)return;
@@ -329,15 +335,17 @@ for(const [view,theme,width,height] of cases){
    noDuplicateNavigation:!document.getElementById('usage-shortcut')&&!document.querySelector('#settings-form .settings-nav')&&!document.querySelector('#settings-form [data-settings]')&&buttons.filter(b=>b.dataset.settings).every(b=>document.querySelectorAll('[data-settings="'+b.dataset.settings+'"]').length===1),
    noSeparateRow:document.querySelector('.header').nextElementSibling.id==='tabs',layout:getComputedStyle(nav).display,
    noKnowledgeCategory:!document.querySelector('[data-settings="knowledge"]')};
-  const taskTools=['session-reset','bind-open','task-handoff','hardware-tab','desktop-open'],header=document.querySelector('.header'),tabs=document.getElementById('tabs'),taskNav=document.querySelector('#sidebar .task-views');
+  const taskTools=['hardware-tab','desktop-open'],header=document.querySelector('.header'),tabs=document.getElementById('tabs'),taskNav=document.querySelector('#sidebar .task-views');
   data.taskNavigation={toolsInTaskMenu:taskTools.every(id=>document.getElementById(id).parentElement===tabs&&!header.contains(document.getElementById(id))),noTaskTodo:!document.getElementById('scratch-tab'),
-   noExtraTaskContainer:!document.getElementById('task-actions'),noOverflowDuplicates:!document.querySelector('[data-task-action="reset-session"],[data-task-action="bind-feishu"]'),
+   lowFrequencyInTaskRows:['handoff','reset-session','bind-feishu'].every(action=>document.querySelector('#task-list [data-task-action="'+action+'"]'))&&['task-handoff','session-reset','bind-open'].every(id=>document.getElementById(id).closest('.task-action-state')),
    sidebarOrder:[...taskNav.querySelectorAll('button')].map(b=>b.id),notesInTaskNav:taskNav.contains(document.getElementById('sticky-tab')),
    globalOrder:[...document.querySelectorAll('#app-menu-items button')].map(b=>b.dataset.settings||b.id),sidebarButtons:[...taskNav.querySelectorAll('button')].map(box)};
   data.knowledgeLibrary={oneDirectory:document.querySelectorAll('#vault-directory').length===1,oneAutomaticControl:document.querySelectorAll('#automatic-capture').length===1,sameDialog:document.getElementById('library-dialog').contains(document.getElementById('settings-knowledge')),noSeparateEditor:!document.getElementById('settings-form').contains(document.getElementById('vault-directory'))};
   data.stickyNotes={inSidebar:document.getElementById('sidebar').contains(document.getElementById('sticky-board')),fields:[...document.querySelectorAll('[data-note-input]')].map(box)};
   pre.textContent=JSON.stringify(data);
  });`;document.body.append(settingsMetrics);
+ const memoryPanel=document.querySelector('.workspace-memory-panel');if(memoryPanel)memoryPanel.id='preview-workspace-memory-panel';
+ script.textContent=script.textContent.replace("const ids=['curated-dialog'","const ids=['preview-workspace-memory-panel','workspace-memory-state','workspace-memory-tasks','workspace-memory-sync','curated-dialog'");
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  for(const control of document.querySelectorAll('fieldset'))if(typeof control.disabled==='boolean')control.toggleAttribute('disabled',control.disabled);
@@ -426,7 +434,7 @@ for(const [view,theme,width,height] of cases){
    assert(items.conversation.height>metrics.height*.5,'conversation receives too little vertical space');
   }
   if(width<=760&&['normal','long','closed'].includes(view)){
-   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','session-reset','bind-open','task-handoff','hardware-tab','desktop-open'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
+   for(const id of ['library-task','attach-open','command-open','message-mode','task-model-button','send','hardware-tab','desktop-open'])assert(items[id].height>=44&&items[id].width>=44,id+' touch target is too small');
   }
   if(view==='usage'){
    const box=items['usage-dialog'];assert(box.visible&&box.x>=0&&box.y>=0&&box.x+box.width<=width+1&&box.y+box.height<=height+1,'usage dialog exceeds viewport');assert(box.scrollWidth<=box.clientWidth+1,'usage table should scroll within its wrapper');
@@ -456,12 +464,13 @@ for(const [view,theme,width,height] of cases){
   }
   if(view.startsWith('knowledge')){
    const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'task knowledge search is unusable');
+   const memory=items['preview-workspace-memory-panel'];assert(memory.visible&&memory.width>=120&&memory.scrollWidth<=memory.clientWidth+1,'workspace memory paths overflow their task panel');assert(items['workspace-memory-sync'].width>=44,'workspace memory backfill action is too narrow');
   }
   if(view.startsWith('sidebar')){
    const list=items['task-list'];
    for(const id of ['tasks-active','tasks-archived','trash-open','sticky-tab','new-task']){const b=items[id];assert(b&&b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y+b.height<=height+1,'sidebar navigation is clipped: '+id);if(width<=760)assert(b.height>=44,id+' touch target is too small')}
    for(const id of ['app-version']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
-   assert(!metrics.stickyNotes.inSidebar&&!items['sticky-dialog'].visible,'notes content must not occupy the task list');
+   assert(metrics.stickyNotes.inSidebar&&!items['sticky-board'].visible,'notes content is hidden while the task list is selected');
    assert(metrics.taskNavigation.notesInTaskNav,'notes entry must be beside the task-list filters');
    assert.deepEqual(metrics.taskNavigation.sidebarOrder,['tasks-active','tasks-archived','trash-open','sticky-tab','new-task'],'sidebar task navigation has the wrong order');
    assert(list.height>=90,'task list has too little height');assert(list.y<(view==='sidebarnarrow'?208:160),'sidebar header takes too much space');
@@ -474,16 +483,21 @@ for(const [view,theme,width,height] of cases){
    if(width<=760){assert(items.sidebar.height===height,'phone drawer must fill the viewport');assert(items.conversation.height>height*.5,'opening the task drawer must not push the conversation down')}
   }
   if(view.startsWith('sticky')){
-   const dialog=items['sticky-dialog'];assert(dialog.visible&&dialog.x>=0&&dialog.x+dialog.width<=width+1&&dialog.y>=0&&dialog.y+dialog.height<=height+1,'notes drawer exceeds viewport');assert(dialog.scrollWidth<=dialog.clientWidth+1,'notes drawer overflows horizontally');
+   const dialog=items['sticky-board'];assert(dialog.visible&&dialog.x>=0&&dialog.x+dialog.width<=items.sidebar.width+1&&dialog.y>=0&&dialog.y+dialog.height<=height+1,'sidebar notes exceed viewport');assert(dialog.scrollWidth<=dialog.clientWidth+1,'sidebar notes overflow horizontally');
    for(const id of ['sticky-close','sticky-new']){const b=items[id],minimum=width<=760?44:24;assert(b.visible&&b.width>=minimum&&b.height>=minimum&&b.x>=dialog.x&&b.x+b.width<=dialog.x+dialog.width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,id+' is clipped or too small for touch')}
    assert(items['sticky-list'].height>=100,'notes drawer has too little writing room');assert(items['sticky-save-status'].visible&&items['sticky-save-status'].y+items['sticky-save-status'].height<=height+1,'note save status is inaccessible');
-   const fields=metrics.stickyNotes.fields;assert(fields.length>=1&&fields[0].visible&&fields[0].width>=120&&fields[0].height>=32,'notes have no usable draft field');assert(!metrics.stickyNotes.inSidebar,'notes must be independent of the task drawer');
+   const fields=metrics.stickyNotes.fields;assert(fields.length>=1&&fields[0].visible&&fields[0].width>=120&&fields[0].height>=32,'notes have no usable draft field');assert(metrics.stickyNotes.inSidebar&&!items['task-list'].visible&&!items.search.visible,'notes replace the task list in place');
   }
   if(view.startsWith('taskmenu')){
    const panel=items['preview-task-menu-panel'];assert(panel.visible&&panel.width>=140&&panel.x>=0&&panel.x+panel.width<=width+1&&panel.y>=0&&panel.y+panel.height<=height+1,'task popup menu exceeds the viewport');assert(panel.scrollWidth<=panel.clientWidth+1,'task popup menu overflows horizontally');
-   const actions=view.endsWith('bottom')?['preview-task-menu-trash']:['preview-task-menu-editor','preview-task-menu-handoff'];
+   const actions=view.endsWith('bottom')?['preview-task-menu-trash']:['preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu'];
    for(const id of actions){const b=items[id];assert(b.visible&&b.width>=100&&b.height>=(width<=760?40:30)&&b.x>=panel.x&&b.x+b.width<=panel.x+panel.width+1&&b.y>=panel.y&&b.y+b.height<=panel.y+panel.height+1,'task popup action is inaccessible: '+id)}
    if(view==='taskmenushortbottom')assert(panel.scrollHeight>panel.clientHeight,'short-screen task menu must exercise real vertical scrolling');
+  }
+  if(view.startsWith('curated')){
+   const dialog=items['curated-dialog'];assert(dialog.visible&&dialog.x>=0&&dialog.y>=0&&dialog.x+dialog.width<=width+1&&dialog.y+dialog.height<=height+1,'formal knowledge editor exceeds viewport');assert(dialog.scrollWidth<=dialog.clientWidth+1,'formal knowledge editor overflows horizontally');
+   for(const id of ['curated-title','curated-content','curated-applicability','curated-evidence','curated-credential','curated-status']){const field=items[id];assert(field.width>=120&&field.x>=dialog.x&&field.x+field.width<=dialog.x+dialog.width+1,'formal knowledge field is too narrow or clipped: '+id)}
+   const action=items[view==='curatedbottom'?'curated-save':'curated-close'];assert(action.visible&&action.x>=dialog.x&&action.x+action.width<=dialog.x+dialog.width+1&&action.y>=dialog.y&&action.y+action.height<=dialog.y+dialog.height+1,'formal knowledge action cannot be reached by scrolling');if(width<=760)assert(action.height>=44,'formal knowledge action has a small touch target');
   }
   if(view==='hardware'){
    for(const id of ['hardware-panel','device-picker','device-refresh','device-ai','device-console']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1,id+' exceeds the viewport')}
@@ -492,13 +506,13 @@ for(const [view,theme,width,height] of cases){
   if(['normal','long','header','headernarrow','appmenu','home','context','create','navigation'].includes(view)){
    const controls=width>760?['theme-toggle','library-open','logout']:['app-menu-toggle'];
    if(width<=760&&['appmenu','navigation'].includes(view))controls.push('theme-toggle','library-open','logout');
-   if(!['home','create'].includes(view))controls.push('session-reset','bind-open','task-handoff','hardware-tab','desktop-open');
-   assert(metrics.taskNavigation.toolsInTaskMenu&&metrics.taskNavigation.noTaskTodo&&metrics.taskNavigation.noExtraTaskContainer&&metrics.taskNavigation.noOverflowDuplicates,'task tools must remain direct actions in the task menu bar');
+   if(!['home','create'].includes(view))controls.push('hardware-tab','desktop-open');
+   assert(metrics.taskNavigation.toolsInTaskMenu&&metrics.taskNavigation.noTaskTodo&&metrics.taskNavigation.lowFrequencyInTaskRows,'task tools and low-frequency sidebar actions must have distinct homes');
    assert(metrics.taskNavigation.notesInTaskNav,'notes must be in the task-list navigation');
    for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct navigation action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
    if(!['home','create'].includes(view)){
-    for(const id of ['session-reset','bind-open','task-handoff','hardware-tab','desktop-open']){const b=items[id],tabs=items.tabs;assert(b.y>=tabs.y&&b.y+b.height<=tabs.y+tabs.height+1,id+' leaves the task menu bar')}
-    const tools=['session-reset','bind-open','task-handoff','hardware-tab','desktop-open'].map(id=>items[id]);for(let i=0;i<tools.length;i++)for(let j=i+1;j<tools.length;j++){const a=tools[i],b=tools[j];assert(a.x+a.width<=b.x+1||b.x+b.width<=a.x+1||a.y+a.height<=b.y+1||b.y+b.height<=a.y+1,'task menu actions overlap')}
+    for(const id of ['hardware-tab','desktop-open']){const b=items[id],tabs=items.tabs;assert(b.y>=tabs.y&&b.y+b.height<=tabs.y+tabs.height+1,id+' leaves the task menu bar')}
+    const tools=['hardware-tab','desktop-open'].map(id=>items[id]);for(let i=0;i<tools.length;i++)for(let j=i+1;j<tools.length;j++){const a=tools[i],b=tools[j];assert(a.x+a.width<=b.x+1||b.x+b.width<=a.x+1||a.y+a.height<=b.y+1||b.y+b.height<=a.y+1,'task menu actions overlap')}
    }
   }
   if(view.startsWith('handoff')){

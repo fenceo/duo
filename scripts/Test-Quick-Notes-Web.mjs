@@ -6,16 +6,16 @@ const {document,window,ctx}=await createWebShellFixture();
 const node=id=>document.getElementById(id),state=code=>runInContext(code,ctx);
 const tick=async()=>{for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve))};
 assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true');
-assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'notes open in a dedicated overlay, outside the task sidebar');
-assert.equal(node('sticky-dialog').parentElement,node('root'));
+assert.equal(node('sticky-board').parentElement,node('sidebar'),'notes replace sidebar content in place');
+assert.equal(node('sticky-dialog'),null,'notes do not create an overlay');
 assert.equal(node('sticky-tab').previousElementSibling,node('trash-open'),'notes sit beside tasks, archive and trash');
 assert.equal(node('sticky-tab').nextElementSibling,node('new-task'));
 assert.equal(node('sticky-tab').parentElement,node('tasks-active').parentElement);
 assert(node('sticky-tab').parentElement.classList.contains('task-navigation'));
 assert.equal(node('sticky-tab').closest('#sidebar'),node('sidebar'));
-assert.equal(node('sticky-tab').getAttribute('aria-controls'),'sticky-dialog');
-assert.equal(node('sticky-tab').getAttribute('aria-expanded'),'false');
-assert.equal(node('sticky-dialog').open,false,'notes no longer occupy permanent sidebar space');
+assert.equal(node('sticky-tab').getAttribute('aria-controls'),'sticky-board');
+assert.equal(node('sticky-tab').getAttribute('aria-pressed'),'false');
+assert(node('sticky-board').classList.contains('hidden'),'notes do not share sidebar space with the task list');
 assert(!node('workspace-open'));assert(!node('sidebar-footer'));
 assert.equal(node('workspace-settings').parentElement,node('app-menu-items'));
 for(const id of ['theme-toggle','logout']){assert.equal(node(id).parentElement,node('workspace-settings'));assert.equal(node(id).closest('details'),null)}
@@ -24,12 +24,14 @@ assert.match(node('app-version').textContent,/^v/);
 assert.equal(state('chosen'),'','shared notes work without a selected task');
 assert.equal(node('connection').textContent,'');assert(node('connection').classList.contains('hidden'));
 node('sticky-tab').onclick();await tick();
-assert.equal(node('sticky-dialog').open,true);assert.equal(node('sticky-tab').getAttribute('aria-expanded'),'true');
+assert(!node('sticky-board').classList.contains('hidden'));assert.equal(node('sticky-tab').getAttribute('aria-pressed'),'true');
+assert(node('task-list').classList.contains('hidden'));assert(node('search').classList.contains('hidden'));assert.equal(state('chosen'),'','opening notes does not select a task');
 assert.match(node('appearance-notes').parentElement.textContent,/显示便签入口/);
 
 let server={revision:0,color:'neutral',items:[]},writes=[],deferred=null,offline=false;
 const originalAPI=ctx.api;
 ctx.api=async(path,method='GET',data)=>{
+ if(path==='trash')return [];
  if(path!=='sticky')return originalAPI(path,method,data);
  if(offline)throw new Error('synthetic offline');
  if(method==='GET')return structuredClone(server);
@@ -47,9 +49,9 @@ assert.equal(document.querySelector('[data-note-input]'),field,'unchanged pollin
 field.value='先做这件事';field.oninput();
 assert.equal(state('quickNotes.items[0].content'),field.value);
 assert.equal(writes.length,0,'typing is debounced');assert.equal(timers.size,1);
-let restoredFocus='';node('sticky-tab').focus=()=>restoredFocus='sticky-tab';
-node('sticky-close').onclick();assert.equal(node('sticky-dialog').open,false);assert.equal(node('sticky-tab').getAttribute('aria-expanded'),'false');assert.equal(restoredFocus,'sticky-tab','desktop close restores the visible sidebar entry');
-node('sticky-tab').onclick();assert.equal(node('sticky-dialog').open,true);
+let restoredFocus='';node('tasks-active').focus=()=>restoredFocus='tasks-active';
+node('sticky-close').onclick();assert(node('sticky-board').classList.contains('hidden'));assert.equal(node('sticky-tab').getAttribute('aria-pressed'),'false');assert.equal(restoredFocus,'tasks-active','returning to tasks restores its sidebar entry');
+assert(!node('task-list').classList.contains('hidden'));node('sticky-tab').onclick();assert(!node('sticky-board').classList.contains('hidden'));
 assert.equal(document.querySelector('[data-note-input]'),field,'closing and reopening keeps the draft input node');
 assert.equal(field.value,'先做这件事');assert.equal(writes.length,0,'closing never discards or prematurely rewrites the pending draft');
 field.dispatchEvent(new window.Event('compositionstart'));assert.equal(timers.size,0);
@@ -81,10 +83,18 @@ server={revision:server.revision+1,color:'neutral',items:[{id:'unsafe',content:'
 assert(!node('sticky-list').querySelector('img'));assert.match(node('sticky-list').querySelector('textarea').value,/<img/);
 node('sticky-expand').onclick();assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'false');await ctx.loadStickyBoard();assert(node('sticky-body').classList.contains('hidden'));
 node('sticky-expand').onclick();assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true');
-state('applyAppearance({...appearance,notes:false})');assert.equal(node('sticky-dialog').open,false);assert(node('sticky-tab').classList.contains('hidden'));assert(!node('sticky-board').classList.contains('hidden'),'appearance hides only the entry, never the note data');
+state('applyAppearance({...appearance,notes:false})');assert(node('sticky-board').classList.contains('hidden'));assert(node('sticky-tab').classList.contains('hidden'));assert.equal(state('taskView'),'active','hiding the notes entry returns to tasks without deleting data');
 state('applyAppearance({...appearance,notes:true})');assert(!node('sticky-tab').classList.contains('hidden'));node('sticky-tab').onclick();await tick();
+// Sidebar view changes preserve the global board and never recreate its draft.
+const sharedField=document.querySelector('[data-note-input]');ctx.poll=async()=>{};
+node('tasks-archived').onclick();assert.equal(state('taskView'),'archived');assert(node('sticky-board').classList.contains('hidden'));assert(!node('task-list').classList.contains('hidden'));
+node('sticky-tab').onclick();node('sticky-close').onclick();assert.equal(state('taskView'),'archived','returning remembers the task view used before notes');
+node('tasks-active').onclick();node('sticky-tab').onclick();
+const beforeTrash=node('trash-dialog').open;node('trash-open').onclick({});await tick();assert.equal(state('taskView'),'active');assert(node('trash-dialog').open,'trash keeps its existing restore dialog');assert(!node('task-list').classList.contains('hidden'));assert.equal(document.querySelector('[data-note-input]'),sharedField);
+if(!beforeTrash)node('trash-dialog').close();node('sticky-tab').onclick();
+await ctx.showCreate();assert.equal(state('taskView'),'active');assert(node('sticky-board').classList.contains('hidden'),'new task restores the task sidebar');assert.equal(document.querySelector('[data-note-input]'),sharedField);node('sticky-tab').onclick();await tick();
 // A late read cannot replace edits made while it was in flight.
 let releaseRead;const savedAPI=ctx.api;ctx.api=path=>path==='sticky'?new Promise(resolve=>releaseRead=resolve):savedAPI(path);
 const loading=ctx.loadStickyBoard();field=document.querySelector('[data-note-input]');field.value='读取途中输入';field.oninput();releaseRead({revision:99,color:'yellow',items:[]});await loading;assert.equal(field.value,'读取途中输入');assert.equal(state('quickNotes.items[0].content'),'读取途中输入');
 state('authenticated=false;renewShellScope()');
-console.log('PASS: shared notes in the task sidebar, open/close draft retention and desktop focus, appearance visibility, debounce/IME, save locks, completion/color/delete undo, conflict and lost-response recovery, escaped text and late-read isolation. No model calls.');
+console.log('PASS: shared notes switch in the task sidebar; task/archive/trash/create transitions preserve drafts, with debounce/IME, save locks, completion/color/delete undo, conflict recovery, escaped text and late-read isolation. No model calls.');

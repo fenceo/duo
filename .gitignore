@@ -56,3 +56,4 @@ __pycache__/
 !/docs/vscode.md
 !/docs/claude-mimo.md
 !/docs/model-latency-tests.md
+!/docs/knowledge-layers.md

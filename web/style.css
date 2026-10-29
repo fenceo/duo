@@ -113,3 +113,18 @@
 .output-image figcaption a{margin-left:8px}
 .turn-records .thought .label{display:block;margin-bottom:6px}
 .turn-footer span{overflow-wrap:anywhere}
+/* The curated editor is a document form; preserve readable lines and a single
+   scroll container on desktop and narrow windows. */
+.curated-dialog{width:min(760px,calc(100vw - 24px));max-height:90dvh;overflow:auto;padding:24px}
+.curated-dialog form{display:grid;gap:14px;min-width:0}
+.curated-dialog label{display:grid;gap:6px;min-width:0}
+.curated-dialog input:not([type=checkbox]),.curated-dialog select,.curated-dialog textarea{width:100%;box-sizing:border-box;min-width:0}
+.curated-dialog label:has(input[type=checkbox]){display:flex;align-items:flex-start}
+.curated-dialog textarea{resize:vertical}
+.workspace-memory-panel{border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0;overflow-wrap:anywhere}
+.workspace-memory-panel p{margin:8px 0}
+.workspace-memory-panel code{white-space:normal;overflow-wrap:anywhere}
+.curated-metadata{border-bottom:1px solid var(--line);margin-bottom:16px;padding-bottom:8px;overflow-wrap:anywhere;white-space:pre-wrap}
+.library-dialog:has(.preview-open) .library-overview,.library-dialog:has(.preview-open) .library-help,.library-dialog:has(.preview-open) #library-curated-actions{display:none}
+@media(max-width:600px){.curated-dialog{padding:16px}.curated-dialog .actions{flex-wrap:wrap}}
+@media(max-width:760px){.curated-dialog button,.curated-dialog input:not([type=checkbox]),.curated-dialog select{min-height:44px}.curated-dialog input[type=checkbox]{flex:0 0 auto;width:20px;height:20px}}

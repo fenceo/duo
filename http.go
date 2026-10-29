@@ -113,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 	s.stickyRoutes(m)
 	s.knowledgeRoutes(m)
 	s.libraryRoutes(m)
+	s.workspaceMemoryRoutes(m)
 	s.hardwareRoutes(m)
 	s.hardwareAIRoutes(m)
 	s.terminalRoutes(m)

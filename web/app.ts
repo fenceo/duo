@@ -140,7 +140,7 @@ function renderShell(){
  installTools();installWorkspace();installConversationFilter();installSettingsSections();installEngineSettings();installProductivity();installEditor();installTerminal();installExecution();installDiscovery();installLayout();installEnvironmentDiscovery();installWorkflow();installCodexApprovals();installStickyBoard();installAppearance();installPanelLayout();installUpdates();installLibrary();installDesktopSharing();installUsageDashboard();installSettingsNavigation();
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
- button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving){notify('知识库设置尚未保存，请先保存后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
+ button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||curatedDirty||curatedSaving){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
@@ -170,6 +170,7 @@ function setCreatePageVisible(visible:boolean){
 }
 function renderList(){
  if(!element('task-list'))return;
+ syncStickySidebar();
  const query=input('search').value.trim(),archived=tasks.filter(t=>t.archived).length;
  for(const [view,label,count] of [['active','任务',tasks.length-archived],['archived','归档',archived]] as const){const control=button('tasks-'+view);if(control.textContent!==label)control.textContent=label;const title=label+' · '+count;control.title=title;control.setAttribute('aria-label',title)}
  for(const view of ['active','archived'])button('tasks-'+view).classList.toggle('selected',taskView===view&&!query);
@@ -185,6 +186,7 @@ function renderList(){
 }
 async function choose(id:string,view='chat'){
  if(!mayLeave())return;invalidateModelTest();creatingTask=false;createReturnTask='';setCreatePageVisible(false);chosen=id;const token=++selection;detail=null;dirty=false;sequence=0;resetConversation();resetCodexApprovals();void loadStickyBoard();taskContext=[];void loadTaskContext(id);
+ if(taskView==='sticky')taskView=tasks.find(t=>t.id===id)?.archived?'archived':'active';
  element('conversation').innerHTML='<p id="loading" class="muted">正在读取最近对话…</p>';input('message').value=drafts.get(id)||'';knowledgeItems=[];knowledgeSummaryOnly=true;knowledgeEditing=null;knowledgeEditTarget=null;knowledgeExpanded.clear();element<HTMLDialogElement>('knowledge-dialog').close();if(input('knowledge-query'))input('knowledge-query').value='';lastKnowledge='';renderKnowledgeList();
  for(const key of ['tabs','composer-wrap','conversation-filter'])element(key).classList.remove('hidden');element('sidebar').classList.remove('open');switchTab('chat');renderList();
  history.replaceState(null,'','/?task='+id);
@@ -202,7 +204,7 @@ function switchTab(tab:string){
  element('tool-dock').classList.toggle('hidden',!open);element('conversation').classList.remove('hidden');element('composer-wrap').classList.toggle('hidden',!chosen);
  for(const [key,panel] of [['note','notebook'],['scratch','scratch-panel'],['hardware','hardware-panel'],['files','files-panel'],['terminal','terminal-panel']]){element(panel).classList.toggle('hidden',tab!==key);const entry=document.getElementById(key+'-tab');entry?.classList.toggle('selected',tab===key);entry?.setAttribute('aria-pressed',String(tab===key))}
  button('chat-tab').classList.toggle('selected',!open);element('tool-title').textContent=({note:'本任务知识',scratch:'待办',hardware:'硬件调试',files:'文件与改动',terminal:'终端'} as Record<string,string>)[tab]||'任务工具';
- renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();if(tab==='note'&&detail)void loadKnowledge();
+ renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();if(tab==='note'&&detail){void loadKnowledge();void loadWorkspaceMemory()}
 }
 
 let knowledgeFilter='all';
@@ -313,6 +315,7 @@ async function poll(background=false){
 }
 async function showCreate(){
  if(!mayLeave())return;
+ if(taskView==='sticky')taskView='active';
  invalidateModelTest();
  const epoch=shellEpoch;
  try{

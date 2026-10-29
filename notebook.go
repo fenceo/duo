@@ -528,9 +528,18 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 		d.Hash = documentHash(d)
 		out = append(out, d)
 	}
-	if len(out) > 0 {
-		body := "# 知识文档目录\n\n所有链接相对于此目录，可整体移动到另一台电脑。\n\n## 任务资料\n\n"
-		var updated int64
+	var curatedCount int
+	var curatedUpdated int64
+	if err := s.QueryRowContext(ctx, "SELECT count(*),coalesce(max(updated),0) FROM curated_knowledge WHERE deleted=0").Scan(&curatedCount, &curatedUpdated); err != nil {
+		return nil, err
+	}
+	if len(out) > 0 || curatedCount > 0 {
+		body := "# 知识文档目录\n\n所有链接相对于此目录，可整体移动到另一台电脑。任务初级过程另存实际工作区的 `.duo/`。\n\n"
+		if curatedCount > 0 {
+			body += "## 正式知识\n\n- [平台共识](consensus/README.md)\n- [系统知识](system/README.md)\n- [项目知识](projects/README.md)\n\n由用户整理并保留验证状态，不自动把历史回复视为已验证结论。\n\n"
+		}
+		body += "## 任务资料（兼容镜像）\n\n"
+		updated := curatedUpdated
 		for _, d := range out {
 			if d.Kind == "task" && strings.HasSuffix(d.ID, "/summary.md") {
 				body += "- [" + markdownTitle(d.TaskTitle) + "](" + d.Path + ")\n"

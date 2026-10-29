@@ -69,6 +69,7 @@ function installLibrary() {
     button('vault-refresh').onclick = ()=>void refreshVault();
     installLibraryBrowser();
     installLibraryPages();
+    installKnowledgeLayers();
     disposeWithShell(()=>{
         libraryRequest++;
         libraryOverviewRequest++;
@@ -183,10 +184,10 @@ function installLibraryBrowser() {
     button('library-preview-back').onclick = ()=>clearLibraryPreview(true);
     button('library-preview-cite').onclick = ()=>void citeLibrary(libraryPreviewID);
     button('library-preview-source').onclick = ()=>{
-        const hit = libraryHits.find((d)=>d.id === libraryPreviewID);
-        if (!hit || !tasks.some((t)=>t.id === hit.task_id && !t.deleted)) return;
+        const hit = libraryHits.find((d)=>d.id === libraryPreviewID), taskID = hit?.source_task_id || hit?.task_id;
+        if (!hit || !taskID || !tasks.some((t)=>t.id === taskID && !t.deleted)) return;
         dialog.close();
-        void choose(hit.task_id, hit.kind === 'knowledge' ? 'note' : 'chat');
+        void choose(taskID, hit.kind === 'knowledge' || hit.kind === 'curated' ? 'note' : 'chat');
     };
     element('library-results').onclick = (e)=>{
         const b = e.target.closest('[data-library-reference],[data-library-preview]');
@@ -221,6 +222,9 @@ function clearLibraryPreview(returnFocus = false) {
     element('library-preview-status').textContent = '';
     button('library-preview-cite').classList.add('hidden');
     button('library-preview-source').classList.add('hidden');
+    libraryPreviewDocument = null;
+    button('library-promote')?.classList.add('hidden');
+    button('library-curated-edit')?.classList.add('hidden');
     highlightLibraryPreview();
     if (returnFocus) Array.from(element('library-results').querySelectorAll('[data-library-preview]')).find((b)=>b.dataset.libraryPreview === previous)?.focus();
 }
@@ -510,8 +514,11 @@ async function searchLibrary(append = false) {
 }
 function libraryDescription(d) {
     return ({
+        consensus: '平台共识',
+        system: '系统知识',
+        project: '项目知识',
         tasks: '任务资料',
-        knowledge: '通用知识',
+        knowledge: '候选结论',
         topics: '主题索引',
         history: '对话记录',
         notes: '任务笔记',
@@ -519,13 +526,16 @@ function libraryDescription(d) {
     })[d.layer || ''] || (d.kind === 'run' ? '对话记录' : '任务笔记');
 }
 function renderLibraryHits() {
-    element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.task_title || '共用知识')}</p><code class="library-document-path">${escapeHTML(d.path || '')}</code><p class="library-tags">${(d.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ')}</p><footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>任务资料随对话保存；通用知识需要回复中有明确依据，主题索引在出现标签后自动形成。旧摘录可在“全部文档”查看。</p></div>';
+    element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}">${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.scope_key || d.task_title || '共用知识')}</p><code class="library-document-path">${escapeHTML(d.path || '')}</code><p class="library-tags">${(d.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ')}</p><footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>任务过程随对话保存；可复用结论先保留为候选，再显式整理成平台共识、系统知识或项目知识。旧摘录及主题索引可在“全部资料”查看。</p></div>';
 }
 async function previewLibrary(id) {
     const hit = libraryHits.find((d)=>d.id === id);
     if (!hit) return;
     const token = ++libraryPreviewRequest, epoch = shellEpoch;
     libraryPreviewID = id;
+    libraryPreviewDocument = null;
+    button('library-promote').classList.add('hidden');
+    button('library-curated-edit').classList.add('hidden');
     libraryPreviewText = '';
     button('library-download').classList.add('hidden');
     button('library-read-more').classList.add('hidden');
@@ -545,10 +555,13 @@ async function previewLibrary(id) {
         if (token !== libraryPreviewRequest || !shellCurrent(epoch)) return;
         libraryPreviewText = result.content || '';
         libraryPreviewLimit = 20000;
+        libraryPreviewDocument = result;
         renderLibraryDocument();
+        button('library-promote').classList.toggle('hidden', result.kind === 'curated');
+        button('library-curated-edit').classList.toggle('hidden', result.kind !== 'curated');
         button('library-preview-cite').classList.remove('hidden');
         button('library-preview-cite').disabled = libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create;
-        button('library-preview-source').classList.toggle('hidden', !tasks.some((t)=>t.id === hit.task_id && !t.deleted));
+        button('library-preview-source').classList.toggle('hidden', !tasks.some((t)=>t.id === (result.source_task_id || result.task_id) && !t.deleted));
     } catch (e) {
         if (token === libraryPreviewRequest && shellCurrent(epoch)) element('library-preview-status').textContent = '预览失败，请重新检索后打开：' + e.message;
     }
@@ -715,7 +728,26 @@ async function refreshVault() {
 }
 function renderLibraryDocument() {
     const cut = libraryPreviewText.length > libraryPreviewLimit;
-    element('library-preview-content').innerHTML = markdown(libraryPreviewText.slice(0, libraryPreviewLimit));
+    const d = libraryPreviewDocument;
+    const metadata = d?.kind === 'curated' ? '<section class="curated-metadata"><p><strong>' + escapeHTML(libraryDescription(d)) + '</strong> · ' + escapeHTML(knowledgeStateText(d.status)) + (d.scope_key ? ' · ' + escapeHTML(d.scope_key) : '') + '</p>' + [
+        [
+            '适用条件',
+            d.applicability
+        ],
+        [
+            '实际依据',
+            d.evidence
+        ],
+        [
+            '安全配置引用',
+            d.credential_ref
+        ],
+        [
+            '原始来源',
+            d.source_id
+        ]
+    ].filter(([, value])=>value).map(([title, value])=>'<p><strong>' + title + '</strong><br>' + escapeHTML(value) + '</p>').join('') + '</section>' : '';
+    element('library-preview-content').innerHTML = metadata + markdown(libraryPreviewText.slice(0, libraryPreviewLimit));
     button('library-read-more').classList.toggle('hidden', !cut);
     button('library-download').classList.toggle('hidden', !libraryPreviewText);
     element('library-preview-status').textContent = cut ? '长文档分段显示，可继续阅读或下载全文。' : '已读取全文。引用到输入框时最多带入 6000 字符，并保留来源。';
@@ -747,6 +779,228 @@ async function followLibraryLink(href) {
         await previewLibrary(doc.id);
     } catch (e) {
         if (request === libraryPreviewRequest && shellCurrent(epoch)) element('library-preview-status').textContent = '无法打开来源文档：' + e.message;
+    }
+}
+let libraryPreviewDocument = null, curatedDraft = null, curatedDirty = false, curatedSaving = false, curatedRequest = 0, workspaceMemoryRequest = 0, workspaceMemorySaving = false;
+function installKnowledgeLayers() {
+    const nav = element('library-dialog').querySelector('.library-layers');
+    nav.innerHTML = [
+        [
+            'tasks',
+            '任务过程'
+        ],
+        [
+            'consensus',
+            '平台共识'
+        ],
+        [
+            'system',
+            '系统知识'
+        ],
+        [
+            'project',
+            '项目知识'
+        ],
+        [
+            'knowledge',
+            '候选结论'
+        ],
+        [
+            'all',
+            '全部资料'
+        ]
+    ].map(([id, title])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id === 'tasks'}" class="${id === 'tasks' ? 'selected' : ''}">${title}</button>`).join('');
+    nav.querySelectorAll('[data-library-layer]').forEach((b)=>b.onclick = ()=>{
+            input('library-layer').value = b.dataset.libraryLayer;
+            input('library-kind').value = '';
+            input('library-source').value = '';
+            input('library-scope').value = '';
+            nav.querySelectorAll('button').forEach((x)=>{
+                x.classList.toggle('selected', x === b);
+                x.setAttribute('aria-pressed', String(x === b));
+            });
+            void searchLibrary();
+        });
+    element('library-preview').querySelector('.library-preview-actions').insertAdjacentHTML('beforeend', '<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
+    element('library-search-form').insertAdjacentHTML('afterend', '<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><span class="muted">自动资料保留来源；正式知识由你整理和确认。</span></div>');
+    button('library-curated-new').onclick = ()=>openCuratedEditor();
+    button('library-promote').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
+    button('library-curated-edit').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
+    element('library-dialog').querySelector('.library-header p').textContent = '任务过程、平台共识、系统知识和项目知识分层管理，保留原始来源。';
+    element('library-dialog').querySelector('.library-help p').textContent = '连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
+    element('settings-knowledge').querySelector('p').textContent = '过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
+    const guide = element('settings-knowledge').querySelector('.knowledge-directory-guide');
+    guide.innerHTML = '<strong>分层目录</strong><p>工作区过程：<code>&lt;workspace&gt;/.duo/tasks/任务ID/</code>，每轮一个来源文件，另有任务索引和交接摘要。</p><p>平台共识：Duo 运行数据内保存，开启同步后镜像到 <code>Duo/consensus/</code>。</p><p>系统知识：<code>Duo/system/主题/</code>；项目知识：<code>Duo/projects/项目/</code>。旧版 <code>Duo/tasks/</code> 继续作为可选任务镜像。</p>';
+    element('automatic-knowledge-settings').querySelector('p').textContent = '自动记录开启后，每轮结束会将任务过程镜像到任务实际工作区的 .duo/，失败不影响执行结果。自动整理只复用正常回复生成摘要和候选结论，不另起模型。旧记录可在“本任务知识”手动回填。只有显式整理后才成为正式知识。';
+    input('automatic-recall').closest('label').lastChild.textContent = '新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
+    element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent = '同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
+    element('notebook').querySelector('.knowledge-panel-help').textContent = '这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
+    element('notebook').querySelector('.knowledge-panel-help').insertAdjacentHTML('afterend', '<section class="workspace-memory-panel"><strong>工作区过程资料</strong><p id="workspace-memory-state" role="status">打开本任务知识时读取目录。</p><div id="workspace-memory-tasks"></div><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button></section>');
+    button('workspace-memory-sync').onclick = ()=>void loadWorkspaceMemory(true);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="curated-dialog" class="curated-dialog" aria-labelledby="curated-heading"><div class="library-header"><h2 id="curated-heading">整理正式知识</h2><button type="button" id="curated-close">关闭</button></div><p>凭据保留在设备或受保护配置，正文只写配置引用。整理和标记状态不会启动模型或独立验证内容。</p><form id="curated-form"><label>知识层级<select id="curated-layer"><option value="consensus">平台共识</option><option value="system">系统知识</option><option value="project">项目知识</option></select></label><label>主题 / 项目名称<input id="curated-scope" maxlength="80" placeholder="平台共识无需填写"></label><label>标题<input id="curated-title" required maxlength="200"></label><label>正文<textarea id="curated-content" required rows="10"></textarea></label><label>适用条件<textarea id="curated-applicability" rows="2"></textarea></label><label>实际依据 / 验证结果<textarea id="curated-evidence" rows="2" placeholder="未验证时明确写出"></textarea></label><label>安全配置引用<input id="curated-credential" placeholder="仅设备或配置名称，不填写密码"></label><label>标签<input id="curated-tags" placeholder="用逗号分隔"></label><label>状态<select id="curated-status"><option value="observed">待验证</option><option value="verified">已验证（用户确认）</option><option value="stale">已过时</option></select></label><label><input type="checkbox" id="curated-confirm">我确认已填写实际依据和适用条件，并明确将此条标为已验证</label><p id="curated-source" class="muted"></p><p id="curated-state" role="status"></p><div class="actions"><button type="submit" id="curated-save" class="primary">保存正式知识</button><button type="button" id="curated-delete" class="danger hidden">移除正式条目</button></div></form></dialog>`);
+    button('curated-close').onclick = ()=>{
+        if (!curatedSaving) element('curated-dialog').close();
+    };
+    button('curated-close').insertAdjacentHTML('beforebegin', '<button type="button" id="curated-discard">放弃草稿</button>');
+    button('curated-discard').onclick = ()=>{
+        if (curatedSaving) return;
+        curatedDirty = false;
+        curatedDraft = null;
+        element('curated-dialog').close();
+    };
+    element('curated-form').oninput = ()=>{
+        curatedDirty = true;
+        element('curated-state').textContent = '草稿尚未保存。';
+    };
+    element('curated-form').onsubmit = (e)=>{
+        e.preventDefault();
+        void saveCuratedEditor();
+    };
+    button('curated-delete').onclick = ()=>void deleteCuratedEditor();
+    element('curated-dialog').addEventListener('cancel', (e)=>{
+        if (curatedSaving) e.preventDefault();
+    });
+    disposeWithShell(()=>{
+        curatedRequest++;
+        workspaceMemoryRequest++;
+        curatedDraft = null;
+        curatedDirty = false;
+        curatedSaving = false;
+        workspaceMemorySaving = false;
+        libraryPreviewDocument = null;
+    });
+}
+function openCuratedEditor(doc) {
+    const dialog = element('curated-dialog');
+    if (curatedSaving) return;
+    if (curatedDirty) {
+        if (!dialog.open) dialog.showModal();
+        element('curated-state').textContent = '保留了尚未保存的草稿，请先完成这份知识整理。';
+        return;
+    }
+    const edit = doc?.kind === 'curated';
+    curatedDraft = edit ? {
+        ...doc,
+        id: doc.id.replace(/^curated:/, '')
+    } : {
+        layer: [
+            'consensus',
+            'system',
+            'project'
+        ].includes(input('library-layer').value) ? input('library-layer').value : 'consensus',
+        source_id: doc?.id || '',
+        source_hash: doc?.hash || '',
+        source_task_id: doc?.task_id || '',
+        status: 'observed'
+    };
+    for (const [id, value] of Object.entries({
+        'curated-layer': curatedDraft.layer || 'consensus',
+        'curated-scope': doc?.scope_key || '',
+        'curated-title': doc?.title || '',
+        'curated-content': doc?.content || '',
+        'curated-applicability': doc?.applicability || '',
+        'curated-evidence': doc?.evidence || '',
+        'curated-credential': doc?.credential_ref || '',
+        'curated-tags': (doc?.tags || []).join(', '),
+        'curated-status': edit ? doc.status : 'observed'
+    }))input(id).value = value;
+    input('curated-confirm').checked = false;
+    button('curated-delete').classList.toggle('hidden', !edit);
+    element('curated-source').textContent = curatedDraft.source_id ? '来源：' + curatedDraft.source_id : '手工创建；建议在正文或依据中记录出处。';
+    element('curated-state').textContent = '';
+    if (!dialog.open) dialog.showModal();
+    input('curated-title').focus();
+}
+function setCuratedBusy(busy) {
+    for (const node of element('curated-form').querySelectorAll('input,textarea,select,button'))node.disabled = busy;
+    button('curated-close').disabled = busy;
+    button('curated-discard').disabled = busy;
+}
+async function saveCuratedEditor() {
+    if (!curatedDraft || curatedSaving) return;
+    const draft = curatedDraft, epoch = shellEpoch, request = ++curatedRequest;
+    curatedSaving = true;
+    setCuratedBusy(true);
+    const payload = {
+        ...draft,
+        layer: input('curated-layer').value,
+        scope_key: input('curated-scope').value,
+        title: input('curated-title').value,
+        content: input('curated-content').value,
+        applicability: input('curated-applicability').value,
+        evidence: input('curated-evidence').value,
+        credential_ref: input('curated-credential').value,
+        tags: input('curated-tags').value.split(/[,，]/).map((t)=>t.trim()).filter(Boolean),
+        status: input('curated-status').value,
+        confirm_verified: input('curated-confirm').checked
+    };
+    try {
+        await api('library/curated' + (draft.id ? '/' + encodeURIComponent(draft.id) : ''), draft.id ? 'PUT' : 'POST', payload);
+        if (!shellCurrent(epoch) || request !== curatedRequest) return;
+        curatedDirty = false;
+        curatedDraft = null;
+        element('curated-dialog').close();
+        notify('正式知识已保存；同一来源在同一层级与范围内不会重复提升。');
+        await searchLibrary();
+        void loadLibraryOverview();
+    } catch (e) {
+        if (shellCurrent(epoch) && request === curatedRequest) element('curated-state').textContent = '保存失败，草稿已保留：' + e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === curatedRequest) {
+            curatedSaving = false;
+            setCuratedBusy(false);
+        }
+    }
+}
+async function deleteCuratedEditor() {
+    if (!curatedDraft?.id || curatedSaving) return;
+    const draft = curatedDraft, epoch = shellEpoch, request = ++curatedRequest;
+    curatedSaving = true;
+    setCuratedBusy(true);
+    try {
+        await api('library/curated/' + encodeURIComponent(draft.id), 'DELETE', {
+            revision: draft.revision
+        });
+        if (!shellCurrent(epoch) || request !== curatedRequest) return;
+        curatedDraft = null;
+        curatedDirty = false;
+        element('curated-dialog').close();
+        notify('正式条目已移除，任务原始资料继续保留。');
+        await searchLibrary();
+    } catch (e) {
+        if (shellCurrent(epoch) && request === curatedRequest) element('curated-state').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === curatedRequest) {
+            curatedSaving = false;
+            setCuratedBusy(false);
+        }
+    }
+}
+async function loadWorkspaceMemory(sync = false) {
+    if (!chosen || creatingTask || !detail || sync && workspaceMemorySaving) return;
+    const task = chosen, selected = selection, epoch = shellEpoch, request = ++workspaceMemoryRequest;
+    if (sync) workspaceMemorySaving = true;
+    button('workspace-memory-sync').disabled = workspaceMemorySaving;
+    element('workspace-memory-state').textContent = sync ? '正在回填工作区资料…' : '正在读取工作区资料…';
+    element('workspace-memory-tasks').textContent = '';
+    const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === workspaceMemoryRequest;
+    try {
+        const report = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory', sync ? 'POST' : 'GET', sync ? {} : undefined, shellController.signal);
+        if (!current()) return;
+        element('workspace-memory-state').textContent = (report.enabled ? '目录：' + report.task_directory : '工作区记录已关闭') + (sync ? `；写入 ${report.exported}，未变化 ${report.unchanged}` : '') + [
+            report.error,
+            ...report.conflicts || [],
+            ...report.warnings || []
+        ].filter(Boolean).map((s)=>'；' + s).join('');
+        element('workspace-memory-tasks').innerHTML = (report.tasks || []).map((t)=>'<p><strong>' + escapeHTML(t.title) + '</strong> · <code>' + escapeHTML(t.path) + '</code></p>').join('');
+    } catch (e) {
+        if (current()) element('workspace-memory-state').textContent = '工作区资料读取失败：' + e.message;
+    } finally{
+        if (shellCurrent(epoch)) {
+            if (sync) workspaceMemorySaving = false;
+            button('workspace-memory-sync').disabled = workspaceMemorySaving;
+            if (sync && !current() && toolsTab === 'note') void loadWorkspaceMemory();
+        }
     }
 }
 let updateLoading = false, updateInformation = null, updatePhase = 'idle', updateExpectedVersion = '';
@@ -1980,6 +2234,7 @@ let quickNotes = {
 };
 let stickyLoading = false, stickyReady = false, stickyDirty = false, stickySaving = false, stickyConflict = false, stickyError = '', stickySaved = '', stickyRequest = 0, stickyGeneration = 0, stickySequence = 0;
 let stickyTimer;
+let stickyReturnView = 'active';
 const stickyColors = [
     [
         'neutral',
@@ -2045,17 +2300,16 @@ function parseAppearance(raw) {
     }
 }
 function installStickyBoard() {
-    element('trash-open').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+    element('trash-open').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-controls="sticky-board" aria-pressed="false">便签</button>');
     element('sticky-tab').parentElement.classList.add('task-navigation');
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="sticky-dialog" aria-labelledby="sticky-title"><section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong id="sticky-title">便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="关闭便签" title="关闭便签">×</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section></dialog>`);
+    element('task-list').insertAdjacentHTML('afterend', `<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
     button('sticky-tab').onclick = openStickyBoard;
-    button('sticky-close').onclick = ()=>element('sticky-dialog').close();
-    element('sticky-dialog').addEventListener('close', ()=>{
-        const entry = button('sticky-tab');
-        entry.setAttribute('aria-expanded', 'false');
-        const target = matchMedia('(max-width:760px)').matches && !element('sidebar').classList.contains('open') ? button('menu') : entry.classList.contains('hidden') ? button('tasks-active') : entry;
-        target.focus();
-    });
+    button('sticky-close').onclick = ()=>closeStickyBoard();
+    const showTrash = button('trash-open').onclick;
+    button('trash-open').onclick = (e)=>{
+        if (taskView === 'sticky') closeStickyBoard(false);
+        showTrash?.call(button('trash-open'), e);
+    };
     button('sticky-expand').onclick = ()=>{
         const board = element('sticky-board'), collapsed = board.dataset.collapsed !== 'true';
         board.dataset.collapsed = String(collapsed);
@@ -2116,17 +2370,38 @@ function installStickyBoard() {
         stickyReady = false;
         void loadStickyBoard();
     }
+    syncStickySidebar();
 }
 function openStickyBoard() {
-    const dialog = element('sticky-dialog');
-    if (dialog.open) return;
-    element('sidebar').classList.remove('open');
-    button('sticky-tab').setAttribute('aria-expanded', 'true');
-    dialog.showModal();
+    if (taskView !== 'sticky') stickyReturnView = taskView === 'archived' ? 'archived' : 'active';
+    taskView = 'sticky';
+    button('search-clear').click();
+    renderList();
+    syncStickySidebar();
     fitQuickNotes();
     const field = element('sticky-body').classList.contains('hidden') ? button('sticky-expand') : element('sticky-list').querySelector('textarea') || button('sticky-new');
     field.focus();
     void loadStickyBoard();
+}
+function closeStickyBoard(focus = true) {
+    taskView = stickyReturnView;
+    renderList();
+    syncStickySidebar();
+    if (focus) button('tasks-' + stickyReturnView).focus();
+}
+function syncStickySidebar() {
+    const board = element('sticky-board');
+    if (!board) return;
+    const active = taskView === 'sticky';
+    board.classList.toggle('hidden', !active);
+    element('task-list').classList.toggle('hidden', active);
+    input('search').classList.toggle('hidden', active);
+    if (active) {
+        element('search-summary').classList.add('hidden');
+        button('search-clear').classList.add('hidden');
+    }
+    button('sticky-tab').classList.toggle('selected', active);
+    button('sticky-tab').setAttribute('aria-pressed', String(active));
 }
 function stickyPayload() {
     return {
@@ -2349,7 +2624,7 @@ function applyAppearance(value) {
     root.style.setProperty('--chat-width', value.width + 'px');
     element('workspace')?.style.setProperty('--tool-width', value.tool + '%');
     element('sticky-tab')?.classList.toggle('hidden', !value.notes);
-    if (!value.notes && element('sticky-dialog')?.open) element('sticky-dialog').close();
+    if (!value.notes && taskView === 'sticky') closeStickyBoard();
     element('task-workspace')?.classList.toggle('hidden', !value.path);
 }
 function installAppearance() {
@@ -3399,7 +3674,7 @@ async function stopCodexApprovalRun(card) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="reset-session" data-task-id="${escapeHTML(t.id)}"${busy || t.archived || !t.session ? ' disabled' : ''} title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function taskEngineMark(engine) {
     if (engine === 'claude') return {
@@ -3573,12 +3848,14 @@ function installLayout() {
     element('task-model-button').title = '本任务使用的 AI 工具、模型和推理强度';
     element('bind-open').insertAdjacentHTML('beforebegin', '<button id="task-handoff" title="切换引擎、账号/API 和模型，接续当前任务">切换 AI</button>');
     button('task-handoff').onclick = ()=>void openHandoff();
-    tabs.append(element('task-handoff'));
-    tabs.insertAdjacentHTML('beforeend', '<button type="button" id="session-reset" class="hidden" title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button>');
+    element('task-actions').insertAdjacentHTML('beforeend', '<button type="button" id="session-reset" class="hidden" title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button>');
     button('bind-open').textContent = '绑定飞书私聊';
-    tabs.append(element('bind-open'), element('hardware-tab'));
-    element('task-actions').remove();
+    tabs.append(element('hardware-tab'));
     element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
+    const actionState = element('task-actions');
+    actionState.className = 'hidden task-action-state';
+    actionState.setAttribute('aria-hidden', 'true');
+    element('session-info-dialog').append(actionState);
     button('session-reset').onclick = ()=>void resetSession();
     button('session-info-close').onclick = ()=>element('session-info-dialog').close();
     element('composer').querySelector('.composer-bottom small').remove();
@@ -3598,6 +3875,8 @@ function installLayout() {
             else if (kind === 'copy-open-command') void copyReopenTaskCommand(id);
             else if (kind === 'fork') void forkTask(id);
             else if (kind === 'handoff') void openHandoff(id);
+            else if (kind === 'reset-session') void openTaskSessionReset(id);
+            else if (kind === 'bind-feishu') void openBinding(id);
             else if (kind === 'session-info') void openSessionInfo(id);
             else if (kind === 'copy-link') void copyTaskLink(id);
             else if (kind === 'rename') void openTaskRename(id);
@@ -3681,6 +3960,11 @@ async function openSessionInfo(id = chosen) {
         renderSessionBanner();
         element('session-info-dialog').showModal();
     }
+}
+async function openTaskSessionReset(id = chosen) {
+    if (!id) return;
+    if (chosen !== id) await choose(id);
+    if (chosen === id && detail?.task.id === id) await resetSession();
 }
 let detectedEnvironments = [];
 let createEnvironmentDiscoveryAt = 0;
@@ -10418,8 +10702,8 @@ function renderShell() {
             notify('便签尚未保存，请等待保存完成或重试后再退出。');
             return;
         }
-        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving) {
-            notify('知识库设置尚未保存，请先保存后再退出。');
+        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || curatedDirty || curatedSaving) {
+            notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');
             return;
         }
         const epoch = shellEpoch;
@@ -10560,6 +10844,7 @@ function setCreatePageVisible(visible) {
 }
 function renderList() {
     if (!element('task-list')) return;
+    syncStickySidebar();
     const query = input('search').value.trim(), archived = tasks.filter((t)=>t.archived).length;
     for (const [view, label, count] of [
         [
@@ -10620,6 +10905,7 @@ async function choose(id, view = 'chat') {
     void loadStickyBoard();
     taskContext = [];
     void loadTaskContext(id);
+    if (taskView === 'sticky') taskView = tasks.find((t)=>t.id === id)?.archived ? 'archived' : 'active';
     element('conversation').innerHTML = '<p id="loading" class="muted">正在读取最近对话…</p>';
     input('message').value = drafts.get(id) || '';
     knowledgeItems = [];
@@ -10727,7 +11013,10 @@ function switchTab(tab) {
     if (tab === 'files') void loadFiles();
     if (tab === 'scratch') void loadScratch();
     if (tab === 'hardware') void loadDevices();
-    if (tab === 'note' && detail) void loadKnowledge();
+    if (tab === 'note' && detail) {
+        void loadKnowledge();
+        void loadWorkspaceMemory();
+    }
 }
 let knowledgeFilter = 'all';
 function knowledgeStateLabel(v) {
@@ -11029,6 +11318,7 @@ async function poll(background = false) {
 }
 async function showCreate() {
     if (!mayLeave()) return;
+    if (taskView === 'sticky') taskView = 'active';
     invalidateModelTest();
     const epoch = shellEpoch;
     try {
