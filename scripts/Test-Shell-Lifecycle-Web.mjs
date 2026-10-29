@@ -19,6 +19,7 @@ const source=[
  extract(app,'async function openSettings(','function environmentPickers('),
  extract(app,'async function saveSettings(','async function openBinding('),
  extract(engines,'async function loadEngineSettings(','function populateEngineProfileForm('),
+ extract(tools,'function settingsNavigation(','async function openSettingsPage('),
  extract(tools,'function showSettingsSection(','function loadAccessSettings('),
 ].join('\n');
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}}
@@ -156,9 +157,11 @@ for(const changed of ['selection','codexApprovalRevision']){
 }
 {
  const f=fixture();let engineLoads=0,updateLoads=0;
- const tabs=['feishu','access','updates'].map(page=>({dataset:{settings:page},classList:{toggle(){}}}));
+ const tabs=['feishu','access','updates'].map(page=>({textContent:page,dataset:{settings:page},classList:{toggle(){}}}));
  const sections=tabs.map(tab=>({id:'settings-'+tab.dataset.settings,classList:{toggle(){}}}));
- f.node('settings-form').querySelector=()=>({querySelectorAll:()=>tabs});
+ const nav={querySelectorAll:()=>tabs,querySelector:selector=>tabs.find(tab=>selector.includes('"'+tab.dataset.settings+'"'))};
+ f.ctx.document.getElementById=id=>id==='workspace-settings'?nav:null;
+ f.node('settings-form').querySelector=()=>f.node('settings-heading');
  f.node('settings-form').querySelectorAll=()=>sections;
  f.ctx.openEngineCenter=()=>engineLoads++;f.ctx.loadUpdateInformation=()=>updateLoads++;
  f.ctx.showSettingsSection('updates');f.ctx.showSettingsSection('feishu');

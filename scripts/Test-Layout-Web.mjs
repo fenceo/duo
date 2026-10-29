@@ -58,7 +58,7 @@ for(const selector of ['.model-manager','.engine-card']){
  assert.equal(declarations(selector)['box-shadow'],'none');
 }
 assert.equal(declarations('.configured-model').background,'var(--canvas)');
-assert.equal(declarations('.settings-nav')['overflow-x'],'auto','settings categories remain reachable at 390px');
+assert.equal(declarations('.workspace-settings').display,'contents','settings categories share the existing toolbar instead of another row');
 assert.equal(declarations('.model-add-row',mobile)['grid-template-columns'],'minmax(0,1fr)');
 assert.equal(declarations('.create-page',mobile).padding,'24px 16px 28px');
 console.log('PASS: narrow sidebar safety; readable task form, separate permissions, model truncation, themed settings, and phone touch/overflow rules.');

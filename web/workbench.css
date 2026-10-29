@@ -452,7 +452,7 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 /* Compact conversation chrome: context on one line, controls below the draft. */
 .header{min-height:48px;padding:8px 22px;gap:12px}
 :root[data-density="compact"] .header{min-height:44px;padding-top:6px;padding-bottom:6px}
-.header .task-heading{flex:1;min-width:0;gap:8px}
+.header>.actions.task-heading{flex:1 1 220px;min-width:0;gap:8px}
 .header .task-identity{display:flex;align-items:center;gap:12px;min-width:0;width:100%}
 .header #task-title{margin:0;flex:0 1 auto;max-width:45%;min-width:3em;font-size:15px;line-height:1.5}
 .header #task-workspace{margin:0;flex:1;min-width:0;font-size:12px;line-height:1.5}
@@ -532,26 +532,27 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 @container (max-width:190px){.sidebar .task-environment{flex:none;width:28px;text-align:right}.sidebar .task-environment-name{display:none}.sidebar .task-environment-short{display:inline}}
 .sidebar .task-path{display:none;max-width:24%;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 @container (min-width:300px){.sidebar .task-path{display:block}}
-.header-utilities{display:flex;align-items:center;gap:10px;flex:none;min-width:0}
+.header{flex-wrap:wrap}
+.header-utilities{display:contents}
 .app>main{container-type:inline-size}
 .header #task-actions,.header-global-actions{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
-.header-global-actions{border-left:1px solid var(--line);padding-left:10px}
-.header #task-actions>button,.header-global-actions>button{padding:5px 8px;min-height:32px;font-size:12px;white-space:nowrap;border-radius:7px}
-.header-global-actions #settings-open{font-weight:600;color:var(--accent)}
+.header-global-actions{flex-wrap:wrap;min-width:0}
+.header #task-actions>button,.header-global-actions>button,.header-global-actions .workspace-settings>button{padding:5px 8px;min-height:32px;font-size:12px;white-space:nowrap;border-radius:7px}
 .header-global-actions #logout{color:var(--muted);background:transparent}
 .header-utilities #connection{font-size:11px;color:var(--muted);max-width:100px}
-.workspace-settings{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:0 22px 8px;border-bottom:1px solid var(--line);flex:none;min-width:0;background:var(--canvas)}
-.workspace-settings>button{flex:none;min-height:32px;padding:5px 10px;border-radius:7px;font-size:12px;white-space:nowrap;background:transparent;color:var(--muted)}
+.workspace-settings{display:contents}
+.workspace-settings>button{background:transparent;color:var(--muted)}
 .workspace-settings>button:hover{background:var(--surface);color:var(--ink)}
+.workspace-settings>button.selected{border-color:var(--accent);color:var(--accent)}
 .knowledge-directory-guide{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
 .knowledge-directory-guide>strong{font-size:13px}.knowledge-directory-guide>code{display:block;overflow-wrap:anywhere;font-size:13px}.knowledge-directory-guide>p{margin:0}
 .knowledge-storage-info{margin-top:18px;border-top:1px solid var(--line);padding-top:16px}.knowledge-storage-info>summary{cursor:pointer;color:var(--muted);font-size:13px}
 @container (max-width:850px){
- .header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}
- .header-utilities{display:contents}.header .task-heading{grid-column:1;grid-row:1}
- .header-global-actions{grid-column:2;grid-row:1;border:0;padding:0}
- .header #task-actions{grid-column:1 / -1;grid-row:2;justify-content:flex-end;flex-wrap:wrap}
- .header-utilities #connection{grid-column:1 / -1;grid-row:3;max-width:none}
+ .header{display:flex;flex-wrap:wrap;gap:4px 12px}
+ .header>.actions.task-heading{flex:1;min-width:0}
+ .header-global-actions{flex:1 0 100%;border:0;padding:0}
+ .header #task-actions{justify-content:flex-end;flex-wrap:wrap}
+ .header-utilities #connection{flex-basis:100%;max-width:none}
 }
 #sticky-board.quick-notes{--sticky-surface:var(--surface);--sticky-row:var(--canvas);height:var(--sticky-height,300px);min-height:180px;max-height:45dvh;flex:none;padding:0;border:1px solid var(--line);border-radius:9px;background:var(--sticky-surface);box-shadow:none;overflow:visible}
 #sticky-board.quick-notes[data-color="yellow"]{--sticky-surface:#fbf5dd;--sticky-row:#fffcf0}
@@ -596,12 +597,11 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 @media(max-width:760px){
  .header{display:flex;padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
- .workspace-settings{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:0 12px 6px;gap:4px}
- .workspace-settings>button{min-height:40px;font-size:12px;padding:7px 10px}
- .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
+ .header-utilities{display:contents}.header>.actions.task-heading{flex:1 0 100%;order:0}
  .header-global-actions{order:1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
  .header #task-actions{order:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%}
- .header #menu,.header #task-actions>button,.header .header-global-actions>button{min-height:44px;min-width:0;font-size:12px;padding:5px 6px}
+ .header #menu,.header #task-actions>button,.header .header-global-actions>button,.header .workspace-settings>button{min-height:44px;min-width:0;font-size:11px;padding:5px 4px}
+ .header-global-actions>button,.header-global-actions .workspace-settings>button{white-space:normal;line-height:1.35;overflow-wrap:anywhere}
  .header #task-actions>button{font-size:11px}
  .header .header-global-actions>#desktop-open{font-size:11px;padding:5px 4px}
  .header-utilities #connection{order:3;max-width:none}

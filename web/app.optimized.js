@@ -3409,10 +3409,7 @@ function installLayout() {
     button('sidebar-close').textContent = '×';
     button('sidebar-close').setAttribute('aria-label', '收起任务列表');
     button('app-version').textContent = appVersion ? 'v' + appVersion : '版本';
-    button('app-version').onclick = async ()=>{
-        await openSettings();
-        showSettingsSection('updates');
-    };
+    button('app-version').onclick = ()=>openSettingsPage('updates');
     const connection = element('connection');
     connection.textContent = '';
     connection.classList.add('hidden');
@@ -3451,6 +3448,7 @@ function installLayout() {
         'bind-open',
         'scratch-tab'
     ])sessionActions.append(element(id));
+    button('bind-open').textContent = '任务绑定';
     element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
     button('scratch-tab').textContent = '本任务待办';
     button('session-reset').onclick = ()=>void resetSession();
@@ -3511,30 +3509,17 @@ function installLayout() {
     element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">D</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
 function installSettingsNavigation() {
-    const source = element('settings-form').querySelector('.settings-nav'), nav = document.createElement('nav');
+    const nav = element('settings-form').querySelector('.settings-nav');
     nav.id = 'workspace-settings';
     nav.className = 'workspace-settings';
-    nav.setAttribute('aria-label', '工作台设置分类，可横向滚动');
-    for (const original of source.querySelectorAll('button')){
-        const page = original.dataset.settings;
-        if (!page && original.id !== 'usage-open') continue;
-        const entry = document.createElement('button');
-        entry.type = 'button';
-        entry.textContent = page === 'knowledge' ? '知识积累' : original.textContent;
+    nav.setAttribute('aria-label', '工作台设置分类');
+    for (const entry of nav.querySelectorAll('button')){
         entry.setAttribute('aria-haspopup', 'dialog');
-        if (page) {
-            entry.dataset.settingsOpen = page;
-            entry.setAttribute('aria-controls', 'settings-dialog');
-            entry.onclick = ()=>openSettingsPage(page);
-        } else {
-            entry.id = 'usage-shortcut';
-            entry.setAttribute('aria-controls', 'usage-dialog');
-            entry.onclick = ()=>openUsageDashboard();
-        }
-        nav.append(entry);
+        entry.setAttribute('aria-controls', entry.dataset.settings ? 'settings-dialog' : 'usage-dialog');
+        if (entry.dataset.settings) entry.onclick = ()=>openSettingsPage(entry.dataset.settings);
     }
-    document.querySelector('.header').after(nav);
-    nav.addEventListener('click', ()=>element('sidebar').classList.remove('open'));
+    nav.onclick = null;
+    element('settings-open').replaceWith(nav);
     disposeWithShell(()=>{
         settingsPageRequest++;
         settingsOpening = null;
@@ -8049,8 +8034,11 @@ function installSettingsSections() {
     footer.classList.add('settings-footer');
 }
 let settingsPageRequest = 0, settingsOpening = null;
+function settingsNavigation() {
+    return document.getElementById('workspace-settings') || element('settings-form').querySelector('.settings-nav');
+}
 async function openSettingsPage(page) {
-    if (!Array.from(element('settings-form').querySelectorAll('[data-settings]')).some((b)=>b.dataset.settings === page)) return;
+    if (!Array.from(settingsNavigation().querySelectorAll('[data-settings]')).some((b)=>b.dataset.settings === page)) return;
     const epoch = shellEpoch, request = ++settingsPageRequest, dialog = element('settings-dialog');
     if (!dialog.open) {
         if (!settingsOpening) {
@@ -8065,11 +8053,18 @@ async function openSettingsPage(page) {
     }
     if (!shellCurrent(epoch) || request !== settingsPageRequest || !dialog.open) return;
     showSettingsSection(page);
+    const visible = (control)=>!control.closest('.hidden,[hidden],details:not([open])') && (control.checkVisibility?.() ?? true);
+    const focused = document.activeElement;
+    if (!focused || !dialog.contains(focused) || !visible(focused)) {
+        const section = element('settings-' + page), target = Array.from(section.querySelectorAll('input:not(:disabled):not([type="hidden"]),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)')).find(visible) || dialog.querySelector('[data-close="settings-dialog"]');
+        target?.focus();
+    }
 }
 function showSettingsSection(page) {
     if (page === 'engines') page = 'environment';
-    const nav = element('settings-form').querySelector('.settings-nav');
+    const nav = settingsNavigation();
     nav.querySelectorAll('button[data-settings]').forEach((b)=>b.classList.toggle('selected', b.dataset.settings === page));
+    element('settings-form').querySelector('h2').textContent = nav.querySelector('button[data-settings="' + page + '"]')?.textContent || '工作台设置';
     element('settings-form').querySelectorAll('.settings-section').forEach((section)=>section.classList.toggle('hidden', section.id !== 'settings-' + page));
     button('settings-save').classList.toggle('hidden', page === 'updates' || page === 'engines' || page === 'data' || page === 'knowledge');
     if (page === 'feishu' || page === 'access' || page === 'data') {} else if (page === 'updates') void loadUpdateInformation();
@@ -10172,7 +10167,6 @@ function renderShell() {
         }
     };
     button('sidebar-close').onclick = ()=>element('sidebar').classList.remove('open');
-    button('settings-open').onclick = openSettings;
     button('chat-tab').onclick = ()=>switchTab('chat');
     button('note-tab').onclick = ()=>switchTab('note');
     input('create-environment').onchange = ()=>void loadCreateEnvironment();

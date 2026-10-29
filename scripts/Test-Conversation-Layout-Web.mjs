@@ -22,11 +22,12 @@ assert.equal(node('session-info-open'),null,'diagnostics do not occupy a header 
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="session-info"/);
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="copy-link"/);
 assert(!node('app-menu')&&!node('task-session-menu'),'header actions have no menu gate');
-for(const id of ['settings-open','theme-toggle','library-open','logout']){
+for(const id of ['theme-toggle','library-open','logout']){
  assert.equal(node(id).parentElement,node('app-menu-items'));
  assert.equal(node(id).closest('details'),null);
 }
-await node('settings-open').onclick();assert(node('settings-dialog').open,'one click opens settings without selecting a task');node('settings-dialog').close();
+assert.equal(node('settings-open'),null,'direct categories replace the generic settings button');
+await document.querySelector('[data-settings="access"]').onclick();assert(node('settings-dialog').open,'one click opens its settings category without selecting a task');node('settings-dialog').close();
 node('theme-toggle').onclick();assert(node('appearance-dialog').open,'one click opens appearance');node('appearance-dialog').close();
 runInContext(`
  chosen='compact-fixture';

@@ -76,8 +76,9 @@ function installSettingsSections(){
  input('access-lan').oninput=renderAccessPreview;input('access-tailscale').oninput=renderAccessPreview;footer.classList.add('settings-footer');
 }
 let settingsPageRequest=0,settingsOpening:Promise<void>|null=null;
+function settingsNavigation(){return document.getElementById('workspace-settings')||element('settings-form').querySelector<HTMLElement>('.settings-nav')!}
 async function openSettingsPage(page:string){
- if(!Array.from(element('settings-form').querySelectorAll<HTMLButtonElement>('[data-settings]')).some(b=>b.dataset.settings===page))return;
+ if(!Array.from(settingsNavigation().querySelectorAll<HTMLButtonElement>('[data-settings]')).some(b=>b.dataset.settings===page))return;
  const epoch=shellEpoch,request=++settingsPageRequest,dialog=element<HTMLDialogElement>('settings-dialog');
  if(!dialog.open){
   if(!settingsOpening){const opening=openSettings();settingsOpening=opening;try{await opening}finally{if(settingsOpening===opening)settingsOpening=null}}
@@ -85,11 +86,19 @@ async function openSettingsPage(page:string){
  }
  if(!shellCurrent(epoch)||request!==settingsPageRequest||!dialog.open)return;
  showSettingsSection(page);
+ const visible=(control:HTMLElement)=>!control.closest('.hidden,[hidden],details:not([open])')&&(control.checkVisibility?.()??true);
+ const focused=document.activeElement as HTMLElement|null;
+ // showModal may have focused the previous category before it was hidden.
+ if(!focused||!dialog.contains(focused)||!visible(focused)){
+  const section=element('settings-'+page),target=Array.from(section.querySelectorAll<HTMLElement>('input:not(:disabled):not([type="hidden"]),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)')).find(visible)||dialog.querySelector<HTMLElement>('[data-close="settings-dialog"]');
+  target?.focus();
+ }
 }
 function showSettingsSection(page:string){
  if(page==='engines')page='environment';
- const nav=element('settings-form').querySelector('.settings-nav')!;
+ const nav=settingsNavigation();
  nav.querySelectorAll<HTMLButtonElement>('button[data-settings]').forEach(b=>b.classList.toggle('selected',b.dataset.settings===page));
+ element('settings-form').querySelector('h2')!.textContent=nav.querySelector<HTMLButtonElement>('button[data-settings="'+page+'"]')?.textContent||'工作台设置';
  element('settings-form').querySelectorAll<HTMLElement>('.settings-section').forEach(section=>section.classList.toggle('hidden',section.id!=='settings-'+page));
  button('settings-save').classList.toggle('hidden',page==='updates'||page==='engines'||page==='data'||page==='knowledge');
  if(page==='feishu'||page==='access'||page==='data'){/* settings-only pages */}

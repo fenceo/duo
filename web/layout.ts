@@ -42,7 +42,7 @@ function installLayout(){
  utilities.append(globalActions);document.querySelector('.header')!.append(utilities);
  const brand=document.querySelector('#sidebar .brand')!;brand.innerHTML='<div class="logo" aria-label="Duo">D</div><strong>Duo</strong><button type="button" id="app-version" title="查看版本与更新">版本</button>';
  brand.append(element('sidebar-close'));button('sidebar-close').textContent='×';button('sidebar-close').setAttribute('aria-label','收起任务列表');
- button('app-version').textContent=appVersion?'v'+appVersion:'版本';button('app-version').onclick=async()=>{await openSettings();showSettingsSection('updates')};
+ button('app-version').textContent=appVersion?'v'+appVersion:'版本';button('app-version').onclick=()=>openSettingsPage('updates');
  const connection=element('connection');connection.textContent='';connection.classList.add('hidden');connection.setAttribute('role','status');utilities.prepend(connection);footer.remove();
  globalActions.addEventListener('click',e=>{if((e.target as HTMLElement).closest('button'))element('sidebar').classList.remove('open')});
  button('theme-toggle').onclick=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('jianzuo-theme',next)}catch{}};
@@ -55,6 +55,7 @@ function installLayout(){
  const sessionActions=element('task-actions');sessionActions.classList.add('header-session-actions');sessionActions.setAttribute('role','group');sessionActions.setAttribute('aria-label','当前会话操作');
  sessionActions.insertAdjacentHTML('afterbegin','<button type="button" id="session-reset" class="hidden">新建会话</button>');
  for(const id of ['task-handoff','bind-open','scratch-tab'])sessionActions.append(element(id));
+ button('bind-open').textContent='任务绑定';
  element('root').insertAdjacentHTML('beforeend','<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
  button('scratch-tab').textContent='本任务待办';button('session-reset').onclick=()=>void resetSession();
  button('session-info-close').onclick=()=>element<HTMLDialogElement>('session-info-dialog').close();
@@ -89,20 +90,16 @@ function installLayout(){
  element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';
  element('conversation').querySelector('.empty')!.innerHTML='<div class="empty-mark">D</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
-// Keep each settings category directly reachable from the workbench. The
-// dialog remains the only editor so shortcuts share drafts and save behavior.
+// Move the original category buttons into the existing toolbar, replacing the
+// generic settings entry. The dialog remains the single settings editor.
 function installSettingsNavigation(){
- const source=element('settings-form').querySelector('.settings-nav')!,nav=document.createElement('nav');
- nav.id='workspace-settings';nav.className='workspace-settings';nav.setAttribute('aria-label','工作台设置分类，可横向滚动');
- for(const original of source.querySelectorAll<HTMLButtonElement>('button')){
-  const page=original.dataset.settings;if(!page&&original.id!=='usage-open')continue;
-  const entry=document.createElement('button');entry.type='button';entry.textContent=page==='knowledge'?'知识积累':original.textContent;entry.setAttribute('aria-haspopup','dialog');
-  if(page){entry.dataset.settingsOpen=page;entry.setAttribute('aria-controls','settings-dialog');entry.onclick=()=>openSettingsPage(page)}
-  else{entry.id='usage-shortcut';entry.setAttribute('aria-controls','usage-dialog');entry.onclick=()=>openUsageDashboard()}
-  nav.append(entry);
+ const nav=element('settings-form').querySelector<HTMLElement>('.settings-nav')!;
+ nav.id='workspace-settings';nav.className='workspace-settings';nav.setAttribute('aria-label','工作台设置分类');
+ for(const entry of nav.querySelectorAll<HTMLButtonElement>('button')){
+  entry.setAttribute('aria-haspopup','dialog');entry.setAttribute('aria-controls',entry.dataset.settings?'settings-dialog':'usage-dialog');
+  if(entry.dataset.settings)entry.onclick=()=>openSettingsPage(entry.dataset.settings!);
  }
- document.querySelector('.header')!.after(nav);
- nav.addEventListener('click',()=>element('sidebar').classList.remove('open'));
+ nav.onclick=null;element('settings-open').replaceWith(nav);
  disposeWithShell(()=>{settingsPageRequest++;settingsOpening=null});
 }
 // Apply before authentication to avoid a dark login screen flashing first.

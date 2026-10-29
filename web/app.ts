@@ -139,7 +139,7 @@ function renderShell(){
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
  button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
- button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('settings-open').onclick=openSettings;button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
+ button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
  input('message').oninput=()=>{drafts.set(chosen,input('message').value);updateComposerSendState()};input('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();element<HTMLFormElement>('composer').requestSubmit()}};

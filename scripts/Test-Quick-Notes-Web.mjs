@@ -9,7 +9,8 @@ assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true');
 assert.equal(node('sticky-board').parentElement,node('sidebar'));
 assert(!node('workspace-open'));assert(!node('sidebar-footer'));
 assert.equal(node('library-open').parentElement,node('app-menu-items'));
-for(const id of ['settings-open','theme-toggle','logout']){assert.equal(node(id).parentElement,node('app-menu-items'));assert.equal(node(id).closest('details'),null)}
+for(const id of ['workspace-settings','theme-toggle','logout']){assert.equal(node(id).parentElement,node('app-menu-items'));assert.equal(node(id).closest('details'),null)}
+assert.equal(node('settings-open'),null);
 assert.match(node('app-version').textContent,/^v/);
 assert.equal(node('scratch-tab').parentElement,node('task-actions'),'existing task todos remain directly accessible');
 assert(!node('scratch-tab').classList.contains('hidden'));

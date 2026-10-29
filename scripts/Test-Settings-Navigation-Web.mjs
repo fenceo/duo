@@ -5,14 +5,20 @@ import assert from 'node:assert/strict';
 
 const {document,ctx,requests}=await createWebShellFixture(),node=id=>document.getElementById(id),run=code=>runInContext(code,ctx);
 const nav=node('workspace-settings');
-assert(nav,'settings shortcuts are visible without selecting a task');
-assert.equal(nav.previousElementSibling,document.querySelector('.header'));
+assert(nav,'settings categories are visible without selecting a task');
+assert.equal(nav.parentElement,node('app-menu-items'),'categories replace settings in its existing toolbar');
+assert.equal(node('settings-open'),null,'generic settings entry is replaced');
+assert.equal(node('usage-shortcut'),null,'usage is moved rather than duplicated');
+assert.equal(node('settings-form').querySelector('.settings-nav'),null,'the dialog has no duplicate category navigation');
+assert.equal(node('settings-form').querySelector('[data-settings]'),null,'category buttons have moved out of the dialog');
+assert.equal(document.querySelector('.header').nextElementSibling,node('tabs'),'there is no standalone settings row');
 assert.equal(nav.closest('details'),null,'settings categories do not require opening a menu');
-const pages=[...document.querySelectorAll('.settings-nav [data-settings]')].map(button=>button.dataset.settings);
+const pages=[...nav.querySelectorAll('[data-settings]')].map(button=>button.dataset.settings);
 assert(pages.length>=5);
 for(const page of pages){
- const shortcuts=nav.querySelectorAll('[data-settings-open="'+page+'"]');
- assert.equal(shortcuts.length,1,'one direct shortcut per settings category');
+ const shortcuts=document.querySelectorAll('[data-settings="'+page+'"]');
+ assert.equal(shortcuts.length,1,'one original button per settings category');
+ assert.equal(shortcuts[0].parentElement,nav);
  assert.equal(shortcuts[0].getAttribute('aria-controls'),'settings-dialog');
  assert.equal(shortcuts[0].getAttribute('aria-haspopup'),'dialog');
 }
@@ -20,13 +26,16 @@ let knowledgeLoads=0,updateLoads=0,usageOpens=0;
 ctx.loadKnowledgeSettings=async()=>{knowledgeLoads++};ctx.loadUpdateInformation=async()=>{updateLoads++};ctx.openUsageDashboard=async()=>{usageOpens++};
 for(const page of pages){
  node('settings-dialog').close();
- await nav.querySelector('[data-settings-open="'+page+'"]').onclick();
+ await nav.querySelector('[data-settings="'+page+'"]').onclick();
  assert(node('settings-dialog').open,'shortcut opens its existing dialog');
  assert(!node('settings-'+page).classList.contains('hidden'),page+' opens directly');
  assert(document.querySelector('[data-settings="'+page+'"]').classList.contains('selected'));
+ assert.equal(node('settings-form').querySelector('h2').textContent,nav.querySelector('[data-settings="'+page+'"]').textContent,'dialog title identifies the current category');
 }
 assert(knowledgeLoads>0);assert(updateLoads>0);
-await node('usage-shortcut').onclick();assert.equal(usageOpens,1,'usage opens directly');
+await node('usage-open').onclick();assert.equal(usageOpens,1,'original usage button opens directly');
+assert.equal(node('bind-open').textContent,'任务绑定');
+assert.equal([...document.querySelectorAll('.header button')].filter(button=>button.textContent==='飞书连接').length,1,'global Feishu configuration and task binding have distinct labels');
 
 // Changing the visible section must preserve edits and reuse the same editor.
 await ctx.openSettingsPage('feishu');node('feishu-id').value='unsaved fixture app';node('setting-workspaces').value='/unsaved-fixture';
@@ -55,9 +64,10 @@ assert.match(section.textContent,/可留空使用默认目录/);assert.match(nod
 for(const id of ['vault-enabled','vault-automatic','automatic-capture','automatic-organize'])assert(node(id));
 
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');
-assert.match(css,/\.workspace-settings\{[^}]*flex-wrap:wrap/,'desktop categories can wrap without clipping');
-assert.match(css,/\.workspace-settings\{[^}]*flex-wrap:nowrap;overflow-x:auto/,'phone categories remain reachable by horizontal scroll');
-assert.match(css,/\.workspace-settings>button\{min-height:40px/,'phone controls retain touch targets');
+assert.match(css,/\.workspace-settings\{display:contents\}/,'moved categories share the original toolbar layout');
+assert.match(css,/\.header-global-actions\{[^}]*flex-wrap:wrap/,'desktop toolbar can wrap naturally');
+assert.match(css,/\.header-global-actions\{[^}]*display:grid;grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/,'phone toolbar keeps all categories visible');
+assert.match(css,/\.header \.workspace-settings>button\{min-height:44px/,'phone categories retain touch targets');
 
 ctx.location.search='?settings=access';await ctx.boot();
 assert(node('settings-dialog').open,'access deep link still opens settings');
@@ -65,4 +75,4 @@ assert(!node('settings-access').classList.contains('hidden'));
 assert.equal(document.querySelectorAll('#workspace-settings').length,1,'fresh login does not duplicate shortcut bars');
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 run('authenticated=false;renewShellScope()');
-console.log('PASS: all settings categories open directly from the top bar; one editor preserves drafts, concurrent opens select the latest category, knowledge setup is directory-first, mobile scrolling and access deep links remain available. Synthetic only.');
+console.log('PASS: original category buttons replace settings in the existing toolbar without duplicated controls or a second navigation row; one editor preserves drafts, concurrent opens, task binding and access deep links. Synthetic only.');
