@@ -1,9 +1,11 @@
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
-let libraryLoading = false, libraryNextOffset = 0, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
+let libraryLoading = false, libraryBrowseStarted = false, libraryNextOffset = 0, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
 let libraryPreviewID = '', libraryPreviewText = '', libraryPreviewLimit = 20000;
 let automaticSettingsRequest = 0, automaticSettingsReady = false, automaticSettingsSaving = false;
 let vaultSettingsRequest = 0, vaultSettingsReady = false, vaultSettingsSaving = false, vaultRefreshing = false;
+let automaticSettingsDirty = false, vaultSettingsDirty = false, knowledgeSettingsRequest = 0;
+let knowledgeSettingsLoading = null;
 function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
@@ -17,10 +19,9 @@ function installLibrary() {
     installLibrarySettings();
     const headerActions = document.createElement('div');
     headerActions.className = 'library-header-actions';
-    headerActions.innerHTML = '<button type="button" id="library-manage-task">管理本任务知识</button><button type="button" id="library-settings-open">知识库设置</button>';
+    headerActions.innerHTML = '<button type="button" id="library-manage-task">管理本任务知识</button>';
     button('library-close').before(headerActions);
     headerActions.append(button('library-close'));
-    button('library-settings-open').onclick = ()=>void openLibrarySettings();
     headerActions.insertAdjacentHTML('afterbegin', '<button type="button" id="library-refresh-files">刷新文件</button>');
     button('library-refresh-files').onclick = async ()=>{
         const epoch = shellEpoch, b = button('library-refresh-files');
@@ -67,6 +68,7 @@ function installLibrary() {
     button('vault-save').onclick = ()=>void saveVault();
     button('vault-refresh').onclick = ()=>void refreshVault();
     installLibraryBrowser();
+    installLibraryPages();
     disposeWithShell(()=>{
         libraryRequest++;
         libraryOverviewRequest++;
@@ -74,6 +76,7 @@ function installLibrary() {
         libraryCitationRequest++;
         libraryCitationBusy = false;
         libraryLoading = false;
+        libraryBrowseStarted = false;
         libraryTarget = null;
         libraryHits = [];
         knowledgeEditTarget = null;
@@ -82,10 +85,14 @@ function installLibrary() {
         automaticSettingsRequest++;
         automaticSettingsReady = false;
         automaticSettingsSaving = false;
+        automaticSettingsDirty = false;
         vaultSettingsRequest++;
         vaultSettingsReady = false;
         vaultSettingsSaving = false;
         vaultRefreshing = false;
+        vaultSettingsDirty = false;
+        knowledgeSettingsRequest++;
+        knowledgeSettingsLoading = null;
     });
 }
 function installLibraryBrowser() {
@@ -246,9 +253,7 @@ async function loadLibraryOverview() {
     element('library-overview').innerHTML = parts.map((s)=>'<span>' + escapeHTML(s) + '</span>').join('');
 }
 function installLibrarySettings() {
-    const nav = element('settings-form').querySelector('.settings-nav');
-    nav.querySelector('[data-settings="data"]').insertAdjacentHTML('afterend', '<button type="button" data-settings="knowledge">知识积累</button>');
-    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-knowledge" class="settings-section hidden"><h3>知识积累</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
+    element('library-dialog').insertAdjacentHTML('beforeend', `<section id="settings-knowledge" class="library-settings-panel hidden" aria-label="积累设置"><h3>积累设置</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
     const section = element('settings-knowledge');
     for (const id of [
         'vault-settings',
@@ -273,23 +278,103 @@ function installLibrarySettings() {
             void saveVault();
         }
     };
+    for (const id of [
+        'vault-directory',
+        'vault-enabled',
+        'vault-runs',
+        'vault-automatic'
+    ])input(id).oninput = input(id).onchange = ()=>{
+        vaultSettingsDirty = true;
+        element('vault-status').textContent = '路径与同步设置尚未保存。';
+    };
+    for (const id of [
+        'automatic-capture',
+        'automatic-organize',
+        'automatic-recall'
+    ])input(id).onchange = ()=>{
+        automaticSettingsDirty = true;
+        element('automatic-status').textContent = '自动记录与整理设置尚未保存。';
+    };
     setVaultControlsDisabled(true);
 }
+function installLibraryPages() {
+    const dialog = element('library-dialog'), section = element('settings-knowledge'), header = dialog.querySelector('.library-header');
+    const browse = document.createElement('section');
+    browse.id = 'library-browse-panel';
+    browse.setAttribute('aria-label', '浏览资料');
+    for (const node of Array.from(dialog.children))if (node !== header && node !== section) browse.append(node);
+    header.insertAdjacentHTML('afterend', '<nav class="library-pages" aria-label="知识库页面"><button type="button" id="library-browse-open" class="selected" aria-pressed="true" aria-controls="library-browse-panel">浏览资料</button><button type="button" id="library-settings-open" aria-pressed="false" aria-controls="settings-knowledge">积累设置</button></nav>');
+    dialog.append(browse, section);
+    button('library-browse-open').onclick = ()=>{
+        showLibraryPage('browse');
+        void loadLibraryOverview();
+        if (!libraryBrowseStarted) void searchLibrary();
+        input('library-query').focus();
+    };
+    button('library-settings-open').onclick = ()=>void openLibrarySettings();
+    dialog.addEventListener('close', ()=>{
+        libraryBrowseStarted = false;
+        if (!automaticSettingsSaving && !automaticSettingsDirty) {
+            automaticSettingsRequest++;
+            automaticSettingsReady = false;
+        }
+        if (!vaultSettingsSaving && !vaultRefreshing && !vaultSettingsDirty) {
+            vaultSettingsRequest++;
+            vaultSettingsReady = false;
+        }
+        knowledgeSettingsRequest++;
+        knowledgeSettingsLoading = null;
+    });
+}
+function showLibraryPage(page) {
+    const setup = page === 'settings';
+    element('library-browse-panel').classList.toggle('hidden', setup);
+    element('settings-knowledge').classList.toggle('hidden', !setup);
+    for (const id of [
+        'library-browse-open',
+        'library-settings-open'
+    ]){
+        const active = id === 'library-settings-open' === setup;
+        button(id).classList.toggle('selected', active);
+        button(id).setAttribute('aria-pressed', String(active));
+    }
+    button('library-refresh-files').classList.toggle('hidden', setup);
+    button('library-manage-task').classList.toggle('hidden', setup);
+}
 async function openLibrarySettings() {
-    const epoch = shellEpoch;
-    element('library-dialog').close();
-    await openSettings();
-    if (!shellCurrent(epoch) || !element('settings-dialog').open) return;
-    if (element('settings-knowledge').classList.contains('hidden')) showSettingsSection('knowledge');
+    const epoch = shellEpoch, dialog = element('library-dialog');
+    if (!dialog.open) {
+        await openLibrary(undefined, 'settings');
+        return;
+    }
+    showLibraryPage('settings');
+    button('library-settings-open').focus();
+    await loadKnowledgeSettings();
+    if (!shellCurrent(epoch) || !dialog.open || element('settings-knowledge').classList.contains('hidden')) return;
 }
 async function loadKnowledgeSettings() {
-    element('knowledge-data-directory').textContent = settings.data_dir || '未能读取当前数据目录';
-    await Promise.all([
-        loadAutomaticKnowledge(),
-        loadVault()
-    ]);
+    if (knowledgeSettingsLoading) return knowledgeSettingsLoading;
+    const epoch = shellEpoch, request = ++knowledgeSettingsRequest;
+    element('knowledge-data-directory').textContent = settings.data_dir || '正在读取当前数据目录…';
+    const loading = (async ()=>{
+        const results = await Promise.allSettled([
+            api('settings', 'GET', undefined, shellController.signal),
+            automaticSettingsReady ? Promise.resolve() : loadAutomaticKnowledge(),
+            vaultSettingsReady ? Promise.resolve() : loadVault()
+        ]);
+        if (request !== knowledgeSettingsRequest || !shellCurrent(epoch)) return;
+        const location1 = results[0];
+        element('knowledge-data-directory').textContent = location1.status === 'fulfilled' ? location1.value.data_dir || '未能读取当前数据目录' : '当前数据目录读取失败；可在“数据与存储”查看。';
+    })();
+    knowledgeSettingsLoading = loading;
+    try {
+        await loading;
+    } finally{
+        if (knowledgeSettingsLoading === loading) knowledgeSettingsLoading = null;
+    }
 }
-async function openLibrary(taskScope) {
+async function openLibrary(taskScope, page = 'browse') {
+    const epoch = shellEpoch;
     libraryTarget = {
         task: chosen,
         create: creatingTask,
@@ -308,10 +393,18 @@ async function openLibrary(taskScope) {
             b.setAttribute('aria-pressed', String(on));
         });
     }
-    element('library-dialog').showModal();
+    showLibraryPage(page);
+    const dialog = element('library-dialog');
+    if (!dialog.open) dialog.showModal();
     button('library-manage-task').disabled = !chosen || creatingTask || !detail;
+    if (page === 'settings') {
+        button('library-settings-open').focus();
+        await loadKnowledgeSettings();
+        return;
+    }
     void loadLibraryOverview();
     await searchLibrary();
+    if (!shellCurrent(epoch) || !dialog.open || element('library-browse-panel').classList.contains('hidden')) return;
     input('library-query').focus();
 }
 function setAutomaticSettingsDisabled(disabled) {
@@ -323,7 +416,7 @@ function setAutomaticSettingsDisabled(disabled) {
     ])input(id).disabled = disabled;
 }
 async function loadAutomaticKnowledge() {
-    if (automaticSettingsSaving) return;
+    if (automaticSettingsSaving || automaticSettingsDirty) return;
     const token = ++automaticSettingsRequest, epoch = shellEpoch;
     automaticSettingsReady = false;
     setAutomaticSettingsDisabled(true);
@@ -353,7 +446,10 @@ async function saveAutomaticKnowledge() {
             recall: input('automatic-recall').checked,
             organize: input('automatic-organize').checked
         });
-        if (token === automaticSettingsRequest && shellCurrent(epoch)) element('automatic-status').textContent = '设置已保存。关闭不会删除已有知识，也不会从原生会话中移除之前已带入的内容。';
+        if (token === automaticSettingsRequest && shellCurrent(epoch)) {
+            automaticSettingsDirty = false;
+            element('automatic-status').textContent = '设置已保存。关闭不会删除已有知识，也不会从原生会话中移除之前已带入的内容。';
+        }
     } catch (e) {
         if (token === automaticSettingsRequest && shellCurrent(epoch)) element('automatic-status').textContent = '保存失败，请重试：' + e.message;
     } finally{
@@ -367,6 +463,7 @@ async function searchLibrary(append = false) {
     if (append && libraryLoading) return;
     const token = ++libraryRequest, epoch = shellEpoch;
     libraryLoading = true;
+    libraryBrowseStarted = true;
     if (!append) {
         libraryHits = [];
         libraryNextOffset = 0;
@@ -544,7 +641,7 @@ function showVaultLocation(directory, enabled) {
     element('vault-document-directory').textContent = directory ? directory + (enabled ? '' : '（同步未启用）') : '尚未设置有效的知识文件根目录';
 }
 async function loadVault() {
-    if (vaultSettingsSaving || vaultRefreshing) return;
+    if (vaultSettingsSaving || vaultRefreshing || vaultSettingsDirty) return;
     const epoch = shellEpoch, token = ++vaultSettingsRequest;
     vaultSettingsReady = false;
     setVaultControlsDisabled(true);
@@ -579,6 +676,7 @@ async function saveVault() {
             task_folders: true
         });
         if (token !== vaultSettingsRequest || !shellCurrent(epoch)) return;
+        vaultSettingsDirty = false;
         showVaultLocation(saved.document_directory, saved.enabled);
         element('vault-status').textContent = '设置已保存，正在同步…';
         await syncVaultView(epoch, token);
@@ -1948,7 +2046,14 @@ function parseAppearance(raw) {
     }
 }
 function installStickyBoard() {
-    element('task-list').insertAdjacentHTML('afterend', `<section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong>便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
+    element('hardware-tab').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-haspopup="dialog" aria-controls="sticky-dialog" aria-expanded="false">便签</button>');
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="sticky-dialog" aria-labelledby="sticky-title"><section id="sticky-board" class="sticky-board quick-notes" data-collapsed="false" aria-label="共用便签"><header><strong id="sticky-title">便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="关闭便签" title="关闭便签">×</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section></dialog>`);
+    button('sticky-tab').onclick = openStickyBoard;
+    button('sticky-close').onclick = ()=>element('sticky-dialog').close();
+    element('sticky-dialog').addEventListener('close', ()=>{
+        button('sticky-tab').setAttribute('aria-expanded', 'false');
+        button('sticky-tab').focus();
+    });
     button('sticky-expand').onclick = ()=>{
         const board = element('sticky-board'), collapsed = board.dataset.collapsed !== 'true';
         board.dataset.collapsed = String(collapsed);
@@ -2009,6 +2114,16 @@ function installStickyBoard() {
         stickyReady = false;
         void loadStickyBoard();
     }
+}
+function openStickyBoard() {
+    const dialog = element('sticky-dialog');
+    if (dialog.open) return;
+    button('sticky-tab').setAttribute('aria-expanded', 'true');
+    dialog.showModal();
+    fitQuickNotes();
+    const field = element('sticky-body').classList.contains('hidden') ? button('sticky-expand') : element('sticky-list').querySelector('textarea') || button('sticky-new');
+    field.focus();
+    void loadStickyBoard();
 }
 function stickyPayload() {
     return {
@@ -2230,7 +2345,8 @@ function applyAppearance(value) {
     if (element('sidebar')) element('sidebar').dataset.narrow = String(value.sidebar < 220);
     root.style.setProperty('--chat-width', value.width + 'px');
     element('workspace')?.style.setProperty('--tool-width', value.tool + '%');
-    element('sticky-board')?.classList.toggle('hidden', !value.notes);
+    element('sticky-tab')?.classList.toggle('hidden', !value.notes);
+    if (!value.notes && element('sticky-dialog')?.open) element('sticky-dialog').close();
     element('task-workspace')?.classList.toggle('hidden', !value.path);
 }
 function installAppearance() {
@@ -2239,7 +2355,7 @@ function installAppearance() {
         if (!localStorage.getItem('jianzuo-appearance-v1') && localStorage.getItem('jianzuo-theme') === 'dark') appearance.theme = 'dark';
     } catch  {}
     applyAppearance(appearance);
-    element('root').insertAdjacentHTML('beforeend', `<dialog id="appearance-dialog"><form id="appearance-form"><h2>调整界面</h2><div class="form-grid"><div><label for="appearance-theme">主题</label><select id="appearance-theme"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div><div><label for="appearance-accent">强调色</label><select id="appearance-accent"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option></select></div></div><label for="appearance-font">对话字号</label><input id="appearance-font" type="range" min="12" max="18" step="1"><label for="appearance-sidebar">任务侧栏宽度</label><input id="appearance-sidebar" type="range" min="180" max="420" step="5"><label for="appearance-tool">左右工具栏宽度</label><input id="appearance-tool" type="range" min="22" max="75" step="1"><label for="appearance-width">对话内容宽度</label><input id="appearance-width" type="range" min="640" max="1100" step="20"><label class="check-row"><input id="appearance-notes" type="checkbox">常驻便签</label><label class="check-row"><input id="appearance-compact" type="checkbox">紧凑布局</label><label class="check-row"><input id="appearance-path" type="checkbox">显示任务工作路径</label><p>即时预览，保存到当前浏览器。</p><div class="dialog-footer"><button type="button" id="appearance-layout">恢复默认布局</button><button type="button" id="appearance-reset">恢复默认</button><button type="button" id="appearance-cancel">取消</button><button class="primary">保存</button></div></form></dialog>`);
+    element('root').insertAdjacentHTML('beforeend', `<dialog id="appearance-dialog"><form id="appearance-form"><h2>调整界面</h2><div class="form-grid"><div><label for="appearance-theme">主题</label><select id="appearance-theme"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div><div><label for="appearance-accent">强调色</label><select id="appearance-accent"><option value="blue">蓝色</option><option value="green">绿色</option><option value="purple">紫色</option></select></div></div><label for="appearance-font">对话字号</label><input id="appearance-font" type="range" min="12" max="18" step="1"><label for="appearance-sidebar">任务侧栏宽度</label><input id="appearance-sidebar" type="range" min="180" max="420" step="5"><label for="appearance-tool">左右工具栏宽度</label><input id="appearance-tool" type="range" min="22" max="75" step="1"><label for="appearance-width">对话内容宽度</label><input id="appearance-width" type="range" min="640" max="1100" step="20"><label class="check-row"><input id="appearance-notes" type="checkbox">显示便签入口</label><label class="check-row"><input id="appearance-compact" type="checkbox">紧凑布局</label><label class="check-row"><input id="appearance-path" type="checkbox">显示任务工作路径</label><p>即时预览，保存到当前浏览器。</p><div class="dialog-footer"><button type="button" id="appearance-layout">恢复默认布局</button><button type="button" id="appearance-reset">恢复默认</button><button type="button" id="appearance-cancel">取消</button><button class="primary">保存</button></div></form></dialog>`);
     button('theme-toggle').onclick = ()=>{
         fillAppearance(appearance);
         element('appearance-dialog').showModal();
@@ -3433,6 +3549,12 @@ function installLayout() {
     tabs.append(element('note-tab'));
     button('files-tab').textContent = '文件';
     button('hardware-tab').textContent = '硬件';
+    const workspaceTools = document.createElement('nav');
+    workspaceTools.id = 'workspace-tools';
+    workspaceTools.className = 'workspace-tools';
+    workspaceTools.setAttribute('aria-label', '便签与硬件');
+    workspaceTools.append(element('hardware-tab'));
+    utilities.insertBefore(workspaceTools, globalActions);
     const model = element('task-model');
     element('composer').querySelector('.composer-bottom').prepend(model);
     element('task-model-button').title = '本任务使用的 AI 工具、模型和推理强度';
@@ -3445,12 +3567,10 @@ function installLayout() {
     sessionActions.insertAdjacentHTML('afterbegin', '<button type="button" id="session-reset" class="hidden">新建会话</button>');
     for (const id of [
         'task-handoff',
-        'bind-open',
-        'scratch-tab'
+        'bind-open'
     ])sessionActions.append(element(id));
     button('bind-open').textContent = '任务绑定';
     element('root').insertAdjacentHTML('beforeend', '<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
-    button('scratch-tab').textContent = '本任务待办';
     button('session-reset').onclick = ()=>void resetSession();
     button('session-info-close').onclick = ()=>element('session-info-dialog').close();
     element('composer').querySelector('.composer-bottom small').remove();
@@ -5262,7 +5382,8 @@ async function openEditor(id = chosen, reference) {
 let hardwareView = null, hardwarePortsRequest = 0, hardwareEditingTask = '', hardwareLoadRequest = 0;
 let hardwarePollTimer, hardwareSaving = false;
 const hardwareDrafts = new Map();
-let hardwareAIGrants = {}, hardwareAIEditing = null;
+let hardwareAIGrants = {}, hardwareAIConfigured = {}, hardwareAIEditing = null, hardwareAIRevision = 0;
+const hardwareAIDefaults = new Set();
 let hardwareOverview = [], hardwareOverviewTask = '', hardwareAISaving = false, hardwareLibraryAttaching = false;
 function hexBytes(hex) {
     return Uint8Array.from(hex.match(/.{1,2}/g) || [], (pair)=>parseInt(pair, 16));
@@ -5300,6 +5421,7 @@ function installHardware() {
     button('hardware-library-close').onclick = ()=>element('hardware-library-dialog').close();
     element('device-library').insertAdjacentHTML('afterend', '<button id="device-ai">AI 使用</button><button id="device-refresh" title="重新读取设备与权限" aria-label="刷新设备">↻</button>');
     button('device-refresh').onclick = ()=>void loadDevices();
+    button('device-ai').title = '打开或连接设备时默认供本任务 AI 使用；可在此调整或关闭权限';
     element('hardware-library-list').onclick = (e)=>{
         const b = e.target.closest('button');
         if (!b) return;
@@ -5311,6 +5433,7 @@ function installHardware() {
         }
     };
     element('root').insertAdjacentHTML('beforeend', `<dialog id="hardware-ai-dialog"><form id="hardware-ai-form"><h2>允许本任务 AI 使用</h2><p id="hardware-ai-name"></p><label class="check-row"><input type="checkbox" id="hardware-ai-read">连接、读取日志和查询状态</label><label class="check-row" id="hardware-ai-write-row"><input type="checkbox" id="hardware-ai-write">发送串口 / 控制台命令</label><label class="check-row" id="hardware-ai-power-row"><input type="checkbox" id="hardware-ai-power">上电、断电和断电重启</label><p>适用于本任务的 Codex、Claude、DeepSeek Harness、MiMo Code 和 OpenCode；CLI 未声明 HTTP MCP 能力时会明确拒绝而不是在没有工具的情况下运行。新增权限从下一轮使用；收回权限会立即撤销本轮硬件凭据。操作记录留在任务和硬件日志中。</p><p class="error" id="hardware-ai-error"></p><div class="dialog-footer"><button type="button" id="hardware-ai-cancel">取消</button><button class="primary" id="hardware-ai-save">保存</button></div></form></dialog>`);
+    element('hardware-ai-name').insertAdjacentHTML('afterend', '<p>打开或连接设备时默认允许本任务 AI 使用，从下一轮生效。只读设备仅允许读取；手动关闭或限制的权限会保留。</p>');
     button('device-ai').onclick = ()=>void editHardwareAI();
     button('hardware-ai-cancel').onclick = ()=>element('hardware-ai-dialog').close();
     input('hardware-ai-read').onchange = renderHardwareAIForm;
@@ -5469,7 +5592,16 @@ function installHardware() {
         });
     clearInterval(hardwarePollTimer);
     hardwarePollTimer = setInterval(()=>void pollDevice(), 100);
-    disposeWithShell(()=>clearInterval(hardwarePollTimer));
+    disposeWithShell(()=>{
+        clearInterval(hardwarePollTimer);
+        ++hardwareLoadRequest;
+        ++hardwareAIRevision;
+        hardwareAIDefaults.clear();
+        hardwareOverviewTask = '';
+        hardwareAIGrants = {};
+        hardwareAIConfigured = {};
+        closeHardwareView();
+    });
 }
 function hardwareEnter() {
     return ({
@@ -5605,11 +5737,13 @@ function connectSelectedDevice() {
     } else void deviceAction('connect', {});
 }
 async function loadDevices() {
-    const task = chosen, request = ++hardwareLoadRequest;
+    const task = chosen, request = ++hardwareLoadRequest, epoch = shellEpoch;
     if (!task) return;
     if (hardwareOverviewTask !== task) {
         devices = [];
         hardwareAIGrants = {};
+        hardwareAIConfigured = {};
+        ++hardwareAIRevision;
         closeHardwareView();
         input('device-picker').disabled = true;
         renderHardwareState();
@@ -5617,14 +5751,18 @@ async function loadDevices() {
     button('device-refresh').disabled = true;
     try {
         const list = await api('hardware/overview');
-        if (chosen !== task || request !== hardwareLoadRequest) return;
+        if (!shellCurrent(epoch) || chosen !== task || request !== hardwareLoadRequest) return;
         hardwareOverview = list;
         hardwareOverviewTask = task;
         devices = list.filter((d)=>d.tasks.some((t)=>t.id === task)).map((d)=>d.config);
         hardwareAIGrants = {};
+        hardwareAIConfigured = {};
         for (const item of list){
             const use = item.tasks.find((t)=>t.id === task);
-            if (use) hardwareAIGrants[item.config.id] = use.ai;
+            if (use) {
+                hardwareAIGrants[item.config.id] = use.ai;
+                hardwareAIConfigured[item.config.id] = use.ai_configured !== false;
+            }
         }
         const picker = input('device-picker'), html = devices.map((d)=>`<option value="${d.id}">${escapeHTML(d.name)}</option>`).join('') || '<option value="">添加串口或网络设备</option>';
         if (picker.dataset.snapshot !== html) {
@@ -5637,10 +5775,10 @@ async function loadDevices() {
         if (element('hardware-library-dialog').open) renderHardwareLibrary();
         return true;
     } catch (e) {
-        if (chosen === task && request === hardwareLoadRequest) notify('设备读取失败：' + e.message);
+        if (shellCurrent(epoch) && chosen === task && request === hardwareLoadRequest) notify('设备读取失败：' + e.message);
         return false;
     } finally{
-        if (request === hardwareLoadRequest) {
+        if (shellCurrent(epoch) && request === hardwareLoadRequest) {
             if (element('device-refresh')) button('device-refresh').disabled = false;
         }
     }
@@ -5657,6 +5795,7 @@ function closeHardwareView() {
     }
 }
 function selectDevice(id) {
+    void activateSelectedHardwareAI(id);
     if (hardwareView?.task === chosen && hardwareView.id === id) {
         input('device-picker').value = id;
         renderHardwareState();
@@ -5753,6 +5892,28 @@ function selectDevice(id) {
     renderDeviceLog();
     renderHardwareState();
     void pollDevice();
+}
+async function activateSelectedHardwareAI(id = deviceID) {
+    const task = chosen, epoch = shellEpoch, key = epoch + '/' + task + '/' + id, revision = hardwareAIRevision;
+    if (!task || !id || toolsTab !== 'hardware' || hardwareOverviewTask !== task || detail?.task.archived || detail?.task.deleted || hardwareAISaving || hardwareAIConfigured[id] || hardwareAIDefaults.has(key) || !devices.some((d)=>d.id === id)) return;
+    hardwareAIDefaults.add(key);
+    try {
+        const grant = await api(`tasks/${task}/hardware/${id}/ai-default`, 'POST', {});
+        if (!shellCurrent(epoch) || chosen !== task || hardwareOverviewTask !== task || revision !== hardwareAIRevision) return;
+        hardwareAIGrants[id] = grant;
+        hardwareAIConfigured[id] = true;
+        const use = hardwareOverview.find((d)=>d.config.id === id)?.tasks.find((t)=>t.id === task);
+        if (use) {
+            use.ai = grant;
+            use.ai_configured = true;
+        }
+        renderHardwareState();
+        if (element('hardware-library-dialog').open) renderHardwareLibrary();
+    } catch (e) {
+        if (shellCurrent(epoch) && chosen === task && toolsTab === 'hardware') notify('默认 AI 硬件权限未保存：' + e.message);
+    } finally{
+        hardwareAIDefaults.delete(key);
+    }
 }
 function fitHardwareTerminal() {
     const h = hardwareView, host = element('hardware-terminal');
@@ -6027,6 +6188,7 @@ async function saveHardwareAI() {
     const editing = hardwareAIEditing;
     if (!editing || hardwareAISaving) return;
     hardwareAISaving = true;
+    ++hardwareAIRevision;
     ++hardwareLoadRequest;
     button('device-refresh').disabled = false;
     button('hardware-ai-save').disabled = true;
@@ -7778,11 +7940,13 @@ async function previewFile(p, view) {
 let toolsTab = '', scratchItems = [], scratchEditing = null, scratchTask = '', scratchOriginal = '', scratchFilter = 'open', scratchPending = {};
 let devices = [], deviceID = '', deviceTask = '', deviceSeq = 0, deviceEvents = [], devicePolling = false, deviceEditing = null;
 function installTools() {
-    element('task-model').insertAdjacentHTML('beforebegin', '<button id="scratch-tab">待办</button><button id="hardware-tab">硬件调试</button>');
+    element('task-model').insertAdjacentHTML('beforebegin', '<button id="hardware-tab">硬件调试</button>');
     element('notebook').insertAdjacentHTML('afterend', `<section id="scratch-panel" class="tool-panel hidden"><div class="note-head"><div><h2>待办</h2><p id="scratch-status" class="muted">每个任务一份待办清单，需要时带入对话。</p></div><button id="scratch-new" class="primary">＋ 新建待办</button></div><nav class="task-views" id="scratch-filter" aria-label="待办筛选"><button data-scratch-filter="open" class="selected">未完成</button><button data-scratch-filter="todo">待办</button><button data-scratch-filter="doing">进行中</button><button data-scratch-filter="done">已完成</button><button data-scratch-filter="all">全部</button></nav><div id="scratch-list" class="scratch-grid"></div></section><section id="hardware-panel" class="tool-panel hidden"></section>`);
     element('root').insertAdjacentHTML('beforeend', `<dialog id="scratch-dialog"><form id="scratch-form"><h2>待办</h2><label for="scratch-title">标题</label><input id="scratch-title" maxlength="120" placeholder="例如：验证继电器上电顺序"><div class="form-grid"><div><label for="scratch-status-field">状态</label><select id="scratch-status-field"><option value="todo">待办</option><option value="doing">进行中</option><option value="done">已完成</option></select></div><div><label for="scratch-due">截止日（可选）</label><input id="scratch-due" type="date"></div></div><label for="scratch-content">备注（可选）</label><textarea id="scratch-content" rows="8" maxlength="60000" aria-label="待办备注" placeholder="命令、线索或下一步想做的事"></textarea><label for="scratch-color">颜色</label><select id="scratch-color"><option value="yellow">黄色</option><option value="green">绿色</option><option value="blue">蓝色</option><option value="pink">粉色</option><option value="purple">紫色</option></select><p id="scratch-error" class="error"></p><div class="dialog-footer"><button type="button" id="scratch-cancel">取消</button><button class="primary">保存待办</button></div></form></dialog><dialog id="device-dialog"><form id="device-form"><h2>硬件连接</h2><label for="device-name">名称</label><input id="device-name" required maxlength="80"><label for="device-protocol">协议</label><select id="device-protocol"><option value="serial">串口 · 服务电脑</option><option value="tcp">TCP 原始字节流</option><option value="telnet">Telnet</option><option value="ssh">SSH</option></select><div id="device-serial-fields"><label for="device-portname">串口</label><input id="device-portname" list="device-ports" placeholder="COM3"><datalist id="device-ports"></datalist><button type="button" id="device-refresh-ports">刷新串口</button><label for="device-baud">波特率 · 8N1</label><input id="device-baud" type="number" min="300" max="4000000" value="115200"></div><div id="device-network-fields"><label for="device-host">主机</label><input id="device-host" placeholder="192.168.50.20"><label for="device-port">端口</label><input id="device-port" type="number" min="1" max="65535"></div><div id="device-ssh-fields"><label for="device-user">SSH 用户名</label><input id="device-user" autocomplete="off"><label for="device-fingerprint">主机 SHA256 指纹</label><input id="device-fingerprint" placeholder="SHA256:…"><p>首次连接会显示指纹。核对设备后填入并保存，再连接。也支持服务用户 .ssh 目录中默认命名的未加密私钥。</p></div><label class="check-row"><input id="device-readonly" type="checkbox">只接收，不允许发送</label><p id="device-error" class="error"></p><div class="dialog-footer"><button id="device-delete" type="button" class="danger">删除连接</button><button id="device-cancel" type="button">取消</button><button class="primary">保存配置</button></div></form></dialog><dialog id="device-password-dialog"><form id="device-password-form"><h2>连接 SSH</h2><label for="device-password">密码（使用密钥时留空）</label><input id="device-password" type="password" autocomplete="off"><p>密码仅用于本次连接，不保存到配置或日志。</p><div class="dialog-footer"><button type="button" id="device-password-cancel">取消</button><button class="primary">连接</button></div></form></dialog>`);
-    button('scratch-tab').onclick = ()=>switchTab('scratch');
-    button('hardware-tab').onclick = ()=>switchTab('hardware');
+    button('hardware-tab').onclick = ()=>{
+        if (chosen && !creatingTask) switchTab('hardware');
+        else notify('请先选择一个任务，再打开硬件。');
+    };
     button('scratch-new').onclick = ()=>editScratch(null);
     button('scratch-cancel').onclick = cancelScratch;
     element('scratch-dialog').addEventListener('cancel', (e)=>{
@@ -8038,6 +8202,14 @@ function settingsNavigation() {
     return document.getElementById('workspace-settings') || element('settings-form').querySelector('.settings-nav');
 }
 async function openSettingsPage(page) {
+    if (page === 'knowledge') {
+        const epoch = shellEpoch, request = ++settingsPageRequest;
+        if (settingsOpening) await settingsOpening;
+        if (!shellCurrent(epoch) || request !== settingsPageRequest) return;
+        element('settings-dialog').close();
+        await openLibrarySettings();
+        return;
+    }
     if (!Array.from(settingsNavigation().querySelectorAll('[data-settings]')).some((b)=>b.dataset.settings === page)) return;
     const epoch = shellEpoch, request = ++settingsPageRequest, dialog = element('settings-dialog');
     if (!dialog.open) {
@@ -8061,6 +8233,10 @@ async function openSettingsPage(page) {
     }
 }
 function showSettingsSection(page) {
+    if (page === 'knowledge') {
+        void openSettingsPage(page);
+        return;
+    }
     if (page === 'engines') page = 'environment';
     const nav = settingsNavigation();
     nav.querySelectorAll('button[data-settings]').forEach((b)=>b.classList.toggle('selected', b.dataset.settings === page));
@@ -10109,7 +10285,8 @@ async function boot() {
     }
     const query = new URLSearchParams(location.search), id = query.get('task');
     if (id && tasks.some((t)=>t.id === id)) await choose(id, query.get('view') === 'note' ? 'note' : 'chat');
-    if (query.get('settings') === 'access') await openSettingsPage('access');
+    const settingsPage = query.get('settings');
+    if (settingsPage === 'access' || settingsPage === 'knowledge') await openSettingsPage(settingsPage);
 }
 function showShellFailure(error) {
     authenticated = false;
@@ -10156,6 +10333,10 @@ function renderShell() {
         if (!mayLeave()) return;
         if (stickyDirty || stickySaving) {
             notify('便签尚未保存，请等待保存完成或重试后再退出。');
+            return;
+        }
+        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving) {
+            notify('知识库设置尚未保存，请先保存后再退出。');
             return;
         }
         const epoch = shellEpoch;
@@ -10427,8 +10608,9 @@ function switchTab(tab) {
         ]
     ]){
         element(panel).classList.toggle('hidden', tab !== key);
-        button(key + '-tab').classList.toggle('selected', tab === key);
-        button(key + '-tab').setAttribute('aria-pressed', String(tab === key));
+        const entry = document.getElementById(key + '-tab');
+        entry?.classList.toggle('selected', tab === key);
+        entry?.setAttribute('aria-pressed', String(tab === key));
     }
     button('chat-tab').classList.toggle('selected', !open);
     element('tool-title').textContent = ({
@@ -11183,8 +11365,7 @@ async function openSettings() {
         element('check-result').textContent = '';
         element('settings-error').textContent = '';
         element('settings-dialog').showModal();
-        if (document.querySelector('[data-settings="knowledge"].selected')) void loadKnowledgeSettings();
-        else if (document.querySelector('[data-settings="environment"].selected')) void openEngineCenter();
+        if (document.querySelector('[data-settings="environment"].selected')) void openEngineCenter();
     } catch (e) {
         if (shellCurrent(epoch)) notify(e.message);
     }
@@ -11587,7 +11768,7 @@ async function setBinding(bind) {
     }
 }
 window.addEventListener('beforeunload', (e)=>{
-    if (dirty || stickyDirty || stickySaving) {
+    if (dirty || stickyDirty || stickySaving || automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving) {
         e.preventDefault();
         e.returnValue = '';
     }
@@ -12115,6 +12296,7 @@ function applyDockLayout(save = false) {
         'sticky',
         'tools'
     ]){
+        if (panel === 'sticky') continue;
         const node = element(dockPanelIDs[panel]), zone = element(dockZoneID(effectiveDockSide(panel)));
         if (!node || !zone) continue;
         if (node.parentElement !== zone) zone.append(node);
@@ -12128,7 +12310,6 @@ function applyDockLayout(save = false) {
         const zone = element(dockZoneID(side));
         if (!zone) continue;
         const panels = [
-            'sticky',
             'tools'
         ].filter((panel)=>effectiveDockSide(panel) === side);
         if (panels.length) zone.dataset.dockPanels = panels.join(' ');
@@ -12244,7 +12425,7 @@ function installDockUI() {
         const section = document.createElement('div');
         section.className = 'dock-layout-section';
         const options = (panel)=>dockPanelSides[panel].map((side)=>`<option value="${side}">${dockSideLabels[side]}</option>`).join('');
-        section.innerHTML = `<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签固定在左侧任务栏，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
+        section.innerHTML = `<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签从右上角打开，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
         const footer = form.querySelector('.dialog-footer');
         form.insertBefore(section, footer);
         for (const panel of [

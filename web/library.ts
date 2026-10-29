@@ -6,10 +6,12 @@ type VaultReport={updated:number;exported:number;imported:number;indexed:number;
 type VaultSettingsResponse={config:VaultConfig;report:VaultReport;document_directory:string};
 let libraryRequest=0,libraryTarget:{task:string;create:boolean;selection:number;epoch:number}|null=null;
 let libraryHits:LibraryDocument[]=[];
-let libraryLoading=false,libraryNextOffset=0,libraryPreviewRequest=0,libraryOverviewRequest=0,libraryCitationRequest=0,libraryCitationBusy=false;
+let libraryLoading=false,libraryBrowseStarted=false,libraryNextOffset=0,libraryPreviewRequest=0,libraryOverviewRequest=0,libraryCitationRequest=0,libraryCitationBusy=false;
 let libraryPreviewID='',libraryPreviewText='',libraryPreviewLimit=20000;
 let automaticSettingsRequest=0,automaticSettingsReady=false,automaticSettingsSaving=false;
 let vaultSettingsRequest=0,vaultSettingsReady=false,vaultSettingsSaving=false,vaultRefreshing=false;
+let automaticSettingsDirty=false,vaultSettingsDirty=false,knowledgeSettingsRequest=0;
+let knowledgeSettingsLoading:Promise<void>|null=null;
 function libraryTargetCurrent(){return !!libraryTarget&&shellCurrent(libraryTarget.epoch)&&selection===libraryTarget.selection&&creatingTask===libraryTarget.create&&(creatingTask||chosen===libraryTarget.task)}
 function installLibrary(){
  element('theme-toggle').insertAdjacentHTML('afterend','<button type="button" id="library-open" title="全局知识库 · 历史与结论" aria-label="全局知识库">知识库</button>');
@@ -19,9 +21,8 @@ function installLibrary(){
  element('vault-settings').insertAdjacentHTML('beforebegin',`<details id="automatic-knowledge-settings"><summary>对话自动积累</summary><p>对话自动保存到任务资料夹。自动整理在同一轮 AI 回复中提取摘要、前提、共识、疑问和有依据的通用知识，不另外启动模型。模型未提供整理结果时，保留原对话。</p><label><input type="checkbox" id="automatic-capture" disabled>自动记录后续对话的问题与最终回复</label><label><input type="checkbox" id="automatic-organize" disabled>随正常对话自动整理摘要、共识与通用知识（增加少量本轮输出）</label><label><input type="checkbox" id="automatic-recall" disabled>新建会话时自动补回当前任务知识</label><p>新会话优先补回本任务的前提、共识与未决问题；没有摘要时使用最近记录。只补回有限片段，其他任务需选择引用；引用文字计入模型输入。</p><button type="button" id="automatic-save" disabled>保存设置</button><p id="automatic-status" role="status"></p></details>`);
  input('vault-runs').closest('label')!.insertAdjacentHTML('afterend','<label><input type="checkbox" id="vault-automatic">同步自动整理的任务资料、通用知识与主题索引</label>');
  installLibrarySettings();
- const headerActions=document.createElement('div');headerActions.className='library-header-actions';headerActions.innerHTML='<button type="button" id="library-manage-task">管理本任务知识</button><button type="button" id="library-settings-open">知识库设置</button>';
+ const headerActions=document.createElement('div');headerActions.className='library-header-actions';headerActions.innerHTML='<button type="button" id="library-manage-task">管理本任务知识</button>';
  button('library-close').before(headerActions);headerActions.append(button('library-close'));
- button('library-settings-open').onclick=()=>void openLibrarySettings();
  headerActions.insertAdjacentHTML('afterbegin','<button type="button" id="library-refresh-files">刷新文件</button>');
  button('library-refresh-files').onclick=async()=>{const epoch=shellEpoch,b=button('library-refresh-files');if(b.disabled)return;b.disabled=true;try{const report=await api<VaultReport>('library/vault/refresh','POST',{});if(!shellCurrent(epoch))return;if(report.error)throw new Error(report.error);if(element<HTMLDialogElement>('library-dialog').open){await searchLibrary();void loadLibraryOverview();if(report.conflicts?.length)notify('文件同步存在冲突，已保留两端内容；请在知识库设置查看详情。')}}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}finally{if(shellCurrent(epoch))b.disabled=false}};
  button('library-manage-task').onclick=()=>{if(!libraryTargetCurrent()||creatingTask||!chosen||!detail)return;element<HTMLDialogElement>('library-dialog').close();switchTab('note')};
@@ -36,7 +37,8 @@ function installLibrary(){
  element('library-search-form').onsubmit=e=>{e.preventDefault();void searchLibrary()};
  button('vault-save').onclick=()=>void saveVault();button('vault-refresh').onclick=()=>void refreshVault();
  installLibraryBrowser();
- disposeWithShell(()=>{libraryRequest++;libraryOverviewRequest++;libraryPreviewRequest++;libraryCitationRequest++;libraryCitationBusy=false;libraryLoading=false;libraryTarget=null;libraryHits=[];knowledgeEditTarget=null;knowledgeSaving=false;knowledgeExpanded.clear();automaticSettingsRequest++;automaticSettingsReady=false;automaticSettingsSaving=false;vaultSettingsRequest++;vaultSettingsReady=false;vaultSettingsSaving=false;vaultRefreshing=false});
+ installLibraryPages();
+ disposeWithShell(()=>{libraryRequest++;libraryOverviewRequest++;libraryPreviewRequest++;libraryCitationRequest++;libraryCitationBusy=false;libraryLoading=false;libraryBrowseStarted=false;libraryTarget=null;libraryHits=[];knowledgeEditTarget=null;knowledgeSaving=false;knowledgeExpanded.clear();automaticSettingsRequest++;automaticSettingsReady=false;automaticSettingsSaving=false;automaticSettingsDirty=false;vaultSettingsRequest++;vaultSettingsReady=false;vaultSettingsSaving=false;vaultRefreshing=false;vaultSettingsDirty=false;knowledgeSettingsRequest++;knowledgeSettingsLoading=null});
 }
 function installLibraryBrowser(){
  const dialog=element<HTMLDialogElement>('library-dialog');dialog.setAttribute('aria-label','知识库');
@@ -95,9 +97,7 @@ async function loadLibraryOverview(){
  element('library-overview').innerHTML=parts.map(s=>'<span>'+escapeHTML(s)+'</span>').join('');
 }
 function installLibrarySettings(){
- const nav=element('settings-form').querySelector('.settings-nav')!;
- nav.querySelector('[data-settings="data"]')!.insertAdjacentHTML('afterend','<button type="button" data-settings="knowledge">知识积累</button>');
- element('settings-error').insertAdjacentHTML('beforebegin',`<section id="settings-knowledge" class="settings-section hidden"><h3>知识积累</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
+ element('library-dialog').insertAdjacentHTML('beforeend',`<section id="settings-knowledge" class="library-settings-panel hidden" aria-label="积累设置"><h3>积累设置</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
  const section=element('settings-knowledge');
  for(const id of ['vault-settings','automatic-knowledge-settings']){const panel=element<HTMLDetailsElement>(id);panel.open=true;section.append(panel)}
  section.append(section.querySelector('.knowledge-storage-info')!);
@@ -110,30 +110,65 @@ function installLibrarySettings(){
  element('automatic-knowledge-settings').querySelector('p')!.textContent='开启“自动记录”保存后续完成的对话；再开启“自动整理”，让同一轮 AI 回复提取摘要、共识、疑问和有依据的知识，不另起模型调用。此处保存后，若要写到上面的目录，还需开启“Markdown 同步与索引”和“同步自动整理的任务资料”。模型未提供整理结果时，保留原对话。';
  button('vault-save').textContent='保存知识库路径与同步设置';
  input('vault-directory').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();void saveVault()}};
+ for(const id of ['vault-directory','vault-enabled','vault-runs','vault-automatic'])input(id).oninput=input(id).onchange=()=>{vaultSettingsDirty=true;element('vault-status').textContent='路径与同步设置尚未保存。'};
+ for(const id of ['automatic-capture','automatic-organize','automatic-recall'])input(id).onchange=()=>{automaticSettingsDirty=true;element('automatic-status').textContent='自动记录与整理设置尚未保存。'};
  setVaultControlsDisabled(true);
 }
+function installLibraryPages(){
+ const dialog=element<HTMLDialogElement>('library-dialog'),section=element('settings-knowledge'),header=dialog.querySelector('.library-header')!;
+ const browse=document.createElement('section');browse.id='library-browse-panel';browse.setAttribute('aria-label','浏览资料');
+ for(const node of Array.from(dialog.children))if(node!==header&&node!==section)browse.append(node);
+ header.insertAdjacentHTML('afterend','<nav class="library-pages" aria-label="知识库页面"><button type="button" id="library-browse-open" class="selected" aria-pressed="true" aria-controls="library-browse-panel">浏览资料</button><button type="button" id="library-settings-open" aria-pressed="false" aria-controls="settings-knowledge">积累设置</button></nav>');
+ dialog.append(browse,section);
+ button('library-browse-open').onclick=()=>{showLibraryPage('browse');void loadLibraryOverview();if(!libraryBrowseStarted)void searchLibrary();input('library-query').focus()};
+ button('library-settings-open').onclick=()=>void openLibrarySettings();
+ dialog.addEventListener('close',()=>{
+  // Clean settings are refreshed on the next visit; unsaved drafts stay intact.
+  libraryBrowseStarted=false;
+  if(!automaticSettingsSaving&&!automaticSettingsDirty){automaticSettingsRequest++;automaticSettingsReady=false}
+  if(!vaultSettingsSaving&&!vaultRefreshing&&!vaultSettingsDirty){vaultSettingsRequest++;vaultSettingsReady=false}
+  knowledgeSettingsRequest++;knowledgeSettingsLoading=null;
+ });
+}
+function showLibraryPage(page:'browse'|'settings'){
+ const setup=page==='settings';element('library-browse-panel').classList.toggle('hidden',setup);element('settings-knowledge').classList.toggle('hidden',!setup);
+ for(const id of ['library-browse-open','library-settings-open']){const active=(id==='library-settings-open')===setup;button(id).classList.toggle('selected',active);button(id).setAttribute('aria-pressed',String(active))}
+ button('library-refresh-files').classList.toggle('hidden',setup);button('library-manage-task').classList.toggle('hidden',setup);
+}
 async function openLibrarySettings(){
- const epoch=shellEpoch;element<HTMLDialogElement>('library-dialog').close();
- await openSettings();if(!shellCurrent(epoch)||!element<HTMLDialogElement>('settings-dialog').open)return;
- if(element('settings-knowledge').classList.contains('hidden'))showSettingsSection('knowledge');
+ const epoch=shellEpoch,dialog=element<HTMLDialogElement>('library-dialog');
+ if(!dialog.open){await openLibrary(undefined,'settings');return}
+ showLibraryPage('settings');button('library-settings-open').focus();await loadKnowledgeSettings();
+ if(!shellCurrent(epoch)||!dialog.open||element('settings-knowledge').classList.contains('hidden'))return;
 }
 async function loadKnowledgeSettings(){
- element('knowledge-data-directory').textContent=settings.data_dir||'未能读取当前数据目录';
- await Promise.all([loadAutomaticKnowledge(),loadVault()]);
+ if(knowledgeSettingsLoading)return knowledgeSettingsLoading;
+ const epoch=shellEpoch,request=++knowledgeSettingsRequest;
+ element('knowledge-data-directory').textContent=settings.data_dir||'正在读取当前数据目录…';
+ const loading=(async()=>{
+  const results=await Promise.allSettled([api<Settings>('settings','GET',undefined,shellController.signal),automaticSettingsReady?Promise.resolve():loadAutomaticKnowledge(),vaultSettingsReady?Promise.resolve():loadVault()]);
+  if(request!==knowledgeSettingsRequest||!shellCurrent(epoch))return;
+  // This read only updates the location hint, never another settings editor's draft.
+  const location=results[0];element('knowledge-data-directory').textContent=location.status==='fulfilled'?(location.value.data_dir||'未能读取当前数据目录'):'当前数据目录读取失败；可在“数据与存储”查看。';
+ })();knowledgeSettingsLoading=loading;
+ try{await loading}finally{if(knowledgeSettingsLoading===loading)knowledgeSettingsLoading=null}
 }
-async function openLibrary(taskScope?:string){
+async function openLibrary(taskScope?:string,page:'browse'|'settings'='browse'){
+ const epoch=shellEpoch;
  libraryTarget={task:chosen,create:creatingTask,selection,epoch:shellEpoch};
  const scope=element<HTMLSelectElement>('library-scope'),previousScope=scope.value;scope.innerHTML='<option value="">所有任务与文件</option>'+tasks.filter(t=>!t.deleted).map(t=>`<option value="${escapeHTML(t.id)}">${escapeHTML(t.title)}</option>`).join('');scope.value=tasks.some(t=>t.id===previousScope&&!t.deleted)?previousScope:'';
  if(taskScope){scope.value=taskScope;input('library-layer').value='tasks';element('library-dialog').querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>{const on=b.dataset.libraryLayer==='tasks';b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))})}
- element<HTMLDialogElement>('library-dialog').showModal();
+ showLibraryPage(page);const dialog=element<HTMLDialogElement>('library-dialog');if(!dialog.open)dialog.showModal();
  button('library-manage-task').disabled=!chosen||creatingTask||!detail;
+ if(page==='settings'){button('library-settings-open').focus();await loadKnowledgeSettings();return}
  void loadLibraryOverview();
  await searchLibrary();
+ if(!shellCurrent(epoch)||!dialog.open||element('library-browse-panel').classList.contains('hidden'))return;
  input('library-query').focus();
 }
 function setAutomaticSettingsDisabled(disabled:boolean){for(const id of ['automatic-capture','automatic-recall','automatic-organize','automatic-save'])input(id).disabled=disabled}
 async function loadAutomaticKnowledge(){
- if(automaticSettingsSaving)return;
+ if(automaticSettingsSaving||automaticSettingsDirty)return;
  const token=++automaticSettingsRequest,epoch=shellEpoch;automaticSettingsReady=false;setAutomaticSettingsDisabled(true);element('automatic-status').textContent='正在读取设置…';
  try{const config=await api<AutomaticKnowledgeConfig>('library/automatic','GET',undefined,shellController.signal);if(token!==automaticSettingsRequest||!shellCurrent(epoch))return;input('automatic-capture').checked=config.capture;input('automatic-recall').checked=config.recall;input('automatic-organize').checked=config.organize!==false;automaticSettingsReady=true;element('automatic-status').textContent=config.capture?'自动记录已开启，对后续完成的对话生效。':'自动记录已关闭，已有记录继续保留。'}
  catch(e){if(token===automaticSettingsRequest&&shellCurrent(epoch))element('automatic-status').textContent=(e as Error).message}
@@ -142,13 +177,13 @@ async function loadAutomaticKnowledge(){
 async function saveAutomaticKnowledge(){
  if(!automaticSettingsReady||automaticSettingsSaving)return;
  const epoch=shellEpoch,token=++automaticSettingsRequest;automaticSettingsSaving=true;setAutomaticSettingsDisabled(true);
- try{await api('library/automatic','PUT',{capture:input('automatic-capture').checked,recall:input('automatic-recall').checked,organize:input('automatic-organize').checked});if(token===automaticSettingsRequest&&shellCurrent(epoch))element('automatic-status').textContent='设置已保存。关闭不会删除已有知识，也不会从原生会话中移除之前已带入的内容。'}
+ try{await api('library/automatic','PUT',{capture:input('automatic-capture').checked,recall:input('automatic-recall').checked,organize:input('automatic-organize').checked});if(token===automaticSettingsRequest&&shellCurrent(epoch)){automaticSettingsDirty=false;element('automatic-status').textContent='设置已保存。关闭不会删除已有知识，也不会从原生会话中移除之前已带入的内容。'}}
  catch(e){if(token===automaticSettingsRequest&&shellCurrent(epoch))element('automatic-status').textContent='保存失败，请重试：'+(e as Error).message}
  finally{if(token===automaticSettingsRequest&&shellCurrent(epoch)){automaticSettingsSaving=false;setAutomaticSettingsDisabled(false)}}
 }
 async function searchLibrary(append=false){
  if(append&&libraryLoading)return;
- const token=++libraryRequest,epoch=shellEpoch;libraryLoading=true;
+ const token=++libraryRequest,epoch=shellEpoch;libraryLoading=true;libraryBrowseStarted=true;
  if(!append){libraryHits=[];libraryNextOffset=0;clearLibraryPreview();element('library-results').textContent='';button('library-more').classList.add('hidden')}
  const q=new URLSearchParams({q:input('library-query').value,kind:input('library-kind').value,source:input('library-source').value,task:input('library-scope').value,stale:input('library-stale').checked?'1':'0',layer:input('library-layer')?.value||'',tag:input('library-tag')?.value.trim()||'',offset:String(append?libraryNextOffset:0)});
  element('library-state').textContent=append?'正在加载更多…':'正在检索…';button('library-more').disabled=true;
@@ -209,7 +244,7 @@ function showVaultReport(r:VaultReport){
 function setVaultControlsDisabled(disabled:boolean){for(const id of ['vault-directory','vault-enabled','vault-runs','vault-automatic','vault-save','vault-refresh'])input(id).disabled=disabled}
 function showVaultLocation(directory:string,enabled:boolean){element('vault-document-directory').textContent=directory?(directory+(enabled?'':'（同步未启用）')):'尚未设置有效的知识文件根目录'}
 async function loadVault(){
- if(vaultSettingsSaving||vaultRefreshing)return;
+ if(vaultSettingsSaving||vaultRefreshing||vaultSettingsDirty)return;
  const epoch=shellEpoch,token=++vaultSettingsRequest;vaultSettingsReady=false;setVaultControlsDisabled(true);element('vault-status').textContent='正在读取知识库设置…';
  try{const v=await api<VaultSettingsResponse>('library/vault','GET',undefined,shellController.signal);if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;input('vault-directory').value=v.config.directory;input('vault-enabled').checked=v.config.enabled;input('vault-runs').checked=v.config.include_runs;input('vault-automatic').checked=!!v.config.include_automatic;showVaultLocation(v.document_directory,v.config.enabled);showVaultReport(v.report);vaultSettingsReady=true}
  catch(e){if(token===vaultSettingsRequest&&shellCurrent(epoch))element('vault-status').textContent=(e as Error).message}
@@ -218,7 +253,7 @@ async function loadVault(){
 async function saveVault(){
  if(!vaultSettingsReady||vaultSettingsSaving||vaultRefreshing)return;
  const epoch=shellEpoch,token=++vaultSettingsRequest;vaultSettingsSaving=true;setVaultControlsDisabled(true);
- try{const saved=await api<VaultConfig&{document_directory:string}>('library/vault','PUT',{directory:input('vault-directory').value.trim(),enabled:input('vault-enabled').checked,include_runs:input('vault-runs').checked,include_automatic:input('vault-automatic').checked,task_folders:true});if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;showVaultLocation(saved.document_directory,saved.enabled);element('vault-status').textContent='设置已保存，正在同步…';await syncVaultView(epoch,token)}
+ try{const saved=await api<VaultConfig&{document_directory:string}>('library/vault','PUT',{directory:input('vault-directory').value.trim(),enabled:input('vault-enabled').checked,include_runs:input('vault-runs').checked,include_automatic:input('vault-automatic').checked,task_folders:true});if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;vaultSettingsDirty=false;showVaultLocation(saved.document_directory,saved.enabled);element('vault-status').textContent='设置已保存，正在同步…';await syncVaultView(epoch,token)}
  catch(e){if(token===vaultSettingsRequest&&shellCurrent(epoch))element('vault-status').textContent=(e as Error).message}
  finally{if(token===vaultSettingsRequest&&shellCurrent(epoch)){vaultSettingsSaving=false;setVaultControlsDisabled(false)}}
 }

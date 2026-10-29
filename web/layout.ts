@@ -50,14 +50,16 @@ function installLayout(){
  // Task knowledge is a primary tool, alongside files and the terminal.
  tabs.append(element('note-tab'));
  button('files-tab').textContent='文件';button('hardware-tab').textContent='硬件';
+ const workspaceTools=document.createElement('nav');workspaceTools.id='workspace-tools';workspaceTools.className='workspace-tools';workspaceTools.setAttribute('aria-label','便签与硬件');
+ workspaceTools.append(element('hardware-tab'));utilities.insertBefore(workspaceTools,globalActions);
  const model=element('task-model');element('composer').querySelector('.composer-bottom')!.prepend(model);element('task-model-button').title='本任务使用的 AI 工具、模型和推理强度';
  element('bind-open').insertAdjacentHTML('beforebegin','<button id="task-handoff" title="切换引擎、账号/API 和模型，接续当前任务">切换 AI</button>');button('task-handoff').onclick=()=>void openHandoff();
  const sessionActions=element('task-actions');sessionActions.classList.add('header-session-actions');sessionActions.setAttribute('role','group');sessionActions.setAttribute('aria-label','当前会话操作');
  sessionActions.insertAdjacentHTML('afterbegin','<button type="button" id="session-reset" class="hidden">新建会话</button>');
- for(const id of ['task-handoff','bind-open','scratch-tab'])sessionActions.append(element(id));
+ for(const id of ['task-handoff','bind-open'])sessionActions.append(element(id));
  button('bind-open').textContent='任务绑定';
  element('root').insertAdjacentHTML('beforeend','<dialog id="session-info-dialog" aria-labelledby="session-info-title"><h2 id="session-info-title">会话信息</h2><div class="session-info"><strong id="session-summary"></strong><p id="session-location"></p><p id="session-description"></p><p id="session-context" class="hidden"></p></div><div class="dialog-footer"><button type="button" id="session-info-close">关闭</button></div></dialog>');
- button('scratch-tab').textContent='本任务待办';button('session-reset').onclick=()=>void resetSession();
+ button('session-reset').onclick=()=>void resetSession();
  button('session-info-close').onclick=()=>element<HTMLDialogElement>('session-info-dialog').close();
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
  element('composer-wrap').querySelector('.footnote')!.remove();

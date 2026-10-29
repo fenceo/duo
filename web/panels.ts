@@ -180,7 +180,7 @@ function resetPanelLayout(){
  notify('面板布局已恢复默认。');
 }
 
-/* Notes stay in the task column. Only the tool panel can change columns. */
+/* Notes live in their drawer. Only the task tool panel changes columns. */
 type DockSide='sidebar'|'left'|'right'|'bottom';
 type DockPanel='sticky'|'tools';
 const dockPanelIDs:Record<DockPanel,string>={sticky:'sticky-board',tools:'tool-dock'};
@@ -208,13 +208,14 @@ function syncDocks(){
 function applyDockLayout(save=false){
  dockLayout.sticky='sidebar';
  for(const panel of ['sticky','tools'] as DockPanel[]){
+  if(panel==='sticky')continue;
   const node=element(dockPanelIDs[panel]),zone=element(dockZoneID(effectiveDockSide(panel)));
   if(!node||!zone)continue;
   if(node.parentElement!==zone)zone.append(node);
  }
  for(const side of ['sidebar','left','right','bottom'] as DockSide[]){
   const zone=element(dockZoneID(side));if(!zone)continue;
-  const panels=(['sticky','tools'] as DockPanel[]).filter(panel=>effectiveDockSide(panel)===side);
+  const panels=(['tools'] as DockPanel[]).filter(panel=>effectiveDockSide(panel)===side);
   if(panels.length)zone.dataset.dockPanels=panels.join(' ');else delete zone.dataset.dockPanels;
  }
  document.getElementById('tool-resizer')?.classList.add('hidden');
@@ -276,7 +277,7 @@ function installDockUI(){
  if(form&&!document.getElementById('appearance-tools-zone')){
   const section=document.createElement('div');section.className='dock-layout-section';
   const options=(panel:DockPanel)=>dockPanelSides[panel].map(side=>`<option value="${side}">${dockSideLabels[side]}</option>`).join('');
-  section.innerHTML=`<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签固定在左侧任务栏，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
+  section.innerHTML=`<h3 class="section-title">面板位置</h3><label for="appearance-tools-zone">工具面板</label><select id="appearance-tools-zone">${options('tools')}</select><p>便签从右上角打开，拖动便签上边缘可调整高度。工具面板可用标题旁的 ⠿ 手柄换栏。</p>`;
   const footer=form.querySelector('.dialog-footer');form.insertBefore(section,footer);
   for(const panel of ['tools'] as DockPanel[]){
    const select=element<HTMLSelectElement>('appearance-'+panel+'-zone');

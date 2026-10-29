@@ -598,7 +598,11 @@ func (s *Server) hardwareAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.PathValue("action") {
 	case "connect":
-		e = s.app.hardware.connectOwned(c, v.Password, r.PathValue("id"))
+		// Persist the default before dialing: a failed connection attempt can
+		// still be retried by the next AI turn. Explicit revocations survive.
+		if _, e = s.app.defaultHardwareAI(r.PathValue("id"), c.ID); e == nil {
+			e = s.app.hardware.connectOwned(c, v.Password, r.PathValue("id"))
+		}
 	case "disconnect":
 		e = s.app.hardware.disconnectOwned(c.ID, r.PathValue("id"), v.ConnectionID)
 	case "claim", "release":

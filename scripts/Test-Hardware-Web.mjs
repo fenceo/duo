@@ -67,3 +67,67 @@ assert.equal(ctx.hardwareCanWrite(state('hardwareView')),false,'other tasks reta
 calls.length=0;state("toolsTab='chat'");await ctx.pollDevice();assert.equal(calls.length,0,'closed hardware panel stops log requests');
 state('authenticated=false;renewShellScope()');
 console.log('PASS: no periodic hardware overview, explicit refresh/grants retained, unchanged logs avoid DOM writes, controller changes and hidden-panel guards preserved. Synthetic only.');
+
+// Exercise the production device-selection path with a synthetic terminal and
+// authenticated API fixture. Merely fetching the library must not authorize it.
+const defaults=await createWebShellFixture(),dc=defaults.ctx;
+const ds=code=>runInContext(code,dc),dn=id=>defaults.document.getElementById(id);
+dc.Terminal=class {
+ constructor(){this.options={};this.parser={registerCsiHandler(){},registerOscHandler(){},registerDcsHandler(){}}}
+ open(){}onData(){}onBinary(){}attachCustomKeyEventHandler(){}dispose(){}reset(){}
+};
+dc.ResizeObserver=class {observe(){}disconnect(){}};
+dc.pollDevice=async()=>{};
+const defaultCalls=[],saved=new Map();
+const spare={...config,id:'spare',name:'Other UART',device:'COM98'};
+dc.api=async(route,method)=>{
+ defaultCalls.push({route,method});
+ if(route==='hardware/overview')return [config,spare].map(device=>({config:device,connected:false,controller_task:'',controller_title:'',tasks:[{id:'a',title:'Fixture task',archived:false,ai:saved.get(device.id)||{read:false,write:false,power:false},ai_configured:saved.has(device.id)}]}));
+ const match=route.match(/^tasks\/a\/hardware\/(serial|spare)\/ai-default$/);
+ if(match){const id=match[1],grant=saved.get(id)||{read:true,write:true,power:false};saved.set(id,grant);return grant}
+ throw Error('Unexpected default fixture route: '+route);
+};
+ds("chosen='a';detail={task:{id:'a',title:'Fixture task',archived:false}};toolsTab='chat'");
+await dc.loadDevices();await Promise.resolve();
+assert.equal(defaultCalls.length,1,'background device reads do not authorize hardware');
+ds("toolsTab='hardware'");
+await dc.loadDevices();await Promise.resolve();
+assert(saved.get('serial')?.write,'opening hardware defaults the selected console to AI read/write');
+assert(!saved.has('spare'),'opening the panel does not authorize every attached device');
+assert.equal(ds('hardwareAIGrants.serial.read'),true,'default grant is reflected in the AI permission editor');
+defaultCalls.length=0;await dc.loadDevices();await Promise.resolve();
+assert.deepEqual(defaultCalls.map(c=>c.route),['hardware/overview'],'refresh retains the persisted preference without repeating defaults');
+saved.set('serial',{read:false,write:false,power:false});
+await dc.loadDevices();await Promise.resolve();
+assert.equal(ds('hardwareAIGrants.serial.read'),false,'reopening does not override an explicit revocation');
+dn('device-picker').value='spare';dn('device-picker').onchange();await Promise.resolve();
+assert(saved.get('spare')?.write,'explicitly selecting another device enables only that device');
+saved.delete('spare');ds("detail.task.archived=true");
+await dc.loadDevices();await Promise.resolve();assert(!saved.has('spare'),'archived task opening never requests defaults');
+ds("detail.task.archived=false;detail.task.deleted=true");
+await dc.loadDevices();await Promise.resolve();assert(!saved.has('spare'),'deleted task opening never requests defaults');
+
+// A response that arrives after navigation must not affect another task's UI.
+ds("detail.task.deleted=false;hardwareAIConfigured.spare=false");
+let finishDefault;dc.api=async()=>new Promise(resolve=>finishDefault=resolve);
+const pendingDefault=dc.activateSelectedHardwareAI('spare');
+ds("chosen='b';hardwareOverviewTask='b';hardwareAIGrants={}");
+finishDefault({read:true,write:true,power:false});await pendingDefault;
+assert.equal(ds('Object.keys(hardwareAIGrants).length'),0,'late default results cannot leak into the next task');
+
+// Logging back into the same task still creates an independent shell scope.
+ds("chosen='a';hardwareOverviewTask='a';hardwareAIConfigured={};hardwareAIGrants={}");
+const pendingDefaults=[];dc.api=async()=>new Promise(resolve=>pendingDefaults.push(resolve));
+const oldShellDefault=dc.activateSelectedHardwareAI('serial');
+assert.equal(pendingDefaults.length,1);
+ds("authenticated=false;renewShellScope();authenticated=true;chosen='a';hardwareOverviewTask='a';toolsTab='hardware';hardwareAIConfigured={};hardwareAIGrants={}");
+const newShellDefault=dc.activateSelectedHardwareAI('serial');
+assert.equal(pendingDefaults.length,2,'the previous shell pending key cannot block the same task after login');
+pendingDefaults[0]({read:true,write:true,power:false});await oldShellDefault;
+assert.equal(ds('Object.keys(hardwareAIGrants).length'),0,'old shell permission response cannot update the same task after login');
+await dc.activateSelectedHardwareAI('serial');
+assert.equal(pendingDefaults.length,2,'old finally cannot clear the new shell in-flight request');
+pendingDefaults[1]({read:true,write:false,power:false});await newShellDefault;
+assert.equal(ds('hardwareAIGrants.serial.write'),false,'only the current shell response updates the editor');
+ds('authenticated=false;renewShellScope()');
+console.log('PASS: visible device opens/selection default next-turn AI access; refresh, explicit revocation, other devices/tasks, archived/deleted tasks, stale navigation and same-task relogin remain isolated. Synthetic only.');

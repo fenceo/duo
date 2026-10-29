@@ -55,6 +55,10 @@ cases.push(['harnesscreate','light',1280,800],['harnesscreate','dark',390,844],[
 cases.push(['harnessmode','light',1280,800],['harnessmode','dark',390,844],['harnessmode','light',320,844],['harnessmodelive','dark',390,844]);
 cases.push(['harnessoutput','light',1280,800],['harnessoutput','dark',390,844],['harnessoutput','light',320,844],['harnessknowledge','light',1280,800],['harnessknowledge','dark',390,844]);
 cases.push(['settings','light',320,844],['knowledge','light',320,844]);
+for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['sticky',theme,width,width===1280?800:844]);
+cases.push(['stickyempty','light',1280,800],['stickyempty','dark',320,844],['stickyfull','dark',1280,800],['stickyfull','light',390,844],['stickyfull','dark',320,844]);
+cases.push(['settings','dark',1280,800],['settings','light',390,844],['settings','dark',320,844],['library','dark',390,844],['library','light',320,844],['library','dark',320,844],['librarypreview','light',320,844],['librarypreview','dark',320,844]);
+cases.push(['librarysettings','light',1280,800],['librarysettings','dark',390,844],['librarysettings','light',320,844],['librarysettingsbottom','dark',390,844],['librarysettingsbottom','light',320,844]);
 const measurements=[],failures=[];
 for(const view of ['editorwindows','editorwsl','editorssh'])cases.push([view,'light',1280,800],[view,'dark',320,844]);
 cases.push(['editorfiles','light',1280,800],['editorfiles','dark',390,844],['editorfiles','light',320,844]);
@@ -177,9 +181,17 @@ for(const [view,theme,width,height] of cases){
   if(view==='sidebarnarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
   if(view==='sidebarwide')runInContext('appearance.sidebar=380;applyAppearance(appearance)',ctx);
   if(view==='sidebarmigrated')runInContext("localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:'right',tools:'left'}));installDockLayout()",ctx);
-  assert.equal(document.getElementById('sticky-board').parentElement.id,'sidebar');
+  assert.equal(document.getElementById('sticky-board').parentElement.id,'sticky-dialog');
+  assert(!document.getElementById('sidebar').contains(document.getElementById('sticky-board')),'notes no longer reserve task-list space');
   assert(!document.querySelector('[data-dock-grip="sticky"]'));
   assert(!document.querySelector('.workspace-heading'));
+ }
+ if(view.startsWith('sticky')){
+  runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='stickyempty'?0:view==='stickyfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版便签与硬件入口','记录下次要验证的问题','补充发布说明和未解决问题','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard();`,ctx);
+  ctx.loadStickyBoard=async()=>{};ctx.openStickyBoard();
+  assert.equal(document.getElementById('hardware-tab').parentElement.id,'workspace-tools');
+  assert.equal(document.getElementById('sticky-tab').parentElement.id,'workspace-tools');
+  assert(!document.getElementById('scratch-tab'),'task to-do shortcut must not return');
  }
  if(view==='hardware'){
   // Synthetic read-only log view: no browser terminal, device or model connection.
@@ -227,9 +239,7 @@ for(const [view,theme,width,height] of cases){
   runInContext("desktopDialogTask=chosen;desktopState={active:true,task_id:chosen,control:true,target:'desktop'};element('desktop-target').innerHTML='<option value=desktop>整个桌面</option>';element('desktop-dialog').setAttribute('open','');renderDesktopSharing();",ctx);
  }
  if(view==='settings'){
-  document.getElementById('settings-dialog').setAttribute('open','');
-  ctx.showSettingsSection('knowledge');
-  for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  await ctx.openSettingsPage('knowledge');
  }
  if(view.startsWith('library')||view.startsWith('knowledge')){
   const entries=[['升级与发布流程','verified','manual'],['目录同步的边界与冲突处理','observed','auto'],['历史故障排查与验证结果','observed','auto'],['知识引用和适用条件','verified','manual'],['旧版配置说明','stale','manual']].map(([title,status,source],i)=>({id:'preview-'+i,task_id:'layout-preview',title,content:'## 适用问题\n查找历史经验，并在新一轮对话中复用。\n\n## 解决办法\n先预览资料，检查来源和验证状态，再引用到输入框。\n\n## 验证结果\n合成用例通过，实际任务仍需核对适用条件。',status,source,run_id:'synthetic-'+i,revision:1,created:1790310000000,updated:1790310000000}));
@@ -250,6 +260,13 @@ for(const [view,theme,width,height] of cases){
    };
    await ctx.openLibrary();
    if(view==='librarypreview')await ctx.previewLibrary('knowledge:'+entries[0].id);
+   if(view.startsWith('librarysettings')){
+    const dialog=document.getElementById('library-dialog');await ctx.openLibrarySettings();
+    const directory=document.getElementById('vault-directory');directory.value='D:/Notes/Duo';directory.oninput();
+    document.getElementById('library-browse-open').onclick();await ctx.openLibrarySettings();
+    assert.equal(document.getElementById('library-dialog'),dialog,'knowledge page switches reuse the same dialog');
+    assert.equal(directory.value,'D:/Notes/Duo','browsing does not overwrite accumulation drafts');
+   }
   }
  }
  if(view.startsWith('handoff')){
@@ -272,6 +289,10 @@ for(const [view,theme,width,height] of cases){
  if(view.startsWith('questions')&&view.endsWith('full')){const open=document.createElement('script');open.textContent="window.addEventListener('load',()=>{const d=document.getElementById('codex-requests-dialog');d.removeAttribute('open');d.showModal()})";document.body.append(open)}
  ctx.positionCodexApprovals?.();
  const script=document.createElement('script');script.textContent=`window.addEventListener('load',()=>{for(const field of document.querySelectorAll('[data-note-input]')){field.style.height='auto';field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}if(${JSON.stringify(view)}==='createbottom'){const page=document.getElementById('create-page');page.scrollTop=page.scrollHeight}if(${JSON.stringify(view)}==='settings'||${JSON.stringify(view)}.startsWith('library')){const dialog=document.getElementById(${JSON.stringify(view)}==='settings'?'settings-dialog':'library-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}==='menu'){const dialog=document.getElementById('session-info-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}.startsWith('handoff')){const dialog=document.getElementById('handoff-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}.endsWith('bottom'))dialog.scrollTop=dialog.scrollHeight}if(['onboarding','desktop','accounts','accountlist','accountfilter','accountquota','accounterror','accountimport','accountmanager','accountsetup'].includes(${JSON.stringify(view)})){const d=document.getElementById(${JSON.stringify(view)}==='onboarding'?'settings-dialog':${JSON.stringify(view)}.startsWith('account')?'account-center-dialog':'desktop-dialog');d.removeAttribute('open');d.showModal();if(${JSON.stringify(view)}==='accountsetup')document.getElementById('engine-account-environment').scrollIntoView({block:'center'});if(${JSON.stringify(view)}==='accountmanager')document.getElementById('account-manager-submit').scrollIntoView({block:'end'})}if(${JSON.stringify(view)}==='harnessapi'){const d=document.getElementById('harness-api-dialog');d.removeAttribute('open');d.showModal()}if(${JSON.stringify(view)}==='usage'){const dialog=document.getElementById('usage-dialog');dialog.removeAttribute('open');dialog.showModal()}if(${JSON.stringify(view)}==='desktopmanual'){const d=document.getElementById('desktop-dialog');d.removeAttribute('open');d.showModal();d.scrollTop=d.scrollHeight}if(${JSON.stringify(view)}.startsWith('editor')&&${JSON.stringify(view)}!=='editorfiles'){const d=document.getElementById('editor-dialog');d.removeAttribute('open');d.showModal()}const ids=['task-model-menu','task-test-model-latency','task-model-test-timeout','task-model-test-result','environment-api-dialog','environment-api-save','environment-api-close','environment-api-provider','environment-api-protocol','environment-api-discover','environment-api-scope','environment-api-role-mode','environment-api-role-opus','environment-api-role-sonnet','environment-api-role-haiku','environment-api-role-fable','environment-api-role-subagent','editor-dialog','editor-project','editor-alias','editor-confirm','editor-launch','editor-close','files-editor','file-editor','file-editor-line','engine-account-environment','engine-account-engine','engine-account-login','harness-api-dialog','harness-api-fields','harness-api-url','harness-api-model','harness-api-key','harness-api-save','harness-api-close','desktop-manual','desktop-manual-tools','desktop-preview-image','desktop-close','usage-dialog','usage-content','usage-close','usage-refresh','usage-scope','preview-cancel-queue','account-search','account-engine-tabs','account-center-list','account-manager-items','account-manager-submit','account-center-dialog','accounts-open','engines-open','desktop-dialog','desktop-stop','desktop-start','engine-setup-fields','engine-catalog','account-import-fields','account-import-file','settings-dialog','handoff-legacy','handoff-preserve-legacy','handoff-dialog','handoff-engine','handoff-profile','handoff-model','handoff-mode','handoff-submit','handoff-cancel','handoff-preview-status','chat-tab','conversation-process','conversation-tools','conversation-history','conversation-older','live-steer','live-interrupt','stop','codex-approvals','preview-answer-option','preview-answer-submit','task-title','task-workspace','tabs','note-tab','conversation','composer-wrap','composer','message','library-task','attach-open','command-open','message-mode','task-model','task-model-button','send','task-actions','session-info-open','session-info-dialog','session-info-close','session-reset','task-handoff','task-link-copy','bind-open','scratch-tab','session-recover','mode-engine-hint','create-input','library-create','create-submit','library-dialog','library-query','library-workspace','library-results','library-preview-content','library-preview-cite','library-preview-back','knowledge-query','notebook','sidebar','task-list','tasks-active','tasks-archived','trash-open','new-task','search','hardware-panel','device-picker','device-refresh','device-ai','device-console','sticky-board','sticky-body','sticky-list','sticky-new','sticky-save-status','app-version','app-menu-items','logout','settings-open','theme-toggle','library-open'];const firstTask=document.querySelector('.task strong');if(firstTask){firstTask.id='first-task-title';ids.push('first-task-title')}const environment=document.querySelector('.task-environment');if(environment){environment.id='first-task-environment';ids.push('first-task-environment')}const firstNote=document.querySelector('.quick-note');if(firstNote){firstNote.id='first-quick-note';ids.push('first-quick-note')}const data={width:innerWidth,height:innerHeight,bodyWidth:document.body.scrollWidth,handoffFooterBackground:document.querySelector('#handoff-dialog .dialog-footer')?getComputedStyle(document.querySelector('#handoff-dialog .dialog-footer')).backgroundColor:'',items:{}};for(const id of ids){const e=document.getElementById(id);if(e){const r=e.getBoundingClientRect();data.items[id]={x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}}}const pre=document.createElement('pre');pre.id='layout-metrics';pre.hidden=true;pre.textContent=JSON.stringify(data);document.body.append(pre)});`;document.body.append(script);
+ // Static fixtures contain no production handlers. Restore only modal geometry
+ // and scroll positions before measuring the already-exercised DOM state.
+ script.textContent=script.textContent.replace("==='settings'?'settings-dialog':'library-dialog'","==='settings'?'library-dialog':'library-dialog'");
+ script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}.startsWith('sticky')){const d=document.getElementById('sticky-dialog');d.removeAttribute('open');d.showModal()}if(${JSON.stringify(view)}==='librarysettingsbottom'){const panel=document.getElementById('settings-knowledge');panel.scrollTop=panel.scrollHeight}const ids=['workspace-tools','hardware-tab','sticky-tab','sticky-dialog','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
  const settingsMetrics=document.createElement('script');settingsMetrics.textContent=`window.addEventListener('load',()=>{
   const pre=document.getElementById('layout-metrics'),nav=document.getElementById('workspace-settings');if(!pre||!nav)return;
   const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}};
@@ -282,7 +303,11 @@ for(const [view,theme,width,height] of cases){
   data.settingsNavigation={bar,toolbar:box(document.getElementById('app-menu-items')),header:box(document.querySelector('.header')),buttons:bounds,focusReachable:focused,focusOutline,directory:box(document.getElementById('vault-directory')),
    replacesSettings:nav.parentElement.id==='app-menu-items'&&!document.getElementById('settings-open'),
    noDuplicateNavigation:!document.getElementById('usage-shortcut')&&!document.querySelector('#settings-form .settings-nav')&&!document.querySelector('#settings-form [data-settings]')&&buttons.filter(b=>b.dataset.settings).every(b=>document.querySelectorAll('[data-settings="'+b.dataset.settings+'"]').length===1),
-   noSeparateRow:document.querySelector('.header').nextElementSibling.id==='tabs',layout:getComputedStyle(nav).display};
+   noSeparateRow:document.querySelector('.header').nextElementSibling.id==='tabs',layout:getComputedStyle(nav).display,
+   noKnowledgeCategory:!document.querySelector('[data-settings="knowledge"]')};
+  data.workspaceTools={sameGroup:document.getElementById('hardware-tab').parentElement.id==='workspace-tools'&&document.getElementById('sticky-tab').parentElement.id==='workspace-tools',noTaskTodo:!document.getElementById('scratch-tab')};
+  data.knowledgeLibrary={oneDirectory:document.querySelectorAll('#vault-directory').length===1,oneAutomaticControl:document.querySelectorAll('#automatic-capture').length===1,sameDialog:document.getElementById('library-dialog').contains(document.getElementById('settings-knowledge')),noSeparateEditor:!document.getElementById('settings-form').contains(document.getElementById('vault-directory'))};
+  data.stickyNotes={inSidebar:document.getElementById('sidebar').contains(document.getElementById('sticky-board')),fields:[...document.querySelectorAll('[data-note-input]')].map(box)};
   pre.textContent=JSON.stringify(data);
  });`;document.body.append(settingsMetrics);
  // Serialize current checkbox state as well as markup into the static fixture.
@@ -303,10 +328,11 @@ for(const [view,theme,width,height] of cases){
    assert(items['task-workspace'].width>=100,'desktop task workspace loses readable width');
   }
   if(metrics.settingsNavigation&&['normal','settings','knowledge','header','headernarrow'].includes(view)){
-   const {bar,toolbar,buttons,focusReachable,focusOutline,directory,replacesSettings,noDuplicateNavigation,noSeparateRow,layout}=metrics.settingsNavigation;
+   const {bar,toolbar,buttons,focusReachable,focusOutline,directory,replacesSettings,noDuplicateNavigation,noSeparateRow,layout,noKnowledgeCategory}=metrics.settingsNavigation;
    assert(replacesSettings&&noDuplicateNavigation&&noSeparateRow&&layout==='contents','settings categories must replace the original entry without duplicate controls or a separate row');
+   assert(noKnowledgeCategory,'knowledge accumulation must be inside the single knowledge library');
    assert(bar.visible&&bar.x>=0&&bar.x+bar.width<=width+1,'top settings navigation exceeds viewport');
-   assert(buttons.length>=6,'top settings navigation is missing a category');
+   assert(buttons.length>=5,'top settings navigation is missing a category');
    assert(toolbar.height<=(width<=760?96:76),'wrapped toolbar consumes too much height');
    assert(buttons.every(button=>button.width>=44&&button.height>=(width<=760?44:32)),'top settings categories have inaccessible targets');
    assert(buttons.every(button=>button.x>=0&&button.x+button.width<=width+1&&button.y>=0&&button.y+button.height<=height+1),'a settings category is clipped');
@@ -383,33 +409,48 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('library')){
    const box=items['library-dialog'];assert(box.visible&&box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,'library dialog exceeds viewport');
    assert(box.scrollWidth<=box.clientWidth+1,'library dialog overflows horizontally');
-   const content=items[view==='librarypreview'?'library-preview-content':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
+   const content=items[view.startsWith('librarysettings')?'settings-knowledge':view==='librarypreview'?'library-preview-content':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
    if(view==='librarypreview'){const cite=items['library-preview-cite'];assert(cite.visible&&cite.y+cite.height<=height&&cite.x+cite.width<=width,'preview action is clipped')}
+  }
+  if(view==='settings'||view.startsWith('library')){
+   const facts=metrics.knowledgeLibrary,dialog=items['library-dialog'];assert(facts.sameDialog&&facts.oneDirectory&&facts.oneAutomaticControl&&facts.noSeparateEditor,'knowledge browsing and accumulation must share one editor');
+   assert(dialog.visible&&dialog.x>=0&&dialog.y>=0&&dialog.x+dialog.width<=width+1&&dialog.y+dialog.height<=height+1,'knowledge library exceeds viewport');
+   for(const id of ['library-browse-open','library-settings-open','library-close']){const b=items[id];assert(b.visible&&b.width>=44&&b.height>=(width<=760?44:32)&&b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' is clipped or too small')}
+   if(view==='settings'||view.startsWith('librarysettings')){assert(items['settings-knowledge'].visible&&!items['library-browse-panel'].visible,'only the selected knowledge page may be shown');assert(items['settings-knowledge'].scrollWidth<=items['settings-knowledge'].clientWidth+1,'accumulation settings overflow horizontally')}
+   else assert(items['library-browse-panel'].visible&&!items['settings-knowledge'].visible,'browse page must hide accumulation controls');
+   if(view==='librarysettingsbottom'){const b=items['automatic-save'];assert(b.visible&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'automatic accumulation save cannot be reached by scrolling')}
   }
   if(view.startsWith('knowledge')){
    const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'task knowledge search is unusable');
   }
   if(view.startsWith('sidebar')){
-   const board=items['sticky-board'],list=items['task-list'];
+   const list=items['task-list'];
    for(const id of ['engines-open']){const b=items[id];assert(b&&b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y+b.height<=height+1,'engine entry is clipped: '+id);if(width<=760)assert(b.height>=44,id+' touch target is too small')}
-   for(const id of ['app-version','sticky-board','sticky-list','sticky-new','sticky-save-status']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
-   assert(list.height>=90,'task list has too little height');assert(list.y<160,'sidebar header takes too much space');assert(list.y+list.height<=board.y+1,'task list overlaps notes');
+   for(const id of ['app-version']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,id+' exceeds viewport');assert(b.scrollWidth<=b.clientWidth+1,id+' overflows horizontally')}
+   assert(!metrics.stickyNotes.inSidebar&&!items['sticky-dialog'].visible,'notes must not occupy the task drawer');
+   assert(list.height>=90,'task list has too little height');assert(list.y<160,'sidebar header takes too much space');
    for(const id of ['tasks-active','tasks-archived','trash-open'])assert(Math.abs(items[id].y-items['new-task'].y)<2,'task navigation wraps');
    assert(Math.abs(items['first-task-title'].y-items['first-task-environment'].y)<6,'task environment wraps to another line');
    assert(items['first-task-environment'].width>=28,'task environment loses all readable space');
-   assert(items['sticky-list'].height>=32,'notes have no writing room');
    if(view==='sidebarnarrow')assert(items['first-task-title'].width>=60,'narrow sidebar hides task titles behind status labels');
-   if(view==='sidebar'&&width>760)assert(items['first-quick-note'].height<=42,'single-line notes have excessive height');
    if(width<=760){assert(items.sidebar.height===height,'phone drawer must fill the viewport');assert(items.conversation.height>height*.5,'opening the task drawer must not push the conversation down')}
+  }
+  if(view.startsWith('sticky')){
+   const dialog=items['sticky-dialog'];assert(dialog.visible&&dialog.x>=0&&dialog.x+dialog.width<=width+1&&dialog.y>=0&&dialog.y+dialog.height<=height+1,'notes drawer exceeds viewport');assert(dialog.scrollWidth<=dialog.clientWidth+1,'notes drawer overflows horizontally');
+   for(const id of ['sticky-close','sticky-new']){const b=items[id],minimum=width<=760?44:24;assert(b.visible&&b.width>=minimum&&b.height>=minimum&&b.x>=dialog.x&&b.x+b.width<=dialog.x+dialog.width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,id+' is clipped or too small for touch')}
+   assert(items['sticky-list'].height>=100,'notes drawer has too little writing room');assert(items['sticky-save-status'].visible&&items['sticky-save-status'].y+items['sticky-save-status'].height<=height+1,'note save status is inaccessible');
+   const fields=metrics.stickyNotes.fields;assert(fields.length>=1&&fields[0].visible&&fields[0].width>=120&&fields[0].height>=32,'notes have no usable draft field');assert(!metrics.stickyNotes.inSidebar,'notes must be independent of the task drawer');
   }
   if(view==='hardware'){
    for(const id of ['hardware-panel','device-picker','device-refresh','device-ai','device-console']){const b=items[id];assert(b.visible&&b.width>0&&b.height>0,id+' is hidden');assert(b.x>=0&&b.x+b.width<=width+1,id+' exceeds the viewport')}
    assert(items['device-console'].height>=180,'hardware controls leave too little space for logs');
   }
   if(['normal','long','header','headernarrow','appmenu','home','context','create'].includes(view)){
-   const controls=['theme-toggle','library-open','logout'];
-   if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','bind-open','scratch-tab');
+   const controls=['theme-toggle','library-open','logout','hardware-tab','sticky-tab'];
+   if(!['home','create'].includes(view))controls.push('session-reset','task-handoff','bind-open');
+   assert(metrics.workspaceTools.sameGroup&&metrics.workspaceTools.noTaskTodo,'hardware and notes must share the global toolbar without a task to-do shortcut');
    for(const id of controls){const b=items[id];assert(b.visible&&b.width>0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'direct header action is clipped: '+id);if(width<=760)assert(b.height>=44&&b.width>=44,id+' touch target is too small')}
+   assert(Math.abs(items['hardware-tab'].y-items['sticky-tab'].y)<2,'hardware and notes should remain on the same row');
   }
   if(view.startsWith('handoff')){
    if(view.startsWith('handofflegacy'))assert(!items['handoff-preserve-legacy'],'legacy task must not ask for an account binding');

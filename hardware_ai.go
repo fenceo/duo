@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -134,6 +135,54 @@ func (s *Store) hardwareGrants(task string) (map[string]HardwareGrant, error) {
 	}
 	return out, rows.Err()
 }
+
+var errHardwareTaskUnavailable = errors.New("请先恢复任务，再使用硬件")
+
+// Opening a device is sufficient to enable it for the next AI turn. A saved
+// row, including an all-false revocation, is deliberate and is never replaced.
+// Resolve the binding, device capabilities and task state in one transaction.
+func (a *App) defaultHardwareAI(task, id string) (HardwareGrant, error) {
+	var g HardwareGrant
+	tx, err := a.store.Begin()
+	if err != nil {
+		return g, err
+	}
+	defer tx.Rollback()
+	var raw string
+	var archived, deleted bool
+	err = tx.QueryRow(`SELECT h.config,COALESCE(p.archived,0),COALESCE(o.deleted,0)
+		FROM hardware h JOIN task_hardware b ON b.hardware_id=h.id
+		JOIN tasks t ON t.id=b.task_id
+		LEFT JOIN task_preferences p ON p.task_id=t.id
+		LEFT JOIN task_options o ON o.task_id=t.id
+		WHERE t.id=? AND h.id=?`, task, id).Scan(&raw, &archived, &deleted)
+	if err != nil {
+		return g, err
+	}
+	if archived || deleted {
+		return g, errHardwareTaskUnavailable
+	}
+	var c HardwareConfig
+	if err = json.Unmarshal([]byte(raw), &c); err != nil {
+		return g, err
+	}
+	g = HardwareGrant{Read: true, Write: !c.ReadOnly && c.Kind != "relay", Power: !c.ReadOnly && c.Kind == "relay"}
+	result, err := tx.Exec(`INSERT INTO hardware_ai_access VALUES(?,?,?,?,?) ON CONFLICT(task_id,hardware_id) DO NOTHING`, task, id, g.Read, g.Write, g.Power)
+	if err != nil {
+		return HardwareGrant{}, err
+	}
+	if err = tx.QueryRow("SELECT allow_read,allow_write,allow_power FROM hardware_ai_access WHERE task_id=? AND hardware_id=?", task, id).Scan(&g.Read, &g.Write, &g.Power); err != nil {
+		return HardwareGrant{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return HardwareGrant{}, err
+	}
+	if inserted, _ := result.RowsAffected(); inserted > 0 {
+		a.hardware.recordFor(id, "status", []byte("打开或连接设备，默认允许本任务 AI 使用：读取="+boolText(g.Read)+"，串口发送="+boolText(g.Write)+"，电源="+boolText(g.Power)), task)
+	}
+	return g, nil
+}
+
 func hardwareEndpoint(c Config, address string) (string, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -207,7 +256,7 @@ func (a *App) aiHardware(l *hardwareLease, id string) (HardwareConfig, HardwareG
 		return c, g, errors.New("任务已停止")
 	}
 	t, err := a.store.task(l.task)
-	if err != nil || t.Archived {
+	if err != nil || t.Archived || t.Deleted {
 		return c, g, errors.New("任务不可用")
 	}
 	err = a.store.QueryRow(`SELECT h.config,p.allow_read,p.allow_write,p.allow_power FROM hardware h JOIN task_hardware t ON t.hardware_id=h.id JOIN hardware_ai_access p ON p.task_id=t.task_id AND p.hardware_id=h.id WHERE t.task_id=? AND h.id=?`, l.task, id).Scan(&raw, &g.Read, &g.Write, &g.Power)
@@ -225,6 +274,20 @@ func (a *App) aiHardware(l *hardwareLease, id string) (HardwareConfig, HardwareG
 }
 func (s *Server) hardwareAIRoutes(m *http.ServeMux) {
 	s.desktopRoutes(m)
+	m.HandleFunc("POST /api/tasks/{id}/hardware/{hid}/ai-default", s.secure(func(w http.ResponseWriter, r *http.Request) {
+		g, err := s.app.defaultHardwareAI(r.PathValue("id"), r.PathValue("hid"))
+		if err != nil {
+			status := 500
+			if errors.Is(err, sql.ErrNoRows) {
+				status = 404
+			} else if errors.Is(err, errHardwareTaskUnavailable) {
+				status = 409
+			}
+			fail(w, status, err.Error())
+			return
+		}
+		jsonOut(w, 200, g)
+	}))
 	m.HandleFunc("GET /api/tasks/{id}/hardware-ai", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		g, err := s.app.store.hardwareGrants(r.PathValue("id"))
 		if err != nil {
@@ -240,7 +303,7 @@ func (s *Server) hardwareAIRoutes(m *http.ServeMux) {
 			return
 		}
 		t, err := s.app.store.task(r.PathValue("id"))
-		if err != nil || t.Archived {
+		if err != nil || t.Archived || t.Deleted {
 			fail(w, 409, "请先恢复任务")
 			return
 		}

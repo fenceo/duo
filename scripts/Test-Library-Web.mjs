@@ -2,12 +2,13 @@ import {readFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import {createContext,runInContext} from 'node:vm';
 import assert from 'node:assert/strict';
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
 
 const source=stripTypeScriptTypes(await readFile(new URL('../web/library.ts',import.meta.url),'utf8'),{mode:'transform'});
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}};
 function fixture(){
  const nodes=new Map(),notices=[],calls=[];
- const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',innerHTML:'',classList:{toggle(){},add(){},remove(){}},querySelectorAll(){return []},focus(){},dispatchEvent(){},close(){},showModal(){}});return nodes.get(id)};
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,textContent:'',innerHTML:'',classList:{toggle(){},add(){},remove(){},contains(){return false}},querySelectorAll(){return []},setAttribute(){},focus(){},dispatchEvent(){},close(){this.open=false},showModal(){this.open=true}});return nodes.get(id)};
  const ctx=createContext({URLSearchParams,Event,console,element:node,input:node,button:node,shellEpoch:1,selection:4,chosen:'one',creatingTask:false,tasks:[],drafts:new Map(),names:{done:'完成'},shellController:new AbortController(),shellCurrent:e=>e===ctx.shellEpoch,escapeHTML:s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),notify:s=>notices.push(s),loadKnowledge:async()=>{},api:async(path,method,body)=>{calls.push({path,method,body});return path==='library/automatic'?{capture:true,recall:true}:path==='library/vault'?{config:{enabled:false},report:{}}:path.startsWith('library/search')?{documents:[],truncated:false}:{reference:'\n[来源：history]\nprevious conclusion',truncated:false}}});
  runInContext(source,ctx);runInContext("libraryTarget={task:'one',create:false,selection:4,epoch:1};libraryHits=[{id:'knowledge:abc',hash:'version-one'}]",ctx);
  return {ctx,node,notices,calls,run:code=>runInContext(code,ctx)};
@@ -80,3 +81,38 @@ console.log('PASS: citation provenance and isolation, escaped previews, automati
  ctx.creatingTask=true;await ctx.openLibrary();assert.equal(node('library-manage-task').disabled,true);
 }
 console.log('PASS: directory settings reject stale reads/writes, duplicate saves and failed loads; search remains separate from settings.');
+{
+ const {document,ctx,requests}=await createWebShellFixture(),node=id=>document.getElementById(id),run=code=>runInContext(code,ctx),api=ctx.api;
+ const calls=[];ctx.api=async(path,method,body,...rest)=>{calls.push({path,method,body});if(path.startsWith('library/search'))return {documents:[],truncated:false};if(path==='library/vault/refresh')return {updated:1,conflicts:[],warnings:[]};return api(path,method,body,...rest)};
+ assert.equal(document.querySelectorAll('[data-settings="knowledge"]').length,0,'knowledge setup is no longer a second top-level settings category');
+ assert.equal(node('settings-knowledge').parentElement,node('library-dialog'),'one original settings editor lives in the knowledge library');
+ assert.equal(node('library-settings-open').parentElement.className,'library-pages','setup is one in-library page rather than another header shortcut');
+ assert.equal(document.querySelectorAll('#vault-directory').length,1);
+ await Promise.all([ctx.openLibrarySettings(),ctx.openLibrarySettings()]);
+ assert(node('library-dialog').open);assert(!node('settings-dialog').open,'knowledge setup never opens the unrelated global editor');
+ assert(!node('settings-knowledge').classList.contains('hidden'));assert(node('library-browse-panel').classList.contains('hidden'));
+ assert.equal(node('knowledge-data-directory').textContent,'C:/fixture/data','advanced data location is loaded without opening settings');
+ assert(calls.every(call=>call.method==='GET'),'opening settings only reads configuration');
+ for(const path of ['settings','library/vault','library/automatic'])assert.equal(calls.filter(call=>call.path===path).length,1,'concurrent knowledge opens share one read: '+path);
+ node('vault-directory').value='/fixture/unsaved-notes';node('vault-directory').oninput();node('automatic-capture').checked=false;node('automatic-capture').onchange();
+ node('library-browse-open').onclick();for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert(calls.some(call=>call.path.startsWith('library/search')),'switching from a settings deep link starts the document browser');
+ assert(!node('library-browse-panel').classList.contains('hidden'));assert(node('settings-knowledge').classList.contains('hidden'));
+ await ctx.openLibrarySettings();
+ assert.equal(node('vault-directory').value,'/fixture/unsaved-notes');assert.equal(node('automatic-capture').checked,false,'switching pages never overwrites unsaved choices');
+ node('library-dialog').close();await ctx.openLibrarySettings();
+ assert.equal(node('vault-directory').value,'/fixture/unsaved-notes');assert.equal(node('automatic-capture').checked,false,'closing and reopening preserves unsaved settings');
+ const reads=calls.length;await ctx.loadVault();await ctx.loadAutomaticKnowledge();assert.equal(calls.length,reads,'background reloads cannot overwrite dirty controls');
+ const normalAPI=ctx.api;ctx.api=async(path,method,...rest)=>{if(method==='PUT')throw new Error('fixture failed save');return normalAPI(path,method,...rest)};
+ await ctx.saveVault();await ctx.saveAutomaticKnowledge();assert(run('vaultSettingsDirty&&automaticSettingsDirty'),'failed saves retain drafts and dirty flags');
+ ctx.api=async(path,method,body,...rest)=>{if(method==='PUT')return path==='library/vault'?{...body,document_directory:body.directory+'/Duo'}:{};return normalAPI(path,method,body,...rest)};
+ await ctx.saveVault();await ctx.saveAutomaticKnowledge();assert.equal(run('vaultSettingsDirty||automaticSettingsDirty'),false,'successful individual saves clear their own dirty flags');
+ // Reading runtime location must not replace another editor's settings snapshot.
+ const snapshot=run('settings');ctx.api=async(path,...rest)=>path==='settings'?{data_dir:'D:/fixture/changed-data'}:normalAPI(path,...rest);await ctx.loadKnowledgeSettings();
+ assert.equal(run('settings'),snapshot);assert.equal(node('knowledge-data-directory').textContent,'D:/fixture/changed-data');
+ const gate=deferred();ctx.api=()=>gate.promise;const pending=ctx.loadKnowledgeSettings();run('renewShellScope()');node('knowledge-data-directory').textContent='next login';gate.resolve({data_dir:'old account data'});await pending;
+ assert.equal(node('knowledge-data-directory').textContent,'next login','late directory responses cannot cross login epochs');
+ assert.equal(run('vaultSettingsDirty||automaticSettingsDirty'),false,'shell disposal clears the former login drafts');
+ assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
+}
+console.log('PASS: knowledge browsing and accumulation share one dialog and one editor; tab switches, reopening, failed saves, runtime-location refresh and login changes preserve or isolate drafts. Synthetic only.');

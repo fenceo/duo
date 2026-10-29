@@ -119,7 +119,7 @@ async function boot(){
  // mount failure belongs to that new shell, not the earlier login/API epoch.
  try{renderShell();renderList()}catch(error){showShellFailure(error);return}
  const query=new URLSearchParams(location.search),id=query.get('task');if(id&&tasks.some(t=>t.id===id))await choose(id,query.get('view')==='note'?'note':'chat');
- if(query.get('settings')==='access')await openSettingsPage('access');
+ const settingsPage=query.get('settings');if(settingsPage==='access'||settingsPage==='knowledge')await openSettingsPage(settingsPage);
 }
 function showShellFailure(error:unknown){
  authenticated=false;renewShellScope();
@@ -138,7 +138,7 @@ function renderShell(){
  installTools();installWorkspace();installConversationFilter();installSettingsSections();installEngineSettings();installProductivity();installEditor();installTerminal();installExecution();installDiscovery();installLayout();installEnvironmentDiscovery();installWorkflow();installCodexApprovals();installStickyBoard();installAppearance();installPanelLayout();installUpdates();installLibrary();installDesktopSharing();installUsageDashboard();installSettingsNavigation();
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
- button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
+ button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving){notify('知识库设置尚未保存，请先保存后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
@@ -195,7 +195,7 @@ function switchTab(tab:string){
  if(chosen){const query=new URLSearchParams({task:chosen});if(tab==='note')query.set('view','note');history.replaceState(null,'','/?'+query)}
  element('workspace').classList.toggle('tool-open',open);element('workspace').classList.toggle('tool-full',open&&toolFullscreen);
  element('tool-dock').classList.toggle('hidden',!open);element('conversation').classList.remove('hidden');element('composer-wrap').classList.toggle('hidden',!chosen);
- for(const [key,panel] of [['note','notebook'],['scratch','scratch-panel'],['hardware','hardware-panel'],['files','files-panel'],['terminal','terminal-panel']]){element(panel).classList.toggle('hidden',tab!==key);button(key+'-tab').classList.toggle('selected',tab===key);button(key+'-tab').setAttribute('aria-pressed',String(tab===key))}
+ for(const [key,panel] of [['note','notebook'],['scratch','scratch-panel'],['hardware','hardware-panel'],['files','files-panel'],['terminal','terminal-panel']]){element(panel).classList.toggle('hidden',tab!==key);const entry=document.getElementById(key+'-tab');entry?.classList.toggle('selected',tab===key);entry?.setAttribute('aria-pressed',String(tab===key))}
  button('chat-tab').classList.toggle('selected',!open);element('tool-title').textContent=({note:'本任务知识',scratch:'待办',hardware:'硬件调试',files:'文件与改动',terminal:'终端'} as Record<string,string>)[tab]||'任务工具';
  renderTerminal();renderHardwareState();if(tab!=='hardware')cancelHardwareInput();if(tab==='files')void loadFiles();if(tab==='scratch')void loadScratch();if(tab==='hardware')void loadDevices();if(tab==='note'&&detail)void loadKnowledge();
 }
@@ -424,7 +424,7 @@ function useKnowledge(k:Knowledge|undefined){if(!k)return;void citeTaskKnowledge
 async function openSettings(){
  const epoch=shellEpoch;
  element('settings-saved').textContent='';
- try{const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;const c=settings.config;loadAccessSettings();loadDataSettings();editingEnvironments=JSON.parse(JSON.stringify(c.environments));editingID=c.default_environment;environmentPickers(c.default_environment);loadEnvironmentEditor();input('feishu-id').value=c.feishu.app_id;input('feishu-secret').value='';input('feishu-secret').placeholder=settings.secret_configured?'已保存，留空保持不变':'填写自建应用 App Secret';input('feishu-enabled').checked=c.feishu.enabled;updateFeishuStatus();element('check-result').textContent='';element('settings-error').textContent='';element<HTMLDialogElement>('settings-dialog').showModal();if(document.querySelector('[data-settings="knowledge"].selected'))void loadKnowledgeSettings();else if(document.querySelector('[data-settings="environment"].selected'))void openEngineCenter()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
+ try{const loaded=await api<Settings>('settings','GET',undefined,shellController.signal);if(!shellCurrent(epoch))return;settings=loaded;const c=settings.config;loadAccessSettings();loadDataSettings();editingEnvironments=JSON.parse(JSON.stringify(c.environments));editingID=c.default_environment;environmentPickers(c.default_environment);loadEnvironmentEditor();input('feishu-id').value=c.feishu.app_id;input('feishu-secret').value='';input('feishu-secret').placeholder=settings.secret_configured?'已保存，留空保持不变':'填写自建应用 App Secret';input('feishu-enabled').checked=c.feishu.enabled;updateFeishuStatus();element('check-result').textContent='';element('settings-error').textContent='';element<HTMLDialogElement>('settings-dialog').showModal();if(document.querySelector('[data-settings="environment"].selected'))void openEngineCenter()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}
 }
 function loadDataSettings(){
  const current=element('data-dir-current');if(!current)return;
@@ -531,7 +531,7 @@ async function openBinding(){
 async function setBinding(bind:boolean){
  try{await api('tasks/'+chosen+'/bind',bind?'POST':'DELETE',bind?{chat:settings.chat}:{});element<HTMLDialogElement>('bind-dialog').close();notify(bind?'已连接到此任务':'已断开此任务');await poll()}catch(e){notify((e as Error).message)}
 }
-window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving){e.preventDefault();e.returnValue=''}});
+window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving){e.preventDefault();e.returnValue=''}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll()});
 setInterval(()=>void poll(true),1000);
 setInterval(()=>void pollSettingsStatus(),5000);

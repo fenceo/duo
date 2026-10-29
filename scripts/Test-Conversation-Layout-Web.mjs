@@ -12,11 +12,14 @@ assert.equal(node('library-create').parentElement,node('create-submit').parentEl
 assert.equal(node('message').previousElementSibling?.id,'composer-resizer','the only element above the draft is its thin resize edge');
 assert(node('task-title').parentElement.classList.contains('task-identity'));
 assert.equal(node('task-title').parentElement,node('task-workspace').parentElement);
-for(const id of ['session-reset','task-handoff','bind-open','scratch-tab']){
+for(const id of ['session-reset','task-handoff','bind-open']){
   assert.equal(node(id).parentElement,node('task-actions'));
   assert.equal(node(id).closest('details'),null,'session actions are directly accessible');
   assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
 }
+assert.equal(node('scratch-tab'),null,'task to-do entry is removed');
+assert.equal(node('hardware-tab').parentElement,node('workspace-tools'));
+assert.equal(node('hardware-tab').nextElementSibling,node('sticky-tab'),'notes and hardware remain adjacent in the header');
 assert.equal(node('task-link-copy'),null,'duplicate link action is removed from the header');
 assert.equal(node('session-info-open'),null,'diagnostics do not occupy a header button');
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="session-info"/);

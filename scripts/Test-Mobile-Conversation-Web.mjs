@@ -5,15 +5,15 @@ import assert from 'node:assert/strict';
 const {ctx,document}=await createWebShellFixture();
 const node=id=>document.getElementById(id);
 runInContext('dockNarrow.matches=true;applyDockLayout()',ctx);
-assert.equal(node('sticky-board').parentElement,node('sidebar'),'phone notes stay in the task drawer, preserving conversation space');
+assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'phone notes stay in their own drawer, preserving conversation space');
 assert.equal(node('sticky-expand').getAttribute('aria-expanded'),'true','notes default to expanded inside the drawer');
 for(const previous of ['left','right','bottom','sidebar']){
  ctx.localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:previous,tools:'left'}));
  runInContext('installDockLayout()',ctx);
- assert.equal(node('sticky-board').parentElement,node('sidebar'),'old note positions return to the task drawer');
+ assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'old note positions cannot move notes out of their drawer');
  assert.deepEqual(JSON.parse(ctx.localStorage.getItem('jianzuo-dock-layout-v1')),{sticky:'sidebar',tools:'left'},'migration keeps tool panel preferences');
  runInContext("moveDockPanel('sticky','right')",ctx);
- assert.equal(node('sticky-board').parentElement,node('sidebar'),'notes cannot be moved accidentally');
+ assert.equal(node('sticky-board').parentElement,node('sticky-dialog'),'notes cannot be moved accidentally');
 }
 assert(!document.querySelector('[data-dock-grip="sticky"]'));
 assert(!node('appearance-sticky-zone'));

@@ -14,7 +14,8 @@ assert.equal(node('settings-form').querySelector('[data-settings]'),null,'catego
 assert.equal(document.querySelector('.header').nextElementSibling,node('tabs'),'there is no standalone settings row');
 assert.equal(nav.closest('details'),null,'settings categories do not require opening a menu');
 const pages=[...nav.querySelectorAll('[data-settings]')].map(button=>button.dataset.settings);
-assert(pages.length>=5);
+assert(pages.length>=4);
+assert(!pages.includes('knowledge'),'knowledge settings live inside the knowledge library');
 for(const page of pages){
  const shortcuts=document.querySelectorAll('[data-settings="'+page+'"]');
  assert.equal(shortcuts.length,1,'one original button per settings category');
@@ -22,8 +23,8 @@ for(const page of pages){
  assert.equal(shortcuts[0].getAttribute('aria-controls'),'settings-dialog');
  assert.equal(shortcuts[0].getAttribute('aria-haspopup'),'dialog');
 }
-let knowledgeLoads=0,updateLoads=0,usageOpens=0;
-ctx.loadKnowledgeSettings=async()=>{knowledgeLoads++};ctx.loadUpdateInformation=async()=>{updateLoads++};ctx.openUsageDashboard=async()=>{usageOpens++};
+let updateLoads=0,usageOpens=0;
+ctx.loadUpdateInformation=async()=>{updateLoads++};ctx.openUsageDashboard=async()=>{usageOpens++};
 for(const page of pages){
  node('settings-dialog').close();
  await nav.querySelector('[data-settings="'+page+'"]').onclick();
@@ -32,7 +33,7 @@ for(const page of pages){
  assert(document.querySelector('[data-settings="'+page+'"]').classList.contains('selected'));
  assert.equal(node('settings-form').querySelector('h2').textContent,nav.querySelector('[data-settings="'+page+'"]').textContent,'dialog title identifies the current category');
 }
-assert(knowledgeLoads>0);assert(updateLoads>0);
+assert(updateLoads>0);
 await node('usage-open').onclick();assert.equal(usageOpens,1,'original usage button opens directly');
 assert.equal(node('bind-open').textContent,'任务绑定');
 assert.equal([...document.querySelectorAll('.header button')].filter(button=>button.textContent==='飞书连接').length,1,'global Feishu configuration and task binding have distinct labels');
@@ -48,12 +49,24 @@ assert.equal(document.querySelectorAll('#vault-directory').length,1,'shortcuts d
 // Multiple quick clicks share one settings read; the last click chooses the page.
 node('settings-dialog').close();let finish,loads=0;const api=ctx.api,loaded=run('JSON.parse(JSON.stringify(settings))');
 ctx.api=(path,...rest)=>path==='settings'?(loads++,new Promise(resolve=>{finish=resolve})):api(path,...rest);
-const first=ctx.openSettingsPage('access'),second=ctx.openSettingsPage('knowledge');
+const first=ctx.openSettingsPage('access'),second=ctx.openSettingsPage('updates');
 assert.equal(loads,1);finish(loaded);await Promise.all([first,second]);
-assert(!node('settings-knowledge').classList.contains('hidden'),'last requested category wins');
+assert(!node('settings-updates').classList.contains('hidden'),'last requested category wins');
 assert(node('settings-access').classList.contains('hidden'));
-await ctx.openSettingsPage('missing-category');assert(!node('settings-knowledge').classList.contains('hidden'),'unknown categories leave the current page intact');
+await ctx.openSettingsPage('missing-category');assert(!node('settings-updates').classList.contains('hidden'),'unknown categories leave the current page intact');
 ctx.api=api;node('settings-dialog').close();
+
+// A late settings load cannot reopen its dialog over the unified library.
+loads=0;ctx.api=(path,...rest)=>path==='settings'&&++loads===1?new Promise(resolve=>{finish=resolve}):api(path,...rest);
+const pending=ctx.openSettingsPage('access'),library=ctx.openSettingsPage('knowledge');
+finish(loaded);await Promise.all([pending,library]);ctx.api=api;
+assert(node('library-dialog').open,'knowledge route opens the unified library');
+assert(!node('settings-dialog').open,'late settings load cannot cover the library');
+assert(!node('settings-knowledge').classList.contains('hidden'));
+assert(node('library-browse-panel').classList.contains('hidden'));
+assert.equal(document.querySelectorAll('[data-settings="knowledge"]').length,0);
+assert.equal(node('settings-knowledge').closest('dialog'),node('library-dialog'));
+node('library-dialog').close();
 
 // Knowledge setup starts with the directory and keeps original switches/IDs.
 const section=node('settings-knowledge'),panels=[...section.children];
@@ -73,6 +86,10 @@ ctx.location.search='?settings=access';await ctx.boot();
 assert(node('settings-dialog').open,'access deep link still opens settings');
 assert(!node('settings-access').classList.contains('hidden'));
 assert.equal(document.querySelectorAll('#workspace-settings').length,1,'fresh login does not duplicate shortcut bars');
+ctx.location.search='?settings=knowledge';await ctx.boot();
+assert(node('library-dialog').open,'legacy knowledge deep link opens the unified library');
+assert(!node('settings-dialog').open);
+assert(!node('settings-knowledge').classList.contains('hidden'));
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 run('authenticated=false;renewShellScope()');
 console.log('PASS: original category buttons replace settings in the existing toolbar without duplicated controls or a second navigation row; one editor preserves drafts, concurrent opens, task binding and access deep links. Synthetic only.');

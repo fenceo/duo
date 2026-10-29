@@ -5,8 +5,9 @@ let hardwareView:HardwareView|null=null,hardwarePortsRequest=0,hardwareEditingTa
 let hardwarePollTimer:ReturnType<typeof setInterval>|undefined,hardwareSaving=false;
 const hardwareDrafts=new Map<string,string>();
 type HardwareGrant={read:boolean;write:boolean;power:boolean};
-let hardwareAIGrants:Record<string,HardwareGrant>={},hardwareAIEditing:{task:string;device:DeviceConfig}|null=null;
-type HardwareTaskUse={id:string;title:string;archived:boolean;ai:HardwareGrant;active_ai?:HardwareGrant};
+let hardwareAIGrants:Record<string,HardwareGrant>={},hardwareAIConfigured:Record<string,boolean>={},hardwareAIEditing:{task:string;device:DeviceConfig}|null=null,hardwareAIRevision=0;
+const hardwareAIDefaults=new Set<string>();
+type HardwareTaskUse={id:string;title:string;archived:boolean;ai:HardwareGrant;ai_configured?:boolean;active_ai?:HardwareGrant};
 type HardwareOverview={config:DeviceConfig;connected:boolean;controller_task:string;controller_title:string;tasks:HardwareTaskUse[]};
 let hardwareOverview:HardwareOverview[]=[],hardwareOverviewTask='',hardwareAISaving=false,hardwareLibraryAttaching=false;
 function hexBytes(hex:string){return Uint8Array.from(hex.match(/.{1,2}/g)||[],pair=>parseInt(pair,16))}
@@ -25,8 +26,10 @@ function installHardware(){
  button('device-library').onclick=()=>void openHardwareLibrary();button('hardware-library-close').onclick=()=>element<HTMLDialogElement>('hardware-library-dialog').close();
  element('device-library').insertAdjacentHTML('afterend','<button id="device-ai">AI 使用</button><button id="device-refresh" title="重新读取设备与权限" aria-label="刷新设备">↻</button>');
  button('device-refresh').onclick=()=>void loadDevices();
+ button('device-ai').title='打开或连接设备时默认供本任务 AI 使用；可在此调整或关闭权限';
  element('hardware-library-list').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('button');if(!b)return;if(b.dataset.attach)void attachHardwareFromLibrary(b.dataset.attach);else if(b.dataset.hardwareTask){element<HTMLDialogElement>('hardware-library-dialog').close();deviceID=b.dataset.device!;void choose(b.dataset.hardwareTask,'hardware')}};
  element('root').insertAdjacentHTML('beforeend',`<dialog id="hardware-ai-dialog"><form id="hardware-ai-form"><h2>允许本任务 AI 使用</h2><p id="hardware-ai-name"></p><label class="check-row"><input type="checkbox" id="hardware-ai-read">连接、读取日志和查询状态</label><label class="check-row" id="hardware-ai-write-row"><input type="checkbox" id="hardware-ai-write">发送串口 / 控制台命令</label><label class="check-row" id="hardware-ai-power-row"><input type="checkbox" id="hardware-ai-power">上电、断电和断电重启</label><p>适用于本任务的 Codex、Claude、DeepSeek Harness、MiMo Code 和 OpenCode；CLI 未声明 HTTP MCP 能力时会明确拒绝而不是在没有工具的情况下运行。新增权限从下一轮使用；收回权限会立即撤销本轮硬件凭据。操作记录留在任务和硬件日志中。</p><p class="error" id="hardware-ai-error"></p><div class="dialog-footer"><button type="button" id="hardware-ai-cancel">取消</button><button class="primary" id="hardware-ai-save">保存</button></div></form></dialog>`);
+ element('hardware-ai-name').insertAdjacentHTML('afterend','<p>打开或连接设备时默认允许本任务 AI 使用，从下一轮生效。只读设备仅允许读取；手动关闭或限制的权限会保留。</p>');
  button('device-ai').onclick=()=>void editHardwareAI();button('hardware-ai-cancel').onclick=()=>element<HTMLDialogElement>('hardware-ai-dialog').close();input('hardware-ai-read').onchange=renderHardwareAIForm;element('hardware-ai-form').onsubmit=e=>{e.preventDefault();void saveHardwareAI()};
  button('device-claim').onclick=()=>{const h=hardwareView;if(h?.controller&&h.controller!==chosen&&!confirm('接管“'+(h.controllerTitle||h.controller)+'”正在控制的设备？原任务会转为查看模式。'))return;cancelHardwareInput();void deviceAction('claim',{})};
  button('device-release').onclick=()=>{cancelHardwareInput();void deviceAction('release',{})};
@@ -60,7 +63,7 @@ function installHardware(){
  button('device-analyze').onclick=()=>{const selected=input('device-view').value==='terminal'?hardwareView?.term.getSelection():window.getSelection()?.toString();const text=(selected||hardwarePlainText(hardwareLogEvents())).slice(-24000);if(!text){notify('先接收日志，或选中要分析的文字');return}bringToChat('请分析以下硬件调试输出：\n\n'+text)};
  element('hardware-panel').querySelectorAll<HTMLButtonElement>('[data-hardware-key]').forEach(b=>b.onclick=()=>{const key=b.dataset.hardwareKey!;const data=key==='enter'?hardwareEnter():({tab:'\t',up:'\x1b[A',down:'\x1b[B','ctrl-c':'\x03',esc:'\x1b'} as Record<string,string>)[key];queueHardwareInput(new TextEncoder().encode(data));hardwareView?.term.focus()});
  clearInterval(hardwarePollTimer);hardwarePollTimer=setInterval(()=>void pollDevice(),100);
- disposeWithShell(()=>clearInterval(hardwarePollTimer));
+ disposeWithShell(()=>{clearInterval(hardwarePollTimer);++hardwareLoadRequest;++hardwareAIRevision;hardwareAIDefaults.clear();hardwareOverviewTask='';hardwareAIGrants={};hardwareAIConfigured={};closeHardwareView()});
 }
 function hardwareEnter(){return ({cr:'\r',lf:'\n',crlf:'\r\n'} as Record<string,string>)[input('hardware-enter').value]||'\r'}
 function hardwareKeyEvent(e:KeyboardEvent,selected:string,enter:string,backspace:string,send:(bytes:Uint8Array)=>void){
@@ -101,18 +104,19 @@ async function saveDevice(connect:boolean){
 }
 function connectSelectedDevice(){if(devices.find(d=>d.id===deviceID)?.protocol==='ssh'){input('device-password').value='';element<HTMLDialogElement>('device-password-dialog').showModal()}else void deviceAction('connect',{})}
 async function loadDevices(){
- const task=chosen,request=++hardwareLoadRequest;if(!task)return;
- if(hardwareOverviewTask!==task){devices=[];hardwareAIGrants={};closeHardwareView();input('device-picker').disabled=true;renderHardwareState()}
+ const task=chosen,request=++hardwareLoadRequest,epoch=shellEpoch;if(!task)return;
+ if(hardwareOverviewTask!==task){devices=[];hardwareAIGrants={};hardwareAIConfigured={};++hardwareAIRevision;closeHardwareView();input('device-picker').disabled=true;renderHardwareState()}
  button('device-refresh').disabled=true;
- try{const list=await api<HardwareOverview[]>('hardware/overview');if(chosen!==task||request!==hardwareLoadRequest)return;
-  hardwareOverview=list;hardwareOverviewTask=task;devices=list.filter(d=>d.tasks.some(t=>t.id===task)).map(d=>d.config);hardwareAIGrants={};for(const item of list){const use=item.tasks.find(t=>t.id===task);if(use)hardwareAIGrants[item.config.id]=use.ai}
+ try{const list=await api<HardwareOverview[]>('hardware/overview');if(!shellCurrent(epoch)||chosen!==task||request!==hardwareLoadRequest)return;
+  hardwareOverview=list;hardwareOverviewTask=task;devices=list.filter(d=>d.tasks.some(t=>t.id===task)).map(d=>d.config);hardwareAIGrants={};hardwareAIConfigured={};for(const item of list){const use=item.tasks.find(t=>t.id===task);if(use){hardwareAIGrants[item.config.id]=use.ai;hardwareAIConfigured[item.config.id]=use.ai_configured!==false}}
   const picker=input('device-picker'),html=devices.map(d=>`<option value="${d.id}">${escapeHTML(d.name)}</option>`).join('')||'<option value="">添加串口或网络设备</option>';
   if(picker.dataset.snapshot!==html){picker.innerHTML=html;picker.dataset.snapshot=html}picker.disabled=false;
   if(!devices.some(d=>d.id===deviceID))deviceID=devices[0]?.id||'';selectDevice(deviceID);if(element<HTMLDialogElement>('hardware-library-dialog').open)renderHardwareLibrary();return true;
- }catch(e){if(chosen===task&&request===hardwareLoadRequest)notify('设备读取失败：'+(e as Error).message);return false}finally{if(request===hardwareLoadRequest){if(element('device-refresh'))button('device-refresh').disabled=false}}
+ }catch(e){if(shellCurrent(epoch)&&chosen===task&&request===hardwareLoadRequest)notify('设备读取失败：'+(e as Error).message);return false}finally{if(shellCurrent(epoch)&&request===hardwareLoadRequest){if(element('device-refresh'))button('device-refresh').disabled=false}}
 }
 function closeHardwareView(){const h=hardwareView;if(h){h.alive=false;h.resize.disconnect();clearTimeout(h.flushTimer);h.pending=[];h.term.dispose();hardwareView=null}}
 function selectDevice(id:string){
+ void activateSelectedHardwareAI(id);
  if(hardwareView?.task===chosen&&hardwareView.id===id){input('device-picker').value=id;renderHardwareState();fitHardwareTerminal();void pollDevice();return}
  closeHardwareView();if(devices.find(d=>d.id===id)?.kind==='relay')input('device-view').value='hex';deviceID=id;deviceTask=chosen;deviceSeq=0;deviceEvents=[];input('device-picker').value=id;input('device-data').value=hardwareDrafts.get(chosen+'/'+id)||'';
  element('hardware-terminal').replaceChildren();
@@ -130,6 +134,18 @@ function selectDevice(id:string){
   term.attachCustomKeyEventHandler(e=>hardwareKeyEvent(e,term.getSelection(),hardwareEnter(),input('hardware-backspace').value,queueHardwareInput));
  }
  renderDeviceLog();renderHardwareState();void pollDevice();
+}
+async function activateSelectedHardwareAI(id=deviceID){
+ const task=chosen,epoch=shellEpoch,key=epoch+'/'+task+'/'+id,revision=hardwareAIRevision;
+ if(!task||!id||toolsTab!=='hardware'||hardwareOverviewTask!==task||detail?.task.archived||detail?.task.deleted||hardwareAISaving||hardwareAIConfigured[id]||hardwareAIDefaults.has(key)||!devices.some(d=>d.id===id))return;
+ hardwareAIDefaults.add(key);
+ try{
+  const grant=await api<HardwareGrant>(`tasks/${task}/hardware/${id}/ai-default`,'POST',{});
+  if(!shellCurrent(epoch)||chosen!==task||hardwareOverviewTask!==task||revision!==hardwareAIRevision)return;
+  hardwareAIGrants[id]=grant;hardwareAIConfigured[id]=true;
+  const use=hardwareOverview.find(d=>d.config.id===id)?.tasks.find(t=>t.id===task);if(use){use.ai=grant;use.ai_configured=true}
+  renderHardwareState();if(element<HTMLDialogElement>('hardware-library-dialog').open)renderHardwareLibrary();
+ }catch(e){if(shellCurrent(epoch)&&chosen===task&&toolsTab==='hardware')notify('默认 AI 硬件权限未保存：'+(e as Error).message)}finally{hardwareAIDefaults.delete(key)}
 }
 function fitHardwareTerminal(){const h=hardwareView,host=element('hardware-terminal');if(!h||toolsTab!=='hardware'||input('device-view').value!=='terminal'||!host.clientHeight)return;const screen=h.term.element?.querySelector<HTMLElement>('.xterm-screen'),rect=screen?.getBoundingClientRect();if(!rect?.width||!rect.height)return;const viewport=h.term.element?.querySelector<HTMLElement>('.xterm-viewport');h.term.resize(Math.max(2,Math.min(400,Math.floor((viewport?.clientWidth||host.clientWidth-22)/(rect.width/h.term.cols)))),Math.max(2,Math.min(150,Math.floor((host.clientHeight-14)/(rect.height/h.term.rows)))))}
 function hardwareCanWrite(h:HardwareView|null){return !!h&&toolsTab==='hardware'&&h.alive&&h.task===chosen&&h.id===deviceID&&h.connected&&h.controller===chosen&&devices.find(d=>d.id===h.id)?.kind!=='relay'&&h.ready&&!h.busy&&!h.paused&&!!h.generation&&!devices.find(d=>d.id===h.id)?.read_only}
@@ -177,7 +193,7 @@ async function deviceAction(action:string,data:unknown){const h=hardwareView;if(
 function hardwareLogEvents(){return input('hardware-task-log').checked&&(input('device-view').value!=='terminal'||devices.find(d=>d.id===deviceID)?.kind==='relay')?deviceEvents.filter(e=>e.task_id===chosen):deviceEvents}
 async function editHardwareAI(){const d=devices.find(d=>d.id===deviceID);if(!d||detail?.task.archived)return;const task=chosen;try{const grants=await api<Record<string,HardwareGrant>>(`tasks/${task}/hardware-ai`);if(task!==chosen||d.id!==deviceID)return;hardwareAIGrants=grants;hardwareAIEditing={task,device:d};const g=grants[d.id];element('hardware-ai-name').textContent='任务：'+(detail?.task.title||task)+'\n设备：'+d.name+' · '+(d.device||d.host);for(const key of ['read','write','power'] as const)input('hardware-ai-'+key).checked=!!g?.[key];element('hardware-ai-write-row').classList.toggle('hidden',d.kind==='relay');element('hardware-ai-power-row').classList.toggle('hidden',d.kind!=='relay');element('hardware-ai-error').textContent='';renderHardwareAIForm();element<HTMLDialogElement>('hardware-ai-dialog').showModal()}catch(e){notify((e as Error).message)}}
 function renderHardwareAIForm(){const d=hardwareAIEditing?.device,read=input('hardware-ai-read').checked;for(const key of ['write','power']){const el=input('hardware-ai-'+key);el.disabled=!read||!!d?.read_only;if(el.disabled)el.checked=false}if(d?.kind==='relay')input('hardware-ai-write').checked=false;else input('hardware-ai-power').checked=false}
-async function saveHardwareAI(){const editing=hardwareAIEditing;if(!editing||hardwareAISaving)return;hardwareAISaving=true;++hardwareLoadRequest;button('device-refresh').disabled=false;button('hardware-ai-save').disabled=true;
+async function saveHardwareAI(){const editing=hardwareAIEditing;if(!editing||hardwareAISaving)return;hardwareAISaving=true;++hardwareAIRevision;++hardwareLoadRequest;button('device-refresh').disabled=false;button('hardware-ai-save').disabled=true;
  try{await api<HardwareGrant>(`tasks/${editing.task}/hardware/${editing.device.id}/ai`,'PUT',{read:input('hardware-ai-read').checked,write:input('hardware-ai-write').checked,power:input('hardware-ai-power').checked});element<HTMLDialogElement>('hardware-ai-dialog').close();if(chosen===editing.task)await loadDevices();notify('AI 硬件权限已保存')}
  catch(e){element('hardware-ai-error').textContent=(e as Error).message}finally{hardwareAISaving=false;button('hardware-ai-save').disabled=false}}
 

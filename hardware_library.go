@@ -8,11 +8,12 @@ import (
 )
 
 type HardwareTaskUse struct {
-	ID       string         `json:"id"`
-	Title    string         `json:"title"`
-	Archived bool           `json:"archived"`
-	AI       HardwareGrant  `json:"ai"`
-	ActiveAI *HardwareGrant `json:"active_ai,omitempty"`
+	ID           string         `json:"id"`
+	Title        string         `json:"title"`
+	Archived     bool           `json:"archived"`
+	AI           HardwareGrant  `json:"ai"`
+	AIConfigured bool           `json:"ai_configured"`
+	ActiveAI     *HardwareGrant `json:"active_ai,omitempty"`
 }
 type HardwareOverview struct {
 	Config          HardwareConfig    `json:"config"`
@@ -24,7 +25,7 @@ type HardwareOverview struct {
 
 func (s *Server) hardwareOverview(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.app.store.Query(`SELECT h.id,h.config,t.id,t.title,COALESCE(pref.archived,0),
-		COALESCE(p.allow_read,0),COALESCE(p.allow_write,0),COALESCE(p.allow_power,0)
+		COALESCE(p.allow_read,0),COALESCE(p.allow_write,0),COALESCE(p.allow_power,0),p.hardware_id IS NOT NULL
 		FROM hardware h LEFT JOIN task_hardware b ON b.hardware_id=h.id
 		LEFT JOIN tasks t ON t.id=b.task_id
 		LEFT JOIN task_preferences pref ON pref.task_id=t.id
@@ -42,7 +43,8 @@ func (s *Server) hardwareOverview(w http.ResponseWriter, r *http.Request) {
 		var task, title sql.NullString
 		var archived sql.NullBool
 		var g HardwareGrant
-		if err = rows.Scan(&id, &raw, &task, &title, &archived, &g.Read, &g.Write, &g.Power); err != nil {
+		var configured bool
+		if err = rows.Scan(&id, &raw, &task, &title, &archived, &g.Read, &g.Write, &g.Power, &configured); err != nil {
 			break
 		}
 		item := byID[id]
@@ -55,7 +57,7 @@ func (s *Server) hardwareOverview(w http.ResponseWriter, r *http.Request) {
 			out = append(out, item)
 		}
 		if task.Valid {
-			use := HardwareTaskUse{ID: task.String, Title: title.String, Archived: archived.Bool, AI: g}
+			use := HardwareTaskUse{ID: task.String, Title: title.String, Archived: archived.Bool, AI: g, AIConfigured: configured}
 			if original, ok := active[task.String][id]; ok && !use.Archived {
 				effective := effectiveHardwareGrant(item.Config, g, original)
 				use.ActiveAI = &effective
