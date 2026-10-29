@@ -1,6 +1,6 @@
 function taskItemMenu(t:Task):string{
  const busy=!t.archived&&(t.status==='running'||t.status==='queued');
- return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="reset-session" data-task-id="${escapeHTML(t.id)}"${busy||t.archived||!t.session?' disabled':''} title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
+ return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="records" data-task-id="${escapeHTML(t.id)}">任务记录与知识</button><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与恢复</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned?'取消置顶':'置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>${t.archived?'恢复任务':'归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy?' disabled':''}>删除会话…</button></div></details>`;
 }
 function taskEngineMark(engine?:string):{letter:string;title:string;kind:string}{
  if(engine==='claude')return {letter:'C',title:'Claude Code',kind:'claude'};
@@ -61,6 +61,7 @@ function installLayout(){
  // Keep the existing stateful action nodes for recovery and binding wiring;
  // the sidebar task menu is their only visible entry point.
  const actionState=element('task-actions');actionState.className='hidden task-action-state';actionState.setAttribute('aria-hidden','true');element('session-info-dialog').append(actionState);
+ const recovery=document.createElement('details');recovery.className='session-recovery';recovery.innerHTML='<summary>高级会话恢复</summary><p class="muted">正常切换引擎和模型请使用输入框旁的选择器。仅在原生会话异常时重建；任务记录保留。</p>';recovery.append(button('session-reset'));element('session-info-dialog').append(recovery);
  button('session-reset').onclick=()=>void resetSession();
  button('session-info-close').onclick=()=>element<HTMLDialogElement>('session-info-dialog').close();
  element('composer').querySelector('.composer-bottom small')!.remove();input('message').title='Enter 发送，Shift + Enter 换行';
@@ -74,7 +75,7 @@ function installLayout(){
    menu.removeAttribute('open');
    if(action.disabled)return;
    const id=action.dataset.taskId||'',kind=action.dataset.taskAction;
-   if(kind==='editor')void openEditor(id);else if(kind==='reopen')void reopenTask(id);else if(kind==='copy-open-command')void copyReopenTaskCommand(id);else if(kind==='fork')void forkTask(id);else if(kind==='handoff')void openHandoff(id);else if(kind==='reset-session')void openTaskSessionReset(id);else if(kind==='bind-feishu')void openBinding(id);else if(kind==='session-info')void openSessionInfo(id);else if(kind==='copy-link')void copyTaskLink(id);else if(kind==='rename')void openTaskRename(id);else if(kind==='pin')void changeTaskPreference('pinned',id);else if(kind==='archive')void changeTaskPreference('archived',id);else if(kind==='trash')void trashCurrentTask(id);
+   if(kind==='records')void openTaskRecords(id);else if(kind==='editor')void openEditor(id);else if(kind==='reopen')void reopenTask(id);else if(kind==='copy-open-command')void copyReopenTaskCommand(id);else if(kind==='fork')void forkTask(id);else if(kind==='handoff')void openHandoff(id);else if(kind==='reset-session')void openTaskSessionReset(id);else if(kind==='bind-feishu')void openBinding(id);else if(kind==='session-info')void openSessionInfo(id);else if(kind==='copy-link')void copyTaskLink(id);else if(kind==='rename')void openTaskRename(id);else if(kind==='pin')void changeTaskPreference('pinned',id);else if(kind==='archive')void changeTaskPreference('archived',id);else if(kind==='trash')void trashCurrentTask(id);
    return;
   }
  });
@@ -105,7 +106,7 @@ function installSettingsNavigation(){
   if(entry.dataset.settings)entry.onclick=()=>openSettingsPage(entry.dataset.settings!);
  }
  nav.onclick=null;element('settings-open').replaceWith(nav);
- const order=['#library-open','#engines-open','[data-settings="feishu"]','[data-settings="access"]','[data-settings="data"]','#usage-open','#theme-toggle','[data-settings="updates"]','#logout'];
+ const order=['#library-open','#library-consensus-open','#library-system-open','#library-project-open','#engines-open','[data-settings="feishu"]','[data-settings="access"]','[data-settings="data"]','#usage-open','#theme-toggle','[data-settings="updates"]','#logout'];
  for(const selector of order){const entry=document.querySelector<HTMLElement>(selector);if(entry)nav.append(entry)}
  disposeWithShell(()=>{settingsPageRequest++;settingsOpening=null});
 }
@@ -114,3 +115,5 @@ try{document.documentElement.dataset.theme=localStorage.getItem('jianzuo-theme')
 
 async function openSessionInfo(id=chosen){if(!id)return;if(chosen!==id)await choose(id);if(chosen===id&&detail){renderSessionBanner();element<HTMLDialogElement>('session-info-dialog').showModal()}}
 async function openTaskSessionReset(id=chosen){if(!id)return;if(chosen!==id)await choose(id);if(chosen===id&&detail?.task.id===id)await resetSession()}
+
+async function openTaskRecords(id=chosen){if(!id)return;if(chosen!==id)await choose(id);if(chosen===id&&detail?.task.id===id)switchTab('note')}

@@ -20,7 +20,7 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 function fixture(){
  const nodes=new Map(),calls=[],notices=[];
  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',disabled:false,dataset:{},textContent:'',focus(){},setAttribute(){},querySelectorAll(){return []}});return nodes.get(id)};
- const values={'create-input':'keep my task','create-engine':'codex','create-effort':'','create-environment':'test-env','create-workspace':'/test','create-model':'test-model'};
+ const values={'create-name':'Named task','create-input':'keep my task','create-engine':'codex','create-effort':'','create-environment':'test-env','create-workspace':'/test','create-model':'test-model'};
  Object.entries(values).forEach(([id,value])=>node(id).value=value);
  const ctx=createContext({
   input:node,button:node,element:node,createFiles:[],createSubmitting:false,creatingTask:true,createPermission:'request',createReturnTask:'',modelRequest:0,shellEpoch:0,shellCurrent:epoch=>epoch===ctx.shellEpoch,
@@ -35,6 +35,14 @@ function fixture(){
  return {ctx,node,calls,notices};
 }
 const event={preventDefault(){}};
+{
+ const {ctx,calls,node}=fixture();node('create-name').value=' ';await ctx.createTask(event);
+ assert.equal(calls.length,0,'a task name is required before any side effects');assert.match(node('create-error').textContent,/任务名称/);
+}
+{
+ const {ctx,calls}=fixture();await ctx.createTask(event);
+ assert.equal(calls.find(c=>c.path==='tasks').data.title,'Named task','explicit task name must not become the first prompt');
+}
 {
  const {ctx,calls,node}=fixture(),gate=deferred();ctx.createFiles=[{name:'retained.txt'}];
  ctx.api=async(path,method,data)=>{calls.push({path,method,data});return gate.promise};

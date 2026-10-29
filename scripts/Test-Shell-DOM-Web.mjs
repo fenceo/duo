@@ -35,7 +35,9 @@ assert.match(document.getElementById('settings-data').textContent,/当前版本�
 assert.equal(document.getElementById('sticky-board').parentElement,document.getElementById('sidebar'));
 assert.equal(document.getElementById('sticky-dialog'),null);
 for(const id of ['hardware-tab','desktop-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('tabs'),id+' belongs to the task toolbar');
-for(const id of ['task-handoff','session-reset','bind-open'])assert.equal(document.getElementById(id).parentElement,document.getElementById('task-actions'),id+' retains hidden state for the task row menu');
+for(const id of ['task-handoff','bind-open'])assert(document.getElementById(id).parentElement===document.getElementById('task-actions'),id+' retains hidden state for the task row menu');
+assert(document.getElementById('session-reset').closest('.session-recovery'),'reset is an advanced recovery control');
+assert(document.getElementById('task-engine-select'),'engine choice is integrated with the model menu');
 assert.equal(document.getElementById('sticky-tab').parentElement,document.getElementById('tasks-active').parentElement,'notes share the task sidebar navigation');
 assert.equal(document.getElementById('sticky-tab').previousElementSibling,document.getElementById('trash-open'));
 assert(document.getElementById('task-actions').classList.contains('hidden'),'low-frequency action state never appears in a toolbar');
@@ -45,7 +47,7 @@ assert.equal(document.getElementById('scratch-tab'),null,'task to-do entry is re
 assert.equal(document.getElementById('settings-open'),null);
 assert.equal(document.getElementById('workspace-settings').parentElement.id,'app-menu-items');
 assert.equal(document.getElementById('workspace-settings').closest('details'),null);
-assert.deepEqual([...document.getElementById('workspace-settings').children].filter(node=>node.tagName==='BUTTON').map(node=>node.dataset.settings||node.id),['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global controls have one ordered home');
+assert.deepEqual([...document.getElementById('workspace-settings').children].filter(node=>node.tagName==='BUTTON').map(node=>node.dataset.settings||node.id),['library-open','library-consensus-open','library-system-open','library-project-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global controls have one ordered home');
 assert.equal(document.querySelectorAll('#app-menu-toggle').length,1,'one phone menu toggle');
 assert.equal(document.getElementById('app-menu-toggle').getAttribute('aria-expanded'),'false');
 assert.equal(document.getElementById('sidebar-footer'),null);

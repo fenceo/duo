@@ -13,7 +13,7 @@ assert.equal(node('settings-form').querySelector('.settings-nav'),null,'the dial
 assert.equal(node('settings-form').querySelector('[data-settings]'),null,'category buttons have moved out of the dialog');
 assert.equal(document.querySelector('.header').nextElementSibling,node('tabs'),'there is no standalone settings row');
 assert.equal(nav.closest('details'),null,'settings categories do not require opening a menu');
-assert.deepEqual([...nav.children].filter(button=>button.tagName==='BUTTON').map(button=>button.dataset.settings||button.id),['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu groups knowledge, engines, connections, storage, usage, appearance, updates and exit');
+assert.deepEqual([...nav.children].filter(button=>button.tagName==='BUTTON').map(button=>button.dataset.settings||button.id),['library-open','library-consensus-open','library-system-open','library-project-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu groups knowledge layers, engines, connections, storage, usage, appearance, updates and exit');
 assert.equal(document.querySelector('.sidebar-account-tools #engines-open'),null,'engines have one global entry rather than a second sidebar entry');
 assert.equal(document.querySelectorAll('#engines-open').length,1);
 const toggle=node('app-menu-toggle');
@@ -89,8 +89,8 @@ node('library-dialog').close();
 const section=node('settings-knowledge'),panels=[...section.children];
 assert(panels.indexOf(node('vault-settings'))<panels.indexOf(node('automatic-knowledge-settings')));
 assert(panels.indexOf(section.querySelector('.knowledge-storage-info'))>panels.indexOf(node('automatic-knowledge-settings')));
-assert.match(section.textContent,/工作区过程/);assert.match(section.textContent,/\.duo\/tasks\/任务ID\//);assert.match(section.textContent,/Duo\/consensus\//);assert.match(section.textContent,/Duo\/system\//);assert.match(section.textContent,/Duo\/projects\//);
-assert.match(section.textContent,/可留空使用默认目录/);assert.match(node('automatic-knowledge-settings').textContent,/只有显式整理后才成为正式知识/);
+assert.match(section.textContent,/工作区过程/);assert.match(section.textContent,/\.duo\/tasks\/任务名-短ID\//);assert.match(section.textContent,/Duo\/consensus\//);assert.match(section.textContent,/Duo\/system\//);assert.match(section.textContent,/Duo\/projects\//);
+assert.match(section.textContent,/选择根目录并开启同步/);assert.match(node('automatic-knowledge-settings').textContent,/候选/);
 for(const id of ['vault-enabled','vault-automatic','automatic-capture','automatic-organize'])assert(node(id));
 
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');

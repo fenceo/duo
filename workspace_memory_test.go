@@ -65,7 +65,7 @@ func TestWorkspaceMemoryStableFilesRedactionAndNoModelCalls(t *testing.T) {
 	if err != nil || report.Exported != 4 || len(report.Tasks) != 1 || !report.Enabled {
 		t.Fatal(report, err)
 	}
-	file := filepath.Join(task.Workspace, ".duo", "tasks", task.ID, "runs", run.ID+".md")
+	file := filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "runs", run.ID+".md")
 	raw, err := os.ReadFile(file)
 	if err != nil || strings.Contains(string(raw), secret) || strings.Contains(string(raw), "fixture-secret") || strings.Contains(string(raw), "steering-secret") || !strings.Contains(string(raw), "完成检查") || !strings.Contains(string(raw), "用户执行中补充") || !workspaceMemoryUnmodified(string(raw)) {
 		t.Fatal("missing or unsafe transcript", string(raw), err)
@@ -101,7 +101,7 @@ func TestWorkspaceMemoryAppFinishAndNewTaskEngineHandoff(t *testing.T) {
 		defer a.mu.Unlock()
 		return a.workers[task.ID] == nil
 	})
-	file := filepath.Join(task.Workspace, ".duo", "tasks", task.ID, "runs", first.ID+".md")
+	file := filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "runs", first.ID+".md")
 	if raw, err := os.ReadFile(file); err != nil || !strings.Contains(string(raw), "workspace-end-to-end-source") {
 		t.Fatal("App.finish did not mirror its committed result", string(raw), err)
 	}
@@ -146,7 +146,7 @@ func TestWorkspaceMemoryEditedFilesPreservedAndConflictsIdempotent(t *testing.T)
 	if _, err := a.syncWorkspaceMemory(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(task.Workspace, ".duo", "tasks", task.ID, "runs", run.ID+".md")
+	file := filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "runs", run.ID+".md")
 	if err := os.WriteFile(file, []byte("user edited reference\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestWorkspaceMemorySameWorkspaceRecallAndForkDeduplication(t *testing.T) {
 	if _, err := a.syncWorkspaceMemory(context.Background(), other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(task.Workspace, ".duo", "tasks", other.ID, "runs", copied.ID+".md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(other)), "runs", copied.ID+".md")); !os.IsNotExist(err) {
 		t.Fatal("fork copied canonical conversation", err)
 	}
 	if text, ids, err := a.workspaceMemoryContext(context.Background(), other); err != nil || text != "" || len(ids) != 0 {
@@ -232,7 +232,7 @@ func TestWorkspaceMemoryDeletedLocalSourcesAreNotAutomaticallyRecalled(t *testin
 	if text, ids, err := a.workspaceMemoryContext(context.Background(), current); err != nil || text != "" || len(ids) != 0 {
 		t.Fatal("a locally deleted source returned directly or through its surviving fork", text, ids, err)
 	}
-	if _, err := os.Stat(filepath.Join(original.Workspace, ".duo", "tasks", original.ID, "runs", run.ID+".md")); err != nil {
+	if _, err := os.Stat(filepath.Join(original.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(original)), "runs", run.ID+".md")); err != nil {
 		t.Fatal("deleting recall must preserve archived workspace files", err)
 	}
 	// A different Duo installation's task need not exist in this database.
@@ -256,7 +256,7 @@ func TestWorkspaceMemoryFailureCaptureToggleAndUnsupportedEnvironment(t *testing
 	if _, err := a.syncWorkspaceMemory(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(task.Workspace, ".duo", "tasks", task.ID, "runs", run.ID+".md"))
+	data, _ := os.ReadFile(filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "runs", run.ID+".md"))
 	if !strings.Contains(string(data), "fixture unresolved failure") || !strings.Contains(string(data), "未解决") {
 		t.Fatal("failed runs were lost or presented as success", string(data))
 	}
@@ -282,7 +282,7 @@ func TestWorkspaceMemoryRejectsLinksAndPreservesEditedHandoff(t *testing.T) {
 	if _, err := a.syncWorkspaceMemory(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(task.Workspace, ".duo", "tasks", task.ID, "handoff.md")
+	file := filepath.Join(task.Workspace, filepath.FromSlash(workspaceMemoryTaskBase(task)), "handoff.md")
 	raw, _ := os.ReadFile(file)
 	raw = append(raw, []byte("\n手工交接：密码：synthetic-secret\n新的人工结论\n")...)
 	if err := os.WriteFile(file, raw, 0600); err != nil {
@@ -348,8 +348,9 @@ def managed(text):
     text=text.rstrip('\n')+'\n'
     return text+'\n<!-- duo-workspace-generated:'+hashlib.sha256(text.encode()).hexdigest()+' -->\n'
 with tempfile.TemporaryDirectory(prefix='duo-workspace-memory-fixture-') as root:
-    def call(files):
+    def call(files,**options):
         payload={'root':root,'action':'sync','files':files}
+        payload.update(options)
         result=subprocess.run([sys.executable,'-c',script],input=json.dumps(payload),text=True,capture_output=True,timeout=10)
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -360,6 +361,19 @@ with tempfile.TemporaryDirectory(prefix='duo-workspace-memory-fixture-') as root
     assert not first.get('error') and first['exported']==2 and len(first['tasks'])==1, first
     second=call(files)
     assert second['exported']==0 and second['unchanged']==2, second
+    legacy='.duo/tasks/fixture-task'
+    readable='.duo/tasks/调试-fixture-'+hashlib.sha256(b'fixture-task').hexdigest()[:10]
+    migrated=call([],action='migrate',migrations=[{'id':'fixture-task','from':legacy,'to':readable}],task_id='fixture-task',task_directory=readable)
+    assert not migrated.get('error') and len(migrated['tasks'])==1 and migrated['tasks'][0]['path']==readable+'/README.md', migrated
+    assert 'first canonical record' not in pathlib.Path(root,transcript).read_text() and 'duo-workspace-redirect:' in pathlib.Path(root,transcript).read_text()
+    for file in files:
+        file['path']=file['path'].replace(legacy,readable)
+        file['content']=managed(file['content'].split('\n<!-- duo-workspace-generated:')[0].replace(legacy,readable))
+    transcript=transcript.replace(legacy,readable)
+    doc=call([],action='document',path=transcript)
+    assert doc.get('content')==managed('first canonical record'), doc
+    unsafe=call([],action='document',path='.duo/tasks/fixture-task/../../README.md')
+    assert unsafe.get('error'), unsafe
     pathlib.Path(root,transcript).write_text('human edited record\n')
     conflict=call(files)
     assert len(conflict['conflicts'])==1, conflict

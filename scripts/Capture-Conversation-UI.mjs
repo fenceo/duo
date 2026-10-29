@@ -66,6 +66,7 @@ for(const theme of ['light','dark'])for(const width of [390,320])cases.push(['ta
 cases.push(['taskmenu','light',1280,800],['taskmenubottom','dark',1024,600]);
 for(const theme of ['light','dark'])cases.push(['taskmenushortbottom',theme,320,420]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['curated',theme,width,width===1280?800:844],['curatedbottom',theme,width,width===1280?800:844]);
+for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['librarygraph',theme,width,width===1280?800:844],['knowledgerecord',theme,width,width===1280?800:844],['createname',theme,width,width===1280?800:844]);
 const measurements=[],failures=[];
 for(const view of ['editorwindows','editorwsl','editorssh'])cases.push([view,'light',1280,800],[view,'dark',320,844]);
 cases.push(['editorfiles','light',1280,800],['editorfiles','dark',390,844],['editorfiles','light',320,844]);
@@ -93,7 +94,7 @@ for(const [view,theme,width,height] of cases){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
   const menus=[...document.querySelectorAll('.task-item-menu')],menu=view.endsWith('bottom')?menus.at(-1):menus[0];
   menu.id='preview-task-menu';menu.querySelector('div').id='preview-task-menu-panel';
-  for(const action of ['editor','handoff','reset-session','bind-feishu','trash']){const control=menu.querySelector('[data-task-action="'+action+'"]');assert(control,'task menu must retain '+action);control.id='preview-task-menu-'+action}
+  for(const action of ['records','editor','bind-feishu','session-info','trash']){const control=menu.querySelector('[data-task-action="'+action+'"]');assert(control,'task menu must retain '+action);control.id='preview-task-menu-'+action}
   // Exercise the production popup-position handler in a real viewport. This
   // one UI-only listener has no requests, credentials or device side effects.
   const layout=await fs.readFile(new URL('layout.ts',webRoot),'utf8'),start=layout.indexOf("element('task-list').addEventListener('toggle',");
@@ -234,7 +235,7 @@ for(const [view,theme,width,height] of cases){
   ctx.openCuratedEditor({id:'curated-synthetic',kind:'curated',layer:'project',scope_key:'开发板调试',title:'开发板 NFS 调试与烧录操作约定',content:('# 调试前提\n\n仅使用合成资料检查知识编辑器。\n\n'+('1. 检查工作目录与设备配置引用。\n2. 记录实际输出和适用条件，尚未验证的内容不能写成已验证。\n\n')).repeat(12),status:'verified',applicability:'适用于当前开发板与调试镜像；切换硬件版本前重新确认。',evidence:'合成 fixture：这里只验证编辑器展示与交互，不代表进行了硬件或模型验证。',credential_ref:'开发板配置 / synthetic-profile',tags:['调试','NFS','烧录'],revision:3});
   runInContext("input('curated-confirm').checked=true;input('curated-status').value='verified';",ctx);
  }
- if(view==='create'||view==='createbottom')runInContext(`for(const id of ['tabs','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录'`,ctx);
+ if(view==='create'||view==='createbottom'||view==='createname')runInContext(`for(const id of ['tabs','conversation','composer-wrap','session-banner'])element(id).classList.add('hidden');setCreatePageVisible(true);setCreateSubmitState('idle');element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录';input('create-name').value='375 开发板调试与 NFS 验证'`,ctx);
  if(['accounts','accountlist','accountfilter','accountquota','accounterror','accountimport','accountmanager','accountsetup'].includes(view)){
   runInContext("settings.config.environments.push({id:'local',name:'Windows',type:'windows',codex:'fixture',workspaces:['C:/fixture']});populateEngineOnboarding();engineCatalog={engines:[{id:'codex',name:'Codex',credential_kinds:['codex_home']},{id:'claude',name:'Claude Code',credential_kinds:['claude_home']}],profiles:[{id:'fixture-profile',name:'工作账号 / API',engine:'claude',environment_id:'local',kind:'claude_home',reference:'C:/fixture/claude-account'}],active_profile:{}};renderAccountCenter();populateEngineProfileForm();element('account-center-dialog').setAttribute('open','');element('engine-account-fields').querySelector('details').open=true;",ctx);
  }
@@ -274,21 +275,24 @@ for(const [view,theme,width,height] of cases){
   ctx.previewEntries=entries;
   runInContext('knowledgeItems=previewEntries;renderKnowledgeList()',ctx);
   if(view.startsWith('knowledge')){
-   const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?entries:route.endsWith('/workspace-memory')?{enabled:true,directory:'.duo',task_directory:'.duo/tasks/layout-preview/',exported:0,unchanged:3,tasks:[{id:'layout-preview',title:'Duo 优化',path:'.duo/tasks/layout-preview/summary.md'},{id:'earlier-task',title:'同工作区的此前调试记录',path:'.duo/tasks/earlier-task-with-a-long-stable-identifier/summary.md'}],conflicts:[],warnings:[]}:baseAPI(route,...args);
+   const baseAPI=ctx.api;ctx.api=async(route,...args)=>route.startsWith('tasks/layout-preview/knowledge')?entries:route.endsWith('/workspace-memory')?{enabled:true,directory:'.duo',task_directory:'.duo/tasks/Duo优化-a1b2c3d4/',exported:0,unchanged:3,tasks:[{id:'layout-preview',title:'Duo 优化',path:'.duo/tasks/Duo优化-a1b2c3d4/README.md'},{id:'earlier-task',title:'同工作区的此前调试记录',path:'.duo/tasks/同工作区的此前调试记录-e5f6a7b8/README.md'}],documents:[{path:'.duo/tasks/Duo优化-a1b2c3d4/README.md',title:'任务说明与索引',kind:'index'},{path:'.duo/tasks/Duo优化-a1b2c3d4/handoff.md',title:'接续交接摘要',kind:'index'},{path:'.duo/tasks/Duo优化-a1b2c3d4/runs/synthetic.md',title:'最近一轮：检查 NFS 调试方式与验证结果',kind:'run'}],conflicts:[],warnings:[]}:route.includes('/workspace-memory/document?')?{path:'.duo/tasks/Duo优化-a1b2c3d4/README.md',content:'# Duo 优化 · 任务记录\n\n## 当前目标\n完成任务资料、平台共识、系统知识和项目知识的分层复用。\n\n## 已完成\n- 合成资料可在 Duo 内阅读。\n- 引擎切换后自动补入交接提示。\n\n## 实际验证\n这里只进行合成界面检查，不代表执行过真实硬件或模型验证。\n\n## 尚未解决\n真实 SSH 主机接续行为仍待验证。'}:baseAPI(route,...args);
    // The DOM fixture has no MutationObserver; explicitly settle the same dock
    // visibility that the live shell updates after a tab switch.
    runInContext("switchTab('note');syncDocks()",ctx);await ctx.loadWorkspaceMemory();assert(!document.getElementById('notice').textContent.includes('Unexpected fixture request'),'workspace memory preview must not have unmocked requests');
    if(view==='knowledgeexpanded')document.querySelector('[data-knowledge-toggle]').onclick();
+   if(view==='knowledgerecord')await ctx.readWorkspaceMemoryDocument('.duo/tasks/Duo优化-a1b2c3d4/README.md');
   }else{
    const baseAPI=ctx.api;
    ctx.api=async(route,...args)=>{
     if(route.startsWith('library/search'))return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:'task',layer:'tasks',path:'tasks/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4};
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
     if(route.startsWith('library/document'))return {content:entries[0].content};
+    if(route==='library/curated')return Array.from({length:15},(_,i)=>({id:'graph-'+i,layer:['consensus','system','project'][i%3],scope_key:i%3===0?'':'开发板调试',title:['NFS 调试与共享目录','烧录前的镜像检查','串口问题的逐步定位','保持文档与验证依据同步','任务接续与工作习惯'][i%5]+' '+(i+1),content:entries[i%entries.length].content,status:'observed',tags:[['NFS','烧录','串口'][i%3],i%2?'调试':'知识积累'],source_task_id:'layout-preview',revision:1,updated:1790310000000}));
     return baseAPI(route,...args);
    };
    await ctx.openLibrary();
    if(view==='librarypreview')await ctx.previewLibrary('knowledge:'+entries[0].id);
+   if(view==='librarygraph'){ctx.window.innerWidth=width;document.getElementById('library-graph-open').onclick();await ctx.loadKnowledgeGraph()}
    if(view.startsWith('librarysettings')){
     const dialog=document.getElementById('library-dialog');await ctx.openLibrarySettings();
     const directory=document.getElementById('vault-directory');directory.value='D:/Notes/Duo';directory.oninput();
@@ -337,15 +341,19 @@ for(const [view,theme,width,height] of cases){
    noKnowledgeCategory:!document.querySelector('[data-settings="knowledge"]')};
   const taskTools=['hardware-tab','desktop-open'],header=document.querySelector('.header'),tabs=document.getElementById('tabs'),taskNav=document.querySelector('#sidebar .task-views');
   data.taskNavigation={toolsInTaskMenu:taskTools.every(id=>document.getElementById(id).parentElement===tabs&&!header.contains(document.getElementById(id))),noTaskTodo:!document.getElementById('scratch-tab'),
-   lowFrequencyInTaskRows:['handoff','reset-session','bind-feishu'].every(action=>document.querySelector('#task-list [data-task-action="'+action+'"]'))&&['task-handoff','session-reset','bind-open'].every(id=>document.getElementById(id).closest('.task-action-state')),
+   lowFrequencyInTaskRows:['records','bind-feishu','session-info'].every(action=>document.querySelector('#task-list [data-task-action="'+action+'"]'))&&!document.querySelector('#task-list [data-task-action="handoff"],#task-list [data-task-action="reset-session"]')&&document.getElementById('session-reset').closest('.session-recovery')&&document.getElementById('bind-open').closest('.task-action-state'),
    sidebarOrder:[...taskNav.querySelectorAll('button')].map(b=>b.id),notesInTaskNav:taskNav.contains(document.getElementById('sticky-tab')),
    globalOrder:[...document.querySelectorAll('#app-menu-items button')].map(b=>b.dataset.settings||b.id),sidebarButtons:[...taskNav.querySelectorAll('button')].map(box)};
   data.knowledgeLibrary={oneDirectory:document.querySelectorAll('#vault-directory').length===1,oneAutomaticControl:document.querySelectorAll('#automatic-capture').length===1,sameDialog:document.getElementById('library-dialog').contains(document.getElementById('settings-knowledge')),noSeparateEditor:!document.getElementById('settings-form').contains(document.getElementById('vault-directory'))};
   data.stickyNotes={inSidebar:document.getElementById('sidebar').contains(document.getElementById('sticky-board')),fields:[...document.querySelectorAll('[data-note-input]')].map(box)};
+  const graph=document.getElementById('knowledge-graph');if(graph)data.knowledgeGraph={labels:[...graph.querySelectorAll('text')].map(e=>({title:e.textContent,...box(e)})),rootEdges:graph.querySelectorAll('.knowledge-graph-edges>line').length,nestedShapes:graph.querySelectorAll('circle text,line line').length,documentButtons:[...document.querySelectorAll('#knowledge-graph-accessible [data-graph-document]')].map(box)};
   pre.textContent=JSON.stringify(data);
  });`;document.body.append(settingsMetrics);
  const memoryPanel=document.querySelector('.workspace-memory-panel');if(memoryPanel)memoryPanel.id='preview-workspace-memory-panel';
  script.textContent=script.textContent.replace("const ids=['curated-dialog'","const ids=['preview-workspace-memory-panel','workspace-memory-state','workspace-memory-tasks','workspace-memory-sync','curated-dialog'");
+ script.textContent=script.textContent.replace("'preview-task-menu-handoff','preview-task-menu-reset-session'","'preview-task-menu-records','preview-task-menu-session-info'");
+ script.textContent=script.textContent.replace('const ids=[',"const ids=['knowledge-graph-accessible',");
+ script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='knowledgerecord')document.getElementById('workspace-memory-reader').scrollIntoView({block:'start',inline:'nearest'});const ids=['create-name','task-engine-select','knowledge-graph-panel','knowledge-graph-viewport','knowledge-graph','knowledge-graph-plus','knowledge-graph-minus','knowledge-graph-refresh','library-graph-open','workspace-memory-reader','workspace-memory-content','workspace-memory-documents','vault-consensus-directory','vault-system-directory','vault-project-directory','knowledge-extraction-save',`);
  // Serialize current checkbox state as well as markup into the static fixture.
  for(const control of document.querySelectorAll('input[type="checkbox"]'))if(typeof control.checked==='boolean')control.toggleAttribute('checked',control.checked);
  for(const control of document.querySelectorAll('fieldset'))if(typeof control.disabled==='boolean')control.toggleAttribute('disabled',control.disabled);
@@ -367,11 +375,11 @@ for(const [view,theme,width,height] of cases){
    const {bar,toolbar,buttons,focusReachable,focusOutline,directory,replacesSettings,noDuplicateNavigation,noSeparateRow,layout,noKnowledgeCategory}=metrics.settingsNavigation;
    assert(replacesSettings&&noDuplicateNavigation&&noSeparateRow&&layout==='contents','settings categories must replace the original entry without duplicate controls or a separate row');
    assert(noKnowledgeCategory,'knowledge accumulation must be inside the single knowledge library');
-   assert.equal(buttons.length,9,'global navigation must contain exactly one entry for each global action');
-   assert.deepEqual(metrics.taskNavigation.globalOrder,['library-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu order must separate knowledge, environments, connections, data and utility actions');
+   assert.equal(buttons.length,12,'global navigation must contain exactly one entry for each global action and knowledge layer');
+   assert.deepEqual(metrics.taskNavigation.globalOrder,['library-open','library-consensus-open','library-system-open','library-project-open','engines-open','feishu','access','data','usage-open','theme-toggle','updates','logout'],'global menu order must separate knowledge layers, environments, connections, data and utility actions');
    if(width>760||['appmenu','navigation'].includes(view)){
     assert(bar.visible&&bar.x>=0&&bar.x+bar.width<=width+1,'top settings navigation exceeds viewport');
-    assert(toolbar.height<=(width<=760?150:76),'expanded global menu consumes too much height');
+    assert(toolbar.height<=(width<=760?210:112),'expanded global menu consumes too much height');
     assert(buttons.every(button=>button.width>=44&&button.height>=(width<=760?44:32)),'top settings categories have inaccessible targets');
     assert(buttons.every(button=>button.x>=0&&button.x+button.width<=width+1&&button.y>=0&&button.y+button.height<=height+1),'a settings category is clipped');
     for(let i=0;i<buttons.length;i++)for(let j=i+1;j<buttons.length;j++){const a=buttons[i],b=buttons[j];assert(a.x+a.width<=b.x+1||b.x+b.width<=a.x+1||a.y+a.height<=b.y+1||b.y+b.height<=a.y+1,'settings categories overlap')}
@@ -451,7 +459,7 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('library')){
    const box=items['library-dialog'];assert(box.visible&&box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,'library dialog exceeds viewport');
    assert(box.scrollWidth<=box.clientWidth+1,'library dialog overflows horizontally');
-   const content=items[view.startsWith('librarysettings')?'settings-knowledge':view==='librarypreview'?'library-preview-content':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
+   const content=items[view.startsWith('librarysettings')?'settings-knowledge':view==='librarypreview'?'library-preview-content':view==='librarygraph'?'knowledge-graph-viewport':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
    if(view==='librarypreview'){const cite=items['library-preview-cite'];assert(cite.visible&&cite.y+cite.height<=height&&cite.x+cite.width<=width,'preview action is clipped')}
   }
   if(view==='settings'||view.startsWith('library')){
@@ -465,6 +473,7 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('knowledge')){
    const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');assert(items['knowledge-query'].visible&&items['knowledge-query'].width>=120,'task knowledge search is unusable');
    const memory=items['preview-workspace-memory-panel'];assert(memory.visible&&memory.width>=120&&memory.scrollWidth<=memory.clientWidth+1,'workspace memory paths overflow their task panel');assert(items['workspace-memory-sync'].width>=44,'workspace memory backfill action is too narrow');
+   if(view==='knowledgerecord'){const reader=items['workspace-memory-content'];assert(reader.visible&&reader.width>=120&&reader.height>=150&&reader.x>=0&&reader.x+reader.width<=width+1,'task record has no readable inline document area');assert(reader.scrollWidth<=reader.clientWidth+1,'task record content overflows horizontally')}
   }
   if(view.startsWith('sidebar')){
    const list=items['task-list'];
@@ -490,7 +499,7 @@ for(const [view,theme,width,height] of cases){
   }
   if(view.startsWith('taskmenu')){
    const panel=items['preview-task-menu-panel'];assert(panel.visible&&panel.width>=140&&panel.x>=0&&panel.x+panel.width<=width+1&&panel.y>=0&&panel.y+panel.height<=height+1,'task popup menu exceeds the viewport');assert(panel.scrollWidth<=panel.clientWidth+1,'task popup menu overflows horizontally');
-   const actions=view.endsWith('bottom')?['preview-task-menu-trash']:['preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu'];
+   const actions=view.endsWith('bottom')?['preview-task-menu-trash']:['preview-task-menu-records','preview-task-menu-editor','preview-task-menu-bind-feishu','preview-task-menu-session-info'];
    for(const id of actions){const b=items[id];assert(b.visible&&b.width>=100&&b.height>=(width<=760?40:30)&&b.x>=panel.x&&b.x+b.width<=panel.x+panel.width+1&&b.y>=panel.y&&b.y+b.height<=panel.y+panel.height+1,'task popup action is inaccessible: '+id)}
    if(view==='taskmenushortbottom')assert(panel.scrollHeight>panel.clientHeight,'short-screen task menu must exercise real vertical scrolling');
   }
@@ -523,6 +532,8 @@ for(const [view,theme,width,height] of cases){
    if(view.endsWith('bottom')||width>760)for(const id of ['handoff-submit','handoff-cancel']){const b=items[id];assert(b.visible&&b.y>=box.y&&b.y+b.height<=box.y+box.height,'engine switch confirmation unavailable: '+id)}
   }
   if(view==='menu'){const b=items['session-info-dialog'];assert(b.visible&&b.y>=0&&b.y+b.height<=height&&b.x>=0&&b.x+b.width<=width,'session information exceeds viewport')}
+  if(view==='librarygraph'){const panel=items['knowledge-graph-viewport'],svg=items['knowledge-graph'],accessible=items['knowledge-graph-accessible'];assert(panel.visible&&panel.height>=230&&panel.width>=230,'tag graph is too small to read');assert(svg.width<=panel.width+1&&svg.height<=panel.height+1,'tag graph exceeds its viewport');assert(accessible.visible&&accessible.height>=30&&accessible.y+accessible.height<=height,'graph text controls are clipped');assert.equal(metrics.knowledgeGraph.nestedShapes,0,'graph labels or edges are invalidly nested inside a shape');assert.equal(metrics.knowledgeGraph.rootEdges,30,'graph edges failed to render independently');assert.equal(metrics.knowledgeGraph.labels.filter(x=>x.title.startsWith('#')&&x.visible&&x.width>0&&x.height>0).length,5,'graph tag labels are invisible');assert.equal(metrics.knowledgeGraph.documentButtons.length,15,'graph needs accessible document text controls');for(const id of ['knowledge-graph-refresh','knowledge-graph-plus','knowledge-graph-minus']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y>=0&&b.y+b.height<=height+1,'tag graph control is clipped: '+id);if(width<=760)assert(b.height>=44,'tag graph control has a small touch target')}}
+  if(view==='createname'){const field=items['create-name'];assert(field.visible&&field.width>=160&&field.height>=44&&field.x>=0&&field.x+field.width<=width+1&&field.y>=0&&field.y+field.height<=height+1,'new-task name is missing, clipped or too small')}
   if(view==='createbottom')for(const id of ['library-create','create-submit']){
    const box=items[id];assert(box.visible&&box.y>=0&&box.y+box.height<=height&&box.x+box.width<=width,id+' is outside the scrolled create page');
   }

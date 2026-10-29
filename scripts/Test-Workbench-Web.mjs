@@ -76,11 +76,11 @@ for(const label of ['改名…','置顶','归档','删除会话…'])assert.matc
 assert.match(menu,/data-task-action="rename" data-task-id="a"/);
 assert.match(menu,/data-task-action="pin" data-task-id="a">置顶</);
 for(const action of ['rename','pin','archive','trash'])assert.match(menu,new RegExp('data-task-action="'+action+'" data-task-id="a">'),'idle action remains enabled: '+action);
-assert.match(menu,/data-task-action="reset-session" data-task-id="a" disabled/,'a task without a native session cannot reset it');
-assert.doesNotMatch(layout.taskItemMenu(task('a',{session:'synthetic'})),/data-task-action="reset-session" data-task-id="a" disabled/,'an idle session can be rebuilt');
+assert.doesNotMatch(menu,/data-task-action="(?:reset-session|handoff)"/,'redundant actions are replaced by the model picker and advanced recovery');
+assert.match(menu,/data-task-action="records" data-task-id="a"/,'task records have a task-specific entry');
 assert.match(layout.taskItemMenu(task('a',{pinned:true})),/取消置顶/);
 const archived=layout.taskItemMenu(task('a',{archived:true}));
-assert.match(archived,/恢复任务/);for(const action of ['rename','pin','archive','trash'])assert.match(archived,new RegExp('data-task-action="'+action+'" data-task-id="a">'),'archived action remains enabled: '+action);assert.match(archived,/data-task-action="reset-session" data-task-id="a" disabled/);
+assert.match(archived,/恢复任务/);for(const action of ['rename','pin','archive','trash'])assert.match(archived,new RegExp('data-task-action="'+action+'" data-task-id="a">'),'archived action remains enabled: '+action);assert.doesNotMatch(archived,/data-task-action="reset-session"/);
 // A running task keeps its history: archive and delete stay disabled, rename and pin stay usable.
 const busy=layout.taskItemMenu(task('a',{status:'running'}));
 assert.match(busy,/data-task-action="archive" data-task-id="a" disabled/);

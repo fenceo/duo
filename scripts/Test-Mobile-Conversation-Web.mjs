@@ -2,6 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
 import {runInContext} from 'node:vm';
 import assert from 'node:assert/strict';
+import {viewportStyles} from './Stylesheet-Fixture.mjs';
 const {ctx,document}=await createWebShellFixture();
 const node=id=>document.getElementById(id);
 runInContext('dockNarrow.matches=true;applyDockLayout()',ctx);
@@ -37,7 +38,7 @@ assert.equal(ctx.localStorage.getItem('jianzuo-sticky-height'),'316','height rem
 node('sticky-resizer').ondblclick();
 assert.equal(ctx.localStorage.getItem('jianzuo-sticky-height'),null);
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');
-const mobile=css.slice(css.lastIndexOf('@media(max-width:760px){'));
+const {mobile}=viewportStyles(css);
 assert.match(css,/\.sidebar>\.task-navigation\{flex-wrap:wrap\}/,'narrow sidebars wrap the task navigation instead of clipping labels');
 assert.match(css,/\.sidebar>\.task-navigation>button:not\(#new-task\)\{flex-basis:44px;min-width:44px;min-height:44px\}/,'phone sidebar notes retain a 44px target');
 assert.match(mobile,/\.composer-tools\{display:grid;grid-template-columns:auto auto auto minmax\(0,1fr\) 44px;/);

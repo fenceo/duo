@@ -84,7 +84,9 @@ function installWorkflow(){
  const form=element('create-form'),heading=element('create-heading'),lead=heading.nextElementSibling!;
  const head=document.createElement('div');head.className='create-page-head';
  const cancel=document.createElement('button');cancel.type='button';cancel.id='create-cancel';cancel.className='subtle';cancel.textContent='返回';head.append(heading,lead,cancel);
- lead.textContent='选择执行位置，直接描述目标；第一条要求会在任务创建后立即开始。';
+ lead.textContent='为任务起一个好找的名字，再选择工作目录；记录会跟随任务，第一条要求会立即开始。';
+ const titleField=document.createElement('label');titleField.className='create-task-name';titleField.htmlFor='create-name';titleField.textContent='任务名称';
+ const titleInput=document.createElement('input');titleInput.id='create-name';titleInput.maxLength=120;titleInput.required=true;titleInput.placeholder='例如：375 调试、NFS 烧录流程';titleField.append(titleInput);
  const context=document.createElement('div');context.className='create-context';
  const environment=input('create-environment'),environmentLabel=environment.previousElementSibling!;
  environmentLabel.remove();environment.setAttribute('aria-label','执行环境');
@@ -132,7 +134,7 @@ function installWorkflow(){
  modelFooter.querySelector('#model-catalog-actions')!.append(element('reload-models'),element('test-models'),element('stop-model-test'),element('model-latency-controls'));
  modelFooter.querySelector('#model-catalog-details')!.append(element('models-hint'));modelFooter.append(element('model-test-result'));
  meta.append(element('effort-hint'),element('create-error'));
- form.replaceChildren(head,context,createComposer,meta);
+ form.replaceChildren(head,titleField,context,createComposer,meta);
  button('create-cancel').onclick=cancelCreate;
  button('create-detect-environments').onclick=()=>void refreshCreateEnvironments(true);
  button('create-browse').onclick=()=>openWorkspacePicker(input('create-environment').value,input('create-workspace').value,async(p,env)=>{input('create-environment').value=env;await loadCreateEnvironment();input('create-workspace').value=p;await loadCreateModels()});

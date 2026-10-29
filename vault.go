@@ -21,11 +21,14 @@ import (
 const vaultFileLimit = 2 * 1024 * 1024
 
 type VaultConfig struct {
-	TaskFolders      bool   `json:"task_folders"`
-	IncludeAutomatic bool   `json:"include_automatic"`
-	Enabled          bool   `json:"enabled"`
-	Directory        string `json:"directory"`
-	IncludeRuns      bool   `json:"include_runs"`
+	TaskFolders        bool   `json:"task_folders"`
+	IncludeAutomatic   bool   `json:"include_automatic"`
+	Enabled            bool   `json:"enabled"`
+	Directory          string `json:"directory"`
+	IncludeRuns        bool   `json:"include_runs"`
+	ConsensusDirectory string `json:"consensus_directory,omitempty"`
+	SystemDirectory    string `json:"system_directory,omitempty"`
+	ProjectDirectory   string `json:"project_directory,omitempty"`
 }
 type VaultReport struct {
 	Updated   int64    `json:"updated"`
@@ -103,6 +106,9 @@ func plainVaultPath(path string) error {
 }
 
 func vaultRoot(c VaultConfig) (string, error) {
+	if err := prepareKnowledgeFolders(&c); err != nil {
+		return "", err
+	}
 	if !filepath.IsAbs(c.Directory) {
 		return "", errors.New("请选择这台 Duo 服务所在电脑上的 Vault 绝对路径")
 	}
@@ -394,7 +400,7 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 	if err != nil {
 		return report, err
 	}
-	if err = os.MkdirAll(root, 0700); err != nil {
+	if err = ensureKnowledgeLayerFolders(root, c); err != nil {
 		return report, err
 	}
 	var cache map[string]vaultCachedFile
@@ -445,7 +451,7 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 		if d.Kind == "run" && !c.IncludeRuns {
 			continue
 		}
-		if d.Automatic && !c.IncludeAutomatic {
+		if d.Automatic && d.Kind != "curated" && !c.IncludeAutomatic {
 			continue
 		}
 		if c.TaskFolders && d.Kind == "knowledge" && d.Automatic {
@@ -487,7 +493,7 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 		if strings.HasPrefix(d.ID, "curated-index:") {
 			rel = d.Path
 		} else if d.Kind == "curated" {
-			rel = curatedPath(d)
+			rel = configuredCuratedPath(c, d)
 			if rel == "" {
 				continue
 			}
@@ -502,9 +508,17 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return report, e
 		}
+		layerDirectoryChanged := false
+		if e == nil && d.Kind == "curated" {
+			previousLayer := d.Layer
+			if previous, ok := files[link.Path]; ok && curatedLayer(previous.Document.Layer) {
+				previousLayer = previous.Document.Layer
+			}
+			layerDirectoryChanged = curatedTrackedFolder(previousLayer, link.Path) != configuredKnowledgeFolder(c, d.Layer)
+		}
 		// Upgrade old tracked paths only when the exact file is unchanged. Rename
 		// preserves user properties and never overwrites another document.
-		if e == nil && c.TaskFolders && rel != link.Path {
+		if e == nil && (c.TaskFolders || layerDirectoryChanged || strings.HasPrefix(d.ID, "curated-index:")) && rel != link.Path {
 			old, ok := files[link.Path]
 			if ok && hash(old.Raw) == link.File {
 				target := filepath.Join(root, filepath.FromSlash(rel))
@@ -728,6 +742,10 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 			return
 		}
 		c.Directory = strings.TrimSpace(c.Directory)
+		if err := prepareKnowledgeFolders(&c); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
 		if c.Directory == "" {
 			c.Directory = filepath.Join(s.app.store.directory, "knowledge")
 		}
@@ -737,7 +755,12 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 					_ = os.MkdirAll(c.Directory, 0700)
 				}
 			}
-			if _, err := vaultRoot(c); err != nil {
+			root, err := vaultRoot(c)
+			if err != nil {
+				fail(w, 400, err.Error())
+				return
+			}
+			if err = ensureKnowledgeLayerFolders(root, c); err != nil {
 				fail(w, 400, err.Error())
 				return
 			}

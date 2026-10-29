@@ -1,11 +1,13 @@
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
-let libraryLoading = false, libraryBrowseStarted = false, libraryNextOffset = 0, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
+let libraryLoading = false, libraryBrowseStarted = false, libraryNextOffset = 0, libraryHasMore = false, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
 let libraryPreviewID = '', libraryPreviewText = '', libraryPreviewLimit = 20000;
 let automaticSettingsRequest = 0, automaticSettingsReady = false, automaticSettingsSaving = false;
 let vaultSettingsRequest = 0, vaultSettingsReady = false, vaultSettingsSaving = false, vaultRefreshing = false;
 let automaticSettingsDirty = false, vaultSettingsDirty = false, knowledgeSettingsRequest = 0;
 let knowledgeSettingsLoading = null;
+let knowledgeExtractionRequest = 0, knowledgeExtractionBusy = false, knowledgeExtractionSettingsReady = false, knowledgeExtractionSettingsDirty = false, knowledgeExtractionSettingsBusy = false;
+let workspaceDocumentRequest = 0, workspaceDocumentTask = '', workspaceDocumentPath = '';
 function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
 }
@@ -344,6 +346,12 @@ function showLibraryPage(page) {
     }
     button('library-refresh-files').classList.toggle('hidden', setup);
     button('library-manage-task').classList.toggle('hidden', setup);
+    if (button('library-graph-open')) {
+        if (setup) {
+            button('library-graph-open').classList.remove('selected');
+            button('library-graph-open').setAttribute('aria-pressed', 'false');
+        } else applyKnowledgeGraphMode();
+    }
 }
 async function openLibrarySettings() {
     const epoch = shellEpoch, dialog = element('library-dialog');
@@ -364,7 +372,8 @@ async function loadKnowledgeSettings() {
         const results = await Promise.allSettled([
             api('settings', 'GET', undefined, shellController.signal),
             automaticSettingsReady ? Promise.resolve() : loadAutomaticKnowledge(),
-            vaultSettingsReady ? Promise.resolve() : loadVault()
+            vaultSettingsReady ? Promise.resolve() : loadVault(),
+            loadKnowledgeExtractionSettings()
         ]);
         if (request !== knowledgeSettingsRequest || !shellCurrent(epoch)) return;
         const location1 = results[0];
@@ -471,9 +480,17 @@ async function searchLibrary(append = false) {
     if (!append) {
         libraryHits = [];
         libraryNextOffset = 0;
+        libraryHasMore = false;
         clearLibraryPreview();
         element('library-results').textContent = '';
         button('library-more').classList.add('hidden');
+        if (knowledgeGraphOpen) {
+            knowledgeGraphRequest++;
+            knowledgeGraphDocuments = [];
+            element('knowledge-graph').innerHTML = '';
+            element('knowledge-graph-accessible').textContent = '';
+            element('knowledge-graph-state').textContent = '正在按当前条件重新读取图谱…';
+        }
     }
     const q = new URLSearchParams({
         q: input('library-query').value,
@@ -501,8 +518,10 @@ async function searchLibrary(append = false) {
         ] : result.documents;
         libraryNextOffset = result.next_offset ?? libraryHits.length;
         element('library-state').textContent = `显示 ${libraryHits.length} / ${result.total ?? libraryHits.length} 条资料。${libraryTarget?.task || libraryTarget?.create ? '引用会加入输入框，发送前仍可修改。' : '可先预览；选择或新建任务后才能引用。'}`;
+        libraryHasMore = result.truncated;
         renderLibraryHits();
-        button('library-more').classList.toggle('hidden', !result.truncated);
+        button('library-more').classList.toggle('hidden', knowledgeGraphOpen || !result.truncated);
+        if (knowledgeGraphOpen) void loadKnowledgeGraph();
     } catch (e) {
         if (token === libraryRequest && shellCurrent(epoch)) element('library-state').textContent = '检索失败，请重试：' + e.message;
     } finally{
@@ -643,12 +662,15 @@ function showVaultReport(r) {
 function setVaultControlsDisabled(disabled) {
     for (const id of [
         'vault-directory',
+        'vault-consensus-directory',
+        'vault-system-directory',
+        'vault-project-directory',
         'vault-enabled',
         'vault-runs',
         'vault-automatic',
         'vault-save',
         'vault-refresh'
-    ])input(id).disabled = disabled;
+    ])if (element(id)) input(id).disabled = disabled;
 }
 function showVaultLocation(directory, enabled) {
     element('vault-document-directory').textContent = directory ? directory + (enabled ? '' : '（同步未启用）') : '尚未设置有效的知识文件根目录';
@@ -662,7 +684,10 @@ async function loadVault() {
     try {
         const v = await api('library/vault', 'GET', undefined, shellController.signal);
         if (token !== vaultSettingsRequest || !shellCurrent(epoch)) return;
-        input('vault-directory').value = v.config.directory;
+        input('vault-directory').value = v.config.directory || '';
+        input('vault-consensus-directory').value = v.config.consensus_directory || 'consensus';
+        input('vault-system-directory').value = v.config.system_directory || 'system';
+        input('vault-project-directory').value = v.config.project_directory || 'projects';
         input('vault-enabled').checked = v.config.enabled;
         input('vault-runs').checked = v.config.include_runs;
         input('vault-automatic').checked = !!v.config.include_automatic;
@@ -683,6 +708,9 @@ async function saveVault() {
     try {
         const saved = await api('library/vault', 'PUT', {
             directory: input('vault-directory').value.trim(),
+            consensus_directory: input('vault-consensus-directory').value.trim(),
+            system_directory: input('vault-system-directory').value.trim(),
+            project_directory: input('vault-project-directory').value.trim(),
             enabled: input('vault-enabled').checked,
             include_runs: input('vault-runs').checked,
             include_automatic: input('vault-automatic').checked,
@@ -783,6 +811,12 @@ async function followLibraryLink(href) {
 }
 let libraryPreviewDocument = null, curatedDraft = null, curatedDirty = false, curatedSaving = false, curatedRequest = 0, workspaceMemoryRequest = 0, workspaceMemorySaving = false;
 function installKnowledgeLayers() {
+    element('library-open').insertAdjacentHTML('afterend', '<button type="button" id="library-consensus-open">平台共识</button><button type="button" id="library-system-open">系统知识</button><button type="button" id="library-project-open">项目知识</button>');
+    for (const layer of [
+        'consensus',
+        'system',
+        'project'
+    ])button('library-' + layer + '-open').onclick = ()=>void openKnowledgeLayer(layer);
     const nav = element('library-dialog').querySelector('.library-layers');
     nav.innerHTML = [
         [
@@ -822,7 +856,9 @@ function installKnowledgeLayers() {
             void searchLibrary();
         });
     element('library-preview').querySelector('.library-preview-actions').insertAdjacentHTML('beforeend', '<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
-    element('library-search-form').insertAdjacentHTML('afterend', '<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><span class="muted">自动资料保留来源；正式知识由你整理和确认。</span></div>');
+    element('library-search-form').insertAdjacentHTML('afterend', '<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><button type="button" id="library-extract">一键提取已有资料</button><button type="button" id="library-ai-extract">AI 整理并提取本任务</button><span class="muted">已有候选可直接提取；AI 整理会发送本任务历史并消耗模型额度。</span></div><p id="library-extraction-state" class="muted" role="status"></p>');
+    button('library-extract').onclick = ()=>void extractRecordedKnowledge();
+    button('library-ai-extract').onclick = ()=>void extractTaskKnowledgeWithAI();
     button('library-curated-new').onclick = ()=>openCuratedEditor();
     button('library-promote').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
     button('library-curated-edit').onclick = ()=>openCuratedEditor(libraryPreviewDocument || undefined);
@@ -830,13 +866,55 @@ function installKnowledgeLayers() {
     element('library-dialog').querySelector('.library-help p').textContent = '连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
     element('settings-knowledge').querySelector('p').textContent = '过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
     const guide = element('settings-knowledge').querySelector('.knowledge-directory-guide');
-    guide.innerHTML = '<strong>分层目录</strong><p>工作区过程：<code>&lt;workspace&gt;/.duo/tasks/任务ID/</code>，每轮一个来源文件，另有任务索引和交接摘要。</p><p>平台共识：Duo 运行数据内保存，开启同步后镜像到 <code>Duo/consensus/</code>。</p><p>系统知识：<code>Duo/system/主题/</code>；项目知识：<code>Duo/projects/项目/</code>。旧版 <code>Duo/tasks/</code> 继续作为可选任务镜像。</p>';
-    element('automatic-knowledge-settings').querySelector('p').textContent = '自动记录开启后，每轮结束会将任务过程镜像到任务实际工作区的 .duo/，失败不影响执行结果。自动整理只复用正常回复生成摘要和候选结论，不另起模型。旧记录可在“本任务知识”手动回填。只有显式整理后才成为正式知识。';
+    guide.innerHTML = '<strong>按任务阅读，按层级复用</strong><p>工作区过程：<code>&lt;workspace&gt;/.duo/tasks/任务名-短ID/</code>，包含任务说明、交接摘要和逐轮记录，改名不会丢失历史。</p><p>在上方选择 Obsidian 根目录后，保存即创建三类文件夹：<code>Duo/consensus/</code>、<code>Duo/system/</code>、<code>Duo/projects/</code>。下方可分别自定义文件夹名；更换目录保留原文件。</p><p>平台共识、系统知识和项目知识都保留标签与来源，可在 Duo 中阅读、编辑和查看关系图谱。已确认的平台共识才自动供新会话参考。</p>';
+    input('vault-directory').placeholder = '选择你的 Obsidian 笔记根目录';
+    const locationHint = element('vault-document-directory');
+    locationHint.parentElement.replaceChildren(document.createTextNode('选择根目录并开启同步后，知识文件将写入三类目录。实际文件目录：'), locationHint);
+    input('vault-directory').closest('label').insertAdjacentHTML('afterend', '<div class="knowledge-layer-directories"><label>平台共识文件夹<input id="vault-consensus-directory" placeholder="consensus" maxlength="200"></label><label>系统知识文件夹<input id="vault-system-directory" placeholder="system" maxlength="200"></label><label>项目知识文件夹<input id="vault-project-directory" placeholder="projects" maxlength="200"></label><p class="muted">文件夹相对于所选根目录内的 Duo/，可用中文名称或多级相对路径；三个目录不可相互包含。设置跟随本机，Markdown 与标签可通过 Git 等工具跨平台同步。</p></div>');
+    for (const id of [
+        'vault-consensus-directory',
+        'vault-system-directory',
+        'vault-project-directory'
+    ]){
+        input(id).disabled = !vaultSettingsReady;
+        input(id).oninput = input(id).onchange = ()=>{
+            vaultSettingsDirty = true;
+            element('vault-status').textContent = '路径与同步设置尚未保存。';
+        };
+    }
+    element('automatic-knowledge-settings').querySelector('p').textContent = '自动记录把任务过程写入实际工作区。自动整理让正常回复输出摘要、带标签的分层候选，不另起模型；自动提取开启后把分类候选分别写入平台共识、系统知识和项目知识，均标为待验证。旧任务可一键提取已有候选，缺少候选时可选择 AI 重新整理。';
     input('automatic-recall').closest('label').lastChild.textContent = '新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
     element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent = '同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
     element('notebook').querySelector('.knowledge-panel-help').textContent = '这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
     element('notebook').querySelector('.knowledge-panel-help').insertAdjacentHTML('afterend', '<section class="workspace-memory-panel"><strong>工作区过程资料</strong><p id="workspace-memory-state" role="status">打开本任务知识时读取目录。</p><div id="workspace-memory-tasks"></div><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button></section>');
     button('workspace-memory-sync').onclick = ()=>void loadWorkspaceMemory(true);
+    element('workspace-memory-tasks').insertAdjacentHTML('afterend', '<div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务记录文件"></div><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><p id="workspace-memory-document-state" role="status"></p><div id="workspace-memory-content" class="content"></div></section>');
+    element('workspace-memory-documents').onclick = (e)=>{
+        const b = e.target.closest('[data-workspace-document]');
+        if (b) void readWorkspaceMemoryDocument(b.dataset.workspaceDocument || '');
+    };
+    element('workspace-memory-content').onclick = (e)=>{
+        const link = e.target.closest('a');
+        if (!link || !workspaceDocumentPath) return;
+        const href = link.getAttribute('href') || '';
+        if (!href || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return;
+        e.preventDefault();
+        const parts = workspaceDocumentPath.split('/').slice(0, -1);
+        for (const part of href.split('#')[0].split('/')){
+            if (!part || part === '.') continue;
+            if (part === '..') parts.pop();
+            else parts.push(part);
+        }
+        const target = parts.join('/');
+        if (target.endsWith('.md')) void readWorkspaceMemoryDocument(target);
+    };
+    element('automatic-knowledge-settings').insertAdjacentHTML('beforeend', '<div class="knowledge-extraction-settings"><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>自动提取三类知识（均保留来源、标签及待验证状态）</label><p>复用本轮正常回复中的分层结果，不额外调用模型。先配置上方根目录并开启同步；没有分类候选时保留原记录，不编造知识。此开关单独保存。</p><button type="button" id="knowledge-extraction-save" disabled>保存自动提取设置</button><p id="knowledge-extraction-settings-state" role="status"></p></div>');
+    input('knowledge-extraction-enabled').onchange = ()=>{
+        knowledgeExtractionSettingsDirty = true;
+        element('knowledge-extraction-settings-state').textContent = '自动提取设置尚未保存。';
+    };
+    button('knowledge-extraction-save').onclick = ()=>void saveKnowledgeExtractionSettings();
+    installKnowledgeGraph();
     element('root').insertAdjacentHTML('beforeend', `<dialog id="curated-dialog" class="curated-dialog" aria-labelledby="curated-heading"><div class="library-header"><h2 id="curated-heading">整理正式知识</h2><button type="button" id="curated-close">关闭</button></div><p>凭据保留在设备或受保护配置，正文只写配置引用。整理和标记状态不会启动模型或独立验证内容。</p><form id="curated-form"><label>知识层级<select id="curated-layer"><option value="consensus">平台共识</option><option value="system">系统知识</option><option value="project">项目知识</option></select></label><label>主题 / 项目名称<input id="curated-scope" maxlength="80" placeholder="平台共识无需填写"></label><label>标题<input id="curated-title" required maxlength="200"></label><label>正文<textarea id="curated-content" required rows="10"></textarea></label><label>适用条件<textarea id="curated-applicability" rows="2"></textarea></label><label>实际依据 / 验证结果<textarea id="curated-evidence" rows="2" placeholder="未验证时明确写出"></textarea></label><label>安全配置引用<input id="curated-credential" placeholder="仅设备或配置名称，不填写密码"></label><label>标签<input id="curated-tags" placeholder="用逗号分隔"></label><label>状态<select id="curated-status"><option value="observed">待验证</option><option value="verified">已验证（用户确认）</option><option value="stale">已过时</option></select></label><label><input type="checkbox" id="curated-confirm">我确认已填写实际依据和适用条件，并明确将此条标为已验证</label><p id="curated-source" class="muted"></p><p id="curated-state" role="status"></p><div class="actions"><button type="submit" id="curated-save" class="primary">保存正式知识</button><button type="button" id="curated-delete" class="danger hidden">移除正式条目</button></div></form></dialog>`);
     button('curated-close').onclick = ()=>{
         if (!curatedSaving) element('curated-dialog').close();
@@ -863,10 +941,19 @@ function installKnowledgeLayers() {
     disposeWithShell(()=>{
         curatedRequest++;
         workspaceMemoryRequest++;
+        workspaceDocumentRequest++;
+        knowledgeExtractionRequest++;
+        knowledgeGraphRequest++;
         curatedDraft = null;
         curatedDirty = false;
         curatedSaving = false;
         workspaceMemorySaving = false;
+        knowledgeExtractionBusy = false;
+        knowledgeExtractionSettingsBusy = false;
+        knowledgeExtractionSettingsReady = false;
+        knowledgeExtractionSettingsDirty = false;
+        knowledgeGraphOpen = false;
+        knowledgeGraphDocuments = [];
         libraryPreviewDocument = null;
     });
 }
@@ -979,6 +1066,14 @@ async function deleteCuratedEditor() {
 async function loadWorkspaceMemory(sync = false) {
     if (!chosen || creatingTask || !detail || sync && workspaceMemorySaving) return;
     const task = chosen, selected = selection, epoch = shellEpoch, request = ++workspaceMemoryRequest;
+    if (workspaceDocumentTask !== task) {
+        workspaceDocumentRequest++;
+        workspaceDocumentTask = task;
+        workspaceDocumentPath = '';
+        element('workspace-memory-documents').textContent = '';
+        element('workspace-memory-reader').classList.add('hidden');
+        element('workspace-memory-content').textContent = '';
+    }
     if (sync) workspaceMemorySaving = true;
     button('workspace-memory-sync').disabled = workspaceMemorySaving;
     element('workspace-memory-state').textContent = sync ? '正在回填工作区资料…' : '正在读取工作区资料…';
@@ -993,6 +1088,7 @@ async function loadWorkspaceMemory(sync = false) {
             ...report.warnings || []
         ].filter(Boolean).map((s)=>'；' + s).join('');
         element('workspace-memory-tasks').innerHTML = (report.tasks || []).map((t)=>'<p><strong>' + escapeHTML(t.title) + '</strong> · <code>' + escapeHTML(t.path) + '</code></p>').join('');
+        element('workspace-memory-documents').innerHTML = (report.documents || []).map((d)=>'<button type="button" data-workspace-document="' + escapeHTML(d.path) + '">' + escapeHTML(d.title || d.kind || d.path) + '</button>').join('');
     } catch (e) {
         if (current()) element('workspace-memory-state').textContent = '工作区资料读取失败：' + e.message;
     } finally{
@@ -1001,6 +1097,372 @@ async function loadWorkspaceMemory(sync = false) {
             button('workspace-memory-sync').disabled = workspaceMemorySaving;
             if (sync && !current() && toolsTab === 'note') void loadWorkspaceMemory();
         }
+    }
+}
+async function readWorkspaceMemoryDocument(path) {
+    if (!chosen || creatingTask || !path) return;
+    const task = chosen, selected = selection, epoch = shellEpoch, request = ++workspaceDocumentRequest;
+    element('workspace-memory-reader').classList.remove('hidden');
+    element('workspace-memory-title').textContent = path;
+    element('workspace-memory-content').textContent = '';
+    element('workspace-memory-document-state').textContent = '正在读取任务记录…';
+    const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === workspaceDocumentRequest;
+    try {
+        const result = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory/document?' + new URLSearchParams({
+            path
+        }), 'GET', undefined, shellController.signal);
+        if (!current()) return;
+        workspaceDocumentPath = result.path;
+        element('workspace-memory-title').textContent = result.path;
+        element('workspace-memory-content').innerHTML = markdown(result.content || '');
+        element('workspace-memory-document-state').textContent = '工作区文件内容；可在外部编辑器中继续编辑。';
+    } catch (e) {
+        if (current()) element('workspace-memory-document-state').textContent = '记录读取失败：' + e.message;
+    }
+}
+async function openKnowledgeLayer(layer) {
+    if (![
+        'consensus',
+        'system',
+        'project'
+    ].includes(layer)) return;
+    input('library-layer').value = layer;
+    input('library-scope').value = '';
+    input('library-kind').value = '';
+    input('library-source').value = '';
+    input('library-tag').value = '';
+    element('library-dialog').querySelectorAll('[data-library-layer]').forEach((b)=>{
+        const on = b.dataset.libraryLayer === layer;
+        b.classList.toggle('selected', on);
+        b.setAttribute('aria-pressed', String(on));
+    });
+    await openLibrary();
+}
+function setKnowledgeExtractionSettingsBusy(busy) {
+    input('knowledge-extraction-enabled').disabled = busy;
+    button('knowledge-extraction-save').disabled = busy;
+}
+async function loadKnowledgeExtractionSettings() {
+    if (knowledgeExtractionSettingsBusy || knowledgeExtractionSettingsDirty) return;
+    const epoch = shellEpoch, request = ++knowledgeExtractionRequest;
+    knowledgeExtractionSettingsReady = false;
+    setKnowledgeExtractionSettingsBusy(true);
+    try {
+        const config = await api('library/extraction', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== knowledgeExtractionRequest) return;
+        input('knowledge-extraction-enabled').checked = config.enabled;
+        knowledgeExtractionSettingsReady = true;
+        element('knowledge-extraction-settings-state').textContent = config.needs_directory ? '先设置 Obsidian 根目录并开启同步，自动提取才会写入文件。' : config.enabled ? '自动提取已开启；候选保持待验证。' : '自动提取已关闭，已有知识保留。';
+    } catch (e) {
+        if (shellCurrent(epoch) && request === knowledgeExtractionRequest) element('knowledge-extraction-settings-state').textContent = e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === knowledgeExtractionRequest) setKnowledgeExtractionSettingsBusy(!knowledgeExtractionSettingsReady);
+    }
+}
+async function saveKnowledgeExtractionSettings() {
+    if (!knowledgeExtractionSettingsReady || knowledgeExtractionSettingsBusy) return;
+    const epoch = shellEpoch, request = ++knowledgeExtractionRequest;
+    knowledgeExtractionSettingsBusy = true;
+    setKnowledgeExtractionSettingsBusy(true);
+    try {
+        await api('library/extraction', 'PUT', {
+            enabled: input('knowledge-extraction-enabled').checked
+        });
+        if (!shellCurrent(epoch) || request !== knowledgeExtractionRequest) return;
+        knowledgeExtractionSettingsDirty = false;
+        element('knowledge-extraction-settings-state').textContent = '自动提取设置已保存。';
+    } catch (e) {
+        if (shellCurrent(epoch) && request === knowledgeExtractionRequest) element('knowledge-extraction-settings-state').textContent = '保存失败：' + e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === knowledgeExtractionRequest) {
+            knowledgeExtractionSettingsBusy = false;
+            setKnowledgeExtractionSettingsBusy(false);
+        }
+    }
+}
+async function ensureExtractionDirectory() {
+    const epoch = shellEpoch, config = await api('library/extraction', 'GET', undefined, shellController.signal);
+    if (!shellCurrent(epoch)) return false;
+    if (!config.needs_directory) return true;
+    await openLibrarySettings();
+    if (!shellCurrent(epoch)) return false;
+    element('vault-status').textContent = '请先选择 Obsidian 根目录，开启 Markdown 同步并保存，再返回提取知识。';
+    input('vault-directory').focus();
+    return false;
+}
+async function extractRecordedKnowledge() {
+    if (knowledgeExtractionBusy) return;
+    const epoch = shellEpoch, taskScope = input('library-scope').value, layer = input('library-layer').value;
+    knowledgeExtractionBusy = true;
+    button('library-extract').disabled = true;
+    button('library-ai-extract').disabled = true;
+    element('library-extraction-state').textContent = '正在检查知识目录…';
+    try {
+        if (!await ensureExtractionDirectory()) return;
+        if (!shellCurrent(epoch)) return;
+        element('library-extraction-state').textContent = '正在从已记录资料中提取，不额外调用模型…';
+        const report = await api('library/extract', 'POST', {
+            task_id: taskScope,
+            layers: [
+                'consensus',
+                'system',
+                'project'
+            ].includes(layer) ? [
+                layer
+            ] : [
+                'consensus',
+                'system',
+                'project'
+            ]
+        });
+        if (!shellCurrent(epoch)) return;
+        element('library-extraction-state').textContent = `提取完成：新增 ${report.created}，已存在 ${report.duplicates}，跳过 ${report.skipped}。${report.created ? '新条目保留标签、来源及待验证状态。' : '没有新增候选；可选择任务后用 AI 重新整理历史。'}` + (report.warnings?.length ? ' ' + report.warnings.join('；') : '');
+        await searchLibrary();
+        void loadLibraryOverview();
+    } catch (e) {
+        if (shellCurrent(epoch)) {
+            element('library-extraction-state').textContent = '提取失败：' + e.message;
+            if (e.status === 409) await openLibrarySettings();
+        }
+    } finally{
+        if (shellCurrent(epoch)) {
+            knowledgeExtractionBusy = false;
+            button('library-extract').disabled = false;
+            button('library-ai-extract').disabled = false;
+        }
+    }
+}
+let knowledgeGraphOpen = false, knowledgeGraphRequest = 0, knowledgeGraphDocuments = [], knowledgeGraphZoom = 1, knowledgeGraphBounds = {
+    width: 1000,
+    height: 320
+};
+function buildKnowledgeGraph(documents, compact = false) {
+    const distinct = [
+        ...new Map(documents.map((d)=>[
+                d.id,
+                d
+            ])).values()
+    ], visible = distinct.slice(0, 80);
+    const counts = new Map();
+    for (const d of visible)for (const tag of new Set((d.tags || []).map((t)=>t.trim()).filter(Boolean)))counts.set(tag, (counts.get(tag) || 0) + 1);
+    const tags = [
+        ...counts
+    ].sort((a, b)=>b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 20).map(([tag])=>tag), nodes = [], edges = [];
+    const width = compact ? 600 : 1000, height = compact ? 620 : 320, cx = width / 2, cy = height / 2;
+    tags.forEach((tag, index)=>{
+        const angle = index / Math.max(1, tags.length) * Math.PI * 2 - Math.PI / 2;
+        nodes.push({
+            id: 'tag:' + tag,
+            title: '#' + tag,
+            kind: 'tag',
+            layer: 'tag',
+            x: cx + Math.cos(angle) * (compact ? 140 : 205),
+            y: cy + Math.sin(angle) * (compact ? 140 : 70),
+            tags: [
+                tag
+            ]
+        });
+    });
+    visible.forEach((d, index)=>{
+        const angle = index / Math.max(1, visible.length) * Math.PI * 2 - Math.PI / 2, radius = compact ? index % 2 ? 230 : 260 : index % 2 ? 360 : 420;
+        nodes.push({
+            id: d.id,
+            title: d.title,
+            kind: 'document',
+            layer: d.layer || '',
+            x: cx + Math.cos(angle) * radius,
+            y: cy + Math.sin(angle) * (compact ? 245 : 115),
+            tags: d.tags || []
+        });
+        for (const tag of new Set(d.tags || []))if (tags.includes(tag)) edges.push({
+            source: d.id,
+            target: 'tag:' + tag
+        });
+    });
+    return {
+        nodes,
+        edges,
+        total: distinct.length,
+        shown: visible.length,
+        tags: tags.length,
+        width,
+        height
+    };
+}
+function installKnowledgeGraph() {
+    button('library-settings-open').insertAdjacentHTML('beforebegin', '<button type="button" id="library-graph-open" aria-pressed="false" aria-controls="knowledge-graph-panel">关系图谱</button>');
+    element('library-workspace').querySelector('.library-list-pane').insertAdjacentHTML('afterbegin', '<section id="knowledge-graph-panel" class="knowledge-graph-panel hidden" aria-label="标签关系图谱"><div class="knowledge-graph-toolbar"><button type="button" id="knowledge-graph-refresh">刷新图谱</button><button type="button" id="knowledge-graph-minus" aria-label="缩小关系图谱">−</button><button type="button" id="knowledge-graph-reset">复位</button><button type="button" id="knowledge-graph-plus" aria-label="放大关系图谱">＋</button></div><p id="knowledge-graph-state" role="status"></p><div id="knowledge-graph-viewport" class="knowledge-graph-viewport"><svg id="knowledge-graph" role="group" aria-label="知识文档与标签关系" viewBox="0 0 1000 690"></svg></div><div id="knowledge-graph-accessible" class="knowledge-graph-accessible" aria-label="图谱文档与标签"></div></section>');
+    button('library-graph-open').onclick = ()=>{
+        showLibraryPage('browse');
+        if (![
+            'consensus',
+            'system',
+            'project',
+            'all'
+        ].includes(input('library-layer').value)) {
+            input('library-layer').value = 'all';
+            element('library-dialog').querySelectorAll('[data-library-layer]').forEach((b)=>{
+                const selected = b.dataset.libraryLayer === 'all';
+                b.classList.toggle('selected', selected);
+                b.setAttribute('aria-pressed', String(selected));
+            });
+        }
+        knowledgeGraphOpen = true;
+        knowledgeGraphZoom = 1;
+        applyKnowledgeGraphMode();
+        void loadKnowledgeGraph();
+    };
+    button('library-browse-open').addEventListener('click', ()=>{
+        knowledgeGraphOpen = false;
+        knowledgeGraphRequest++;
+        applyKnowledgeGraphMode();
+    });
+    button('library-settings-open').addEventListener('click', ()=>{
+        knowledgeGraphRequest++;
+    });
+    button('knowledge-graph-refresh').onclick = ()=>void loadKnowledgeGraph();
+    for (const [id, factor] of [
+        [
+            'knowledge-graph-minus',
+            .8
+        ],
+        [
+            'knowledge-graph-plus',
+            1.25
+        ]
+    ])button(id).onclick = ()=>{
+        knowledgeGraphZoom = Math.max(.6, Math.min(2.8, knowledgeGraphZoom * factor));
+        applyKnowledgeGraphZoom();
+    };
+    button('knowledge-graph-reset').onclick = ()=>{
+        knowledgeGraphZoom = 1;
+        applyKnowledgeGraphZoom();
+    };
+    const activate = (target)=>{
+        const node = target.closest('[data-graph-document],[data-graph-tag]');
+        if (!node) return;
+        if (node.dataset.graphTag) {
+            input('library-tag').value = node.dataset.graphTag;
+            void searchLibrary();
+        } else if (node.dataset.graphDocument) {
+            const d = knowledgeGraphDocuments.find((d)=>d.id === node.dataset.graphDocument);
+            if (!d) return;
+            if (!libraryHits.some((item)=>item.id === d.id)) libraryHits.push(d);
+            void previewLibrary(d.id);
+        }
+    };
+    element('knowledge-graph').onclick = (e)=>activate(e.target);
+    element('knowledge-graph-accessible').onclick = (e)=>activate(e.target);
+    element('knowledge-graph').onkeydown = (e)=>{
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activate(e.target);
+        }
+    };
+    element('library-dialog').addEventListener('close', ()=>{
+        knowledgeGraphRequest++;
+        knowledgeGraphOpen = false;
+        applyKnowledgeGraphMode();
+    });
+    listenWithShell(window, 'resize', ()=>{
+        if (knowledgeGraphOpen) renderKnowledgeGraph();
+    });
+}
+function applyKnowledgeGraphMode() {
+    element('library-dialog').classList.toggle('graph-open', knowledgeGraphOpen);
+    element('knowledge-graph-panel').classList.toggle('hidden', !knowledgeGraphOpen);
+    element('library-results').classList.toggle('hidden', knowledgeGraphOpen);
+    button('library-more').classList.toggle('hidden', knowledgeGraphOpen || !libraryHasMore);
+    button('library-graph-open').classList.toggle('selected', knowledgeGraphOpen);
+    button('library-graph-open').setAttribute('aria-pressed', String(knowledgeGraphOpen));
+    button('library-browse-open').classList.toggle('selected', !knowledgeGraphOpen);
+    button('library-browse-open').setAttribute('aria-pressed', String(!knowledgeGraphOpen));
+}
+async function extractTaskKnowledgeWithAI() {
+    if (knowledgeExtractionBusy) return;
+    const task = input('library-scope').value || (!creatingTask ? chosen : '');
+    if (!task) {
+        element('library-extraction-state').textContent = '请先在任务范围选择一个任务，再整理该任务的历史。';
+        input('library-scope').focus();
+        return;
+    }
+    const epoch = shellEpoch;
+    knowledgeExtractionBusy = true;
+    button('library-extract').disabled = true;
+    button('library-ai-extract').disabled = true;
+    try {
+        if (!await ensureExtractionDirectory()) return;
+        if (!shellCurrent(epoch)) return;
+        const title = tasks.find((t)=>t.id === task)?.title || task;
+        const confirmed = confirm(`AI 整理并提取知识\n\n将使用“${title}”当前引擎和模型，发送最近最多 8 轮成功对话的有界文本进行整理。会消耗模型额度，输出平台共识、系统知识和项目知识的带标签候选，均保持待验证；不会继续调试或执行硬件操作。\n\n开始整理？`);
+        if (!confirmed || !shellCurrent(epoch)) return;
+        const result = await api('tasks/' + encodeURIComponent(task) + '/knowledge/extract', 'POST', {
+            confirm: true
+        });
+        if (!shellCurrent(epoch)) return;
+        element('library-extraction-state').textContent = 'AI 整理任务已排队，可在该任务执行记录查看进度；完成后刷新知识库。';
+        notify('AI 知识整理已排队：' + title);
+        void result;
+    } catch (e) {
+        if (shellCurrent(epoch)) element('library-extraction-state').textContent = 'AI 整理未启动：' + e.message;
+    } finally{
+        if (shellCurrent(epoch)) {
+            knowledgeExtractionBusy = false;
+            button('library-extract').disabled = false;
+            button('library-ai-extract').disabled = false;
+        }
+    }
+}
+function applyKnowledgeGraphZoom() {
+    const width = knowledgeGraphBounds.width / knowledgeGraphZoom, height = knowledgeGraphBounds.height / knowledgeGraphZoom;
+    element('knowledge-graph').setAttribute('viewBox', `${knowledgeGraphBounds.width / 2 - width / 2} ${knowledgeGraphBounds.height / 2 - height / 2} ${width} ${height}`);
+}
+function renderKnowledgeGraph() {
+    const data = buildKnowledgeGraph(knowledgeGraphDocuments, window.innerWidth > 0 && window.innerWidth <= 760), byID = new Map(data.nodes.map((n)=>[
+            n.id,
+            n
+        ]));
+    knowledgeGraphBounds = {
+        width: data.width,
+        height: data.height
+    };
+    const edges = data.edges.map((edge)=>{
+        const a = byID.get(edge.source), b = byID.get(edge.target);
+        return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line>`;
+    }).join('');
+    const nodes = data.nodes.map((n)=>`<g role="button" tabindex="0" class="knowledge-graph-node ${n.kind}" data-layer="${escapeHTML(n.layer)}" ${n.kind === 'tag' ? 'data-graph-tag="' + escapeHTML(n.tags[0]) + '"' : 'data-graph-document="' + escapeHTML(n.id) + '"'} aria-label="${escapeHTML(n.title)}" transform="translate(${n.x},${n.y})"><title>${escapeHTML(n.title)}</title><circle r="${n.kind === 'tag' ? 9 : 6}"></circle><text y="${n.kind === 'tag' ? -18 : 24}" text-anchor="middle">${escapeHTML(n.title.length > 12 ? n.title.slice(0, 12) + '…' : n.title)}</text></g>`).join('');
+    element('knowledge-graph').innerHTML = `<g class="knowledge-graph-edges">${edges}</g>${nodes}`;
+    element('knowledge-graph-state').textContent = data.shown ? `显示 ${data.shown} / ${data.total} 份知识、${data.tags} 个标签。连线表示文档包含该标签；点击文档阅读，点击标签缩小范围。${data.total > 80 ? '图谱最多显示最近 80 份，请使用搜索、层级或标签筛选。' : ''}` : '当前范围没有正式知识；可先一键提取或新建知识，并添加标签。';
+    element('knowledge-graph-accessible').innerHTML = data.nodes.map((n)=>'<button type="button" ' + (n.kind === 'tag' ? 'data-graph-tag="' + escapeHTML(n.tags[0]) + '"' : 'data-graph-document="' + escapeHTML(n.id) + '"') + '>' + escapeHTML(n.title) + '</button>').join('');
+    applyKnowledgeGraphZoom();
+}
+async function loadKnowledgeGraph() {
+    if (!knowledgeGraphOpen) return;
+    const epoch = shellEpoch, request = ++knowledgeGraphRequest, dialog = element('library-dialog');
+    element('knowledge-graph-state').textContent = '正在读取三类知识的标签关系…';
+    element('knowledge-graph').innerHTML = '';
+    element('knowledge-graph-accessible').textContent = '';
+    try {
+        const docs = await api('library/curated', 'GET', undefined, shellController.signal);
+        if (!shellCurrent(epoch) || request !== knowledgeGraphRequest || !knowledgeGraphOpen || !dialog.open) return;
+        const layer = input('library-layer').value, tag = input('library-tag').value.trim().replace(/^#/, ''), query = input('library-query').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean), scope = input('library-scope').value;
+        knowledgeGraphDocuments = docs.filter((d)=>(![
+                'consensus',
+                'system',
+                'project'
+            ].includes(layer) || d.layer === layer) && (!tag || (d.tags || []).some((t)=>t.toLocaleLowerCase() === tag.toLocaleLowerCase())) && (!scope || d.source_task_id === scope) && (input('library-stale').checked || d.status !== 'stale') && query.every((q)=>(d.title + ' ' + d.content + ' ' + d.scope_key + ' ' + (d.tags || []).join(' ')).toLocaleLowerCase().includes(q))).map((d)=>({
+                ...d,
+                id: 'curated:' + d.id,
+                kind: 'curated',
+                task_id: d.source_task_id || '',
+                task_title: tasks.find((t)=>t.id === d.source_task_id)?.title || '',
+                hash: '',
+                snippet: d.content.slice(0, 300),
+                origin: 'local'
+            }));
+        renderKnowledgeGraph();
+    } catch (e) {
+        if (shellCurrent(epoch) && request === knowledgeGraphRequest) element('knowledge-graph-state').textContent = '图谱读取失败：' + e.message;
     }
 }
 let updateLoading = false, updateInformation = null, updatePhase = 'idle', updateExpectedVersion = '';
@@ -1424,7 +1886,17 @@ function installWorkflow() {
     cancel.className = 'subtle';
     cancel.textContent = '返回';
     head.append(heading, lead, cancel);
-    lead.textContent = '选择执行位置，直接描述目标；第一条要求会在任务创建后立即开始。';
+    lead.textContent = '为任务起一个好找的名字，再选择工作目录；记录会跟随任务，第一条要求会立即开始。';
+    const titleField = document.createElement('label');
+    titleField.className = 'create-task-name';
+    titleField.htmlFor = 'create-name';
+    titleField.textContent = '任务名称';
+    const titleInput = document.createElement('input');
+    titleInput.id = 'create-name';
+    titleInput.maxLength = 120;
+    titleInput.required = true;
+    titleInput.placeholder = '例如：375 调试、NFS 烧录流程';
+    titleField.append(titleInput);
     const context = document.createElement('div');
     context.className = 'create-context';
     const environment = input('create-environment'), environmentLabel = environment.previousElementSibling;
@@ -1545,7 +2017,7 @@ function installWorkflow() {
     modelFooter.querySelector('#model-catalog-details').append(element('models-hint'));
     modelFooter.append(element('model-test-result'));
     meta.append(element('effort-hint'), element('create-error'));
-    form.replaceChildren(head, context, createComposer, meta);
+    form.replaceChildren(head, titleField, context, createComposer, meta);
     button('create-cancel').onclick = cancelCreate;
     button('create-detect-environments').onclick = ()=>void refreshCreateEnvironments(true);
     button('create-browse').onclick = ()=>openWorkspacePicker(input('create-environment').value, input('create-workspace').value, async (p, env)=>{
@@ -3674,7 +4146,7 @@ async function stopCodexApprovalRun(card) {
 }
 function taskItemMenu(t) {
     const busy = !t.archived && (t.status === 'running' || t.status === 'queued');
-    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="handoff" data-task-id="${escapeHTML(t.id)}">切换 AI 继续</button><button data-task-action="reset-session" data-task-id="${escapeHTML(t.id)}"${busy || t.archived || !t.session ? ' disabled' : ''} title="保留任务记录、知识和草稿，重建当前 AI 的上下文">重建 AI 会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与外部指令</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
+    return `<details class="task-item-menu"><summary aria-label="任务操作" title="任务操作">⋯</summary><div><button data-task-action="records" data-task-id="${escapeHTML(t.id)}">任务记录与知识</button><button data-task-action="editor" data-task-id="${escapeHTML(t.id)}">在 VS Code 中打开</button><button data-task-action="reopen" data-task-id="${escapeHTML(t.id)}">重新打开任务</button><button data-task-action="copy-open-command" data-task-id="${escapeHTML(t.id)}">复制重新打开命令</button><button data-task-action="fork" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''} title="继承此前历史，之后分别继续；共享同一个工作目录">分叉会话</button><button data-task-action="bind-feishu" data-task-id="${escapeHTML(t.id)}">绑定飞书私聊</button><button data-task-action="session-info" data-task-id="${escapeHTML(t.id)}">会话与恢复</button><button data-task-action="copy-link" data-task-id="${escapeHTML(t.id)}">复制任务链接</button><button data-task-action="rename" data-task-id="${escapeHTML(t.id)}">改名…</button><button data-task-action="pin" data-task-id="${escapeHTML(t.id)}">${t.pinned ? '取消置顶' : '置顶'}</button><button data-task-action="archive" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>${t.archived ? '恢复任务' : '归档'}</button><button class="danger" data-task-action="trash" data-task-id="${escapeHTML(t.id)}"${busy ? ' disabled' : ''}>删除会话…</button></div></details>`;
 }
 function taskEngineMark(engine) {
     if (engine === 'claude') return {
@@ -3856,6 +4328,11 @@ function installLayout() {
     actionState.className = 'hidden task-action-state';
     actionState.setAttribute('aria-hidden', 'true');
     element('session-info-dialog').append(actionState);
+    const recovery = document.createElement('details');
+    recovery.className = 'session-recovery';
+    recovery.innerHTML = '<summary>高级会话恢复</summary><p class="muted">正常切换引擎和模型请使用输入框旁的选择器。仅在原生会话异常时重建；任务记录保留。</p>';
+    recovery.append(button('session-reset'));
+    element('session-info-dialog').append(recovery);
     button('session-reset').onclick = ()=>void resetSession();
     button('session-info-close').onclick = ()=>element('session-info-dialog').close();
     element('composer').querySelector('.composer-bottom small').remove();
@@ -3870,7 +4347,8 @@ function installLayout() {
             menu.removeAttribute('open');
             if (action.disabled) return;
             const id = action.dataset.taskId || '', kind = action.dataset.taskAction;
-            if (kind === 'editor') void openEditor(id);
+            if (kind === 'records') void openTaskRecords(id);
+            else if (kind === 'editor') void openEditor(id);
             else if (kind === 'reopen') void reopenTask(id);
             else if (kind === 'copy-open-command') void copyReopenTaskCommand(id);
             else if (kind === 'fork') void forkTask(id);
@@ -3930,6 +4408,9 @@ function installSettingsNavigation() {
     element('settings-open').replaceWith(nav);
     const order = [
         '#library-open',
+        '#library-consensus-open',
+        '#library-system-open',
+        '#library-project-open',
         '#engines-open',
         '[data-settings="feishu"]',
         '[data-settings="access"]',
@@ -3965,6 +4446,11 @@ async function openTaskSessionReset(id = chosen) {
     if (!id) return;
     if (chosen !== id) await choose(id);
     if (chosen === id && detail?.task.id === id) await resetSession();
+}
+async function openTaskRecords(id = chosen) {
+    if (!id) return;
+    if (chosen !== id) await choose(id);
+    if (chosen === id && detail?.task.id === id) switchTab('note');
 }
 let detectedEnvironments = [];
 let createEnvironmentDiscoveryAt = 0;
@@ -7318,6 +7804,15 @@ function invalidateModelCatalogs() {
     else if (detail && !element('task-model-menu').classList.contains('hidden')) void refreshTaskModels();
 }
 function installModelPicker() {
+    element('task-model-menu').insertAdjacentHTML('afterbegin', '<label class="task-engine-choice" for="task-engine-select">AI 引擎<select id="task-engine-select" aria-label="切换当前任务的 AI 引擎"></select></label><p class="model-context">换引擎会自动准备历史文件与交接提示；换模型通常继续当前会话。</p>');
+    input('task-engine-select').onchange = ()=>{
+        if (!detail) return;
+        const engine = input('task-engine-select').value, current = detail.task.engine || 'codex';
+        if (engine === current) return;
+        input('task-engine-select').value = current;
+        closeModelMenu('task');
+        void openHandoff(chosen, engine);
+    };
     element('task-model-menu').insertAdjacentHTML('beforeend', '<div class="model-catalog-footer"><p id="task-models-context" class="model-context"></p><p id="task-models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions"><button id="task-reload-models" type="button">重读模型列表</button><button id="task-test-models" type="button">测试列表模型</button><button id="task-stop-model-test" type="button" class="hidden">停止测试</button></div><p id="task-model-test-result" class="model-test-result" role="status"></p><details class="model-catalog-details"><summary>来源与诊断</summary><p id="task-models-hint"></p></details></div>');
     button('test-models').insertAdjacentHTML('afterend', '<button id="stop-model-test" type="button" class="hidden">停止测试</button>');
     for (const prefix of [
@@ -7450,6 +7945,12 @@ function renderModelMenu(target) {
     syncModelTestButton();
     const ids = modelPickers[target], search = input(ids.search).value.trim(), filter = search.toLowerCase();
     const models = target === 'task' ? taskPickerModels : createModels;
+    if (target === 'task' && element('task-engine-select')) {
+        const engines = input('create-engine');
+        input('task-engine-select').innerHTML = engines.innerHTML;
+        input('task-engine-select').value = detail?.task.engine || 'codex';
+        input('task-engine-select').disabled = !detail || !!detail.task.archived || !!detail.runs?.some((r)=>r.status === 'running' || r.status === 'queued');
+    }
     const selected = target === 'task' ? detail?.task.model || '' : input('create-model').value;
     const matches = models.filter((m)=>!filter || m.id.toLowerCase().includes(filter) || (m.name || '').toLowerCase().includes(filter));
     const custom = !!filter && matches.length === 0;
@@ -10298,7 +10799,7 @@ async function loadHandoffPreview() {
         }
     }
 }
-async function openHandoff(id = chosen) {
+async function openHandoff(id = chosen, targetEngine = '') {
     if (!id || handoffBusy) return;
     ensureHandoffDialog();
     handoffController?.abort();
@@ -10328,7 +10829,8 @@ async function openHandoff(id = chosen) {
         if (snapshot.task.archived || snapshot.task.deleted || snapshot.runs.some((r)=>r.status === 'running' || r.status === 'queued')) throw new Error('请先恢复任务，或等待执行结束 / 停止并取消排队后再切换。');
         input('handoff-environment').innerHTML = settings.config.environments.map((v)=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');
         input('handoff-environment').value = snapshot.task.environment.id;
-        input('handoff-engine').value = snapshot.task.engine;
+        input('handoff-engine').innerHTML = input('create-engine').innerHTML;
+        input('handoff-engine').value = targetEngine || snapshot.task.engine;
         input('handoff-workspace').value = snapshot.task.workspace;
         input('handoff-context-mode').value = 'full';
         element('handoff-fields').disabled = false;
@@ -10702,7 +11204,7 @@ function renderShell() {
             notify('便签尚未保存，请等待保存完成或重试后再退出。');
             return;
         }
-        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || curatedDirty || curatedSaving) {
+        if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving) {
             notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');
             return;
         }
@@ -11333,6 +11835,7 @@ async function showCreate() {
         createFiles = [];
         syncDesktopTaskContext();
         syncTaskDialogContext();
+        input('create-name').value = '';
         input('create-input').value = '';
         input('create-files').value = '';
         input('create-error').textContent = '';
@@ -11354,7 +11857,7 @@ async function showCreate() {
         element('task-workspace').title = '';
         history.replaceState(null, '', '/');
         renderList();
-        input('create-input').focus();
+        input('create-name').focus();
         await loadCreateEnvironment();
         void refreshCreateEnvironments();
     } catch (e) {
@@ -11417,6 +11920,17 @@ async function loadCreateEnvironment(keepWorkspace = false) {
 async function createTask(e) {
     e.preventDefault();
     if (createSubmitting || button('create-submit').disabled || !creatingTask) return;
+    const title = input('create-name').value.trim();
+    if (!title) {
+        element('create-error').textContent = '请先填写任务名称，方便查找任务和记录。';
+        input('create-name').focus();
+        return;
+    }
+    if (Array.from(title).length > 120) {
+        element('create-error').textContent = '任务名称最多 120 个字。';
+        input('create-name').focus();
+        return;
+    }
     const text = input('create-input').value, files = [
         ...createFiles
     ];
@@ -11440,7 +11954,7 @@ async function createTask(e) {
             engine: input('create-engine').value,
             reasoning_effort: input('create-effort').value,
             environment_id: input('create-environment').value,
-            title: createTaskTitle(text),
+            title,
             workspace: input('create-workspace').value,
             model: input('create-model').value === '__custom__' ? input('custom-model').value.trim() : input('create-model').value,
             mode_id: mode.id
@@ -12201,7 +12715,7 @@ async function setBinding(bind) {
     }
 }
 window.addEventListener('beforeunload', (e)=>{
-    if (dirty || stickyDirty || stickySaving || automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving) {
+    if (dirty || stickyDirty || stickySaving || automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving) {
         e.preventDefault();
         e.returnValue = '';
     }

@@ -51,12 +51,13 @@ func (s *Store) notebookRecall(ctx context.Context, task string) (string, []stri
 }
 
 type taskMemory struct {
-	Summary       string          `json:"summary"`
-	Prerequisites []string        `json:"prerequisites"`
-	Decisions     []string        `json:"decisions"`
-	OpenQuestions []string        `json:"open_questions"`
-	Tags          []string        `json:"tags"`
-	Insights      []memoryInsight `json:"insights"`
+	Summary             string               `json:"summary"`
+	Prerequisites       []string             `json:"prerequisites"`
+	Decisions           []string             `json:"decisions"`
+	OpenQuestions       []string             `json:"open_questions"`
+	Tags                []string             `json:"tags"`
+	Insights            []memoryInsight      `json:"insights"`
+	KnowledgeCandidates []knowledgeCandidate `json:"knowledge_candidates,omitempty"`
 }
 type memoryInsight struct {
 	Title         string   `json:"title"`
@@ -72,7 +73,8 @@ type memoryInsight struct {
 func memoryMarker(run string) string { return "<!-- duo-memory:" + run + " -->" }
 func memoryPrompt(run string) string {
 	return `Duo 的本轮附加记录约定（不覆盖用户要求）：在完成正常回复后，若确有值得保留的进展，可附加本轮增量记忆；若用户要求严格输出格式或禁止附加内容，则省略。不要为记录额外调用工具、调查或更改文件。不要把计划写成已完成，不确定或有分歧的内容放 open_questions。使用相对路径或 <workspace> 等可迁移占位，不写机器绝对路径、凭据、账号。记录不会独立验证你的结论。
-结构：{"summary":"本轮进展摘要","prerequisites":["继续任务所需前提"],"decisions":["用户约定或有依据的决策"],"open_questions":["尚未解决的问题"],"tags":["简短主题"],"insights":[{"title":"可复用问题","question":"问题或曾有的分歧","conclusion":"调查/解释/实验后的结论","evidence":"逐字摘录正常回复中说明实际调查或验证的那一句","applicability":"适用条件与限制","tags":["主题"]}]}
+结构：{"summary":"本轮进展摘要","prerequisites":["继续任务所需前提"],"decisions":["用户约定或有依据的决策"],"open_questions":["尚未解决的问题"],"tags":["简短主题"],"insights":[{"title":"可复用问题","question":"问题或曾有的分歧","conclusion":"调查/解释/实验后的结论","evidence":"逐字摘录正常回复中说明实际调查或验证的那一句","applicability":"适用条件与限制","tags":["主题"]}],"knowledge_candidates":[{"layer":"consensus 或 system 或 project","scope_key":"系统知识主题或项目名，平台共识留空","title":"可复用知识标题","content":"知识正文","evidence":"逐字摘录上方回复的依据","applicability":"适用范围与未验证限制","tags":["主题"]}]}
+knowledge_candidates 最多 6 条，按本轮实际资料自动分类提取候选：consensus 仅用户明确约定的跨任务习惯与流程；system 为通用原理、方法与学习总结；project 为本项目资料和结论。没有依据或不适合复用则留空，不必凑齐三类。evidence 必须逐字出现在上方正常回复，候选只以待验证保存，不会自动确认事实。不得写入密码、令牌或账户值，仅可写受保护配置的引用。
 只在问题得到实际调查、解惑或实验支持后写 insights（最多 3 条），evidence 必须在上面的正常回复中逐字出现，不得编造验证。没有依据就留空。数组各最多 8 项；摘要和每项保持简短。标签自动提取，无需询问用户分类。整个 JSON 放在下面这两个标记之间，紧接正常回复末尾：
 ` + memoryMarker(run) + "\n{...}\n<!-- /duo-memory:" + run + " -->\n\n本轮用户要求：\n"
 }
@@ -119,6 +121,7 @@ func splitTaskMemory(result, run string) (string, *taskMemory) {
 		insights = append(insights, insight)
 	}
 	m.Insights = insights
+	m.KnowledgeCandidates = validKnowledgeCandidates(m.KnowledgeCandidates, clean)
 	m.Tags = notebookTags(m.Tags, m.Summary)
 	return clean, &m
 }
@@ -176,6 +179,7 @@ func portableTaskMemory(m taskMemory, workspace string) taskMemory {
 	m.OpenQuestions = cleanList(m.OpenQuestions)
 	m.Tags = notebookTags(m.Tags, m.Summary)
 	m.Insights = append([]memoryInsight(nil), m.Insights...)
+	m.KnowledgeCandidates = portableKnowledgeCandidates(m.KnowledgeCandidates, workspace)
 	for i := range m.Insights {
 		v := &m.Insights[i]
 		v.Title = portableKnowledge(v.Title, workspace)

@@ -29,6 +29,7 @@ type LibraryDocument struct {
 	Applicability string   `json:"applicability,omitempty" yaml:"duo_applicability,omitempty"`
 	Evidence      string   `json:"evidence,omitempty" yaml:"duo_evidence,omitempty"`
 	CredentialRef string   `json:"credential_ref,omitempty" yaml:"duo_credential_ref,omitempty"`
+	ExtractionKey string   `json:"extraction_key,omitempty" yaml:"duo_extraction_key,omitempty"`
 	Tags          []string `json:"tags,omitempty" yaml:"-"`
 	Layer         string   `json:"layer,omitempty" yaml:"duo_layer,omitempty"`
 	Generated     bool     `json:"generated,omitempty" yaml:"duo_generated,omitempty"`
@@ -326,6 +327,7 @@ func (s *Store) libraryDocument(ctx context.Context, id string) (LibraryDocument
 		item, err = s.curatedKnowledge(ctx, id)
 		if err == nil {
 			d = curatedDocument(item)
+			d.Path = configuredCuratedPath(s.vaultConfig(), d)
 			var tracked string
 			if e := s.QueryRowContext(ctx, "SELECT path FROM library_links WHERE id=?", d.ID).Scan(&tracked); e == nil && validCuratedTrackedPath(tracked) {
 				d.Path = tracked
@@ -364,7 +366,24 @@ func (s *Store) libraryDocument(ctx context.Context, id string) (LibraryDocument
 				return doc, nil
 			}
 		}
-		if parts[0] == "consensus" || parts[0] == "system" || parts[0] == "projects" {
+		// A tracked note may live under a previous/custom folder even before the
+		// file index is populated. Resolve that exact path without scanning notes.
+		var trackedID string
+		if e := s.QueryRowContext(ctx, "SELECT id FROM library_links WHERE path=? AND id LIKE 'curated:%' LIMIT 1", rel).Scan(&trackedID); e == nil {
+			return s.libraryDocument(ctx, trackedID)
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return d, e
+		}
+		c := s.vaultConfig()
+		curatedPath := false
+		for _, layer := range []string{"consensus", "system", "project"} {
+			folder := configuredKnowledgeFolder(c, layer)
+			if strings.HasPrefix(rel, folder+"/") {
+				curatedPath = true
+				break
+			}
+		}
+		if curatedPath {
 			docs, e := s.curatedDocuments(ctx)
 			if e != nil {
 				return d, e

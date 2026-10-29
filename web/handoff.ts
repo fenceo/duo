@@ -84,7 +84,7 @@ async function loadHandoffPreview(){
  try{const p=await api<HandoffPreview>('tasks/'+encodeURIComponent(task.id)+'/continuation/preview?mode='+encodeURIComponent(mode),'GET',undefined,handoffController?.signal);if(!handoffCurrent(generation,epoch)||request!==handoffPreviewRequest||choice!==handoffPreviewChoice())return;handoffPreview=p;handoffPreviewSelection=choice;element('handoff-preview-status').textContent=mode==='brief'?`精简资料：${p.transferred_runs} 轮成功回复、${p.transferred_knowledge} 条笔记。仅在本地整理，可能遗漏细节，请核对下方摘要后确认。`:`所选资料：${p.transferred_runs} 轮对话、${p.transferred_knowledge} 条笔记，全文 ${(p.archive_bytes/1024).toFixed(1)} KiB。${p.context_truncated?'摘要仅含重点，全文保留所选历史。':''}`;element('handoff-preview').textContent=p.context;if(mode!=='brief')element('handoff-archive').setAttribute('href','/api/tasks/'+encodeURIComponent(task.id)+'/continuation/archive?mode='+encodeURIComponent(mode));button('handoff-submit').disabled=false}
  catch(e){if(handoffCurrent(generation,epoch)&&request===handoffPreviewRequest){element('handoff-preview-status').textContent='接续资料读取失败';element('handoff-error').textContent=(e as Error).message}}
 }
-async function openHandoff(id=chosen){
+async function openHandoff(id=chosen,targetEngine=''){
  if(!id||handoffBusy)return;
  ensureHandoffDialog();handoffController?.abort();handoffController=new AbortController();handoffTask=null;handoffPreview=null;handoffPreviewSelection='';handoffPreviousContextMode='full';
  input('handoff-restart-session').checked=false;updateHandoffRecovery(true);element('handoff-preview').textContent='';element('handoff-preview-status').textContent='';element('handoff-archive').removeAttribute('href');
@@ -98,7 +98,7 @@ async function openHandoff(id=chosen){
   element('handoff-source').textContent=snapshot.task.title+' · '+taskEngineName(snapshot.task.engine);
   if(snapshot.task.archived||snapshot.task.deleted||snapshot.runs.some(r=>r.status==='running'||r.status==='queued'))throw new Error('请先恢复任务，或等待执行结束 / 停止并取消排队后再切换。');
   input('handoff-environment').innerHTML=settings.config.environments.map(v=>`<option value="${escapeHTML(v.id)}">${escapeHTML(environmentOptionLabel(v))}</option>`).join('');input('handoff-environment').value=snapshot.task.environment.id;
-  input('handoff-engine').value=snapshot.task.engine;input('handoff-workspace').value=snapshot.task.workspace;input('handoff-context-mode').value='full';
+  input('handoff-engine').innerHTML=input('create-engine').innerHTML;input('handoff-engine').value=targetEngine||snapshot.task.engine;input('handoff-workspace').value=snapshot.task.workspace;input('handoff-context-mode').value='full';
 
   element<HTMLFieldSetElement>('handoff-fields').disabled=false;updateHandoffTarget(true);
 

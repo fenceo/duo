@@ -1,5 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import {viewportStyles} from './Stylesheet-Fixture.mjs';
 
 const css=await readFile(new URL('../web/workbench.css',import.meta.url),'utf8');
 // Check the final declaration for each selector, since this stylesheet layers
@@ -31,8 +32,7 @@ assert.match(css,/@media\(max-width:760px\)\{\.panel-resizer\{display:none\}\}/,
 
 const refinement=css.slice(css.indexOf('/* Readable shared chrome.'));
 assert(refinement.startsWith('/* Readable shared chrome.'),'shared refinement section is present');
-const mobile=refinement.slice(refinement.lastIndexOf('@media(max-width:760px){'));
-const desktop=refinement.slice(0,refinement.lastIndexOf('@media(max-width:760px){'));
+const {mobile,desktop}=viewportStyles(refinement);
 assert(!refinement.includes('!important'),'readability rules should not fight layout visibility or drag states');
 assert.equal(declarations('.create-form',desktop).width,'min(860px,100%)');
 assert.equal(declarations('.create-form',desktop).margin,'0 auto');
@@ -44,7 +44,7 @@ assert.equal(declarations('.create-permission',desktop)['grid-column'],'1 / -1')
 assert.equal(declarations('.create-context-field>select',desktop).width,'100%');
 assert.equal(declarations('#model-picker-label')['text-overflow'],'ellipsis');
 assert.equal(declarations('#model-picker-label')['white-space'],'nowrap');
-assert.equal(declarations('.model-item small',css.slice(0,css.lastIndexOf('@media(max-width:760px){')))['max-width'],'44%','long source labels cannot squeeze model IDs on desktop');
+assert.equal(declarations('.model-item small',viewportStyles(css).desktop)['max-width'],'44%','long source labels cannot squeeze model IDs on desktop');
 assert.equal(declarations('.model-item small')['min-width'],'0');
 assert.equal(declarations('.model-item small')['flex-shrink'],'1');
 assert.equal(declarations('.create-permission>small',mobile).display,'block','important execution boundaries remain visible on phones');

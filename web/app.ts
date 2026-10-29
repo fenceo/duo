@@ -140,7 +140,7 @@ function renderShell(){
  installTools();installWorkspace();installConversationFilter();installSettingsSections();installEngineSettings();installProductivity();installEditor();installTerminal();installExecution();installDiscovery();installLayout();installEnvironmentDiscovery();installWorkflow();installCodexApprovals();installStickyBoard();installAppearance();installPanelLayout();installUpdates();installLibrary();installDesktopSharing();installUsageDashboard();installSettingsNavigation();
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
- button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||curatedDirty||curatedSaving){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
+ button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
@@ -323,14 +323,14 @@ async function showCreate(){
   if(!creatingTask)createReturnTask=chosen;
   creatingTask=true;chosen='';detail=null;selection++;createFiles=[];
   syncDesktopTaskContext();syncTaskDialogContext();
-  input('create-input').value='';input('create-files').value='';input('create-error').textContent='';
+  input('create-name').value='';input('create-input').value='';input('create-files').value='';input('create-error').textContent='';
   renderCreateEnvironmentOptions(settings.config.default_environment);
   setCreatePermission('auto');renderCreateFiles();setCreateSubmitState('idle');
   setCreatePageVisible(true);element('sidebar').classList.remove('open');
   for(const id of ['tabs','conversation','composer-wrap'])element(id).classList.add('hidden');
   element('workspace').classList.remove('tool-open','tool-full');element('tool-dock').classList.add('hidden');
   element('task-title').textContent='新建任务';element('task-workspace').textContent='选择环境和工作目录';element('task-workspace').title='';
-  history.replaceState(null,'','/');renderList();input('create-input').focus();await loadCreateEnvironment();
+  history.replaceState(null,'','/');renderList();input('create-name').focus();await loadCreateEnvironment();
   // Detection is deliberately started after the existing configuration is
   // usable. It may need to start WSL and can take several seconds, so it must
   // never block the first task from being created.
@@ -360,9 +360,11 @@ async function loadCreateEnvironment(keepWorkspace=false){
 }
 async function createTask(e:Event){
  e.preventDefault();if(createSubmitting||button('create-submit').disabled||!creatingTask)return;
+ const title=input('create-name').value.trim();if(!title){element('create-error').textContent='请先填写任务名称，方便查找任务和记录。';input('create-name').focus();return}
+ if(Array.from(title).length>120){element('create-error').textContent='任务名称最多 120 个字。';input('create-name').focus();return}
  const text=input('create-input').value,files=[...createFiles];if(!text.trim()&&!files.length){element('create-error').textContent='请先写下任务要求，或添加附件。';input('create-input').focus();return}
  const epoch=shellEpoch;invalidateModelTest('create');createSubmitting=true;modelRequest++;setCreateSubmitState('starting');let created='',uploadedCount=0;
- try{validateEngineAttachments(input('create-engine').value,files.length);validateAttachmentFiles(files);const mode=modeForPermission(createPermission,input('create-engine').value);if(!mode||!modeSupportsEngine(mode,input('create-engine').value))throw new Error('所选审批模式暂不可用，请刷新工作台或重新选择。');const r=await api('tasks','POST',{engine:input('create-engine').value,reasoning_effort:input('create-effort').value,environment_id:input('create-environment').value,title:createTaskTitle(text),workspace:input('create-workspace').value,model:input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value,mode_id:mode.id});created=r.task.id;drafts.set(created,text);attachmentDrafts.set(created,[]);
+ try{validateEngineAttachments(input('create-engine').value,files.length);validateAttachmentFiles(files);const mode=modeForPermission(createPermission,input('create-engine').value);if(!mode||!modeSupportsEngine(mode,input('create-engine').value))throw new Error('所选审批模式暂不可用，请刷新工作台或重新选择。');const r=await api('tasks','POST',{engine:input('create-engine').value,reasoning_effort:input('create-effort').value,environment_id:input('create-environment').value,title,workspace:input('create-workspace').value,model:input('create-model').value==='__custom__'?input('custom-model').value.trim():input('create-model').value,mode_id:mode.id});created=r.task.id;drafts.set(created,text);attachmentDrafts.set(created,[]);
   if(!shellCurrent(epoch)){if(files.length)pendingUploadFiles.set(created,files);return}tasks.unshift(r.task);
   for(const file of files){const attachment=await uploadTaskFile(created,file);attachmentDrafts.get(created)!.push(attachment);uploadedCount++;if(!shellCurrent(epoch)){if(uploadedCount<files.length)pendingUploadFiles.set(created,files.slice(uploadedCount));return}}
   if(text.trim()||files.length){await api('tasks/'+created+'/messages','POST',{content:text.trim()||'请查看这些附件。',mode_id:mode.id,attachment_ids:attachmentDrafts.get(created)!.map(f=>f.id)});drafts.delete(created);attachmentDrafts.delete(created)}
@@ -556,7 +558,7 @@ async function setBinding(bind:boolean){
  catch(e){if(bindingTarget===target&&bindingCurrent())notify((e as Error).message)}
  finally{bindingSaving=false;if(bindingTarget===target&&bindingCurrent()){button('bind').disabled=!target.chat;button('unbind').disabled=!detail?.chat;button('bind-setup').disabled=false}}
 }
-window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving){e.preventDefault();e.returnValue=''}});
+window.addEventListener('beforeunload',e=>{if(dirty||stickyDirty||stickySaving||automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving){e.preventDefault();e.returnValue=''}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void poll()});
 setInterval(()=>void poll(true),1000);
 setInterval(()=>void pollSettingsStatus(),5000);

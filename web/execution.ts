@@ -231,6 +231,8 @@ function invalidateModelCatalogs(){
 // Model choice follows the Codex IDE extension: click the current model, then
 // filter the list or type a name that is not listed yet.
 function installModelPicker(){
+ element('task-model-menu').insertAdjacentHTML('afterbegin','<label class="task-engine-choice" for="task-engine-select">AI 引擎<select id="task-engine-select" aria-label="切换当前任务的 AI 引擎"></select></label><p class="model-context">换引擎会自动准备历史文件与交接提示；换模型通常继续当前会话。</p>');
+ input('task-engine-select').onchange=()=>{if(!detail)return;const engine=input('task-engine-select').value,current=detail.task.engine||'codex';if(engine===current)return;input('task-engine-select').value=current;closeModelMenu('task');void openHandoff(chosen,engine)};
  element('task-model-menu').insertAdjacentHTML('beforeend','<div class="model-catalog-footer"><p id="task-models-context" class="model-context"></p><p id="task-models-status" class="model-catalog-status" role="status"></p><div class="model-catalog-actions"><button id="task-reload-models" type="button">重读模型列表</button><button id="task-test-models" type="button">测试列表模型</button><button id="task-stop-model-test" type="button" class="hidden">停止测试</button></div><p id="task-model-test-result" class="model-test-result" role="status"></p><details class="model-catalog-details"><summary>来源与诊断</summary><p id="task-models-hint"></p></details></div>');
  button('test-models').insertAdjacentHTML('afterend','<button id="stop-model-test" type="button" class="hidden">停止测试</button>');
  for(const prefix of ['','task-']){
@@ -306,6 +308,7 @@ function renderModelMenu(target:ModelPickerTarget){
  syncModelTestButton();
  const ids=modelPickers[target],search=input(ids.search).value.trim(),filter=search.toLowerCase();
  const models=target==='task'?taskPickerModels:createModels;
+ if(target==='task'&&element('task-engine-select')){const engines=input('create-engine');input('task-engine-select').innerHTML=engines.innerHTML;input('task-engine-select').value=detail?.task.engine||'codex';input('task-engine-select').disabled=!detail||!!detail.task.archived||!!detail.runs?.some(r=>r.status==='running'||r.status==='queued')}
  const selected=target==='task'?(detail?.task.model||''):input('create-model').value;
  const matches=models.filter(m=>!filter||m.id.toLowerCase().includes(filter)||(m.name||'').toLowerCase().includes(filter));
  // Offer a free-form name only when nothing matches, so a partial word can not be

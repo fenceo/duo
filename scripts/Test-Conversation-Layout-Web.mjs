@@ -21,7 +21,9 @@ for(const id of ['hardware-tab','desktop-open']){
  assert.equal(node(id).closest('details'),null,'task actions are visible without opening a menu');
  assert.equal(typeof node(id).onclick,'function',id+' retains its original action');
 }
-for(const id of ['task-handoff','session-reset','bind-open'])assert.equal(node(id).closest('.task-action-state'),node('task-actions'),'low-frequency action state stays hidden outside the task toolbar');
+for(const id of ['task-handoff','bind-open'])assert(node(id).closest('.task-action-state')===node('task-actions'),'low-frequency action state stays hidden outside the task toolbar');
+assert(node('session-reset').closest('.session-recovery'),'session reset is an advanced recovery action');
+assert(node('task-engine-select'),'engine switching is integrated with the model picker');
 assert(node('task-actions').classList.contains('hidden'));
 assert.equal(node('session-info-dialog').querySelector('.session-advanced-actions'),null,'session information has no hidden action group');
 assert.equal(node('scratch-tab'),null,'task to-do entry is removed');
@@ -31,7 +33,8 @@ assert.equal(node('task-link-copy'),null,'duplicate link action is removed from 
 assert.equal(node('session-info-open'),null,'diagnostics do not occupy a header button');
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="session-info"/);
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="copy-link"/);
-assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="reset-session"/);
+assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="records"/);
+assert.doesNotMatch(ctx.taskItemMenu({id:'fixture'}),/data-task-action="(?:reset-session|handoff)"/);
 assert.match(ctx.taskItemMenu({id:'fixture'}),/data-task-action="bind-feishu"/);
 assert(!node('app-menu')&&!node('task-session-menu'),'toolbar uses one responsive menu without nested menus');
 for(const id of ['theme-toggle','library-open','logout']){
@@ -52,12 +55,12 @@ assert(!node('session-reset').classList.contains('hidden'));
 assert.equal(node('session-reset').disabled,false);
 assert.match(node('session-reset').textContent,/重建\s*AI\s*会话/,'selecting or polling a task keeps the precise reset label');
 ctx.renderList();
-assert(node('task-list').querySelector('[data-task-action="reset-session"]'));assert(node('task-list').querySelector('[data-task-action="bind-feishu"]'));
-const routed=[],openTaskSessionReset=ctx.openTaskSessionReset,openBinding=ctx.openBinding,openHandoff=ctx.openHandoff;
-ctx.openTaskSessionReset=async id=>routed.push(['reset',id]);ctx.openBinding=async id=>routed.push(['bind',id]);ctx.openHandoff=async id=>routed.push(['handoff',id]);
-for(const action of ['reset-session','bind-feishu','handoff'])node('task-list').querySelector('[data-task-action="'+action+'"]').click();
-assert.deepEqual(routed,[['reset','compact-fixture'],['bind','compact-fixture'],['handoff','compact-fixture']],'sidebar actions route to the row task, independent of the selected task');
-ctx.openTaskSessionReset=openTaskSessionReset;ctx.openBinding=openBinding;ctx.openHandoff=openHandoff;
+assert(node('task-list').querySelector('[data-task-action="records"]'));assert(node('task-list').querySelector('[data-task-action="bind-feishu"]'));
+const routed=[],openTaskSessionReset=ctx.openTaskSessionReset,openBinding=ctx.openBinding,openTaskRecords=ctx.openTaskRecords;
+ctx.openBinding=async id=>routed.push(['bind',id]);ctx.openTaskRecords=async id=>routed.push(['records',id]);
+for(const action of ['bind-feishu','records'])node('task-list').querySelector('[data-task-action="'+action+'"]').click();
+assert.deepEqual(routed,[['bind','compact-fixture'],['records','compact-fixture']],'sidebar actions route to the row task, independent of the selected task');
+ctx.openBinding=openBinding;ctx.openTaskRecords=openTaskRecords;
 const initialDetail=runInContext('detail',ctx),choose=ctx.choose,resetSession=ctx.resetSession;
 ctx.choose=async id=>runInContext('chosen='+JSON.stringify(id)+';detail={task:{id:chosen}}',ctx);ctx.resetSession=async()=>routed.push(['row-reset',runInContext('chosen',ctx)]);
 await ctx.openTaskSessionReset('different-row');assert.deepEqual(routed.at(-1),['row-reset','different-row'],'reset selects and checks the clicked row before acting');
@@ -89,4 +92,4 @@ assert.equal(node('note-tab').getAttribute('aria-pressed'),'true');
 assert(node('tool-title').textContent.includes('本任务知识'));
 assert(requests.every(request=>request.method==='GET'&&!request.path.includes('/models/test')));
 runInContext('authenticated=false;renewShellScope()',ctx);
-console.log('PASS: low-frequency AI/reset/binding actions in task row menus, hardware/desktop in the task toolbar, shared notes in the sidebar, ordered global tools, preserved session information/focus and reset/send guards. No model calls.');
+console.log('PASS: task records and binding in task row menus, unified engine/model picker, advanced session recovery, sidebar notes, preserved session information/focus and reset/send guards. No model calls.');

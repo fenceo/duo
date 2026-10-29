@@ -401,7 +401,8 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 	for {
 		a.mu.Lock()
 		var r Run
-		e := a.store.QueryRow("SELECT id,input,kind FROM runs WHERE task_id=? AND status='queued' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created,id LIMIT 1", id, w.nextRunID).Scan(&r.ID, &r.Input, &r.Kind)
+		e := a.store.QueryRow("SELECT id,input,kind,source FROM runs WHERE task_id=? AND status='queued' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created,id LIMIT 1", id, w.nextRunID).Scan(&r.ID, &r.Input, &r.Kind, &r.Source)
+		r.TaskID = id
 		if e != nil || ctx.Err() != nil {
 			delete(a.workers, id)
 			a.mu.Unlock()
@@ -467,8 +468,14 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			}
 			if err == nil {
 				input := r.Input
-				if r.Kind == "knowledge" && task.Engine == "deepseek-harness" {
+				if r.Kind == "knowledge" && (task.Engine == "deepseek-harness" || r.Source == knowledgeExtractionSource) {
+					if r.Source == knowledgeExtractionSource {
+						input = knowledgeExtractionPrompt(r.ID)
+					}
 					input, err = a.store.harnessKnowledgeInput(id, input)
+					if task.Engine != "deepseek-harness" {
+						input = strings.ReplaceAll(input, "本次独立会话的全部工具操作被拒绝。", "本次使用独立只读会话。请仅根据提供的文本整理，不调用工具。")
+					}
 					// Never resume or persist the source task's durable session.
 					task.ID, task.Session, task.Files, task.NoTools = "", "", nil, true
 					cfg.HardwareAI = nil
@@ -567,7 +574,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 							}
 							return
 						}
-						if kind == "assistant" && r.Kind == "chat" {
+						if kind == "assistant" && (r.Kind == "chat" || r.Source == knowledgeExtractionSource) {
 							visible, hidden := visibleMemoryStream(text, r.ID)
 							if hidden && (visible == "" || visible == lastVisibleAssistant) {
 								return
@@ -611,7 +618,12 @@ func (a *App) clearRunControl(id string, w *worker) {
 }
 func (a *App) finish(id string, r Run, session, result string, err error) {
 	var memory *taskMemory
-	if r.Kind == "chat" {
+	if r.Source == knowledgeExtractionSource {
+		// The temporary extraction identity must never replace the chat session,
+		// including runners that report a session only in their return value.
+		session = ""
+	}
+	if r.Kind == "chat" || r.Source == knowledgeExtractionSource {
 		result, memory = splitTaskMemory(result, r.ID)
 	}
 	status := "done"
@@ -638,9 +650,13 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 			_, e = tx.Exec("UPDATE tasks SET status=?,updated=?,session=CASE WHEN ?='' THEN session ELSE ? END WHERE id=?", status, now(), session, session, id)
 		}
 		if e == nil && status == "done" && (previous == "running" || previous == "queued") {
-			captured, captureErr = captureAutomaticKnowledge(tx, id, r.ID)
-			if captureErr == nil {
-				captureErr = captureTaskMemory(tx, id, r.ID, memory)
+			if r.Source == knowledgeExtractionSource {
+				captureErr = captureExtractedMemory(tx, id, r.ID, memory)
+			} else {
+				captured, captureErr = captureAutomaticKnowledge(tx, id, r.ID)
+				if captureErr == nil {
+					captureErr = captureTaskMemory(tx, id, r.ID, memory)
+				}
 			}
 		}
 		if e == nil {
@@ -660,6 +676,24 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 	_ = a.store.event(id, r.ID, "status", status+" "+failure)
 	a.changed()
 	if e == nil {
+		automatic, automaticErr := automaticKnowledgeConfig(a.store)
+		if status == "done" && captureErr == nil && (r.Source == knowledgeExtractionSource || automaticErr == nil && automatic.Capture && automatic.Organize && a.store.knowledgeExtractionEnabled()) {
+			extractCtx, extractCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			report, extractErr := a.store.extractTaskKnowledge(extractCtx, id, r.ID, nil)
+			extractCancel()
+			if extractErr != nil {
+				_ = a.store.event(id, r.ID, "progress", "运行结果已保存，分层知识提取未完成；可在知识库中重试。")
+			} else if report.Created > 0 {
+				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("已提取 %d 条分层知识候选，仍需核对依据和适用条件。", report.Created))
+			} else if r.Source == knowledgeExtractionSource {
+				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("本次未新增分层知识候选（重复 %d 条）；可查看整理结果及未提取原因。", report.Duplicates))
+			}
+			if r.Source == knowledgeExtractionSource && extractErr == nil {
+				for _, warning := range report.Warnings {
+					_ = a.store.event(id, r.ID, "progress", warning)
+				}
+			}
+		}
 		// Export after committing and releasing the app lock. A failed mirror
 		// never turns a completed model run into a failure.
 		memoryBase := a.ctx

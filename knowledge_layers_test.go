@@ -335,6 +335,53 @@ func TestCuratedVaultRenameKeepsOneFileAndIndexesActualPath(t *testing.T) {
 	}
 }
 
+func TestCuratedCustomFolderParentChangeMovesTrackedPathWithoutTaskFolders(t *testing.T) {
+	for _, layer := range []string{"consensus", "system", "project"} {
+		t.Run(layer, func(t *testing.T) {
+			a := fixture(t, &fakeRunner{})
+			v := curatedFixture(t, a, layer, "合成范围", "observed")
+			dir := t.TempDir()
+			setTestVault(t, a, dir, true)
+			c := a.store.vaultConfig()
+			c.TaskFolders = false
+			folder := &c.ConsensusDirectory
+			if layer == "system" {
+				folder = &c.SystemDirectory
+			}
+			if layer == "project" {
+				folder = &c.ProjectDirectory
+			}
+			*folder = "资料/原分类"
+			config, _ := json.Marshal(c)
+			if err := a.store.set("knowledge_vault", string(config)); err != nil {
+				t.Fatal(err)
+			}
+			syncTestVault(t, a)
+			old := configuredCuratedPath(c, curatedDocument(v))
+			*folder = "资料"
+			config, _ = json.Marshal(c)
+			if err := a.store.set("knowledge_vault", string(config)); err != nil {
+				t.Fatal(err)
+			}
+			report := syncTestVault(t, a)
+			if len(report.Conflicts) != 0 {
+				t.Fatal(report)
+			}
+			want := configuredCuratedPath(c, curatedDocument(v))
+			doc, err := a.store.libraryDocument(context.Background(), "curated:"+v.ID)
+			if err != nil || doc.Path != want {
+				t.Fatal("custom parent-folder change did not update citation", doc, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "Duo", filepath.FromSlash(old))); !os.IsNotExist(err) {
+				t.Fatal("old file was duplicated", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "Duo", filepath.FromSlash(want))); err != nil {
+				t.Fatal("new file is missing", err)
+			}
+		})
+	}
+}
+
 func TestCuratedReadingLinksWorkBeforeVaultSync(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	v := curatedFixture(t, a, "consensus", "", "observed")
