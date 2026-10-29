@@ -89,6 +89,22 @@ function installLayout(){
  element('task-title').textContent='今天，从哪件事开始？';element('task-workspace').textContent='Windows · WSL · SSH';
  element('conversation').querySelector('.empty')!.innerHTML='<div class="empty-mark">D</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
 }
+// Keep each settings category directly reachable from the workbench. The
+// dialog remains the only editor so shortcuts share drafts and save behavior.
+function installSettingsNavigation(){
+ const source=element('settings-form').querySelector('.settings-nav')!,nav=document.createElement('nav');
+ nav.id='workspace-settings';nav.className='workspace-settings';nav.setAttribute('aria-label','工作台设置分类，可横向滚动');
+ for(const original of source.querySelectorAll<HTMLButtonElement>('button')){
+  const page=original.dataset.settings;if(!page&&original.id!=='usage-open')continue;
+  const entry=document.createElement('button');entry.type='button';entry.textContent=page==='knowledge'?'知识积累':original.textContent;entry.setAttribute('aria-haspopup','dialog');
+  if(page){entry.dataset.settingsOpen=page;entry.setAttribute('aria-controls','settings-dialog');entry.onclick=()=>openSettingsPage(page)}
+  else{entry.id='usage-shortcut';entry.setAttribute('aria-controls','usage-dialog');entry.onclick=()=>openUsageDashboard()}
+  nav.append(entry);
+ }
+ document.querySelector('.header')!.after(nav);
+ nav.addEventListener('click',()=>element('sidebar').classList.remove('open'));
+ disposeWithShell(()=>{settingsPageRequest++;settingsOpening=null});
+}
 // Apply before authentication to avoid a dark login screen flashing first.
 try{document.documentElement.dataset.theme=localStorage.getItem('jianzuo-theme')==='dark'?'dark':'light'}catch{document.documentElement.dataset.theme='light'}
 

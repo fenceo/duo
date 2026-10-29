@@ -247,21 +247,25 @@ async function loadLibraryOverview() {
 }
 function installLibrarySettings() {
     const nav = element('settings-form').querySelector('.settings-nav');
-    nav.querySelector('[data-settings="data"]').insertAdjacentHTML('afterend', '<button type="button" data-settings="knowledge">知识库</button>');
-    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-knowledge" class="settings-section hidden"><h3>知识库</h3><p>所有文档共用一个目录。默认在当前运行数据目录下自动建立 knowledge/Duo/，也可填写自选目录；文档不依赖此电脑的绝对路径。</p><div class="knowledge-storage-info"><h4>本机运行数据</h4><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。知识文件目录用于 Markdown 同步；切换完整运行数据请到“数据与存储”。</p></div></section>`);
+    nav.querySelector('[data-settings="data"]').insertAdjacentHTML('afterend', '<button type="button" data-settings="knowledge">知识积累</button>');
+    element('settings-error').insertAdjacentHTML('beforebegin', `<section id="settings-knowledge" class="settings-section hidden"><h3>知识积累</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
     const section = element('settings-knowledge');
     for (const id of [
-        'automatic-knowledge-settings',
-        'vault-settings'
+        'vault-settings',
+        'automatic-knowledge-settings'
     ]){
         const panel = element(id);
         panel.open = true;
         section.append(panel);
     }
-    element('vault-settings').querySelector('summary').textContent = '知识文件目录与同步';
-    input('vault-directory').previousSibling.textContent = '知识文件根目录（服务所在电脑）';
+    section.append(section.querySelector('.knowledge-storage-info'));
+    element('vault-settings').querySelector('summary').textContent = '1. 积累目录与文档同步';
+    element('vault-settings').querySelector('p').textContent = '选择运行 Duo 的这台电脑上的目录，也可以使用已有的 Obsidian Vault。Duo 只读写其中的 Duo/ 文件夹。开启同步后每分钟更新一次，也可立即同步。';
+    input('vault-directory').previousSibling.textContent = '积累根目录（Duo 服务所在电脑）';
     input('vault-directory').placeholder = '留空使用当前数据目录下的 knowledge';
-    input('vault-directory').closest('label').insertAdjacentHTML('afterend', '<p>实际文件目录：<code id="vault-document-directory">尚未设置</code></p><p class="muted">Duo/ 下按 tasks/、knowledge/、topics/ 保存。路径仅配置在本机；文档内部使用相对链接。更换目录会同步当前资料，旧目录保留；独立外部笔记需自行复制。</p>');
+    input('vault-directory').closest('label').insertAdjacentHTML('afterend', '<p>可留空使用默认目录：当前运行数据目录下的 <code>knowledge</code>。实际文件目录：<code id="vault-document-directory">尚未设置</code></p><div class="knowledge-directory-guide"><strong>一任务一篇主文档</strong><code>Duo/tasks/任务名-短ID.md</code><p>例如 <code>Duo/tasks/375调试-a1b2c3d4.md</code>。任务来源与历次对话放在同级任务资料夹中；通用结论和主题索引另存，主文档用相对链接引用。</p></div><p class="muted">选择下方要同步的内容并保存。更换目录会同步当前资料，旧目录保留；独立外部笔记需自行复制。文件名首次导出后保持不变，修改任务名称会更新文档标题。</p>');
+    element('automatic-knowledge-settings').querySelector('summary').textContent = '2. 每轮自动记录与整理';
+    element('automatic-knowledge-settings').querySelector('p').textContent = '开启“自动记录”保存后续完成的对话；再开启“自动整理”，让同一轮 AI 回复提取摘要、共识、疑问和有依据的知识，不另起模型调用。此处保存后，若要写到上面的目录，还需开启“Markdown 同步与索引”和“同步自动整理的任务资料”。模型未提供整理结果时，保留原对话。';
     button('vault-save').textContent = '保存知识库路径与同步设置';
     input('vault-directory').onkeydown = (e)=>{
         if (e.key === 'Enter' && !e.isComposing) {
@@ -3505,6 +3509,36 @@ function installLayout() {
     element('task-title').textContent = '今天，从哪件事开始？';
     element('task-workspace').textContent = 'Windows · WSL · SSH';
     element('conversation').querySelector('.empty').innerHTML = '<div class="empty-mark">D</div><h2>一件事，一个任务。</h2><p>把目标交给 Codex、Claude Code 或 DeepSeek Harness，<br>在网页和飞书继续，留下可复用的经验。</p><button class="primary" id="empty-new">＋ 新建任务</button>';
+}
+function installSettingsNavigation() {
+    const source = element('settings-form').querySelector('.settings-nav'), nav = document.createElement('nav');
+    nav.id = 'workspace-settings';
+    nav.className = 'workspace-settings';
+    nav.setAttribute('aria-label', '工作台设置分类，可横向滚动');
+    for (const original of source.querySelectorAll('button')){
+        const page = original.dataset.settings;
+        if (!page && original.id !== 'usage-open') continue;
+        const entry = document.createElement('button');
+        entry.type = 'button';
+        entry.textContent = page === 'knowledge' ? '知识积累' : original.textContent;
+        entry.setAttribute('aria-haspopup', 'dialog');
+        if (page) {
+            entry.dataset.settingsOpen = page;
+            entry.setAttribute('aria-controls', 'settings-dialog');
+            entry.onclick = ()=>openSettingsPage(page);
+        } else {
+            entry.id = 'usage-shortcut';
+            entry.setAttribute('aria-controls', 'usage-dialog');
+            entry.onclick = ()=>openUsageDashboard();
+        }
+        nav.append(entry);
+    }
+    document.querySelector('.header').after(nav);
+    nav.addEventListener('click', ()=>element('sidebar').classList.remove('open'));
+    disposeWithShell(()=>{
+        settingsPageRequest++;
+        settingsOpening = null;
+    });
 }
 try {
     document.documentElement.dataset.theme = localStorage.getItem('jianzuo-theme') === 'dark' ? 'dark' : 'light';
@@ -8014,6 +8048,24 @@ function installSettingsSections() {
     input('access-tailscale').oninput = renderAccessPreview;
     footer.classList.add('settings-footer');
 }
+let settingsPageRequest = 0, settingsOpening = null;
+async function openSettingsPage(page) {
+    if (!Array.from(element('settings-form').querySelectorAll('[data-settings]')).some((b)=>b.dataset.settings === page)) return;
+    const epoch = shellEpoch, request = ++settingsPageRequest, dialog = element('settings-dialog');
+    if (!dialog.open) {
+        if (!settingsOpening) {
+            const opening = openSettings();
+            settingsOpening = opening;
+            try {
+                await opening;
+            } finally{
+                if (settingsOpening === opening) settingsOpening = null;
+            }
+        } else await settingsOpening;
+    }
+    if (!shellCurrent(epoch) || request !== settingsPageRequest || !dialog.open) return;
+    showSettingsSection(page);
+}
 function showSettingsSection(page) {
     if (page === 'engines') page = 'environment';
     const nav = element('settings-form').querySelector('.settings-nav');
@@ -10062,10 +10114,7 @@ async function boot() {
     }
     const query = new URLSearchParams(location.search), id = query.get('task');
     if (id && tasks.some((t)=>t.id === id)) await choose(id, query.get('view') === 'note' ? 'note' : 'chat');
-    if (query.get('settings') === 'access') {
-        await openSettings();
-        document.querySelector('[data-settings="access"]')?.click();
-    }
+    if (query.get('settings') === 'access') await openSettingsPage('access');
 }
 function showShellFailure(error) {
     authenticated = false;
@@ -10103,6 +10152,7 @@ function renderShell() {
     installLibrary();
     installDesktopSharing();
     installUsageDashboard();
+    installSettingsNavigation();
     button('new-task').onclick = showCreate;
     button('empty-new').onclick = showCreate;
     button('menu').onclick = ()=>element('sidebar').classList.toggle('open');

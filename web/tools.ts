@@ -75,6 +75,17 @@ function installSettingsSections(){
  tabs.onclick=e=>{const target=(e.target as HTMLElement).closest<HTMLButtonElement>('button[data-settings]');if(target&&tabs.contains(target))showSettingsSection(target.dataset.settings!)};
  input('access-lan').oninput=renderAccessPreview;input('access-tailscale').oninput=renderAccessPreview;footer.classList.add('settings-footer');
 }
+let settingsPageRequest=0,settingsOpening:Promise<void>|null=null;
+async function openSettingsPage(page:string){
+ if(!Array.from(element('settings-form').querySelectorAll<HTMLButtonElement>('[data-settings]')).some(b=>b.dataset.settings===page))return;
+ const epoch=shellEpoch,request=++settingsPageRequest,dialog=element<HTMLDialogElement>('settings-dialog');
+ if(!dialog.open){
+  if(!settingsOpening){const opening=openSettings();settingsOpening=opening;try{await opening}finally{if(settingsOpening===opening)settingsOpening=null}}
+  else await settingsOpening;
+ }
+ if(!shellCurrent(epoch)||request!==settingsPageRequest||!dialog.open)return;
+ showSettingsSection(page);
+}
 function showSettingsSection(page:string){
  if(page==='engines')page='environment';
  const nav=element('settings-form').querySelector('.settings-nav')!;

@@ -486,7 +486,6 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 								old.Document.Path = rel
 								files[rel] = old
 								link.Path = rel
-								link.Local = ""
 							}
 						}
 					}
@@ -518,6 +517,13 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 		}
 		if exists && e != nil && documentHash(file.Document) != documentHash(d) {
 			report.Conflicts = append(report.Conflicts, rel+"：没有共同同步基线，请手工合并")
+			continue
+		}
+		if exists && e == nil && d.Generated && localHash != link.Local && (fileHash != link.File || documentHash(file.Document) != link.Local) {
+			// An idle sync may already have acknowledged the external file hash.
+			// Its body still differs from the generated baseline, so a later task
+			// update must preserve that edit rather than silently overwrite it.
+			report.Conflicts = append(report.Conflicts, rel+"：自动文档与外部编辑都已变化，保留外部文件")
 			continue
 		}
 		if exists && e == nil && fileHash != link.File {

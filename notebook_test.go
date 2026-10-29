@@ -203,7 +203,7 @@ func TestNotebookVaultLayoutConflictAndIdleIndex(t *testing.T) {
 			t.Fatal("absolute path exported")
 		}
 	}
-	summary := filepath.Join(root, "tasks", task.ID, "summary.md")
+	summary := filepath.Join(root, filepath.FromSlash(taskNotebookPath(task.Title, task.ID)))
 	original := readTestFile(t, summary)
 	var before, after int64
 	a.store.QueryRow("SELECT total_changes()").Scan(&before)

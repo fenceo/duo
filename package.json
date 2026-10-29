@@ -1,6 +1,6 @@
 {
  "name":"duo",
- "version":"0.34.55",
+ "version":"0.34.56",
  "description":"Duo local AI task workbench.",
  "private":true,
  "type":"module",

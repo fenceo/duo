@@ -238,6 +238,9 @@ func validNotebookID(id string) bool {
 }
 func notebookPath(d LibraryDocument) string {
 	if strings.HasPrefix(d.ID, "notebook:") {
+		if d.Generated && d.Path != "" {
+			return d.Path
+		}
 		return strings.TrimPrefix(d.ID, "notebook:")
 	}
 	id := strings.TrimPrefix(d.ID, d.Kind+":")
@@ -274,7 +277,13 @@ func (s *Store) notebookDocuments(ctx context.Context) ([]LibraryDocument, error
 	if err := s.QueryRowContext(ctx, "SELECT total_changes()").Scan(&stamp); err != nil {
 		return nil, err
 	}
-	if s.notebookCached && s.notebookStamp == stamp {
+	// Legacy summaries may need to stay in place when externally edited. Their
+	// disk state affects navigation, so they cannot reuse a database-only cache.
+	var legacy int
+	if err := s.QueryRowContext(ctx, "SELECT count(*) FROM library_links WHERE id LIKE 'notebook:tasks/%/summary.md' AND path=substr(id,10)").Scan(&legacy); err != nil {
+		return nil, err
+	}
+	if legacy == 0 && s.notebookCached && s.notebookStamp == stamp {
 		return append([]LibraryDocument(nil), s.notebookCache...), nil
 	}
 	docs, err := s.buildNotebookDocuments(ctx)
@@ -286,7 +295,7 @@ func (s *Store) notebookDocuments(ctx context.Context) ([]LibraryDocument, error
 	for _, d := range docs {
 		bytes += len(d.Content)
 	}
-	if s.QueryRowContext(ctx, "SELECT total_changes()").Scan(&after) == nil && stamp == after && bytes <= 8*1024*1024 {
+	if legacy == 0 && s.QueryRowContext(ctx, "SELECT total_changes()").Scan(&after) == nil && stamp == after && bytes <= 8*1024*1024 {
 		s.notebookCache = append([]LibraryDocument(nil), docs...)
 		s.notebookStamp = stamp
 		s.notebookCached = true
@@ -322,6 +331,36 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 	if err != nil {
 		return nil, err
 	}
+	tracked, err := s.trackedTaskNotebookPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Duplicate titles are separated by the short task ID. In the unlikely
+	// event that both title and short prefix collide, use the full identity.
+	paths := map[string]string{}
+	counts := map[string]int{}
+	used := map[string]bool{}
+	for _, task := range tasks {
+		file := tracked["notebook:tasks/"+task.id+"/summary.md"]
+		if file != "" {
+			paths[task.id] = file
+			used[strings.ToLower(file)] = true
+			continue
+		}
+		file = taskNotebookPath(task.title, task.id)
+		paths[task.id] = file
+		counts[strings.ToLower(file)]++
+	}
+	for _, task := range tasks {
+		file := paths[task.id]
+		if tracked["notebook:tasks/"+task.id+"/summary.md"] != "" {
+			continue
+		}
+		if file != "" && (counts[strings.ToLower(file)] > 1 || used[strings.ToLower(file)]) {
+			paths[task.id] = strings.TrimSuffix(file, ".md") + "-" + task.id + ".md"
+		}
+		used[strings.ToLower(paths[task.id])] = true
+	}
 	out := []LibraryDocument{}
 	for _, task := range tasks {
 		if err = ctx.Err(); err != nil {
@@ -332,6 +371,7 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 		}
 		title := portableKnowledge(task.title, task.workspace)
 		base := "tasks/" + task.id + "/"
+		mainFile := paths[task.id]
 		add := func(file, kind, name, body string, tags []string, run string, updated int64) {
 			d := LibraryDocument{ID: "notebook:" + file, Kind: kind, Layer: kind, TaskID: task.id, TaskTitle: title, Title: name, Content: portableKnowledge(body, task.workspace), Tags: notebookTags(tags, title+" "+body), RunID: run, Updated: updated, Revision: 1, Origin: "local", Path: file, Automatic: true, Generated: true, Status: "observed"}
 			if kind == "task" {
@@ -343,15 +383,16 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 			d.Hash = documentHash(d)
 			out = append(out, d)
 		}
-		summary := "# " + title + "\n\n[对话记录](conversations.md) · [前提与共识](context.md)\n\n"
 		contextBody := "# 前提与共识 · " + title + "\n\n以下按来源保留任务前提、约定与未决问题；不同轮次存在分歧时，以来源和最新用户要求为准。\n\n"
-		conversations := "# 对话记录 · " + title + "\n\n[任务摘要](summary.md) · [前提与共识](context.md)\n\n"
+		conversations := "# 对话记录 · " + title + "\n\n[任务记录](" + notebookLink(base+"conversations.md", mainFile) + ") · [前提与共识](context.md)\n\n"
+		contextBody = "[任务记录](" + notebookLink(base+"context.md", mainFile) + ")\n\n" + contextBody
 		memRows, e := s.QueryContext(ctx, "SELECT run_id,payload,updated FROM task_memories WHERE task_id=? ORDER BY updated DESC,run_id", task.id)
 		if e != nil {
 			return nil, e
 		}
 		count := 0
 		tags := []string{}
+		memories := []notebookWorklogMemory{}
 		for memRows.Next() {
 			var run, raw string
 			var updated int64
@@ -363,10 +404,8 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 				continue
 			}
 			tags = append(tags, memory.Tags...)
+			memories = append(memories, notebookWorklogMemory{run: run, updated: updated, memory: memory})
 			source := "[来源对话](conversations/" + run + ".md)"
-			if count < 8 && memory.Summary != "" {
-				summary += "### " + memoryDate(updated) + "\n\n" + memory.Summary + "\n\n" + source + "\n\n"
-			}
 			if count < 30 {
 				for _, section := range []struct {
 					heading string
@@ -383,7 +422,7 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 			}
 			for i, insight := range memory.Insights {
 				file := fmt.Sprintf("knowledge/%s-%d.md", run, i+1)
-				body := "# " + insight.Title + "\n\n## 问题\n\n" + insight.Question + "\n\n## 结论\n\n" + insight.Conclusion + "\n\n## 依据\n\n" + insight.Evidence + "\n\n## 适用条件\n\n" + insight.Applicability + "\n\n## 来源\n\n[原任务](" + notebookLink(file, base+"summary.md") + ") · [原始对话](" + notebookLink(file, base+"conversations/"+run+".md") + ")\n\n依据摘自来源回复，Duo 未独立重做调查或实验。\n"
+				body := "# " + insight.Title + "\n\n## 问题\n\n" + insight.Question + "\n\n## 结论\n\n" + insight.Conclusion + "\n\n## 依据\n\n" + insight.Evidence + "\n\n## 适用条件\n\n" + insight.Applicability + "\n\n## 来源\n\n[原任务](" + notebookLink(file, mainFile) + ") · [原始对话](" + notebookLink(file, base+"conversations/"+run+".md") + ")\n\n依据摘自来源回复，Duo 未独立重做调查或实验。\n"
 				add(file, "insight", insight.Title, body, insight.Tags, run, updated)
 			}
 			count++
@@ -396,7 +435,6 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 			return nil, e
 		}
 		if count == 0 {
-			summary += "尚无结构化摘要。旧对话和已有笔记保留在下方；开启自动整理后，后续正常对话会逐步补充。\n\n"
 			contextBody += "尚无结构化前提与共识；请参阅已有笔记与对话。\n\n"
 		}
 		if count > 30 {
@@ -429,13 +467,14 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 		if e != nil {
 			return nil, e
 		}
+		notes := ""
 		for noteRows.Next() {
 			var id, title string
 			if e = noteRows.Scan(&id, &title); e != nil {
 				break
 			}
 			link := "- [" + markdownTitle(title) + "](notes/" + id + ".md)\n"
-			summary += link
+			notes += "- [" + markdownTitle(title) + "](" + notebookLink(mainFile, base+"notes/"+id+".md") + ")\n"
 			contextBody += link
 		}
 		if e == nil {
@@ -445,9 +484,24 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 		if e != nil {
 			return nil, e
 		}
-		add(base+"summary.md", "task", title+" · 摘要", summary, tags, "", task.updated)
+		goal, goalRun, e := s.taskWorklogGoal(ctx, task.id, task.workspace)
+		if e != nil {
+			return nil, e
+		}
+		summary := renderTaskWorklog(title, goal, goalRun, base, mainFile, memories, notes)
+		add(base+"summary.md", "task", title+" · 任务记录", summary, tags, "", task.updated)
+		out[len(out)-1].Path = mainFile
+		// Keep old Obsidian links useful after an unchanged summary moves. If
+		// external edits protect the old location, it remains the main entry.
+		if mainFile != base+"summary.md" {
+			add(base+"summary-link.md", "index", title+" · 旧摘要入口", "# "+title+"\n\n[打开任务记录]("+notebookLink(base+"summary.md", mainFile)+")\n", tags, "", task.updated)
+			out[len(out)-1].Path = base + "summary.md"
+			out[len(out)-1].Layer = "files"
+		}
 		add(base+"context.md", "task", title+" · 前提与共识", contextBody, tags, "", task.updated)
+		out[len(out)-1].Layer = "files"
 		add(base+"conversations.md", "task", title+" · 对话目录", conversations, tags, "", task.updated)
+		out[len(out)-1].Layer = "files"
 	}
 	topics := map[string][]LibraryDocument{}
 	for _, d := range out {
@@ -478,7 +532,7 @@ func (s *Store) buildNotebookDocuments(ctx context.Context) ([]LibraryDocument, 
 		body := "# 知识文档目录\n\n所有链接相对于此目录，可整体移动到另一台电脑。\n\n## 任务资料\n\n"
 		var updated int64
 		for _, d := range out {
-			if d.Kind == "task" && strings.HasSuffix(d.Path, "/summary.md") {
+			if d.Kind == "task" && strings.HasSuffix(d.ID, "/summary.md") {
 				body += "- [" + markdownTitle(d.TaskTitle) + "](" + d.Path + ")\n"
 				updated = max(updated, d.Updated)
 			}

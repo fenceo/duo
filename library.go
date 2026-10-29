@@ -317,7 +317,7 @@ func (s *Store) libraryDocument(ctx context.Context, id string) (LibraryDocument
 		if err == nil {
 			err = sql.ErrNoRows
 			for _, doc := range docs {
-				if doc.ID == id {
+				if doc.ID == id || "notebook:"+doc.Path == id {
 					d = doc
 					err = nil
 					break

@@ -540,6 +540,12 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 .header-global-actions #settings-open{font-weight:600;color:var(--accent)}
 .header-global-actions #logout{color:var(--muted);background:transparent}
 .header-utilities #connection{font-size:11px;color:var(--muted);max-width:100px}
+.workspace-settings{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:0 22px 8px;border-bottom:1px solid var(--line);flex:none;min-width:0;background:var(--canvas)}
+.workspace-settings>button{flex:none;min-height:32px;padding:5px 10px;border-radius:7px;font-size:12px;white-space:nowrap;background:transparent;color:var(--muted)}
+.workspace-settings>button:hover{background:var(--surface);color:var(--ink)}
+.knowledge-directory-guide{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.knowledge-directory-guide>strong{font-size:13px}.knowledge-directory-guide>code{display:block;overflow-wrap:anywhere;font-size:13px}.knowledge-directory-guide>p{margin:0}
+.knowledge-storage-info{margin-top:18px;border-top:1px solid var(--line);padding-top:16px}.knowledge-storage-info>summary{cursor:pointer;color:var(--muted);font-size:13px}
 @container (max-width:850px){
  .header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}
  .header-utilities{display:contents}.header .task-heading{grid-column:1;grid-row:1}
@@ -590,10 +596,13 @@ dialog p{font-size:13px;overflow-wrap:anywhere}
 main>.codex-approvals{border-top:1px solid var(--line);border-bottom:0}
 @media(max-width:760px){
  .header{display:flex;padding:4px 12px;min-height:0;align-items:center;gap:4px 8px;flex-wrap:wrap}
+ .workspace-settings{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:0 12px 6px;gap:4px}
+ .workspace-settings>button{min-height:40px;font-size:12px;padding:7px 10px}
  .header-utilities{display:contents}.header .task-heading{flex:1 0 100%;order:0}
  .header-global-actions{order:1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:100%;border:0;padding:0}
- .header #task-actions{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;width:100%}
+ .header #task-actions{order:2;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;width:100%}
  .header #menu,.header #task-actions>button,.header .header-global-actions>button{min-height:44px;min-width:0;font-size:12px;padding:5px 6px}
+ .header #task-actions>button{font-size:11px}
  .header .header-global-actions>#desktop-open{font-size:11px;padding:5px 4px}
  .header-utilities #connection{order:3;max-width:none}
  .library-header{flex-direction:column}.library-header-actions{max-width:100%;justify-content:flex-start}
