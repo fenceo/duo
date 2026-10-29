@@ -103,12 +103,16 @@ func TestHarnessACPPermissionSwitchCloseFailureDoesNotSendPrompt(t *testing.T) {
 }
 
 type harnessModeQueueProbe struct {
-	calls chan Task
-	gate  chan struct{}
+	calls  chan Task
+	inputs chan string
+	gate   chan struct{}
 }
 
-func (f *harnessModeQueueProbe) Run(ctx context.Context, _ Config, task Task, _ string, _ func(string, string)) (string, string, error) {
+func (f *harnessModeQueueProbe) Run(ctx context.Context, _ Config, task Task, input string, _ func(string, string)) (string, string, error) {
 	f.calls <- task
+	if f.inputs != nil {
+		f.inputs <- input
+	}
 	select {
 	case <-f.gate:
 		return task.Session, "synthetic result", nil
@@ -149,6 +153,84 @@ func TestHarnessPermissionSwitchHTTPQueueKeepsEachModeSnapshot(t *testing.T) {
 	waitUntil(t, func() bool {
 		runs, _ := a.store.runs(task.ID)
 		return len(runs) == 3 && runs[0].Status == "done" && runs[1].Status == "done" && runs[2].Status == "done"
+	})
+}
+
+func TestHarnessPermissionSwitchSameMillisecondQueueKeepsInsertionOrder(t *testing.T) {
+	f := &harnessModeQueueProbe{calls: make(chan Task, 4), inputs: make(chan string, 4), gate: make(chan struct{})}
+	a := fixture(t, f)
+	task := createHarnessStoredTask(t, a)
+	const session = "same-millisecond-permission-session"
+	if _, err := a.store.Exec("UPDATE tasks SET session=? WHERE id=?", session, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	await := func(input, mode string) {
+		t.Helper()
+		select {
+		case got := <-f.calls:
+			if got.Mode == nil || got.Mode.ID != mode || got.Session != session {
+				t.Fatalf("input %q: mode=%+v session=%q, want mode=%q session=%q", input, got.Mode, got.Session, mode, session)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("input %q did not start", input)
+		}
+		select {
+		case got := <-f.inputs:
+			if got != input {
+				t.Fatalf("queue executed input %q, want %q", got, input)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("input %q was not observed", input)
+		}
+	}
+	if _, err := a.submitWithOptions(task.ID, "active", "chat", "web", SubmitOptions{ModeID: harnessWorkspaceMode}); err != nil {
+		t.Fatal(err)
+	}
+	await("active", harnessWorkspaceMode)
+
+	// Fix both timestamps and reverse the IDs relative to insertion order. The
+	// queue must follow submission order instead of randomly sorting equal-ms IDs.
+	stamp := now()
+	queuedRuns := []struct{ id, input, mode string }{
+		{"z-first-full", "full round", "full"},
+		{"a-second-workspace", "narrow next round", harnessWorkspaceMode},
+	}
+	modeSnapshots := make([][]byte, len(queuedRuns))
+	for i, queued := range queuedRuns {
+		mode, resolveErr := a.store.resolveMode(queued.mode, nil)
+		if resolveErr != nil {
+			t.Fatal(resolveErr)
+		}
+		modeSnapshots[i], _ = json.Marshal(mode)
+	}
+	tx, err := a.store.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for i, queued := range queuedRuns {
+		modeJSON := modeSnapshots[i]
+		if _, err = tx.Exec("INSERT INTO runs(id,task_id,input,kind,source,status,created) VALUES(?,?,?,'chat','web','queued',?)", queued.id, task.ID, queued.input, stamp); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec("INSERT INTO run_options(run_id,mode,attachments) VALUES(?,?,'[]')", queued.id, string(modeJSON)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec("UPDATE task_options SET mode=? WHERE task_id=?", string(modeJSON), task.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	f.gate <- struct{}{}
+	await("full round", "full")
+	f.gate <- struct{}{}
+	await("narrow next round", harnessWorkspaceMode)
+	close(f.gate)
+	waitUntil(t, func() bool {
+		var completed int
+		return a.store.QueryRow("SELECT count(*) FROM runs WHERE task_id=? AND status='done'", task.ID).Scan(&completed) == nil && completed == 3
 	})
 }
 

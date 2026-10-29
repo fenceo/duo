@@ -401,7 +401,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 	for {
 		a.mu.Lock()
 		var r Run
-		e := a.store.QueryRow("SELECT id,input,kind,source FROM runs WHERE task_id=? AND status='queued' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created,id LIMIT 1", id, w.nextRunID).Scan(&r.ID, &r.Input, &r.Kind, &r.Source)
+		e := a.store.QueryRow("SELECT id,input,kind,source FROM runs WHERE task_id=? AND status='queued' ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,created,rowid LIMIT 1", id, w.nextRunID).Scan(&r.ID, &r.Input, &r.Kind, &r.Source)
 		r.TaskID = id
 		if e != nil || ctx.Err() != nil {
 			delete(a.workers, id)
