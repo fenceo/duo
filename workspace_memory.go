@@ -258,33 +258,36 @@ func (s *Store) workspaceMemoryOrigin(ctx context.Context, task, run string) (st
 func (s *Store) workspaceMemoryProcess(ctx context.Context, run Run, workspace string) (string, error) {
 	// Tool output is bounded and secret-filtered. No environment settings,
 	// native session file, images or binary attachments are copied to Git notes.
-	rows, err := s.QueryContext(ctx, "SELECT kind,substr(text,1,601) FROM events WHERE task_id=? AND run_id=? AND kind IN ('user','command','tool','error') ORDER BY seq LIMIT 41", run.TaskID, run.ID)
+	rows, err := s.QueryContext(ctx, "SELECT seq,kind,CASE WHEN length(text)>1200 THEN substr(text,1,600)||char(10)||'…（中间省略）…'||char(10)||substr(text,-600) ELSE text END,created FROM events WHERE task_id=? AND run_id=? AND kind IN ('user','command','tool','error') ORDER BY seq DESC LIMIT 41", run.TaskID, run.ID)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
-	var body strings.Builder
-	count := 0
+	events := []Event{}
 	for rows.Next() {
-		var kind, text string
-		if err = rows.Scan(&kind, &text); err != nil {
+		var event Event
+		if err = rows.Scan(&event.Seq, &event.Kind, &event.Text, &event.Created); err != nil {
 			return "", err
 		}
-		count++
-		if count > 40 {
-			body.WriteString("\n更多过程仍保留在 Duo 原始执行记录中。\n")
-			break
-		}
-		text, _ = clipContinuation(workspaceMemoryText(text, workspace), 600)
-		fmt.Fprintf(&body, "\n### %s\n\n%s\n", kind, text)
+		events = append(events, event)
 	}
 	if err = rows.Err(); err != nil {
 		return "", err
 	}
-	if count == 0 {
+	if len(events) == 0 {
 		return "", nil
 	}
-	return "\n## 过程摘录\n\n以下仅为有界执行摘录，不能单独证明操作成功。\n" + body.String(), nil
+	var body strings.Builder
+	if len(events) > 40 {
+		events = events[:40]
+		body.WriteString("\n仅保留最近 40 条过程，按发生顺序展示；更早过程仍保留在 Duo 原始执行记录中。\n")
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		text, _ := workspaceWorklogExcerpt(event.Text, workspace, 1200)
+		fmt.Fprintf(&body, "\n### %s · %s · 事件 %d\n\n%s\n", memoryDate(event.Created), event.Kind, event.Seq, text)
+	}
+	return "\n## 过程摘录\n\n以下仅为有界执行摘录，不能单独证明操作成功；长事件保留开头与结尾。\n" + body.String(), nil
 }
 
 func (s *Store) workspaceMemorySteering(ctx context.Context, run Run, workspace string) (string, error) {
@@ -460,7 +463,7 @@ WHERE r.task_id=? AND r.status IN ('done','failed','interrupted') ORDER BY r.cre
 			break
 		}
 		files = append(files, workspaceMemoryFile{Path: file, Content: content, CreateOnly: originTask != task.ID})
-		worklog = append(worklog, workspaceWorklogEntry{ID: identity, Content: workspaceWorklogEntryContent(task, r, memories[r.ID], workspaceMemoryLink(path.Join(base, workspaceWorklogFilename), file))})
+		worklog = append(worklog, workspaceWorklogEntry{ID: identity, Content: workspaceWorklogEntryContent(task, r, memories[r.ID], workspaceMemoryLink(path.Join(base, workspaceWorklogFilename), file), process), Details: true})
 		if memory := memories[r.ID]; memory != nil {
 			worklogTags = append(worklogTags, memory.Tags...)
 		}
@@ -688,8 +691,12 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			if path.Base(file.Path) != workspaceWorklogFilename || !workspaceMemoryTaskDirectory(task.ID, path.Dir(file.Path)) {
 				return errors.New("任务记录追加路径无效")
 			}
+			appendBase, upgraded := upgradeWorkspaceLegacyWorklogHeader(old)
+			if upgraded {
+				report.Warnings = append(report.Warnings, "已按已知自动模板修正旧版问候目标；历史记录和人工内容保留，当前目标仍需有效任务状态确认。")
+			}
 			var limited bool
-			file.Content, limited, err = appendWorkspaceWorklog(old, err == nil, file.Content, file.Entries)
+			file.Content, limited, err = appendWorkspaceWorklog(appendBase, err == nil, file.Content, file.Entries)
 			if err != nil {
 				return err
 			}

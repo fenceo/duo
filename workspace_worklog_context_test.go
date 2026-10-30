@@ -83,3 +83,22 @@ func TestWorkspaceWorklogAppReadsHumanNotesOnlyOnFreshSession(t *testing.T) {
 		t.Fatal("recall changed the stored user request", stored, err)
 	}
 }
+
+func TestWorkspaceWorklogHandoffKeepsNewestRequestAndFinalConclusion(t *testing.T) {
+	a, task := workspaceMemoryFixture(t)
+	workspaceMemoryRun(t, a, task, "earlier request", "earlier answer", "done")
+	report, err := a.syncWorkspaceMemory(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "# 当前人工任务说明\n\n保留当前已确认的接线方案。\n" + strings.Repeat("旧轮次只作为历史参考。\n", 1200) + "\n" +
+		workspaceWorklogMarker(task.ID+"/recent-fixture") + "\n" + workspaceWorklogDetailMarker(task.ID+"/recent-fixture") + "\n\n### 最近一轮\n\n#### 本轮需求\n\n最新明确要求：先核对NFS配置，不执行烧录。\n\n" +
+		strings.Repeat("助手中间的执行说明。", 1400) + "\n最终结论：仍需真实设备验证，不得宣称通过。\n"
+	if err := os.WriteFile(filepath.Join(task.Workspace, filepath.FromSlash(report.MainDocument)), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	text, _, err := a.workspaceWorklogContext(context.Background(), task)
+	if err != nil || !strings.Contains(text, "保留当前已确认的接线方案") || !strings.Contains(text, "最新明确要求：先核对NFS配置，不执行烧录。") || !strings.Contains(text, "最终结论：仍需真实设备验证，不得宣称通过。") || !strings.Contains(text, `"truncated":true`) || utf8.RuneCountInString(text) > 8500 {
+		t.Fatal("handoff lost the newest requirement or final conclusion", text, err)
+	}
+}

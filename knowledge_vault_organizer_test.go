@@ -6,14 +6,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 func organizerSourceHashes(t *testing.T, root string) map[string]string {
@@ -85,7 +88,7 @@ func TestKnowledgeVaultOrganizerLegacyInsightImportsAsProjectCandidate(t *testin
 	before := organizerSourceHashes(t, source)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "scripts/Organize-KnowledgeVault.py", "--source", source, "--output", output, "--report", report, "--apply")
+	cmd := exec.CommandContext(ctx, python, "scripts/Organize-KnowledgeVault.py", "--source", source, "--output", output, "--report", report, "--layout", "source-notes", "--apply")
 	hideCommand(cmd)
 	if log, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("synthetic offline organizer failed: %v\n%s", err, log)
@@ -160,6 +163,157 @@ func TestKnowledgeVaultOrganizerLegacyInsightImportsAsProjectCandidate(t *testin
 	if after := organizerSourceHashes(t, source); !reflect.DeepEqual(before, after) {
 		t.Fatal("Go import changed a legacy source file")
 	}
+}
+
+// The default reading layout combines literal source excerpts and navigation.
+// It must remain readable without creating new formal curated identities.
+// All files are synthetic; this test never opens a user database or a model.
+func TestKnowledgeVaultOrganizerReadableViewParsesAndLinksWithoutCuratedImport(t *testing.T) {
+	python := organizerPython(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "legacy", "Duo")
+	output := filepath.Join(root, "reading")
+	report := filepath.Join(root, "report.json")
+	write := func(relative, body string) {
+		t.Helper()
+		filename := filepath.Join(source, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filename, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"甲", "乙"} {
+		write("knowledge/"+name+".md", fmt.Sprintf("---\nduo_kind: insight\nduo_task: task-375\nduo_task_title: 375调试\nduo_run: run-1\nduo_updated: 1792416579737\ntitle: 内存方法%s\ntags: [内存]\n---\n\n## 结论\n\n合成方法%s的原文。\n\n## 依据\n\n合成依据，未执行硬件验证。\n", name, name))
+	}
+	write("knowledge/long.md", "---\nduo_kind: insight\nduo_task: task-375\nduo_task_title: 375调试\ntitle: 内存完整长文\n---\n\n"+strings.Repeat("需要保留的合成长文。", 180)+"\n\n## 依据\n\n合成长文依据。\n")
+	write("tasks/task-375/summary.md", "---\nduo_kind: task\nduo_task: task-375\nduo_task_title: 375调试\nduo_updated: 1792416579737\ntitle: 合成任务记录\n---\n\n## 当前目标\n\n合成目标。\n\n## 当前计划\n\n- [ ] 合成待执行步骤\n")
+	write("tasks/task-375/conversations/run-1.md", "---\nduo_kind: run\nduo_task: task-375\nduo_task_title: 375调试\nduo_run: run-1\nduo_updated: 1792416579737\nstatus: failed\ntitle: 合成轮次\n---\n\n## 用户要求\n\n合成请求。\n\n## 回复 / 执行结果\n\n部分合成进展。\n\n## 执行错误\n\n合成超时，未完成验证。\n")
+	before := organizerSourceHashes(t, source)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, "scripts/Organize-KnowledgeVault.py", "--source", source, "--output", output, "--report", report, "--apply")
+	hideCommand(cmd)
+	if log, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("synthetic readable organizer failed: %v\n%s", err, log)
+	}
+	files, warnings, err := scanVault(ctx, output)
+	if err != nil || len(warnings) != 0 {
+		t.Fatal("readable output failed Go Markdown scanning", err, warnings)
+	}
+	handbooks, archives := 0, 0
+	for _, file := range files {
+		if file.Document.Kind == "curated" || strings.HasPrefix(file.Document.ID, "curated:") {
+			t.Fatal("readable source compilation unexpectedly created formal curated identity")
+		}
+		if strings.Contains(file.Document.Title, "内存与性能手册") {
+			handbooks++
+			for _, expected := range []string{"合成方法甲的原文。", "合成方法乙的原文。", "问题导航", "关联任务过程与操作原文"} {
+				if !strings.Contains(file.Document.Content, expected) {
+					t.Fatalf("topic handbook lost literal content or navigation %q", expected)
+				}
+			}
+		}
+	}
+	linkPattern := regexp.MustCompile(`\[[^\]]*\]\(([^\s)]+)\)`)
+	err = filepath.WalkDir(output, func(filename string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() || filepath.Ext(filename) != ".md" {
+			return walkErr
+		}
+		raw, err := os.ReadFile(filename)
+		if err != nil {
+			return err
+		}
+		if filepath.Base(filename) == "任务记录.md" {
+			archives++
+			for _, expected := range []string{"合成目标。", "合成待执行步骤", "按时间记录", "合成超时，未完成验证。"} {
+				if !strings.Contains(string(raw), expected) {
+					t.Fatalf("task archive lost an existing field or outcome %q", expected)
+				}
+			}
+		}
+		for _, match := range linkPattern.FindAllSubmatch(raw, -1) {
+			link, err := url.Parse(string(match[1]))
+			if err != nil {
+				return err
+			}
+			if link.Scheme != "" || link.Host != "" {
+				continue
+			}
+			path, err := url.PathUnescape(link.EscapedPath())
+			if err != nil {
+				return err
+			}
+			target := filename
+			if path != "" {
+				target = filepath.Clean(filepath.Join(filepath.Dir(filename), filepath.FromSlash(path)))
+			}
+			if _, err := os.Stat(target); err != nil {
+				return fmt.Errorf("readable navigation target does not exist: %w", err)
+			}
+			if link.Fragment != "" && strings.HasPrefix(target, output+string(filepath.Separator)) {
+				body, err := os.ReadFile(target)
+				if err != nil {
+					return err
+				}
+				if !organizerVisibleHeadingSlugs(string(body))[link.Fragment] {
+					return fmt.Errorf("readable navigation anchor does not exist: %s", link.Fragment)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal("readable output contains a broken local link", err)
+	}
+	if handbooks != 1 || archives != 1 {
+		t.Fatal("short knowledge was not combined or task archive was missing", handbooks, archives)
+	}
+	if !reflect.DeepEqual(before, organizerSourceHashes(t, source)) {
+		t.Fatal("readable organizer modified a synthetic original")
+	}
+}
+
+// Mirrors the UI's documented Markdown heading slug contract, including the
+// duplicate suffix rule. Raw HTML anchors are intentionally not recognized.
+func organizerVisibleHeadingSlugs(body string) map[string]bool {
+	out := map[string]bool{}
+	counts := map[string]int{}
+	fence := byte(0)
+	heading := regexp.MustCompile(`^#{1,6}[ \t]+(.+)$`)
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if fence == 0 {
+				fence = trimmed[0]
+			} else if fence == trimmed[0] {
+				fence = 0
+			}
+			continue
+		}
+		if fence != 0 {
+			continue
+		}
+		match := heading.FindStringSubmatch(line)
+		if len(match) != 2 {
+			continue
+		}
+		var filtered strings.Builder
+		for _, char := range strings.ToLower(strings.TrimSpace(match[1])) {
+			if unicode.IsLetter(char) || unicode.IsNumber(char) || unicode.IsSpace(char) || char == '_' || char == '-' {
+				filtered.WriteRune(char)
+			}
+		}
+		base := strings.Join(strings.Fields(filtered.String()), "-")
+		slug := base
+		if counts[base] > 0 {
+			slug = fmt.Sprintf("%s-%d", base, counts[base])
+		}
+		counts[base]++
+		out[slug] = true
+	}
+	return out
 }
 
 // An opt-in audit of a separately generated real reading view. This test never

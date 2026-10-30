@@ -412,10 +412,11 @@ print('workspace-memory-posix-ok')
 			t.Skip("POSIX filesystem protocol needs Linux or explicit DUO_WORKSPACE_MEMORY_WSL_DISTRO")
 		}
 		cfg := Config{Distro: distro, User: os.Getenv("DUO_WORKSPACE_MEMORY_WSL_USER")}
-		cmd = commandWithContext(ctx, nativeTargetCommand(cfg, "python3", "-c", program))
+		cmd = commandWithContext(ctx, nativeTargetCommand(cfg, "python3", "-"))
 	} else {
-		cmd = exec.CommandContext(ctx, "python3", "-c", program)
+		cmd = exec.CommandContext(ctx, "python3", "-")
 	}
+	cmd.Stdin = strings.NewReader(program)
 	output, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), "workspace-memory-posix-ok") {
 		t.Fatalf("POSIX workspace protocol: %v\n%s", err, output)

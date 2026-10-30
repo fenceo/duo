@@ -120,6 +120,12 @@ func (s *Store) libraryDocuments(ctx context.Context, layers ...string) ([]Libra
 		return nil, err
 	}
 	docs = append(notebooks, docs...)
+	readingIDs := map[string]bool{}
+	for _, doc := range docs {
+		if doc.Kind == "index" && strings.HasPrefix(doc.ID, "curated-index:") {
+			readingIDs[doc.ID] = true
+		}
+	}
 	curatedIDs, err := s.knownCuratedIDs(ctx)
 	if err != nil {
 		return nil, err
@@ -140,6 +146,11 @@ func (s *Store) libraryDocuments(ctx context.Context, layers ...string) ([]Libra
 		}
 		if d.Kind == "curated" && curatedIDs[d.ID] {
 			// A mirror is not a second result, including after local deletion.
+			continue
+		}
+		if d.Kind == "index" && d.Generated && strings.HasPrefix(d.ID, "curated-index:") && (readingIDs[d.ID] || len(layers) > 0 && curatedLayer(layers[0])) {
+			// A synchronized handbook is the same generated reading view. Old
+			// surplus pages remain on disk, but are not current category results.
 			continue
 		}
 		if d.Kind == "curated" {
@@ -288,6 +299,11 @@ func (s *Store) searchLibrary(ctx context.Context, query, task, kind string, sta
 	}
 	sort.SliceStable(out.Documents, func(i, j int) bool {
 		a, b := out.Documents[i], out.Documents[j]
+		// Browsing a knowledge category starts with readable handbooks. A
+		// specific search still ranks original notes by actual keyword matches.
+		if len(terms) == 0 && curatedLayer(filter.Layer) && (a.Kind == "index") != (b.Kind == "index") {
+			return a.Kind == "index"
+		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
@@ -439,6 +455,19 @@ AND NOT EXISTS(SELECT 1 FROM task_options o WHERE o.task_id=t.id AND o.deleted=1
 			}
 			// Not yet imported portable content cannot self-declare verification.
 			d.Status = "observed"
+		}
+		if err == nil && d.Kind == "index" && d.Generated && strings.HasPrefix(d.ID, "curated-index:") {
+			// A Markdown path must preserve the generated identity and current
+			// content, rather than exposing the mirror as a promotable vault note.
+			var current []LibraryDocument
+			current, err = s.curatedDocuments(ctx)
+			if err == nil {
+				for _, doc := range current {
+					if doc.ID == d.ID {
+						return s.libraryDocument(ctx, doc.ID)
+					}
+				}
+			}
 		}
 		if err == nil {
 			var deleted int

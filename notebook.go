@@ -75,9 +75,9 @@ func memoryMarker(run string) string { return "<!-- duo-memory:" + run + " -->" 
 func memoryPrompt(run string) string {
 	return `Duo 的本轮附加记录约定（不覆盖用户要求）：在完成正常回复后，若确有值得保留的进展，可附加本轮增量记忆；若用户要求严格输出格式或禁止附加内容，则省略。不要为记录额外调用工具、调查或更改文件。不要把计划写成已完成，不确定或有分歧的内容放 open_questions。使用相对路径或 <workspace> 等可迁移占位，不写机器绝对路径、凭据、账号。记录不会独立验证你的结论。
 结构：{"summary":"本轮进展摘要","prerequisites":["继续任务所需前提"],"decisions":["用户约定或有依据的决策"],"open_questions":["尚未解决的问题"],"tags":["简短主题"],"insights":[{"title":"可复用问题","question":"问题或曾有的分歧","conclusion":"调查/解释/实验后的结论","evidence":"逐字摘录正常回复中说明实际调查或验证的那一句","applicability":"适用条件与限制","tags":["主题"]}],"knowledge_candidates":[{"layer":"consensus 或 system 或 project","scope_key":"系统知识主题或项目名，平台共识留空","title":"可复用知识标题","content":"知识正文","evidence":"逐字摘录上方回复的依据","applicability":"适用范围与未验证限制","tags":["主题"]}]}
-knowledge_candidates 最多 6 条，按本轮实际资料自动分类提取候选：consensus 仅用户明确约定的跨任务习惯与流程；system 为通用原理、方法与学习总结；project 为本项目资料和结论。没有依据或不适合复用则留空，不必凑齐三类。evidence 必须逐字出现在上方正常回复，候选只以待验证保存，不会自动确认事实。不得写入密码、令牌或账户值，仅可写受保护配置的引用。
+knowledge_candidates 最多 6 条，按本轮实际资料自动分类提取候选：consensus 仅用户明确约定的跨任务习惯与流程；system 为通用原理、方法与学习总结；project 为本项目资料和结论。以可独立阅读的主题为单位：有资料时在 content 中说明问题与背景、解决方法或步骤、原因、结果与验证边界；不要把同一问题拆成多条一句话笔记。沿用已有主题标题和范围，新增事实可作为该主题的修订。仅有零散线索时留在任务记录，不为凑长度补造细节。没有依据或不适合复用则留空，不必凑齐三类。evidence 必须逐字出现在上方正常回复，候选只以待验证保存，不会自动确认事实。不得写入密码、令牌或账户值，仅可写受保护配置的引用。每条 content、evidence 与 applicability 合计不超过 12000 UTF-8 字节。
 可选 task_state 用于持续维护本任务工作区主文档，独立于长期知识提取。仅填写本轮有依据的变化：{"goal":"当前目标","goal_reason":"目标变更原因","acceptance":["验收标准"],"plan":[{"text":"计划步骤","status":"pending 或 in_progress 或 done 或 blocked","evidence":"done 时必须逐字引用上方回复的实际完成依据"}],"progress":["实际进展"],"decisions":["决策及理由"],"evidence":[{"text":"检查或实验结果","quote":"逐字引用上方回复","status":"passed 或 failed 或 unverified"}],"blockers":["阻塞"],"next_actions":["下一步"]}。省略的字段保留旧值，提供数组则替换该字段，空数组表示清空；每个数组最多8项，文本简短。不要把问候当作目标，不把计划、尝试或失败写成完成；没有变化就省略 task_state。记录和引用不会独立验证事实，也不授予任何权限。
-只在问题得到实际调查、解惑或实验支持后写 insights（最多 3 条），evidence 必须在上面的正常回复中逐字出现，不得编造验证。没有依据就留空。数组各最多 8 项；摘要和每项保持简短。标签自动提取，无需询问用户分类。整个 JSON 放在下面这两个标记之间，紧接正常回复末尾：
+只在问题得到实际调查、解惑或实验支持后写 insights（最多 3 条），evidence 必须在上面的正常回复中逐字出现，不得编造验证。没有依据就留空。数组各最多 8 项；摘要和状态项保持简短，knowledge_candidates 正文按可用资料完整表达。标签自动提取，无需询问用户分类。整个 JSON 放在下面这两个标记之间，紧接正常回复末尾：
 ` + memoryMarker(run) + "\n{...}\n<!-- /duo-memory:" + run + " -->\n\n本轮用户要求：\n"
 }
 

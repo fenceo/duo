@@ -38,8 +38,8 @@ class OrganizerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_organizer(self, apply=False):
-        return organizer.organize(self.source.parent, self.output, self.report, apply)
+    def run_organizer(self, apply=False, layout="source-notes"):
+        return organizer.organize(self.source.parent, self.output, self.report, apply, layout)
 
     def test_preview_never_writes_source_or_output(self):
         fixture(self.source / "knowledge" / "run-id.md", "逻辑缓存与物理内存")
@@ -199,6 +199,244 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(meta["duo_scope_key"], "Linux内存")
         self.assertEqual(meta["duo_evidence"], "第一条实际依据。\n第二条实际依据。")
         self.assertEqual(meta["duo_applicability"], "仅限合成 Linux 环境， 不代表其他系统。")
+
+    def document(self, name, body, **metadata):
+        path = self.source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        base = dict(duo_kind="run", duo_task="task-375", duo_task_title="375调试",
+                    duo_updated="1792416579737", status="done", title="合成任务轮次")
+        base.update(metadata)
+        path.write_text(organizer.yaml_text(base) + body, encoding="utf-8")
+        return path
+
+    def test_readable_is_default_and_combines_short_notes_without_semantic_rewrite(self):
+        for index in range(3):
+            fixture(self.source / "knowledge" / f"note-{index}.md", f"内存问题{index}",
+                    body=f"## 结论\n\n第{index}个原始判断，待条件复核。\n\n## 依据\n\n第{index}段原文依据。\n")
+        before = hashes(self.source)
+        data = organizer.organize(self.source.parent, self.output, self.report, True)
+        self.assertEqual(data["layout"], "readable")
+        self.assertEqual(data["note_count"], 3)
+        self.assertEqual(data["short_note_count"], 3)
+        self.assertEqual(data["topic_handbook_count"], 1)
+        self.assertEqual(data["knowledge_document_count"], 1)
+        self.assertEqual(data["curated_note_count"], 0)
+        targets = {r["target"] for r in data["sources"]}
+        self.assertEqual(len(targets), 1)
+        text = (self.output / targets.pop()).read_text(encoding="utf-8")
+        self.assertIn("问题导航", text)
+        self.assertIn('duo_kind: "note"', text)
+        self.assertIn("也未迁移 Duo 数据库", (self.output / "首页.md").read_text(encoding="utf-8"))
+        for index in range(3):
+            self.assertIn(f"第{index}个原始判断，待条件复核。", text)
+            self.assertIn(f"第{index}段原文依据。", text)
+        for digest in before.values():
+            self.assertIn(digest, text)
+        self.assertEqual(before, hashes(self.source))
+
+    def test_readable_task_archive_expands_fields_and_results_by_stable_task_id(self):
+        self.document("tasks/task-375/summary.md", "## 任务目标\n\n明确的合成验证目标。\n\n## 当前计划\n\n- [ ] 运行合成检查\n\n## 当前进展\n\n合成进展已保存。\n", duo_kind="task", duo_task_title="375新任务名")
+        self.document("tasks/task-375/context.md", "## 决策与共识 · 2026-10-19\n\n只使用合成样本。\n\n## 仍需解决 · 2026-10-19\n\n硬件验证尚未执行。\n", duo_kind="task")
+        self.document("tasks/task-375/conversations/run-1.md", "## 用户要求\n\n先检查样本。\n\n## 回复 / 执行结果\n\n第一轮结果：合成代码检查已通过。\n\n## 执行错误\n", duo_run="run-1", duo_task_title="375旧任务名", duo_updated="1788220800000")
+        self.document("tasks/task-375/conversations/run-2.md", "## 用户要求\n\n下一步检查。\n\n## 回复 / 执行结果\n\n第二轮保留部分进展。\n\n## 执行错误\n\n合成超时，没有完成验证。\n", duo_run="run-2", status="failed")
+        # A duplicate export of run-1 is one event, not a second history turn.
+        self.document("archive/run-1.md", "## 用户要求\n\n先检查样本。\n\n## 回复 / 执行结果\n\n第一轮结果：合成代码检查已通过。\n", duo_kind="automatic", duo_run="run-1", duo_updated="1788220800000")
+        fixture(self.source / "knowledge" / "fact.md", "内存证据")
+        data = self.run_organizer(True, "readable")
+        self.assertEqual(data["task_count"], 1)
+        self.assertEqual(data["timeline_event_count"], 2)
+        masters = list((self.output / "任务记录").rglob("任务记录.md"))
+        self.assertEqual(len(masters), 1)
+        main = masters[0].read_text(encoding="utf-8")
+        for text in ("明确的合成验证目标。", "运行合成检查", "合成进展已保存。", "只使用合成样本。", "硬件验证尚未执行。", "合成样本日志显示缓存归零。", "按时间记录", "第一轮结果", "合成超时"):
+            self.assertIn(text, main)
+        logs = "\n".join(path.read_text(encoding="utf-8") for path in masters[0].parent.joinpath("时间线").glob("*.md"))
+        self.assertIn("第一轮结果：合成代码检查已通过。", logs)
+        self.assertIn("第二轮保留部分进展。", logs)
+        self.assertIn("合成超时，没有完成验证。", logs)
+        self.assertIn("failed", logs)
+        self.assertIn("SHA-256", logs)
+
+    def test_readable_missing_state_is_explicit_and_user_question_is_not_a_goal(self):
+        self.document("tasks/task-375/conversations/run.md", "## 用户要求\n\n请把这个提问当成当前目标是不正确的。\n\n## 回复 / 执行结果\n\n只有来源结果，没有结构化计划。\n", duo_run="run")
+        data = self.run_organizer(True, "readable")
+        main = next((self.output / "任务记录").rglob("任务记录.md")).read_text(encoding="utf-8")
+        goals = main.split("## 目标与验收（已有来源）", 1)[1].split("## 计划（已有来源）", 1)[0]
+        self.assertIn("未找到可安全摘录的明确字段", goals)
+        self.assertNotIn("请把这个提问", goals)
+        self.assertEqual(data["timeline_event_count"], 1)
+        logs = next((self.output / "任务记录").rglob("时间线/*.md")).read_text(encoding="utf-8")
+        self.assertIn("本轮要求（非当前目标）", logs)
+        self.assertIn("请把这个提问", logs)
+
+    def test_readable_handbooks_and_long_log_pages_are_bounded_and_have_navigation(self):
+        for index in range(47):
+            fixture(self.source / "knowledge" / f"note-{index}.md", f"内存问题{index:02d}",
+                    body=f"## 结论\n\n合成判断{index}。\n\n## 依据\n\n合成依据{index}。\n")
+        for index in range(18):
+            self.document(f"tasks/task-375/conversations/run-{index}.md", "## 用户要求\n\n合成要求\n\n## 回复 / 执行结果\n\n" + str(index) + "较长的合成原文。" * 600, duo_run=f"run-{index}")
+        data = self.run_organizer(True, "readable")
+        self.assertEqual(data["topic_handbook_count"], 3)
+        self.assertGreater(data["timeline_page_count"], 1)
+        for path in (self.output / "项目知识").rglob("*手册*.md"):
+            text = path.read_text(encoding="utf-8")
+            self.assertLess(len(text), 32000)
+            self.assertIn("问题导航", text)
+        for path in (self.output / "任务记录").rglob("时间线/*.md"):
+            if path.name == "首页.md":
+                continue
+            text = path.read_text(encoding="utf-8")
+            self.assertLess(len(text), 40000)
+            self.assertIn("轮次导航", text)
+            self.assertIn("原文较长，此处节选", text)
+
+    def test_readable_relative_links_land_on_correct_handbook_entry(self):
+        fixture(self.source / "knowledge" / "a.md", "内存甲", body="参考[乙结论](b.md)。\n\n## 依据\n\n甲样本。\n")
+        fixture(self.source / "knowledge" / "b.md", "内存乙", body="乙判断。\n\n## 依据\n\n乙样本。\n")
+        data = self.run_organizer(True, "readable")
+        second = next(r for r in data["sources"] if r["source"].endswith("b.md"))
+        text = (self.output / second["target"]).read_text(encoding="utf-8")
+        self.assertIn("#" + second["target_anchor"] + ")", text)
+        self.assertIn(second["target_anchor"], [organizer.heading_slug(line[3:]) for line in text.splitlines() if line.startswith("## ")])
+        self.assertNotIn("<a id=", text)
+
+    def test_readable_sensitive_conversation_is_source_only_and_legacy_curated_task_is_linked(self):
+        self.document("tasks/task-375/conversations/run.md", "## 用户要求\n\n检查\n\n## 回复 / 执行结果\n\npassword=fixture-protected-value\n", duo_run="run")
+        self.document("projects/375/fact.md", "原有内存结论。", title="内存方法", duo_kind="curated", duo_layer="project", duo_scope_key="375平台", duo_task="", duo_source_task="task-375", duo_task_title="", duo_evidence="合成证据。")
+        data = self.run_organizer(True, "readable")
+        text = "\n".join(path.read_text(encoding="utf-8") for path in self.output.rglob("*.md"))
+        self.assertNotIn("fixture-protected-value", text)
+        self.assertIn("本轮原文疑似含敏感信息", text)
+        self.assertEqual(data["task_count"], 1)
+        master = next((self.output / "任务记录").rglob("任务记录.md")).read_text(encoding="utf-8")
+        self.assertIn("内存与性能手册", master)
+        self.assertIn("合成证据。", master)
+
+    def test_readable_same_task_name_does_not_merge_distinct_task_ids(self):
+        for index in (1, 2):
+            self.document(f"tasks/task-{index}/conversations/run.md", "## 回复 / 执行结果\n\n合成结果。\n", duo_task=f"task-{index}", duo_run=f"run-{index}")
+        data = self.run_organizer(True, "readable")
+        self.assertEqual(data["task_count"], 2)
+        self.assertEqual(len(list((self.output / "任务记录").rglob("任务记录.md"))), 2)
+
+    def test_readable_larger_notes_stay_complete_and_code_headings_are_not_rewritten(self):
+        body = "## 结论\n\n完整长文。" + "保留上下文。" * 300 + "\n\n```sh\n## code-heading\necho sample\n```\n\n## 依据\n\n合成证据。\n"
+        fixture(self.source / "knowledge" / "long.md", "内存长文", body=body)
+        data = self.run_organizer(True, "readable")
+        self.assertEqual(data["short_note_count"], 0)
+        self.assertEqual(data["knowledge_document_count"], 1)
+        output = self.output / next(r["target"] for r in data["sources"])
+        self.assertIn(body, output.read_text(encoding="utf-8"))
+        self.assertIn('duo_kind: "note"', output.read_text(encoding="utf-8"))
+        self.assertNotIn('duo_id: "curated:', output.read_text(encoding="utf-8"))
+        self.assertIn("## code-heading", organizer.nested_headings(body))
+
+    def test_readable_curated_run_source_links_to_full_task_context(self):
+        self.document("tasks/task-375/conversations/run.md", "## 回复 / 执行结果\n\n完整操作过程。\n", duo_run="run")
+        self.document("projects/375/knowledge.md", "内存结论。", title="内存操作方法", duo_kind="curated", duo_layer="project", duo_scope_key="375平台", duo_task="", duo_source_task="task-375", duo_task_title="", duo_source_id="run:run", duo_evidence="来源依据。")
+        data = self.run_organizer(True, "readable")
+        record = next(r for r in data["sources"] if r["source"].endswith("knowledge.md"))
+        self.assertEqual(record["run_id"], "run")
+        handbook = (self.output / record["target"]).read_text(encoding="utf-8")
+        self.assertIn("关联任务过程与操作原文", handbook)
+        event = next(r for r in data["sources"] if r["source"].endswith("conversations/run.md"))
+        self.assertIn(event["reading_target"].split("#", 1)[1], handbook)
+        self.assertIn("完整操作过程。", (self.output / event["reading_target"].split("#", 1)[0]).read_text(encoding="utf-8"))
+
+    def test_readable_handbook_name_collision_never_overwrites_long_note(self):
+        long_body = "长知识原文。" * 300 + "\n\n## 依据\n\n合成依据。\n"
+        fixture(self.source / "knowledge" / "long.md", "内存与性能手册", body=long_body)
+        fixture(self.source / "knowledge" / "short.md", "内存操作方法")
+        data = self.run_organizer(True, "readable")
+        self.assertEqual(data["knowledge_document_count"], 2)
+        targets = {r["target"] for r in data["sources"]}
+        self.assertEqual(len(targets), 2)
+        long_record = next(r for r in data["sources"] if r["source"].endswith("long.md"))
+        self.assertIn(long_body, (self.output / long_record["target"]).read_text(encoding="utf-8"))
+
+    def test_readable_truncated_code_fence_does_not_swallow_navigation(self):
+        excerpt = organizer.clipped("开头\n```sh\n" + "echo synthetic\n" * 1000 + "```\n", 100)
+        self.assertEqual(excerpt.count("```"), 2)
+        self.assertIn("补齐了节选中未闭合的代码块标记", excerpt)
+        self.assertIn("原文较长，此处节选", excerpt)
+
+    def test_readable_current_progress_is_preferred_over_history_in_same_snapshot(self):
+        self.document("tasks/task-375/summary.md", "## 当前进展\n\n最新状态原文。\n\n## 进展记录\n\n早期历史，不应冒充当前进展。\n", duo_kind="task")
+        self.run_organizer(True, "readable")
+        main = next((self.output / "任务记录").rglob("任务记录.md")).read_text(encoding="utf-8")
+        progress = main.split("## 进展（已有来源）", 1)[1].split("## 决策与约定（已有来源）", 1)[0]
+        self.assertIn("最新状态原文。", progress)
+        self.assertNotIn("早期历史，不应冒充当前进展。", progress)
+
+    def test_readable_duplicate_source_heading_uses_renderer_suffix_in_navigation(self):
+        self.document("tasks/task-375/summary.md", "## 当前目标\n\n目标原文。\n\n### 按时间记录\n\n原文里的同名小标题。\n", duo_kind="task")
+        self.run_organizer(True, "readable")
+        main = next((self.output / "任务记录").rglob("任务记录.md")).read_text(encoding="utf-8")
+        self.assertIn("[按时间浏览全部轮次](#按时间记录-1)", main)
+        self.assertNotIn("<a id=", main)
+
+    def test_readable_identical_long_sources_in_different_projects_keep_distinct_note_ids(self):
+        body = "需要保留的相同长原文。" * 160 + "\n\n## 依据\n\n合成依据。\n"
+        fixture(self.source / "knowledge" / "one.md", "内存长文", task="375调试", body=body)
+        fixture(self.source / "knowledge" / "two.md", "内存长文", task="385调试", body=body)
+        data = self.run_organizer(True, "readable")
+        identifiers = [organizer.frontmatter((self.output / record["target"]).read_text(encoding="utf-8"))[0]["duo_id"] for record in data["sources"]]
+        self.assertEqual(len(set(identifiers)), 2)
+
+    def test_redacted_path_links_remain_visible_citations_without_fake_files(self):
+        placeholders = ("<local-path>", "<workspace>/task.md", "%3Clocal-path%3E",
+                        "路径已脱敏", "[本机路径已脱敏]", "脱敏")
+        for placeholder in placeholders:
+            with self.subTest(placeholder=placeholder):
+                body = "参见[原任务记录](" + placeholder + ")。"
+                actual = organizer.rewrite_links(body, self.source / "tasks" / "record.md",
+                                                 self.output / "任务记录.md", self.source, self.output, {})
+                self.assertEqual(actual, "参见原任务记录（原路径已脱敏，不可恢复）。")
+                self.assertNotIn("%3C", actual)
+
+    def test_rewriting_links_preserves_fenced_and_inline_code_exactly(self):
+        body = ("[普通链接](target.md)\n\n"
+                "`[行内代码](target.md)` 和 ``[行内含`符号](<local-path>)``\n\n"
+                "```md\n[代码示例](target.md)\n[脱敏示例](<local-path>)\n```\n\n"
+                "~~~~markdown\n[另一示例](target.md)\n~~~\n仍在代码块\n~~~~\n\n"
+                "[脱敏引用](<workspace>/task.md)\n")
+        actual = organizer.rewrite_links(body, self.source / "knowledge" / "record.md",
+                                         self.output / "任务记录.md", self.source, self.output,
+                                         {"knowledge/target.md": "知识手册.md#目标"})
+        self.assertIn("[普通链接](%E7%9F%A5%E8%AF%86%E6%89%8B%E5%86%8C.md#目标)", actual)
+        self.assertIn("脱敏引用（原路径已脱敏，不可恢复）", actual)
+        for code in ("`[行内代码](target.md)`", "``[行内含`符号](<local-path>)``",
+                     "```md\n[代码示例](target.md)\n[脱敏示例](<local-path>)\n```",
+                     "~~~~markdown\n[另一示例](target.md)\n~~~\n仍在代码块\n~~~~"):
+            self.assertIn(code, actual)
+
+    def test_heading_navigation_preserves_links_inside_code(self):
+        body = ("# 主文档\n\n### 目标\n\n## 目标\n\n"
+                "[普通链接](#目标)\n\n`[行内代码](#目标)`\n\n"
+                "```md\n[代码示例](#目标)\n```\n")
+        files = {"主文档.md": body}
+        organizer.close_heading_navigation(files, [], self.output)
+        actual = files["主文档.md"]
+        self.assertIn("[普通链接](#目标-1)", actual)
+        self.assertIn("`[行内代码](#目标)`", actual)
+        self.assertIn("```md\n[代码示例](#目标)\n```", actual)
+
+    def test_missing_original_file_is_a_visible_path_citation_not_a_dead_link(self):
+        body = ("[第2轮](conversations/task-00000001.md#验证)\n\n"
+                "`[代码引用](conversations/task-00000001.md)`\n\n"
+                "```md\n[示例引用](conversations/task-00000001.md)\n```\n")
+        actual = organizer.rewrite_links(body, self.source / "tasks" / "task" / "summary.md",
+                                         self.output / "任务记录.md", self.source, self.output, {})
+        self.assertIn("第2轮（原引用文件缺失；原路径：`tasks/task/conversations/task-00000001.md#验证`）", actual)
+        self.assertNotIn("[第2轮]", actual)
+        self.assertIn("`[代码引用](conversations/task-00000001.md)`", actual)
+        self.assertIn("```md\n[示例引用](conversations/task-00000001.md)\n```", actual)
+
+    def test_redacted_words_in_real_anchor_or_external_url_are_not_path_placeholders(self):
+        body = "[本节](#本机路径已脱敏) 和 [公开文档](https://example.test/路径已脱敏)"
+        actual = organizer.rewrite_links(body, self.source / "tasks" / "summary.md",
+                                         self.output / "任务记录.md", self.source, self.output, {})
+        self.assertEqual(actual, body)
 
 
 if __name__ == "__main__":

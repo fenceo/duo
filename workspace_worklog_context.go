@@ -43,7 +43,14 @@ func (a *App) workspaceWorklogContext(ctx context.Context, task Task) (string, s
 	runes := []rune(clean)
 	truncated := len(runes) > 7200
 	if truncated {
-		clean = string(runes[:4200]) + "\n\n[中间记录未自动附加，可按原文件查阅]\n\n" + string(runes[len(runes)-3000:])
+		recent := string(runes[len(runes)-3000:])
+		// A long final reply must not crowd the newest user requirement out of
+		// an engine handoff. Prefer the start and end of the latest source block.
+		at := max(strings.LastIndex(clean, "\n<!-- duo:worklog:"), strings.LastIndex(clean, "\n<!-- duo:worklog-detail:"))
+		if at >= 0 {
+			recent, _ = workspaceWorklogExcerpt(clean[at:], "", 3000)
+		}
+		clean = string(runes[:4200]) + "\n\n[中间记录未自动附加，可按原文件查阅]\n\n" + recent
 	}
 	ref := struct {
 		Path      string `json:"path"`

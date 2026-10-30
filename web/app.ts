@@ -96,10 +96,10 @@ function markdown(text:string):string{
   if(i%2)return '<pre><code>'+escapeHTML(part)+'</code></pre>';
   const output:string[]=[];let paragraph:string[]=[],list:string[]=[];
   const flush=()=>{if(paragraph.length){output.push('<p>'+paragraph.map(inline).join('<br>')+'</p>');paragraph=[]}if(list.length){output.push('<ul>'+list.map(line=>'<li>'+inline(line)+'</li>').join('')+'</ul>');list=[]}};
-  for(const line of escapeHTML(part).replace(/\r\n/g,'\n').split('\n')){
-   const heading=line.match(/^(#{1,3}) (.+)$/);
+  for(const sourceLine of part.replace(/\r\n/g,'\n').split('\n')){
+   const line=escapeHTML(sourceLine),heading=sourceLine.match(/^(#{1,6})[ \t]+(.+)$/);
    if(!line.trim()){flush();continue}
-   if(heading){flush();const level=heading[1].length;output.push(`<h${level}>${inline(heading[2])}</h${level}>`);continue}
+   if(heading){flush();const level=heading[1].length;output.push(`<h${level} data-markdown-heading="${escapeHTML(heading[2])}">${inline(escapeHTML(heading[2]))}</h${level}>`);continue}
    if(/^[-*] /.test(line)){if(paragraph.length)flush();list.push(line.slice(2));continue}
    if(list.length)flush();paragraph.push(line);
   }

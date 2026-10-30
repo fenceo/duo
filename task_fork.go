@@ -97,7 +97,18 @@ func (a *App) forkTask(id string) (Task, error) {
 		if engine == "" {
 			engine = source.Engine
 		}
-		snapshot, _ := json.Marshal(RunExecution{Engine: engine, Model: run.Model})
+		// A copied historical run retains its original workspace identity. Using
+		// the branch's current directory would silently reassign old knowledge.
+		var originalSnapshot string
+		var originalExecution RunExecution
+		if e := tx.QueryRow("SELECT snapshot FROM run_execution WHERE run_id=?", run.ID).Scan(&originalSnapshot); e == nil {
+			if err = json.Unmarshal([]byte(originalSnapshot), &originalExecution); err != nil {
+				return Task{}, err
+			}
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return Task{}, e
+		}
+		snapshot, _ := json.Marshal(RunExecution{Engine: engine, Model: run.Model, WorkspaceKey: originalExecution.WorkspaceKey})
 		for _, statement := range []struct {
 			query string
 			args  []any

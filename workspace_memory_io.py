@@ -14,9 +14,11 @@ TASK_MARKER = "<!-- duo-workspace-task:"
 WORKLOG_NAME = "任务记录.md"
 WORKLOG_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}$")
 WORKLOG_SOURCE = re.compile(r"(?m)^<!-- duo:worklog:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
+WORKLOG_DETAIL = re.compile(r"(?m)^<!-- duo:worklog-detail:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
 STATE_START = "<!-- duo:task-state:"
 STATE_END = "<!-- /duo:task-state -->"
 CONFLICT_MESSAGE = "任务记录已被修改，请重新读取后合并；当前编辑未覆盖"
+WORKLOG_NOTES = "## 备注\n\n自动管理区域维护当前状态；人工编辑该区域会暂停自动替换。区域外正文保持原样，时间记录只追加新轮次。请保留来源标记以避免重复回填。\n\n## 进展记录\n\n以下按轮次时间持续追加本轮需求、助手结论、执行摘录及结构化进展。原始需求不自动作为任务目标，历史回复和自动整理不等于独立验证；失败记录保留失败状态。\n"
 
 
 class DocumentConflict(ValueError):
@@ -56,8 +58,12 @@ def update_worklog_state(text, body):
         if STATE_END in text:
             return text, True
         block = state_block(body) + "\n\n"
+        separator = "\n\n"
+        if "\r\n" in text:
+            block = block.replace("\n", "\r\n")
+            separator = "\r\n\r\n"
         at = text.find("\n## ")
-        return (text[:at+1] + block + text[at+1:] if at >= 0 else text + "\n\n" + block), False
+        return (text[:at+1] + block + text[at+1:] if at >= 0 else text + separator + block), False
     if text.count(STATE_START) != 1 or text.count(STATE_END) != 1:
         return text, True
     header_end, end = text.find(" -->", start), text.find(STATE_END, start)
@@ -73,6 +79,28 @@ def update_worklog_state(text, body):
     if "\r\n" in text[start:end]:
         block = block.replace("\n", "\r\n")
     return text[:start] + block + text[end+len(STATE_END):], False
+
+
+def upgrade_legacy_worklog_header(text):
+    if text.count(STATE_START) != text.count(STATE_END) or text.count(STATE_START) > 1:
+        return text, False
+    newline = "\r\n" if "\r\n" in text else "\n"
+    if not text.startswith("---"+newline+"type: task_worklog"+newline+"task_id: "):
+        return text, False
+    for greeting in ("你好", "您好", "hello", "Hello", "hi", "Hi", "你好，继续", "你好,继续", "好的", "继续"):
+        legacy = "## 任务目标\n\n"+greeting+"\n\n## 当前计划\n\n尚未手工填写。可在这里维护下一步计划。\n\n## 备注\n\n可直接编辑目标、计划、备注和已有记录；后续只追加新轮次。请保留来源标记以避免重复回填。\n\n## 进展记录\n\n以下按轮次时间持续追加。历史回复和自动整理不等于独立验证；失败记录保留失败状态。\n"
+        expected = legacy.replace("\n", newline)
+        start = text.find(newline+"## 任务目标"+newline)
+        if start < 0:
+            continue
+        start += len(newline)
+        if "<!-- duo:worklog:" in text[:start]:
+            continue
+        if STATE_START in text[:start] and STATE_END not in text[:start]:
+            continue
+        if digest(text[start:start+len(expected)]) == digest(expected):
+            return text[:start]+WORKLOG_NOTES.replace("\n", newline)+text[start+len(expected):], True
+    return text, False
 
 
 def valid_directory(task_id, directory):
@@ -296,20 +324,34 @@ def main():
         text = old if old is not None else file.get("content", "")
         if not isinstance(text, str) or not isinstance(file.get("entries", []), list):
             raise ValueError("任务记录内容格式无效")
+        text, upgraded = upgrade_legacy_worklog_header(text)
+        if upgraded:
+            report["warnings"].append("已按已知自动模板修正旧版问候目标；历史记录和人工内容保留，当前目标仍需有效任务状态确认。")
         seen = set(WORKLOG_SOURCE.findall(text))
+        detailed = set(WORKLOG_DETAIL.findall(text))
         for entry in file.get("entries", []):
             identity, content = entry.get("id", ""), entry.get("content", "")
             if not isinstance(identity, str) or not WORKLOG_ID.fullmatch(identity) or not isinstance(content, str):
                 raise ValueError("任务记录来源格式无效")
-            if identity in seen:
+            details = entry.get("details", False)
+            if not isinstance(details, bool):
+                raise ValueError("任务记录补全标记格式无效")
+            if identity in seen and (not details or identity in detailed):
                 continue
             separator = "" if not text or text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
-            addition = separator + "<!-- duo:worklog:" + identity + " -->\n\n" + content.rstrip("\n") + "\n"
+            prefix = "<!-- duo:worklog:" + identity + " -->\n\n"
+            if details:
+                prefix += "<!-- duo:worklog-detail:" + identity + " -->\n\n"
+                if identity in seen:
+                    prefix = "<!-- duo:worklog-detail:" + identity + " -->\n\n> 历史轮次资料补全：补充原需求、回复与执行摘录；此前记录和人工编辑保持原样。\n\n"
+            addition = separator + prefix + content.rstrip("\n") + "\n"
             if len((text + addition).encode("utf-8")) > LIMIT:
                 report["warnings"].append("任务记录达到 1 MiB；保留全部原文，本次停止追加，完整执行记录仍在 Duo：" + relative)
                 break
             text += addition
             seen.add(identity)
+            if details:
+                detailed.add(identity)
         if len(text.encode("utf-8")) > LIMIT:
             report["warnings"].append("任务记录初始内容超过 1 MiB；未写入：" + relative)
             return

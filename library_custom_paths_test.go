@@ -88,6 +88,33 @@ func TestLibraryCustomLayerReadingKeepsTrackedPathBeforeFileIndex(t *testing.T) 
 	}
 }
 
+func TestLibraryCustomHumanReadingUsesEncodedTrackedPathBeforeFileIndex(t *testing.T) {
+	a := fixture(t, &fakeRunner{})
+	c := libraryCustomFolderConfig(t, a)
+	c.HumanLayout = true
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.store.set("knowledge_vault", string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	v := curatedFixture(t, a, "project", "项目 #50% (合成)", "observed")
+	tracked := "旧资料/人工 #25% (归档)/保留名字 #50% (验证).md"
+	if _, err := a.store.Exec("INSERT INTO library_links(id,path,local_hash,file_hash) VALUES(?,?,?,?)", "curated:"+v.ID, tracked, "fixture-local-hash", "fixture-file-hash"); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := path.Join(configuredKnowledgeFolder(c, "project"), knowledgeFilename(v.ScopeKey), "README.md")
+	index, err := a.store.libraryDocument(context.Background(), "document:"+indexPath)
+	if err != nil || !strings.Contains(index.Content, knowledgeMarkdownLink(indexPath, tracked)) || strings.Contains(index.Content, "]("+notebookLink(indexPath, tracked)+")") {
+		t.Fatal("human reading page lost the exact tracked path or exposed its unescaped filename", index, err)
+	}
+	doc, err := a.store.libraryDocument(context.Background(), "document:"+tracked)
+	if err != nil || doc.ID != "curated:"+v.ID || doc.Path != tracked || doc.Content != v.Content {
+		t.Fatal("URL encoding changed the original tracked document path", doc, err)
+	}
+}
+
 func TestLibraryTaskNotebookDoesNotLoadUnrelatedCuratedDocuments(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	libraryCustomFolderConfig(t, a)

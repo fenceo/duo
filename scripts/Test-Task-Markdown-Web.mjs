@@ -40,7 +40,7 @@ assert.match(ctx.taskItemMenu({id:'one'}),/>任务记录<\/button>/);
 assert(node('task-record-history').contains(node('knowledge-list')));assert(!node('task-record-history').open);
 
 state('one');await ctx.openTaskRecords('one');await tick();await tick();
-assert.equal(node('workspace-memory-title').textContent,main('one'),'task menu directly opens its primary Markdown');
+assert.equal(node('workspace-memory-path').textContent,main('one'),'task menu directly opens its primary Markdown');assert.equal(node('workspace-memory-title').textContent,'one','reading uses the Markdown title instead of a technical path');
 assert.match(node('workspace-memory-content').textContent,/2026-10-29/);assert.equal(node('workspace-memory-content').querySelector('script'),null);
 assert(!node('workspace-memory-content').classList.contains('hidden'));assert(node('workspace-memory-editor').classList.contains('hidden'));
 node('workspace-memory-edit').onclick();node('workspace-memory-editor').value='# User draft\n\nAHA 风格连续记录';node('workspace-memory-editor').oninput();
@@ -48,7 +48,7 @@ assert(node('workspace-memory-save').disabled===false);
 await ctx.loadWorkspaceMemory();assert.equal(node('workspace-memory-editor').value,'# User draft\n\nAHA 风格连续记录','automatic refresh preserves edits');
 node('workspace-memory-read').onclick();assert.match(node('workspace-memory-content').textContent,/User draft/,'reading mode previews the unsaved draft safely');
 node('workspace-memory-edit').onclick();
-state('two');await ctx.loadWorkspaceMemory();assert.equal(node('workspace-memory-title').textContent,main('two'));assert(!node('workspace-memory-editor').value.includes('User draft'));
+state('two');await ctx.loadWorkspaceMemory();assert.equal(node('workspace-memory-path').textContent,main('two'));assert.equal(node('workspace-memory-title').textContent,'two');assert(!node('workspace-memory-editor').value.includes('User draft'));
 state('one');await ctx.loadWorkspaceMemory();assert.match(node('workspace-memory-editor').value,/User draft/,'returning to a task restores its own draft');
 await ctx.readWorkspaceMemoryDocument(main('one'),true);assert.match(node('workspace-memory-document-state').textContent,/草稿尚未保存/);assert.match(node('workspace-memory-editor').value,/User draft/);
 
@@ -68,9 +68,9 @@ await ctx.readWorkspaceMemoryDocument('.duo/tasks/one-1234/runs/old.md');assert(
 
 // Missing primary documents are initialized once without a model call.
 missing=true;enabled=false;state('disabled');calls=[];await ctx.loadWorkspaceMemory();assert(!calls.some(c=>c.method==='POST'));assert.match(node('workspace-memory-state').textContent,/自动记录已关闭/);
-enabled=true;state('first-open');files.set('first-open',{path:main('first-open'),content:'# Initial task',revision:'init',editable:true});calls=[];await ctx.loadWorkspaceMemory();assert.equal(calls.filter(c=>c.method==='POST').length,1);assert.equal(node('workspace-memory-title').textContent,main('first-open'));
+enabled=true;state('first-open');files.set('first-open',{path:main('first-open'),content:'# Initial task',revision:'init',editable:true});calls=[];await ctx.loadWorkspaceMemory();assert.equal(calls.filter(c=>c.method==='POST').length,1);assert.equal(node('workspace-memory-path').textContent,main('first-open'));assert.equal(node('workspace-memory-title').textContent,'Initial task');
 state('retry');syncFails=true;calls=[];await ctx.loadWorkspaceMemory();assert.match(node('workspace-memory-state').textContent,/synthetic sync unavailable/);await ctx.loadWorkspaceMemory();assert.equal(calls.filter(c=>c.method==='POST').length,1,'failed initialization is not retried in a loop');
-syncFails=false;files.set('retry',{path:main('retry'),content:'# Retried',revision:'retry',editable:true});await ctx.loadWorkspaceMemory(true);assert.equal(node('workspace-memory-title').textContent,main('retry'));
+syncFails=false;files.set('retry',{path:main('retry'),content:'# Retried',revision:'retry',editable:true});await ctx.loadWorkspaceMemory(true);assert.equal(node('workspace-memory-path').textContent,main('retry'));assert.equal(node('workspace-memory-title').textContent,'Retried');
 
 // A request from the previous login must not mutate the current UI.
 missing=false;state('one');await ctx.loadWorkspaceMemory();readGate=deferred();const oldRead=ctx.readWorkspaceMemoryDocument(main('one'),true);run('shellEpoch++');node('workspace-memory-content').textContent='new login';readGate.resolve({...saved,content:'old private text'});await oldRead;assert.equal(node('workspace-memory-content').textContent,'new login');

@@ -166,7 +166,7 @@ func workspaceTaskStateContent(task Task, state taskStatePatch, latest Run, sour
 	}
 	goal := clean(state.Goal)
 	if strings.TrimSpace(goal) == "" {
-		goal = "待明确任务目标。"
+		goal = "待明确任务目标。本轮需求与助手结果已按时间保留在下方；尚无有效目标增量，不从问候、任务名称或单条问题推断。"
 	}
 	body.WriteString("### 任务目标\n\n" + goal + "\n\n")
 	if state.GoalReason != "" {

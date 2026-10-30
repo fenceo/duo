@@ -101,11 +101,11 @@ func TestCuratedVaultSyncPreservesImportedNestedPaths(t *testing.T) {
 					t.Fatal("a second flattened copy was created", flat, err)
 				}
 				index := readTestFile(t, filepath.Join(c.Directory, filepath.FromSlash(folder), "README.md"))
-				if !strings.Contains(index, notebookLink(path.Join(folder, "README.md"), path.Join(project, "README.md"))) {
+				if !strings.Contains(index, knowledgeMarkdownLink(path.Join(folder, "README.md"), path.Join(project, "README.md"))) {
 					t.Fatal("generated category index lost its project entry")
 				}
 				projectGenerated := readTestFile(t, filepath.Join(c.Directory, filepath.FromSlash(project), "README.md"))
-				if !strings.Contains(projectGenerated, notebookLink(path.Join(project, "README.md"), relative)) {
+				if !strings.Contains(projectGenerated, knowledgeMarkdownLink(path.Join(project, "README.md"), relative)) {
 					t.Fatal("generated project index did not follow the actual nested note")
 				}
 			})

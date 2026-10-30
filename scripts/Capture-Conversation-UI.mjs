@@ -288,15 +288,16 @@ for(const [view,theme,width,height] of cases){
    if(view==='knowledgerecordedit'||view==='knowledgerecordconflict'){document.getElementById('workspace-memory-edit').onclick();document.getElementById('workspace-memory-editor').value=content+'## 人工补充\n\n保留这段尚未保存的编辑。';document.getElementById('workspace-memory-editor').oninput();if(view==='knowledgerecordconflict')await ctx.saveWorkspaceMemoryDocument()}
   }else{
    const baseAPI=ctx.api;
+   const readingGuide={...entries[0],id:'curated-index:consensus',kind:'index',generated:true,layer:'consensus',title:'平台共识阅读手册',path:'平台共识/README.md',hash:'synthetic-guide',snippet:entries[0].content};
    ctx.api=async(route,...args)=>{
-    if(route.startsWith('library/search')){const layer=new URLSearchParams(route.split('?')[1]).get('layer')||'consensus',formal=['consensus','system','project'].includes(layer);return {documents:entries.filter(k=>k.status!=='stale').map(k=>({...k,id:'knowledge:'+k.id,kind:formal?'curated':'task',layer,path:(formal?layer:'tasks')+'/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content})),total:4,truncated:false,next_offset:4}}
+    if(route.startsWith('library/search')){const layer=new URLSearchParams(route.split('?')[1]).get('layer')||'consensus',formal=['consensus','system','project'].includes(layer);return {documents:entries.filter(k=>k.status!=='stale').map((k,i)=>view==='librarypreview'&&i===0?readingGuide:{...k,id:'knowledge:'+k.id,kind:formal?'curated':'task',layer,path:(formal?layer:'tasks')+'/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content}),total:4,truncated:false,next_offset:4}}
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
-    if(route.startsWith('library/document'))return {content:entries[0].content};
+    if(route.startsWith('library/document'))return view==='librarypreview'?readingGuide:{content:entries[0].content};
     if(route==='library/curated')return Array.from({length:18},(_,i)=>({id:'graph-'+i,layer:i<15?'consensus':['system','project','project'][i-15],scope_key:i<15?'':'开发板调试',title:['NFS 调试与共享目录','烧录前的镜像检查','串口问题的逐步定位','保持文档与验证依据同步','任务接续与工作习惯'][i%5]+' '+(i+1),content:entries[i%entries.length].content,status:'observed',tags:[['NFS','烧录','串口'][i%3],i%2?'调试':'知识积累'],source_task_id:'layout-preview',revision:1,updated:1790310000000}));
     return baseAPI(route,...args);
    };
    await ctx.openLibrary();
-   if(view==='librarypreview')await ctx.previewLibrary('knowledge:'+entries[0].id);
+   if(view==='librarypreview')await ctx.previewLibrary(readingGuide.id);
    if(view==='librarygraph'){ctx.window.innerWidth=width;document.getElementById('library-graph-open').onclick();await ctx.loadKnowledgeGraph()}
    if(view.startsWith('librarysettings')){
     const dialog=document.getElementById('library-dialog');await ctx.openLibrarySettings();

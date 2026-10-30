@@ -50,6 +50,13 @@ with tempfile.TemporaryDirectory(prefix='duo-worklog-protocol-') as root:
     appended=sync([entry(task+'/run-one','不得重复'),entry(task+'/run-two','## 2026-01-01 10:01\n\n次轮结果')])
     current=pathlib.Path(root,path).read_text(encoding='utf-8')
     assert not appended.get('error') and current.startswith(human) and current.count('首轮结果')==1 and '次轮结果' in current, appended
+    detail=entry(task+'/run-one','#### 本轮需求\n\n补回原需求\n\n#### 助手结果\n\n补回实际结论')
+    detail['details']=True
+    filled=sync([detail])
+    current=pathlib.Path(root,path).read_text(encoding='utf-8')
+    assert not filled.get('error') and current.startswith(human) and current.count('<!-- duo:worklog:'+task+'/run-one -->')==1 and current.count('<!-- duo:worklog-detail:'+task+'/run-one -->')==1 and '补回实际结论' in current, filled
+    repeated_fill=sync([detail])
+    assert not repeated_fill.get('error') and repeated_fill['exported']==0 and pathlib.Path(root,path).read_text(encoding='utf-8')==current, repeated_fill
     stale=call(action='save_document',path=path,content='stale replacement',revision=doc['revision'])
     assert stale.get('error_code')=='conflict' and pathlib.Path(root,path).read_text(encoding='utf-8')==current, stale
     missing=call(action='save_document',path=path,content='missing revision')
@@ -99,6 +106,16 @@ with tempfile.TemporaryDirectory(prefix='duo-worklog-protocol-') as root:
     pathlib.Path(root,path).write_bytes(human_state)
     protected=state_sync(state_body.replace('合成目标','不得覆盖'))
     assert not protected.get('error') and protected['warnings'] and pathlib.Path(root,path).read_bytes()==human_state, protected
+    legacy='---\ntype: task_worklog\ntask_id: '+task+'\ntitle: "fixture"\n---\n\n# fixture\n\n## 任务目标\n\n你好\n\n## 当前计划\n\n尚未手工填写。可在这里维护下一步计划。\n\n## 备注\n\n可直接编辑目标、计划、备注和已有记录；后续只追加新轮次。请保留来源标记以避免重复回填。\n\n## 进展记录\n\n以下按轮次时间持续追加。历史回复和自动整理不等于独立验证；失败记录保留失败状态。\n'
+    legacy_history='\n<!-- duo:worklog:'+task+'/old-source -->\n旧版进展\n\n人工结尾：不要覆盖  \n'
+    pathlib.Path(root,path).write_bytes((legacy+legacy_history).replace('\n','\r\n').encode('utf-8'))
+    upgraded=state_sync('## 当前任务状态\n\n### 任务目标\n\n待明确任务目标。\n')
+    migrated=pathlib.Path(root,path).read_bytes()
+    assert not upgraded.get('error') and any('旧版问候目标' in warning for warning in upgraded['warnings']) and '## 任务目标\r\n\r\n你好'.encode('utf-8') not in migrated and migrated.endswith(legacy_history.replace('\n','\r\n').encode('utf-8')), upgraded
+    manual_legacy=legacy.replace('尚未手工填写。','人工计划：先检查接线。')+legacy_history
+    pathlib.Path(root,path).write_text(manual_legacy,encoding='utf-8')
+    manual_sync=sync([])
+    assert not manual_sync.get('error') and pathlib.Path(root,path).read_text(encoding='utf-8')==manual_legacy, manual_sync
     pathlib.Path(root,path).write_bytes(edited.encode('utf-8'))
     # A deterministic external write between staging and the final comparison
     # must win; only the temporary generated replacement is discarded.

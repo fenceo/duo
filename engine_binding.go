@@ -66,14 +66,16 @@ func sameEngineProfile(a, b *EngineCredentialProfile) bool {
 // Queued runs retain engine/model and handoff history. Credentials belong to
 // the target CLI environment and are never selected from a task snapshot.
 type RunExecution struct {
-	Engine    string             `json:"engine"`
-	Model     string             `json:"model"`
-	Reasoning string             `json:"reasoning"`
-	Binding   *TaskEngineBinding `json:"binding"`
+	Engine       string             `json:"engine"`
+	Model        string             `json:"model"`
+	Reasoning    string             `json:"reasoning"`
+	Binding      *TaskEngineBinding `json:"binding"`
+	WorkspaceKey string             `json:"workspace_key,omitempty"`
 }
 
 func saveRunExecution(tx *sql.Tx, run string, task Task) error {
-	raw, err := json.Marshal(RunExecution{task.Engine, task.Model, task.ReasoningEffort, task.Binding})
+	// Persist only an opaque identity, never the path or environment credentials.
+	raw, err := json.Marshal(RunExecution{Engine: task.Engine, Model: task.Model, Reasoning: task.ReasoningEffort, Binding: task.Binding, WorkspaceKey: knowledgeWorkspaceKey(task)})
 	if err != nil {
 		return err
 	}
