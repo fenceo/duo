@@ -293,6 +293,24 @@ func appendWorkspaceWorklogPages(ctx context.Context, task Task, file workspaceM
 	if oversized {
 		return nil
 	}
+	var executionConflict bool
+	executionContent := file.ExecutionContent
+	if executionContent != nil && *executionContent == "" && strings.Contains(main, workspaceExecutionCheckpointStart) {
+		// A long history may be exported in several batches. A stale live
+		// snapshot must survive until its own terminal source is durably in the
+		// existing history or staged earlier in this successful append.
+		if _, conflict := updateWorkspaceExecutionCheckpoint(main, executionContent); !conflict {
+			id := workspaceExecutionCheckpointSource(main)
+			if !strings.HasPrefix(id, task.ID+"/") || !seen[id] || !detailed[id] {
+				executionContent = nil
+				warn("执行快照对应的终态来源尚未写入时间记录，已保留快照；后续历史同步保存该来源后再自动清理。")
+			}
+		}
+	}
+	main, executionConflict = updateWorkspaceExecutionCheckpoint(main, executionContent)
+	if executionConflict {
+		warn("执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
+	}
 	if file.StateIncomplete {
 		warn("任务状态历史不完整，已保留自动状态区；新进展仍写入时间记录。")
 	} else {

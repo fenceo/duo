@@ -298,6 +298,7 @@ func runCodexAppServerFixture() {
 	cwd, _ := os.Getwd()
 	result, _ := json.Marshal(map[string]any{"cwd": cwd, "args": os.Args[1:], "initialize": initial.Params, "method": thread.Method, "thread": threadParams, "turn": turnParams, "responses": responses})
 	item("analysis", "commentary", "fixture progress")
+	notify("item/completed", map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "reason", "type": "reasoning", "text": "fixture private thought"}})
 	notify("item/completed", map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "cmd", "type": "commandExecution", "command": "echo fixture", "status": "completed", "aggregatedOutput": "tool output"}})
 	notify("item/completed", map[string]any{"threadId": threadID, "turnId": turnID, "item": map[string]any{"id": "patch", "type": "fileChange", "changes": []any{map[string]any{"path": "demo.txt", "diff": "+safe"}}}})
 	for _, n := range []int64{10, 10, 15} {
@@ -471,6 +472,9 @@ func TestCodexAppServerNativeRoundTrip(t *testing.T) {
 			defer mu.Unlock()
 			if len(events["session"]) != 1 || len(events["assistant"]) != 1 || len(events["tool"]) < 2 || len(events["progress"]) < 2 {
 				t.Fatal(events)
+			}
+			if len(events["thought"]) == 0 || strings.Contains(strings.Join(events["progress"], "|"), "fixture private thought") {
+				t.Fatal("reasoning was exported as public progress", events)
 			}
 			var usage RunUsage
 			_ = json.Unmarshal([]byte(events["usage"][len(events["usage"])-1]), &usage)

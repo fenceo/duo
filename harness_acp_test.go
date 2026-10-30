@@ -47,6 +47,9 @@ func TestHarnessACPChunksAndForeignSessions(t *testing.T) {
 	if state.result != "hello world" || strings.Contains(strings.Join(output, "|"), "secret") {
 		t.Fatalf("chunk/session isolation failed: %q %v", state.result, output)
 	}
+	if !strings.Contains(strings.Join(output, "|"), "thought:thinking") || strings.Contains(strings.Join(output, "|"), "progress:thinking") {
+		t.Fatal("native thoughts must not be labelled as public progress", output)
+	}
 	consume("root", "tool_call", nil)
 	consume("root", "agent_message_chunk", map[string]string{"type": "text", "text": "final answer"})
 	if state.result != "final answer" {

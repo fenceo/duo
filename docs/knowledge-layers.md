@@ -4,6 +4,8 @@
 
 本次参考了 AHA 的任务工作日志：其 [context_planner.py](https://github.com/ChinaKai/AHA/blob/main/src/aha_cli/services/context_planner.py) 为任务确定稳定的 Markdown 路径，[backend_context_pack.md](https://github.com/ChinaKai/AHA/blob/main/src/aha_cli/prompts/backend_context_pack.md) 要求 AI 持续更新该文件，长期知识另外整理。Duo 采用“一任务一篇可编辑主文档”的组织方式；自动进展在每轮结束后追加，尚未实现 AHA 那种由 AI 在执行中实时维护计划和日志的完整流程。
 
+v0.34.67 起，主文档在执行期间额外保存独立的观察快照：开始时尝试写入，有新事件时最多每 15 秒刷新。快照是带时间和轮次的公开进度摘录，不改目标/计划/证据，不把工具活动当作成功；正式终态保存后由时间记录接替。服务重启会排队补写中断状态，磁盘不可访问、退避或人工冲突时保留原文。结构化状态仍在轮次结束后维护，未自动实现执行中语义里程碑整理。
+
 ## 两层资料
 
 第一层是工作区任务原件；第二层是笔记库内的平台共识、系统知识、项目知识。完整架构与参考资料见 [知识重构方案](knowledge-rebuild-architecture.md)。

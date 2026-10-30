@@ -570,11 +570,9 @@ func (s *harnessACPTurn) consume(msg codexRPC, emit func(string, string)) {
 			if block.Type == "image" {
 				s.image(u.Content, "process", emit)
 			} else if block.Text != "" {
-				kind := "progress"
-				if s.engine == "mimo" {
-					kind = "thought"
-				}
-				emit(kind, block.Text)
+				// Keep native reasoning separate from public commentary for every
+				// ACP engine; task documents must not export thought chunks.
+				emit("thought", block.Text)
 			}
 			return
 		}

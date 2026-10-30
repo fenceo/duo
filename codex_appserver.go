@@ -790,9 +790,13 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					for _, change := range item.Changes {
 						emit("tool", "文件修改："+change.Path+"\n"+change.Diff)
 					}
+				case "reasoning", "reasoningSummary":
+					if item.Text != "" {
+						emit("thought", item.Text)
+					}
 				default:
 					if item.Text != "" {
-						emit("progress", item.Text)
+						emit("log", item.Text)
 					}
 				}
 			case "thread/tokenUsage/updated":

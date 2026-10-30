@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"unicode/utf8"
 )
 
 const workspaceWorklogFilename = "任务记录.md"
@@ -162,6 +163,113 @@ func upgradeWorkspaceLegacyWorklogHeader(content string) (string, bool) {
 
 const workspaceTaskStateStart = "<!-- duo:task-state:"
 const workspaceTaskStateEnd = "<!-- /duo:task-state -->"
+
+const workspaceExecutionCheckpointStart = "<!-- duo:execution-checkpoint:"
+const workspaceExecutionCheckpointEnd = "<!-- /duo:execution-checkpoint -->"
+const workspaceExecutionCheckpointSourcePrefix = "<!-- duo:execution-source:"
+
+func workspaceExecutionCheckpointBlock(body string) string {
+	body = strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), "\n") + "\n"
+	return workspaceExecutionCheckpointStart + workspaceMemoryHash(body) + " -->\n" + body + workspaceExecutionCheckpointEnd
+}
+
+// The source identity is separate from append-only terminal source markers.
+// Only a unique identity inside an intact managed snapshot is eligible for
+// automatic retirement once its terminal record has actually been saved.
+func workspaceExecutionCheckpointSource(content string) string {
+	start := strings.Index(content, workspaceExecutionCheckpointStart)
+	if start < 0 || strings.Count(content, workspaceExecutionCheckpointStart) != 1 || strings.Count(content, workspaceExecutionCheckpointEnd) != 1 {
+		return ""
+	}
+	headerEnd := strings.Index(content[start:], " -->")
+	end := strings.Index(content[start:], workspaceExecutionCheckpointEnd)
+	if headerEnd < 0 || end < headerEnd {
+		return ""
+	}
+	headerEnd += start
+	end += start
+	revision := content[start+len(workspaceExecutionCheckpointStart) : headerEnd]
+	body := strings.TrimPrefix(strings.ReplaceAll(content[headerEnd+len(" -->"):end], "\r\n", "\n"), "\n")
+	if !validWorkspaceMemoryRevision(revision) || workspaceMemoryHash(body) != revision || strings.Count(body, workspaceExecutionCheckpointSourcePrefix) != 1 {
+		return ""
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, workspaceExecutionCheckpointSourcePrefix) && strings.HasSuffix(line, " -->") {
+			id := strings.TrimSuffix(strings.TrimPrefix(line, workspaceExecutionCheckpointSourcePrefix), " -->")
+			if validWorkspaceWorklogID(id) {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// Execution snapshots have their own ownership hash. They never change the
+// terminal task state or source receipts. nil preserves an existing snapshot;
+// an empty string removes only an intact owned block, retaining every other byte.
+func updateWorkspaceExecutionCheckpoint(content string, body *string) (string, bool) {
+	if body == nil {
+		return content, false
+	}
+	if !utf8.ValidString(*body) || strings.ContainsRune(*body, '\x00') || len(*body) > workspaceMemoryFileLimit || strings.Contains(*body, workspaceExecutionCheckpointStart) || strings.Contains(*body, workspaceExecutionCheckpointEnd) {
+		return content, true
+	}
+	start := strings.Index(content, workspaceExecutionCheckpointStart)
+	if start < 0 {
+		if strings.Contains(content, workspaceExecutionCheckpointEnd) {
+			return content, true
+		}
+		if *body == "" {
+			return content, false
+		}
+		block := workspaceExecutionCheckpointBlock(*body) + "\n\n"
+		separator := "\n\n"
+		if strings.Contains(content, "\r\n") {
+			block = strings.ReplaceAll(block, "\n", "\r\n")
+			separator = "\r\n\r\n"
+		}
+		// Place the bounded snapshot before the potentially long task-state
+		// body, preserving YAML, the document title and any human introduction.
+		if at := strings.Index(content, workspaceTaskStateStart); at >= 0 {
+			return content[:at] + block + content[at:], false
+		}
+		if at := strings.Index(content, "\n## "); at >= 0 {
+			return content[:at+1] + block + content[at+1:], false
+		}
+		return content + separator + block, false
+	}
+	if strings.Count(content, workspaceExecutionCheckpointStart) != 1 || strings.Count(content, workspaceExecutionCheckpointEnd) != 1 {
+		return content, true
+	}
+	headerEnd := strings.Index(content[start:], " -->")
+	end := strings.Index(content[start:], workspaceExecutionCheckpointEnd)
+	if headerEnd < 0 || end < headerEnd {
+		return content, true
+	}
+	headerEnd += start
+	end += start
+	revision := content[start+len(workspaceExecutionCheckpointStart) : headerEnd]
+	stored := strings.TrimPrefix(strings.ReplaceAll(content[headerEnd+len(" -->"):end], "\r\n", "\n"), "\n")
+	if !validWorkspaceMemoryRevision(revision) || workspaceMemoryHash(stored) != revision {
+		return content, true
+	}
+	if *body == "" {
+		after := content[end+len(workspaceExecutionCheckpointEnd):]
+		// The two separators inserted with a new block belong to its envelope;
+		// remove them too so repeated runs cannot accumulate empty paragraphs.
+		if strings.HasPrefix(after, "\r\n\r\n") {
+			after = after[4:]
+		} else if strings.HasPrefix(after, "\n\n") {
+			after = after[2:]
+		}
+		return content[:start] + after, false
+	}
+	block := workspaceExecutionCheckpointBlock(*body)
+	if strings.Contains(content[start:end], "\r\n") {
+		block = strings.ReplaceAll(block, "\n", "\r\n")
+	}
+	return content[:start] + block + content[end+len(workspaceExecutionCheckpointEnd):], false
+}
 
 func workspaceTaskStateBlock(body string) string {
 	body = strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), "\n") + "\n"

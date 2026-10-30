@@ -384,9 +384,13 @@ func (CodexRunner) Run(ctx context.Context, c Config, t Task, input string, emit
 					for _, change := range v.Item.Changes {
 						emit("tool", "文件修改："+change.Path)
 					}
+				case "reasoning", "reasoning_summary":
+					if v.Item.Text != "" {
+						emit("thought", v.Item.Text)
+					}
 				default:
 					if v.Item.Text != "" {
-						emit("progress", v.Item.Text)
+						emit("log", v.Item.Text)
 					}
 				}
 			case "turn.failed":

@@ -14,7 +14,7 @@ import (
 // A version bump on main is what starts the stable release workflow, so a run
 // that fails before publishing is fixed on the same version: the tag does not
 // exist yet and an unpublished version is never rewritten in place.
-const version = "0.34.66"
+const version = "0.34.67"
 
 // Only the native launcher's first-run wizard uses this stdin-only operation.
 // Existing databases are never reset by initialization.

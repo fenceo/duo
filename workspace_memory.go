@@ -114,6 +114,8 @@ type workspaceMemoryFile struct {
 	HistoryPending   bool                    `json:"history_pending,omitempty"`
 	StateContent     string                  `json:"state_content,omitempty"`
 	StateIncomplete  bool                    `json:"state_incomplete,omitempty"`
+	ExecutionContent *string                 `json:"execution_content,omitempty"`
+	CheckpointOnly   bool                    `json:"checkpoint_only,omitempty"`
 	ReplaceDocument  bool                    `json:"-"`
 	PreserveDocument bool                    `json:"-"`
 	ExpectedRevision string                  `json:"-"`
@@ -283,7 +285,18 @@ func (s *Store) workspaceMemoryProcess(ctx context.Context, run Run, workspace s
 	if err = rows.Err(); err != nil {
 		return "", err
 	}
-	if len(events) == 0 {
+	// A failed/stopped engine may have emitted useful public progress without
+	// returning a final result. Preserve that bounded report before replacing
+	// its live checkpoint, without treating it as a completed task-state patch.
+	rows.Close()
+	public := ""
+	if run.Status != "done" || strings.TrimSpace(run.Result) == "" {
+		public, err = s.workspaceExecutionObservations(ctx, Task{ID: run.TaskID, Workspace: workspace}, run, int64(^uint64(0)>>1), false)
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(events) == 0 && public == "" {
 		return "", nil
 	}
 	var body strings.Builder
@@ -295,6 +308,9 @@ func (s *Store) workspaceMemoryProcess(ctx context.Context, run Run, workspace s
 		event := events[i]
 		text, _ := workspaceWorklogExcerpt(event.Text, workspace, 1200)
 		fmt.Fprintf(&body, "\n### %s · %s · 事件 %d\n\n%s\n", memoryDate(event.Created), event.Kind, event.Seq, text)
+	}
+	if public != "" {
+		body.WriteString("\n### 未结束前的公开进度（来源报告，未独立验证）\n\n" + public)
 	}
 	return "\n## 过程摘录\n\n以下仅为有界执行摘录，不能单独证明操作成功；长事件保留开头与结尾。\n" + body.String(), nil
 }
@@ -539,7 +555,19 @@ func (s *Store) workspaceMemoryFiles(ctx context.Context, task Task) ([]workspac
 	for left, right := 0, len(recentWorklog)-1; left < right; left, right = left+1, right-1 {
 		recentWorklog[left], recentWorklog[right] = recentWorklog[right], recentWorklog[left]
 	}
-	files = append(files, workspaceMemoryFile{Path: path.Join(base, workspaceWorklogFilename), Content: workspaceWorklogHeader(task, "", worklogTags...), AppendWorklog: true, Entries: worklog, RecentEntries: recentWorklog, HistoryPending: checkpoint.Pending, StateContent: stateContent, StateIncomplete: stateHistoryIncomplete})
+	// A manual/history sync during execution must not erase its live section.
+	// Once terminal, clear it only in the same main-document CAS that follows
+	// successful source/history writes. Failed writes retain the older snapshot.
+	var active bool
+	if err = s.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM runs WHERE task_id=? AND kind='chat' AND status='running')", task.ID).Scan(&active); err != nil {
+		return nil, warnings, err
+	}
+	var execution *string
+	if !active {
+		empty := ""
+		execution = &empty
+	}
+	files = append(files, workspaceMemoryFile{Path: path.Join(base, workspaceWorklogFilename), Content: workspaceWorklogHeader(task, "", worklogTags...), AppendWorklog: true, Entries: worklog, RecentEntries: recentWorklog, HistoryPending: checkpoint.Pending, StateContent: stateContent, StateIncomplete: stateHistoryIncomplete, ExecutionContent: execution})
 	// The receipt must be last: a failed page/source append cannot advance the
 	// durable cursor and silently strand omitted history.
 	files = append(files, workspaceMemoryFile{Path: path.Join(base, "README.md"), Content: workspaceMemoryManaged(index.String())}, workspaceMemoryFile{Path: path.Join(base, "handoff.md"), Content: workspaceMemoryManaged("<!-- duo-workspace-task:" + string(raw) + " -->\n\n" + handoff.String())})
@@ -670,8 +698,101 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 		}
 		return string(raw), err
 	}
+	if payload.Action == "checkpoint" {
+		// A live snapshot only needs this task's canonical directory. Do not
+		// load every task's metadata or enumerate terminal history and sources.
+		if err := check(workspaceMemoryDirectory+"/tasks/_", false); err != nil && !os.IsNotExist(err) {
+			return report, err
+		}
+		requestedExists := false
+		if info, err := root.Lstat(filepath.FromSlash(report.TaskDirectory)); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return report, errors.New("执行快照任务目录不是安全的普通目录")
+			}
+			if err := check(report.TaskDirectory+"/_", false); err != nil {
+				return report, err
+			}
+			requestedExists = true
+		} else if !os.IsNotExist(err) {
+			return report, err
+		}
+		if !requestedExists {
+			folder, err := root.Open(filepath.FromSlash(workspaceMemoryDirectory + "/tasks"))
+			if err != nil && !os.IsNotExist(err) {
+				return report, err
+			}
+			if err == nil {
+				entries, readErr := folder.ReadDir(501)
+				folder.Close()
+				if readErr != nil && readErr != io.EOF {
+					return report, readErr
+				}
+				limited := len(entries) > 500
+				if limited {
+					entries = entries[:500]
+				}
+				named, legacy, requestedFound := []string{}, "", requestedExists
+				for _, entry := range entries {
+					directory := path.Join(workspaceMemoryDirectory, "tasks", entry.Name())
+					if !entry.IsDir() || !workspaceMemoryTaskDirectory(task.ID, directory) {
+						continue
+					}
+					if entry.Name() == task.ID {
+						legacy = directory
+					} else {
+						named = append(named, directory)
+					}
+					requestedFound = requestedFound || directory == report.TaskDirectory
+				}
+				if limited && !requestedFound && len(named) == 0 && legacy == "" {
+					return report, errors.New("工作区超过 500 个任务目录，未能确认当前任务的既有目录；已停止执行快照写入，避免重复新建任务目录")
+				}
+				sort.Strings(named)
+				if !(requestedFound && path.Base(report.TaskDirectory) != task.ID) {
+					if len(named) > 0 {
+						report.TaskDirectory = named[0]
+					} else if legacy != "" {
+						report.TaskDirectory = legacy
+					}
+				}
+				report.MainDocument = workspaceWorklogPath(report)
+			}
+		}
+	}
 	var write func(workspaceMemoryFile) error
 	write = func(file workspaceMemoryFile) error {
+		if file.CheckpointOnly {
+			if file.Path != workspaceWorklogPath(report) || !workspaceMemoryTaskDirectory(task.ID, path.Dir(file.Path)) {
+				return errors.New("执行快照只能写入当前任务的主 Markdown 记录")
+			}
+			if file.ExecutionContent == nil {
+				report.Unchanged++
+				return nil
+			}
+			old, err := read(file.Path)
+			existed := err == nil
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if !existed && *file.ExecutionContent == "" {
+				report.Unchanged++
+				return nil
+			}
+			current := old
+			if !existed {
+				current = file.Content
+			}
+			updated, conflict := updateWorkspaceExecutionCheckpoint(current, file.ExecutionContent)
+			if conflict {
+				report.Warnings = append(report.Warnings, "执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
+				return nil
+			}
+			revision := ""
+			if existed {
+				revision = workspaceMemoryHash(old)
+			}
+			return write(workspaceMemoryFile{Path: file.Path, Content: updated, PreserveDocument: true, ExpectedRevision: revision})
+		}
 		if file.AppendWorklog {
 			return appendWorkspaceWorklogPages(ctx, task, file, read, func(relative string) ([]string, error) {
 				if err := check(relative+"/_", false); err != nil {
@@ -900,11 +1021,20 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			}
 		}
 	}
-	if payload.Action == "sync" {
+	if payload.Action == "sync" || payload.Action == "checkpoint" {
 		for _, file := range payload.Files {
+			if payload.Action == "checkpoint" && !file.CheckpointOnly {
+				return report, errors.New("执行快照操作仅允许更新当前任务的执行快照")
+			}
+			if payload.Action == "checkpoint" && file.Path == "" {
+				file.Path = report.MainDocument
+			}
 			if err = write(file); err != nil {
 				return report, err
 			}
+		}
+		if payload.Action == "checkpoint" {
+			return report, nil
 		}
 	}
 	if payload.Action == "document" {

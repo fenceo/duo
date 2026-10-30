@@ -134,9 +134,10 @@ func (a *App) workspaceWorklogContext(ctx context.Context, task Task) (string, s
 }
 
 func workspaceWorklogHandoffExcerpt(clean string) (string, bool) {
+	clean, liveCut := workspaceWorklogCompactExecutionExcerpt(clean)
 	runes := []rune(clean)
 	if len(runes) <= 7200 {
-		return clean, false
+		return clean, liveCut
 	}
 	recent := string(runes[len(runes)-3000:])
 	// A long final reply must not crowd the newest user requirement out of an
@@ -146,6 +147,37 @@ func workspaceWorklogHandoffExcerpt(clean string) (string, bool) {
 		recent, _ = workspaceWorklogExcerpt(clean[at:], "", 3000)
 	}
 	return string(runes[:4200]) + "\n\n[中间记录未自动附加，可按原文件查阅]\n\n" + recent, true
+}
+
+// A live observation is intentionally placed before durable task state in the
+// editable document. Compact only its intact owned block for a long fresh-session
+// prompt, leaving room for goals and plans. The original file and receipt remain
+// byte-for-byte snapshots; a broken/manual block gets the normal excerpt policy.
+func workspaceWorklogCompactExecutionExcerpt(clean string) (string, bool) {
+	if len([]rune(clean)) <= 7200 || strings.Count(clean, workspaceExecutionCheckpointStart) != 1 || strings.Count(clean, workspaceExecutionCheckpointEnd) != 1 {
+		return clean, false
+	}
+	start := strings.Index(clean, workspaceExecutionCheckpointStart)
+	headerEnd := strings.Index(clean[start:], " -->")
+	end := strings.Index(clean[start:], workspaceExecutionCheckpointEnd)
+	if headerEnd < 0 || end < headerEnd {
+		return clean, false
+	}
+	headerEnd += start
+	end += start
+	revision := clean[start+len(workspaceExecutionCheckpointStart) : headerEnd]
+	body := strings.TrimPrefix(strings.ReplaceAll(clean[headerEnd+len(" -->"):end], "\r\n", "\n"), "\n")
+	if !validWorkspaceMemoryRevision(revision) || workspaceMemoryHash(body) != revision {
+		return clean, false
+	}
+	runes := []rune(body)
+	if len(runes) <= 1600 {
+		return clean, false
+	}
+	// The execution header carries the original run and observation time. Never
+	// synthesize a new managed hash for this shortened, display-only quotation.
+	compact := strings.TrimSpace(string(runes[:1600])) + "\n\n[来源：原任务 Markdown 的执行快照，轮次与截至时间见上文。已省略部分活动；完整快照、目标及计划请按本次资料的 path 读取。原文件未修改。]\n\n"
+	return clean[:start] + compact + clean[end+len(workspaceExecutionCheckpointEnd):], true
 }
 
 // A single contiguous region bounds the diff algorithm and includes deletions.

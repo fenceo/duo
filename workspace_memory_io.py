@@ -22,6 +22,10 @@ WORKLOG_SOURCE = re.compile(r"(?m)^<!-- duo:worklog:([A-Za-z0-9_-]{1,96}/[A-Za-z
 WORKLOG_DETAIL = re.compile(r"(?m)^<!-- duo:worklog-detail:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
 STATE_START = "<!-- duo:task-state:"
 STATE_END = "<!-- /duo:task-state -->"
+EXECUTION_START = "<!-- duo:execution-checkpoint:"
+EXECUTION_END = "<!-- /duo:execution-checkpoint -->"
+EXECUTION_SOURCE_PREFIX = "<!-- duo:execution-source:"
+EXECUTION_SOURCE = re.compile(r"(?m)^<!-- duo:execution-source:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
 CONFLICT_MESSAGE = "任务记录已被修改，请重新读取后合并；当前编辑未覆盖"
 WORKLOG_NOTES = "## 备注\n\n自动管理区域维护当前状态；人工编辑该区域会暂停自动替换。区域外正文保持原样，时间记录只追加新轮次。请保留来源标记以避免重复回填。\n\n## 进展记录\n\n以下按轮次时间持续追加本轮需求、助手结论、执行摘录及结构化进展。原始需求不自动作为任务目标，历史回复和自动整理不等于独立验证；失败记录保留失败状态。\n"
 
@@ -84,6 +88,75 @@ def update_worklog_state(text, body):
     if "\r\n" in text[start:end]:
         block = block.replace("\n", "\r\n")
     return text[:start] + block + text[end+len(STATE_END):], False
+
+
+def execution_block(body):
+    body = body.replace("\r\n", "\n").rstrip("\n") + "\n"
+    return EXECUTION_START + digest(body) + " -->\n" + body + EXECUTION_END
+
+
+def execution_checkpoint_source(text):
+    start = text.find(EXECUTION_START)
+    if start < 0 or text.count(EXECUTION_START) != 1 or text.count(EXECUTION_END) != 1:
+        return ""
+    header_end, end = text.find(" -->", start), text.find(EXECUTION_END, start)
+    if header_end < 0 or end < header_end:
+        return ""
+    revision = text[start+len(EXECUTION_START):header_end]
+    body = text[header_end+len(" -->"):end].replace("\r\n", "\n")
+    if body.startswith("\n"):
+        body = body[1:]
+    if not re.fullmatch(r"[0-9a-f]{64}", revision) or digest(body) != revision or body.count(EXECUTION_SOURCE_PREFIX) != 1:
+        return ""
+    matches = EXECUTION_SOURCE.findall(body)
+    return matches[0] if len(matches) == 1 else ""
+
+
+def update_execution_checkpoint(text, body):
+    # A missing/null value preserves the region; an explicit empty string may
+    # remove only an intact owned snapshot. It cannot consume a terminal source.
+    if body is None:
+        return text, False
+    if not isinstance(body, str) or "\x00" in body or len(body.encode("utf-8")) > LIMIT or EXECUTION_START in body or EXECUTION_END in body:
+        return text, True
+    start = text.find(EXECUTION_START)
+    if start < 0:
+        if EXECUTION_END in text:
+            return text, True
+        if not body:
+            return text, False
+        block = execution_block(body) + "\n\n"
+        separator = "\n\n"
+        if "\r\n" in text:
+            block = block.replace("\n", "\r\n")
+            separator = "\r\n\r\n"
+        at = text.find(STATE_START)
+        if at >= 0:
+            return text[:at] + block + text[at:], False
+        at = text.find("\n## ")
+        return (text[:at+1] + block + text[at+1:] if at >= 0 else text + separator + block), False
+    if text.count(EXECUTION_START) != 1 or text.count(EXECUTION_END) != 1:
+        return text, True
+    header_end, end = text.find(" -->", start), text.find(EXECUTION_END, start)
+    if header_end < 0 or end < header_end:
+        return text, True
+    revision = text[start+len(EXECUTION_START):header_end]
+    stored = text[header_end+len(" -->"):end].replace("\r\n", "\n")
+    if stored.startswith("\n"):
+        stored = stored[1:]
+    if not re.fullmatch(r"[0-9a-f]{64}", revision) or digest(stored) != revision:
+        return text, True
+    if not body:
+        after = text[end+len(EXECUTION_END):]
+        if after.startswith("\r\n\r\n"):
+            after = after[4:]
+        elif after.startswith("\n\n"):
+            after = after[2:]
+        return text[:start] + after, False
+    block = execution_block(body)
+    if "\r\n" in text[start:end]:
+        block = block.replace("\n", "\r\n")
+    return text[:start] + block + text[end+len(EXECUTION_END):], False
 
 
 def upgrade_legacy_worklog_header(text):
@@ -304,10 +377,20 @@ def main():
         requested = request.get("task_directory", "")
         if not valid_directory(task_id, requested):
             return ""
+        checkpoint = request.get("action") == "checkpoint"
+        if checkpoint:
+            try:
+                requested_fd, _ = parent(requested + "/_")
+                os.close(requested_fd)
+                return requested
+            except FileNotFoundError:
+                pass
         try:
-            names = entries(".duo/tasks")[:500]
+            names = entries(".duo/tasks")
         except FileNotFoundError:
             return requested
+        limited = len(names) > 500
+        names = names[:500]
         matches = []
         for name in names:
             directory = ".duo/tasks/" + name
@@ -319,6 +402,8 @@ def main():
             except (OSError, ValueError):
                 continue
             matches.append(directory)
+        if checkpoint and limited and not matches:
+            raise ValueError("工作区超过 500 个任务目录，未能确认当前任务的既有目录；已停止执行快照写入，避免重复新建任务目录")
         # Prefer an existing named archive to a legacy redirect or a newly
         # proposed name after the task was renamed. Every candidate remains
         # confined to this task's stable ID/hash.
@@ -483,6 +568,17 @@ def main():
             history_index(directory + "/history/README.md", index)
         if oversized:
             return
+        execution_content = file.get("execution_content")
+        if execution_content == "" and EXECUTION_START in text:
+            _, execution_conflict = update_execution_checkpoint(text, execution_content)
+            if not execution_conflict:
+                identity = execution_checkpoint_source(text)
+                if not identity.startswith(request.get("task_id", "") + "/") or identity not in seen or identity not in detailed:
+                    execution_content = None
+                    report["warnings"].append("执行快照对应的终态来源尚未写入时间记录，已保留快照；后续历史同步保存该来源后再自动清理。")
+        text, execution_conflict = update_execution_checkpoint(text, execution_content)
+        if execution_conflict:
+            report["warnings"].append("执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
         if file.get("state_incomplete", False):
             report["warnings"].append("任务状态历史不完整，已保留自动状态区；新进展仍写入时间记录。")
         else:
@@ -503,6 +599,29 @@ def main():
             report["warnings"].append("更新任务状态或导航将超过 1 MiB，保留主文档；新轮次已保存到历史分页。")
             return
         plain_write(relative, text, old)
+
+    def checkpoint_only(file):
+        relative = file.get("path", "")
+        if relative != report["main_document"] or not valid_directory(request.get("task_id", ""), relative.rsplit("/", 1)[0]):
+            raise ValueError("执行快照只能写入当前任务的主 Markdown 记录")
+        if file.get("execution_content") is None:
+            report["unchanged"] += 1
+            return
+        try:
+            old = read(relative)
+        except FileNotFoundError:
+            old = None
+        if old is None and file.get("execution_content") == "":
+            report["unchanged"] += 1
+            return
+        text = old if old is not None else file.get("content", "")
+        if not isinstance(text, str):
+            raise ValueError("任务记录内容格式无效")
+        updated, conflict = update_execution_checkpoint(text, file.get("execution_content"))
+        if conflict:
+            report["warnings"].append("执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
+            return
+        plain_write(relative, updated, old)
 
     def migrate(item):
         old, new, task_id = item["from"], item["to"], item["id"]
@@ -562,12 +681,20 @@ def main():
         if owned_directory:
             report["task_directory"] = owned_directory
             report["main_document"] = owned_directory + "/" + WORKLOG_NAME
-        if request["action"] == "sync":
+        if request["action"] in ("sync", "checkpoint"):
             for file in request.get("files", []):
-                if file.get("append_worklog"):
+                if request["action"] == "checkpoint" and not file.get("path"):
+                    file["path"] = report["main_document"]
+                if file.get("checkpoint_only"):
+                    checkpoint_only(file)
+                elif request["action"] == "checkpoint":
+                    raise ValueError("执行快照操作仅允许更新当前任务的执行快照")
+                elif file.get("append_worklog"):
                     append_worklog(file)
                 else:
                     write(file["path"], file["content"], file.get("create_only", False))
+            if request["action"] == "checkpoint":
+                return report
         if request["action"] == "save_document":
             relative, text, revision = request.get("path", ""), request.get("content"), request.get("revision", "")
             if not owned_directory or relative != report["main_document"]:

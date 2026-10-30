@@ -144,6 +144,11 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
  CREATE INDEX IF NOT EXISTS events_run ON events(run_id,kind,seq);
  CREATE TABLE IF NOT EXISTS feishu_card_actions(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,task_id TEXT NOT NULL,action TEXT NOT NULL,query TEXT NOT NULL DEFAULT '',offset INTEGER NOT NULL DEFAULT 0,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
  DELETE FROM feishu_card_actions WHERE expires<unixepoch()*1000;
+ ` + workspaceMemoryRetrySchema + `
+ -- Preserve an export receipt before recovering unfinished runs. Previously
+ -- interrupted history is not a reason to enqueue on every application open.
+ INSERT OR IGNORE INTO workspace_memory_sync_queue(task_id,next_at,attempts,paused)
+ SELECT DISTINCT task_id,0,0,0 FROM runs WHERE status IN ('running','queued');
  UPDATE runs SET status='interrupted',error='服务重启，请检查后继续',finished=unixepoch()*1000 WHERE status IN ('running','queued');
  UPDATE tasks SET status='interrupted' WHERE status IN ('running','queued');`)
 	if err != nil {

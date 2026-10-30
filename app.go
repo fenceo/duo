@@ -560,6 +560,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				})
 				lastVisibleAssistant := ""
 				if err == nil {
+					stopCheckpoint := a.startWorkspaceExecutionCheckpoint(task, r)
 					session, result, err = a.runner.Run(runCtx, cfg, task, executionInput(task, input), func(kind, text string) {
 						if kind == "context" {
 							var value RunContext
@@ -610,6 +611,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						_ = a.store.event(id, r.ID, kind, text)
 						a.changed()
 					})
+					stopCheckpoint()
 				}
 				if err == nil && r.Kind == "chat" && worklogRecall != nil {
 					ackSession := session

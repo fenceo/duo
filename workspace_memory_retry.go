@@ -34,11 +34,27 @@ ON CONFLICT(task_id) DO UPDATE SET paused=1`, task)
 ON CONFLICT(task_id) DO UPDATE SET next_at=excluded.next_at,attempts=min(7,workspace_memory_sync_queue.attempts+1),paused=0`, task, now()+delay.Milliseconds())
 		return
 	}
-	if report.SyncPending {
-		_, _ = a.store.ExecContext(ctx, `INSERT INTO workspace_memory_sync_queue(task_id,next_at,attempts,paused) VALUES(?,0,0,0)
+	// A normal history export excludes unfinished rounds. Keep its durable
+	// receipt until the live chat ends, even when all terminal history is done.
+	// The transaction makes the active-run check and receipt update indivisible
+	// with respect to another run's startup/finalization on the same store.
+	tx, err := a.store.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	var active bool
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM runs WHERE task_id=? AND kind='chat' AND status IN ('running','queued'))", task).Scan(&active); err != nil {
+		return
+	}
+	if report.SyncPending || active {
+		_, err = tx.ExecContext(ctx, `INSERT INTO workspace_memory_sync_queue(task_id,next_at,attempts,paused) VALUES(?,0,0,0)
 ON CONFLICT(task_id) DO UPDATE SET next_at=0,attempts=0,paused=0`, task)
 	} else {
-		_, _ = a.store.ExecContext(ctx, "DELETE FROM workspace_memory_sync_queue WHERE task_id=?", task)
+		_, err = tx.ExecContext(ctx, "DELETE FROM workspace_memory_sync_queue WHERE task_id=?", task)
+	}
+	if err == nil {
+		_ = tx.Commit()
 	}
 }
 
