@@ -1,8 +1,9 @@
-type LibraryDocument={scope_key?:string;source_id?:string;source_hash?:string;source_task_id?:string;applicability?:string;evidence?:string;credential_ref?:string;tags?:string[];layer?:string;generated?:boolean;content?:string;id:string;kind:string;source?:string;task_id:string;task_title:string;title:string;status:string;revision:number;updated:number;origin:string;path?:string;hash:string;snippet:string};
+type KnowledgeRevision={key:string;content:string;evidence:string;applicability:string;tags:string[];source_id:string;source_task_id:string;created:number};
+type LibraryDocument={scope_key?:string;source_id?:string;source_hash?:string;source_task_id?:string;applicability?:string;evidence?:string;credential_ref?:string;tags?:string[];pending_revisions?:KnowledgeRevision[];layer?:string;generated?:boolean;content?:string;id:string;kind:string;source?:string;task_id:string;task_title:string;title:string;status:string;revision:number;updated:number;origin:string;path?:string;hash:string;snippet:string};
 type LibraryReference={document?:LibraryDocument;reference:string;preview?:string;truncated:boolean};
-type VaultConfig={enabled:boolean;directory:string;include_runs:boolean;include_automatic:boolean;task_folders?:boolean;consensus_directory?:string;system_directory?:string;project_directory?:string};
-type KnowledgeExtractionConfig={enabled:boolean;needs_directory?:boolean};
-type KnowledgeExtractionReport={created:number;duplicates:number;skipped:number;items?:CuratedKnowledge[];warnings?:string[]};
+type VaultConfig={enabled:boolean;directory:string;include_runs:boolean;include_automatic:boolean;task_folders?:boolean;consensus_directory?:string;system_directory?:string;project_directory?:string;root_mode?:'direct'|'legacy';include_legacy?:boolean;human_layout?:boolean};
+type KnowledgeExtractionConfig={enabled:boolean;needs_directory?:boolean;scheduled?:boolean;interval_hours?:number;last_organized?:number;last_error?:string};
+type KnowledgeExtractionReport={created:number;revisions?:number;duplicates:number;skipped:number;items?:CuratedKnowledge[];warnings?:string[]};
 type AutomaticKnowledgeConfig={capture:boolean;recall:boolean;organize?:boolean};
 type VaultReport={updated:number;exported:number;imported:number;indexed:number;conflicts:string[];warnings:string[];error?:string};
 type VaultSettingsResponse={config:VaultConfig;report:VaultReport;document_directory:string};
@@ -15,6 +16,7 @@ let vaultSettingsRequest=0,vaultSettingsReady=false,vaultSettingsSaving=false,va
 let automaticSettingsDirty=false,vaultSettingsDirty=false,knowledgeSettingsRequest=0;
 let knowledgeSettingsLoading:Promise<void>|null=null;
 let knowledgeExtractionRequest=0,knowledgeExtractionBusy=false,knowledgeExtractionSettingsReady=false,knowledgeExtractionSettingsDirty=false,knowledgeExtractionSettingsBusy=false;
+let knowledgeExtractionActionRequest=0;
 let workspaceDocumentRequest=0,workspaceDocumentTask='',workspaceDocumentPath='';
 function libraryTargetCurrent(){return !!libraryTarget&&shellCurrent(libraryTarget.epoch)&&selection===libraryTarget.selection&&creatingTask===libraryTarget.create&&(creatingTask||chosen===libraryTarget.task)}
 function installLibrary(){
@@ -72,7 +74,7 @@ function installLibraryBrowser(){
  button('library-more').onclick=()=>void searchLibrary(true);
  button('library-read-more').onclick=()=>{libraryPreviewLimit+=20000;renderLibraryDocument()};
  button('library-download').onclick=()=>{const hit=libraryHits.find(d=>d.id===libraryPreviewID);if(!hit||!libraryPreviewText)return;const url=URL.createObjectURL(new Blob([libraryPreviewText],{type:'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=(hit.path?.split('/').at(-1)||'document.md');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
- element('library-preview-content').onclick=e=>{const link=(e.target as HTMLElement).closest<HTMLAnchorElement>('a');if(!link)return;const href=link.getAttribute('href')||'';if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href))return;e.preventDefault();void followLibraryLink(href)};
+ element('library-preview-content').onclick=e=>{const revision=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-knowledge-revision]');if(revision){void resolveKnowledgeRevision(revision.dataset.knowledgeRevision||'',revision.dataset.accept==='true');return}const link=(e.target as HTMLElement).closest<HTMLAnchorElement>('a');if(!link)return;const href=link.getAttribute('href')||'';if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href))return;e.preventDefault();void followLibraryLink(href)};
  button('library-preview-back').onclick=()=>clearLibraryPreview(true);
  button('library-preview-cite').onclick=()=>void citeLibrary(libraryPreviewID);
  button('library-preview-source').onclick=()=>{const hit=libraryHits.find(d=>d.id===libraryPreviewID),taskID=hit?.source_task_id||hit?.task_id;if(!hit||!taskID||!tasks.some(t=>t.id===taskID&&!t.deleted))return;dialog.close();void choose(taskID,hit.kind==='knowledge'||hit.kind==='curated'?'note':'chat')};
@@ -103,7 +105,7 @@ async function loadLibraryOverview(){
  element('library-overview').innerHTML=parts.map(s=>'<span>'+escapeHTML(s)+'</span>').join('');
 }
 function installLibrarySettings(){
- element('library-dialog').insertAdjacentHTML('beforeend',`<section id="settings-knowledge" class="library-settings-panel hidden" aria-label="积累设置"><h3>积累设置</h3><p>先选一个便于阅读和同步的目录。每个任务有一篇 Markdown 主文档，集中阅读目标、当前进展、结论和后续事项；可直接用 Obsidian 或其他编辑器打开。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的积累目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
+ element('library-dialog').insertAdjacentHTML('beforeend',`<section id="settings-knowledge" class="library-settings-panel hidden" aria-label="知识库设置"><h3>知识库设置</h3><p>任务记录保存在工作区，长期可复用的知识保存在你的笔记目录。两层资料各有一份可阅读、可编辑的 Markdown，不把每次提问都变成知识笔记。</p><details class="knowledge-storage-info"><summary>运行数据与迁移（高级）</summary><code id="knowledge-data-directory" class="data-dir-path"></code><p>任务、对话和知识共用此目录中的数据库。下面设置的笔记目录用于保存可阅读的 Markdown，不会迁移运行数据；切换完整运行数据请到“数据与存储”。</p></details></section>`);
  const section=element('settings-knowledge');
  for(const id of ['vault-settings','automatic-knowledge-settings']){const panel=element<HTMLDetailsElement>(id);panel.open=true;section.append(panel)}
  section.append(section.querySelector('.knowledge-storage-info')!);
@@ -124,7 +126,7 @@ function installLibraryPages(){
  const dialog=element<HTMLDialogElement>('library-dialog'),section=element('settings-knowledge'),header=dialog.querySelector('.library-header')!;
  const browse=document.createElement('section');browse.id='library-browse-panel';browse.setAttribute('aria-label','浏览资料');
  for(const node of Array.from(dialog.children))if(node!==header&&node!==section)browse.append(node);
- header.insertAdjacentHTML('afterend','<nav class="library-pages" aria-label="知识库页面"><button type="button" id="library-browse-open" class="selected" aria-pressed="true" aria-controls="library-browse-panel">浏览资料</button><button type="button" id="library-settings-open" aria-pressed="false" aria-controls="settings-knowledge">积累设置</button></nav>');
+ header.insertAdjacentHTML('afterend','<nav class="library-pages" aria-label="知识库页面"><button type="button" id="library-browse-open" class="selected" aria-pressed="true" aria-controls="library-browse-panel">阅读知识</button><button type="button" id="library-settings-open" aria-pressed="false" aria-controls="settings-knowledge">目录与整理</button></nav>');
  dialog.append(browse,section);
  button('library-browse-open').onclick=()=>{showLibraryPage('browse');void loadLibraryOverview();if(!libraryBrowseStarted)void searchLibrary();input('library-query').focus()};
  button('library-settings-open').onclick=()=>void openLibrarySettings();
@@ -190,6 +192,7 @@ async function saveAutomaticKnowledge(){
 }
 async function searchLibrary(append=false){
  if(append&&libraryLoading)return;
+ renderKnowledgeLayerHelp();
  const token=++libraryRequest,epoch=shellEpoch;libraryLoading=true;libraryBrowseStarted=true;
  if(!append){libraryHits=[];libraryNextOffset=0;libraryHasMore=false;clearLibraryPreview();element('library-results').textContent='';button('library-more').classList.add('hidden');if(knowledgeGraphOpen){knowledgeGraphRequest++;knowledgeGraphDocuments=[];element('knowledge-graph').innerHTML='';element('knowledge-graph-accessible').textContent='';element('knowledge-graph-state').textContent='正在按当前条件重新读取图谱…'}}
  const q=new URLSearchParams({q:input('library-query').value,kind:input('library-kind').value,source:input('library-source').value,task:input('library-scope').value,stale:input('library-stale').checked?'1':'0',layer:input('library-layer')?.value||'',tag:input('library-tag')?.value.trim()||'',offset:String(append?libraryNextOffset:0)});
@@ -211,7 +214,7 @@ async function previewLibrary(id:string){
  libraryPreviewDocument=null;button('library-promote').classList.add('hidden');button('library-curated-edit').classList.add('hidden');
  libraryPreviewText='';button('library-download').classList.add('hidden');button('library-read-more').classList.add('hidden');
  element('library-workspace').classList.add('preview-open');element('library-preview-title').textContent=hit.title;
- element('library-preview-meta').textContent=libraryDescription(hit)+' · '+(hit.task_title||'独立笔记')+(hit.path?' · Duo/'+hit.path:'');
+ element('library-preview-meta').textContent=libraryDescription(hit)+' · '+(hit.scope_key||hit.task_title||'共用知识')+(hit.path?' · '+hit.path:'');
  element('library-preview-content').textContent='';element('library-preview-status').textContent='正在读取预览…';button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');highlightLibraryPreview();
  try{const result=await api<LibraryDocument>('library/document?'+new URLSearchParams({id,hash:hit.hash}),'GET',undefined,shellController.signal);if(token!==libraryPreviewRequest||!shellCurrent(epoch))return;
   libraryPreviewText=result.content||'';libraryPreviewLimit=20000;libraryPreviewDocument=result;renderLibraryDocument();
@@ -250,19 +253,19 @@ function showVaultReport(r:VaultReport){
  element('vault-status').textContent=r.error?'同步失败：'+r.error:r.updated?`索引 ${r.indexed} 份文档；写入 ${r.exported}，导入结论修改 ${r.imported}。${r.conflicts?.length?'存在编辑冲突，请查看详情。':''}`:'尚未同步。';
  const details=[...(r.conflicts||[]).map(s=>'冲突：'+s),...(r.warnings||[]).map(s=>'提示：'+s)];element('vault-problems').textContent=details.join('\n');element('vault-problems').classList.toggle('hidden',!details.length);
 }
-function setVaultControlsDisabled(disabled:boolean){for(const id of ['vault-directory','vault-consensus-directory','vault-system-directory','vault-project-directory','vault-enabled','vault-runs','vault-automatic','vault-save','vault-refresh'])if(element(id))input(id).disabled=disabled}
+function setVaultControlsDisabled(disabled:boolean){for(const id of ['vault-directory','vault-root-mode','vault-consensus-directory','vault-system-directory','vault-project-directory','vault-enabled','vault-legacy','vault-runs','vault-automatic','vault-save','vault-refresh'])if(element(id))input(id).disabled=disabled}
 function showVaultLocation(directory:string,enabled:boolean){element('vault-document-directory').textContent=directory?(directory+(enabled?'':'（同步未启用）')):'尚未设置有效的知识文件根目录'}
 async function loadVault(){
  if(vaultSettingsSaving||vaultRefreshing||vaultSettingsDirty)return;
  const epoch=shellEpoch,token=++vaultSettingsRequest;vaultSettingsReady=false;setVaultControlsDisabled(true);element('vault-status').textContent='正在读取知识库设置…';
- try{const v=await api<VaultSettingsResponse>('library/vault','GET',undefined,shellController.signal);if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;input('vault-directory').value=v.config.directory||'';input('vault-consensus-directory').value=v.config.consensus_directory||'consensus';input('vault-system-directory').value=v.config.system_directory||'system';input('vault-project-directory').value=v.config.project_directory||'projects';input('vault-enabled').checked=v.config.enabled;input('vault-runs').checked=v.config.include_runs;input('vault-automatic').checked=!!v.config.include_automatic;showVaultLocation(v.document_directory,v.config.enabled);showVaultReport(v.report);vaultSettingsReady=true}
+ try{const v=await api<VaultSettingsResponse>('library/vault','GET',undefined,shellController.signal);if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;const human=v.config.human_layout||!v.config.directory;input('vault-directory').value=v.config.directory||'';input('vault-root-mode').value=v.config.root_mode||(v.config.directory?'legacy':'direct');input('vault-consensus-directory').value=v.config.consensus_directory||(human?'平台共识':'consensus');input('vault-system-directory').value=v.config.system_directory||(human?'系统知识':'system');input('vault-project-directory').value=v.config.project_directory||(human?'项目知识':'projects');input('vault-enabled').checked=v.config.enabled;input('vault-legacy').checked=v.config.include_legacy??!!v.config.directory;input('vault-runs').checked=v.config.include_runs;input('vault-automatic').checked=!!v.config.include_automatic;showVaultLocation(v.document_directory,v.config.enabled);showVaultReport(v.report);vaultSettingsReady=true}
  catch(e){if(token===vaultSettingsRequest&&shellCurrent(epoch))element('vault-status').textContent=(e as Error).message}
  finally{if(token===vaultSettingsRequest&&shellCurrent(epoch))setVaultControlsDisabled(!vaultSettingsReady)}
 }
 async function saveVault(){
  if(!vaultSettingsReady||vaultSettingsSaving||vaultRefreshing)return;
  const epoch=shellEpoch,token=++vaultSettingsRequest;vaultSettingsSaving=true;setVaultControlsDisabled(true);
- try{const saved=await api<VaultConfig&{document_directory:string}>('library/vault','PUT',{directory:input('vault-directory').value.trim(),consensus_directory:input('vault-consensus-directory').value.trim(),system_directory:input('vault-system-directory').value.trim(),project_directory:input('vault-project-directory').value.trim(),enabled:input('vault-enabled').checked,include_runs:input('vault-runs').checked,include_automatic:input('vault-automatic').checked,task_folders:true});if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;vaultSettingsDirty=false;showVaultLocation(saved.document_directory,saved.enabled);element('vault-status').textContent='设置已保存，正在同步…';await syncVaultView(epoch,token)}
+ try{const saved=await api<VaultConfig&{document_directory:string}>('library/vault','PUT',{directory:input('vault-directory').value.trim(),root_mode:input('vault-root-mode').value==='legacy'?'legacy':'direct',consensus_directory:input('vault-consensus-directory').value.trim(),system_directory:input('vault-system-directory').value.trim(),project_directory:input('vault-project-directory').value.trim(),enabled:input('vault-enabled').checked,include_legacy:input('vault-legacy').checked,include_runs:input('vault-runs').checked,include_automatic:input('vault-automatic').checked,task_folders:true,human_layout:true});if(token!==vaultSettingsRequest||!shellCurrent(epoch))return;vaultSettingsDirty=false;showVaultLocation(saved.document_directory,saved.enabled);element('vault-status').textContent='设置已保存，正在同步…';await syncVaultView(epoch,token)}
  catch(e){if(token===vaultSettingsRequest&&shellCurrent(epoch))element('vault-status').textContent=(e as Error).message}
  finally{if(token===vaultSettingsRequest&&shellCurrent(epoch)){vaultSettingsSaving=false;setVaultControlsDisabled(false)}}
 }
@@ -281,9 +284,20 @@ function renderLibraryDocument(){
  const cut=libraryPreviewText.length>libraryPreviewLimit;
  const d=libraryPreviewDocument;
  const metadata=d?.kind==='curated'?'<section class="curated-metadata"><p><strong>'+escapeHTML(libraryDescription(d))+'</strong> · '+escapeHTML(knowledgeStateText(d.status))+(d.scope_key?' · '+escapeHTML(d.scope_key):'')+'</p>'+[['适用条件',d.applicability],['实际依据',d.evidence],['安全配置引用',d.credential_ref],['原始来源',d.source_id]].filter(([,value])=>value).map(([title,value])=>'<p><strong>'+title+'</strong><br>'+escapeHTML(value!)+'</p>').join('')+'</section>':'';
- element('library-preview-content').innerHTML=metadata+markdown(libraryPreviewText.slice(0,libraryPreviewLimit));
+ const revisions=d?.kind==='curated'&&d.pending_revisions?.length?'<details class="knowledge-pending-revisions"><summary>待处理修订（'+d.pending_revisions.length+'）</summary><p>原正文保持不变。采用修订会更新正文并退回待验证；请先检查依据与适用条件。</p>'+d.pending_revisions.map(r=>'<article><h4>修订候选 · '+escapeHTML(new Date(r.created).toLocaleString())+'</h4><div class="content">'+markdown(r.content)+'</div><p><strong>依据</strong> '+escapeHTML(r.evidence||'未提供，需核查')+'</p><p><strong>适用条件</strong> '+escapeHTML(r.applicability||'未说明')+'</p><p class="library-tags">'+(r.tags||[]).map(t=>'#'+escapeHTML(t)).join(' · ')+'</p><p class="muted">来源：'+escapeHTML(r.source_id||r.source_task_id||'未提供')+'</p><div class="actions"><button type="button" data-knowledge-revision="'+escapeHTML(r.key)+'" data-accept="true"'+(knowledgeRevisionBusy?' disabled':'')+'>采用修订（退回待验证）</button><button type="button" data-knowledge-revision="'+escapeHTML(r.key)+'" data-accept="false"'+(knowledgeRevisionBusy?' disabled':'')+'>忽略修订</button></div></article>').join('')+'<p id="library-revision-state" role="status"></p></details>':'';
+ element('library-preview-content').innerHTML=metadata+markdown(libraryPreviewText.slice(0,libraryPreviewLimit))+revisions;
  button('library-read-more').classList.toggle('hidden',!cut);button('library-download').classList.toggle('hidden',!libraryPreviewText);
  element('library-preview-status').textContent=cut?'长文档分段显示，可继续阅读或下载全文。':'已读取全文。引用到输入框时最多带入 6000 字符，并保留来源。';
+}
+async function resolveKnowledgeRevision(key:string,accept:boolean){
+ const doc=libraryPreviewDocument;if(knowledgeRevisionBusy||!doc||doc.kind!=='curated'||!doc.pending_revisions?.some(r=>r.key===key))return;
+ if(curatedDirty||curatedSaving||element<HTMLDialogElement>('curated-dialog').open){notify('请先保存、放弃或关闭正在编辑的知识草稿，再处理修订。');return}
+ const epoch=shellEpoch,request=++knowledgeRevisionRequest,preview=libraryPreviewRequest,id=doc.id;let applied=false;
+ const current=()=>shellCurrent(epoch)&&request===knowledgeRevisionRequest&&preview===libraryPreviewRequest&&libraryPreviewID===id;
+ knowledgeRevisionBusy=true;renderLibraryDocument();element('library-revision-state').textContent=accept?'正在采用修订…':'正在忽略修订…';
+ try{await api<CuratedKnowledge>('library/curated/'+encodeURIComponent(id.replace(/^curated:/,''))+'/revisions/'+encodeURIComponent(key),'POST',{revision:doc.revision,accept});applied=true;if(!current()){if(shellCurrent(epoch))notify(accept?'原文档修订已采用，并退回待验证。':'原文档修订已忽略。');return}const updated=await api<LibraryDocument>('library/document?'+new URLSearchParams({id}),'GET',undefined,shellController.signal);if(!current())return;libraryPreviewDocument=updated;libraryPreviewText=updated.content||'';libraryHits=libraryHits.map(hit=>hit.id===id?updated:hit);knowledgeRevisionBusy=false;renderLibraryDocument();element('library-preview-status').textContent=accept?'修订已采用，知识已退回待验证；请核查后确认。':'修订已忽略，原正文保持不变。'}
+ catch(e){if(current()){const state=element('library-revision-state');if(state)state.textContent=(applied?'修订已处理，但重新读取失败；请刷新文件后查看：':'处理失败，原预览已保留：')+(e as Error).message}}
+ finally{if(shellCurrent(epoch)&&request===knowledgeRevisionRequest){knowledgeRevisionBusy=false;if(current())element('library-preview-content').querySelectorAll<HTMLButtonElement>('[data-knowledge-revision]').forEach(b=>b.disabled=false)}}
 }
 async function followLibraryLink(href:string){
  const current=libraryHits.find(d=>d.id===libraryPreviewID);if(!current?.path)return;
@@ -293,34 +307,50 @@ async function followLibraryLink(href:string){
  try{const doc=await api<LibraryDocument>('library/document?'+new URLSearchParams({id:'document:'+relative}));if(request!==libraryPreviewRequest||!shellCurrent(epoch))return;libraryHits=libraryHits.filter(d=>d.id!==doc.id);libraryHits.push(doc);await previewLibrary(doc.id)}catch(e){if(request===libraryPreviewRequest&&shellCurrent(epoch))element('library-preview-status').textContent='无法打开来源文档：'+(e as Error).message}
 }
 
-type CuratedKnowledge={id:string;layer:string;scope_key:string;title:string;content:string;status:string;source_id:string;source_hash:string;source_task_id:string;applicability:string;evidence:string;credential_ref:string;tags:string[];revision:number;created:number;updated:number};
+type CuratedKnowledge={id:string;layer:string;scope_key:string;title:string;content:string;status:string;source_id:string;source_hash:string;source_task_id:string;applicability:string;evidence:string;credential_ref:string;tags:string[];pending_revisions?:KnowledgeRevision[];revision:number;created:number;updated:number};
 type WorkspaceMemoryReport={enabled:boolean;directory:string;task_directory:string;main_document?:string;exported:number;unchanged:number;tasks:{id:string;title:string;path:string;updated:number;excerpt:string}[];documents?:{path:string;title:string;kind:string}[];conflicts:string[];warnings:string[];error?:string;error_code?:string};
 type WorkspaceDocument={path:string;content:string;revision?:string;editable?:boolean};
 type WorkspaceDocumentDraft=WorkspaceDocument&{task:string;dirty:boolean;editing:boolean;saving:boolean;status:string};
 const workspaceDocumentDrafts=new Map<string,WorkspaceDocumentDraft>(),workspaceInitialSync=new Set<string>();
 function workspaceDraftKey(task:string,path:string){return task+'\n'+path}
 function workspaceDraftsPending(){return Array.from(workspaceDocumentDrafts.values()).some(d=>d.dirty||d.saving)}
-let libraryPreviewDocument:LibraryDocument|null=null,curatedDraft:Partial<CuratedKnowledge>|null=null,curatedDirty=false,curatedSaving=false,curatedRequest=0,workspaceMemoryRequest=0,workspaceMemorySaving=false;
+let libraryPreviewDocument:LibraryDocument|null=null,curatedDraft:Partial<CuratedKnowledge>|null=null,curatedDirty=false,curatedSaving=false,curatedRequest=0,workspaceMemoryRequest=0,workspaceMemorySaving=false,knowledgeRevisionBusy=false,knowledgeRevisionRequest=0;
 function installKnowledgeLayers(){
  const nav=element('library-dialog').querySelector('.library-layers')!;
  const layerButton=([id,title]:string[])=>`<button type="button" data-library-layer="${id}" aria-pressed="${id==='consensus'}" class="${id==='consensus'?'selected':''}">${title}</button>`;
- nav.innerHTML=[['consensus','平台共识'],['system','系统知识'],['project','项目知识']].map(layerButton).join('')+'<details id="library-history" class="library-history"><summary>历史资料</summary><div>'+[['tasks','任务资料'],['knowledge','候选结论'],['all','全部资料']].map(layerButton).join('')+'</div></details>';
+ nav.innerHTML=[['consensus','平台共识'],['system','系统知识'],['project','项目知识']].map(layerButton).join('')+'<details id="library-history" class="library-history"><summary>旧资料（兼容）</summary><div>'+[['tasks','任务资料'],['knowledge','候选结论'],['all','全部资料']].map(layerButton).join('')+'</div></details>';
  input('library-layer').value='consensus';
+ nav.insertAdjacentHTML('afterend','<p id="library-layer-help" class="library-layer-help"></p>');
  nav.querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>b.onclick=()=>{input('library-layer').value=b.dataset.libraryLayer!;input('library-kind').value='';input('library-source').value='';input('library-scope').value='';nav.querySelectorAll<HTMLButtonElement>('button').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b))});void searchLibrary()});
+ renderKnowledgeLayerHelp();
  element('library-preview').querySelector('.library-preview-actions')!.insertAdjacentHTML('beforeend','<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
- element('library-search-form').insertAdjacentHTML('afterend','<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建正式知识</button><button type="button" id="library-extract">一键提取已有资料</button><button type="button" id="library-ai-extract">AI 整理并提取本任务</button><span class="muted">已有候选可直接提取；AI 整理会发送本任务历史并消耗模型额度。</span></div><p id="library-extraction-state" class="muted" role="status"></p>');
+ element('library-search-form').insertAdjacentHTML('afterend','<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建知识</button><button type="button" id="library-extract">一键整理已有候选</button><button type="button" id="library-ai-extract">用 AI 整理本任务</button><span class="muted">一键整理复用已保存的分层候选，不调用模型。AI 整理需确认并消耗额度。</span></div><p id="library-extraction-state" class="muted" role="status"></p>');
  button('library-extract').onclick=()=>void extractRecordedKnowledge();button('library-ai-extract').onclick=()=>void extractTaskKnowledgeWithAI();
  button('library-curated-new').onclick=()=>openCuratedEditor();button('library-promote').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);button('library-curated-edit').onclick=()=>openCuratedEditor(libraryPreviewDocument||undefined);
  element('library-dialog').querySelector('.library-header p')!.textContent='在这里查找和编辑平台共识、系统知识、项目知识。每个任务的连续记录从左侧任务菜单打开。';
  element('library-dialog').querySelector('.library-help p')!.textContent='连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
- element('settings-knowledge').querySelector('p')!.textContent='过程资料随工作区，共识随 Duo，系统和项目知识放在你指定的 Obsidian 目录。已有记录与旧目录保留，不自动删除或搬移。';
+ element('settings-knowledge').querySelector('p')!.textContent='第一层是工作区里的任务记录，维护目标、计划、进展、决策与证据，供切换 AI 和同工作区任务接续。第二层是笔记目录里的平台共识、系统知识、项目知识，提取可复用内容供你阅读学习和 AI 查找。';
+ element('vault-settings').querySelector('summary')!.textContent='1. 笔记根目录与知识分类';
+ element('vault-settings').querySelector('p')!.textContent='选择运行 Duo 的这台电脑上的 Obsidian 笔记目录。新设置默认直接使用所选目录；已有配置保留兼容路径。开启同步后每分钟检查 Markdown，也可立即同步。';
+ input('vault-directory').previousSibling!.textContent='笔记根目录（Duo 服务所在电脑）';
  const guide=element('settings-knowledge').querySelector('.knowledge-directory-guide')!;
- guide.innerHTML='<strong>按任务阅读，按层级复用</strong><p>工作区过程：<code>&lt;workspace&gt;/.duo/tasks/任务名-短ID/</code>，包含任务说明、交接摘要和逐轮记录，改名不会丢失历史。</p><p>在上方选择 Obsidian 根目录后，保存即创建三类文件夹：<code>Duo/consensus/</code>、<code>Duo/system/</code>、<code>Duo/projects/</code>。下方可分别自定义文件夹名；更换目录保留原文件。</p><p>平台共识、系统知识和项目知识都保留标签与来源，可在 Duo 中阅读、编辑和查看关系图谱。已确认的平台共识才自动供新会话参考。</p>';
+ guide.innerHTML='<strong>两层资料，一条积累路径</strong><div class="knowledge-flow"><section><h4>任务记录 · 工作区</h4><code>&lt;workspace&gt;/.duo/tasks/任务名-短ID/任务记录.md</code><p>持续维护当前状态与时间进展；原始对话保留来源。每个任务从左侧任务菜单打开，同工作区可以互相参考。</p></section><span aria-hidden="true">→</span><section><h4>可复用知识 · 笔记目录</h4><p>平台共识 / 系统知识 / 项目知识</p><p>按主题成文，保留依据、适用条件、标签与任务来源。在知识库阅读、编辑或查看关系图谱。</p></section></div><p>只把用户明确约定的跨任务习惯放进平台共识；通用原理归系统知识，具体项目结论归项目知识。候选保持待验证，确认状态不等同于自动完成实际测试。</p>';
  input('vault-directory').placeholder='选择你的 Obsidian 笔记根目录';
- const locationHint=element('vault-document-directory');locationHint.parentElement!.replaceChildren(document.createTextNode('选择根目录并开启同步后，知识文件将写入三类目录。实际文件目录：'),locationHint);
- input('vault-directory').closest('label')!.insertAdjacentHTML('afterend','<div class="knowledge-layer-directories"><label>平台共识文件夹<input id="vault-consensus-directory" placeholder="consensus" maxlength="200"></label><label>系统知识文件夹<input id="vault-system-directory" placeholder="system" maxlength="200"></label><label>项目知识文件夹<input id="vault-project-directory" placeholder="projects" maxlength="200"></label><p class="muted">文件夹相对于所选根目录内的 Duo/，可用中文名称或多级相对路径；三个目录不可相互包含。设置跟随本机，Markdown 与标签可通过 Git 等工具跨平台同步。</p></div>');
- for(const id of ['vault-consensus-directory','vault-system-directory','vault-project-directory']){input(id).disabled=!vaultSettingsReady;input(id).oninput=input(id).onchange=()=>{vaultSettingsDirty=true;element('vault-status').textContent='路径与同步设置尚未保存。'}}
- element('automatic-knowledge-settings').querySelector('p')!.textContent='自动记录把任务过程写入实际工作区。自动整理让正常回复输出摘要、带标签的分层候选，不另起模型；自动提取开启后把分类候选分别写入平台共识、系统知识和项目知识，均标为待验证。旧任务可一键提取已有候选，缺少候选时可选择 AI 重新整理。';
+ const locationHint=element('vault-document-directory');locationHint.parentElement!.replaceChildren(document.createTextNode('选择根目录并开启同步后，知识文件将写入三类目录。实际知识根目录：'),locationHint);
+ input('vault-directory').closest('label')!.insertAdjacentHTML('afterend','<label>根目录方式<select id="vault-root-mode"><option value="direct">所选目录就是知识根（新配置推荐）</option><option value="legacy">兼容旧配置：所选目录下的 Duo/</option></select></label><div class="knowledge-layer-directories"><label>平台共识相对目录<input id="vault-consensus-directory" placeholder="平台共识" maxlength="200"></label><label>系统知识相对目录<input id="vault-system-directory" placeholder="系统知识" maxlength="200"></label><label>项目知识相对目录<input id="vault-project-directory" placeholder="项目知识" maxlength="200"></label><p class="muted">三个目录相对于实际知识根，可用中文名称或多级相对路径，不可相互包含。更换根目录方式或路径不会搬走、删除原件。保存后采用按主题命名的可读布局；有外部修改的文件保留原路径，避免覆盖。</p></div>');
+ for(const id of ['vault-root-mode','vault-consensus-directory','vault-system-directory','vault-project-directory']){input(id).disabled=!vaultSettingsReady;input(id).oninput=input(id).onchange=()=>{vaultSettingsDirty=true;element('vault-status').textContent='路径与同步设置尚未保存。'}}
+ input('vault-enabled').closest('label')!.lastChild!.textContent='启用三类知识的 Markdown 同步与索引';
+ const legacy=document.createElement('details');legacy.id='vault-legacy-settings';legacy.className='knowledge-legacy-settings';legacy.innerHTML='<summary>旧资料镜像（兼容）</summary><label><input type="checkbox" id="vault-legacy">继续往笔记库导出旧资料镜像</label><p>默认只导出三类正式知识。关闭旧资料镜像后，不再向笔记库追加聊天摘录、旧知识片段和主题索引；已导出文件不删除，原始来源仍在 Duo 与工作区保留。</p>';
+ input('vault-enabled').closest('label')!.after(legacy);
+ for(const id of ['vault-runs','vault-automatic'])legacy.append(input(id).closest('label')!);
+ const legacyPrivacy=Array.from(element('vault-settings').querySelectorAll('p')).find(p=>p.textContent?.startsWith('同步文件包含问题、回复和结论'));if(legacyPrivacy)legacy.append(legacyPrivacy);
+ input('vault-automatic').closest('label')!.lastChild!.textContent='镜像旧版自动资料、片段与主题索引';
+ input('vault-legacy').disabled=!vaultSettingsReady;input('vault-legacy').onchange=()=>{vaultSettingsDirty=true;element('vault-status').textContent='旧资料镜像设置尚未保存。'};
+ const storageNote=guide.nextElementSibling;if(storageNote)storageNote.textContent='更换目录会同步三类知识，旧目录保留；独立笔记需自行复制。知识正文可直接在 Obsidian 编辑，同步冲突会保留两端内容。';
+ element('automatic-knowledge-settings').querySelector('summary')!.textContent='2. 任务记录与每轮候选';
+ element('automatic-knowledge-settings').querySelector('p')!.textContent='自动记录维护工作区任务文档。自动整理让正常回复给出任务状态变化和带标签的分层候选，不另起模型；没有新进展时不编造记录，没有可复用内容时不创建知识。';
+ input('automatic-capture').closest('label')!.lastChild!.textContent='自动记录完成的对话并更新工作区任务资料';
+ input('automatic-organize').closest('label')!.lastChild!.textContent='随正常回复整理任务状态与可复用知识候选（增加本轮输出）';
  input('automatic-recall').closest('label')!.lastChild!.textContent='新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
  element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent='同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
  element('notebook').querySelector('.knowledge-panel-help')!.textContent='这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
@@ -342,8 +372,8 @@ function installKnowledgeLayers(){
  input('workspace-memory-editor').oninput=()=>{const draft=activeWorkspaceDraft();if(!draft||draft.saving)return;draft.content=input('workspace-memory-editor').value;draft.dirty=true;draft.status='修改尚未保存；切换任务后草稿仍保留。';renderWorkspaceDocumentControls(draft)};
  element('workspace-memory-documents').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-workspace-document]');if(b)void readWorkspaceMemoryDocument(b.dataset.workspaceDocument||'')};
  element('workspace-memory-content').onclick=e=>{const link=(e.target as HTMLElement).closest<HTMLAnchorElement>('a');if(!link||!workspaceDocumentPath)return;const href=link.getAttribute('href')||'';if(!href||/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href))return;e.preventDefault();const parts=workspaceDocumentPath.split('/').slice(0,-1);for(const part of href.split('#')[0].split('/')){if(!part||part==='.')continue;if(part==='..')parts.pop();else parts.push(part)}const target=parts.join('/');if(target.endsWith('.md'))void readWorkspaceMemoryDocument(target)};
- element('automatic-knowledge-settings').insertAdjacentHTML('beforeend','<div class="knowledge-extraction-settings"><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>自动提取三类知识（均保留来源、标签及待验证状态）</label><p>复用本轮正常回复中的分层结果，不额外调用模型。先配置上方根目录并开启同步；没有分类候选时保留原记录，不编造知识。此开关单独保存。</p><button type="button" id="knowledge-extraction-save" disabled>保存自动提取设置</button><p id="knowledge-extraction-settings-state" role="status"></p></div>');
- input('knowledge-extraction-enabled').onchange=()=>{knowledgeExtractionSettingsDirty=true;element('knowledge-extraction-settings-state').textContent='自动提取设置尚未保存。'};
+ element('automatic-knowledge-settings').insertAdjacentHTML('beforeend','<section class="knowledge-extraction-settings"><h4>3. 将候选整理进笔记</h4><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>每轮结束后自动归入三类知识</label><label><input id="knowledge-extraction-scheduled" type="checkbox" disabled>定时整理已有候选</label><label class="knowledge-schedule-interval">整理间隔（小时，1～168）<input id="knowledge-extraction-interval" type="number" min="1" max="168" step="1" value="24" disabled></label><p>自动、定时及“一键整理已有候选”都复用已保存的分层结果，不额外调用模型。没有候选时保留任务记录；要重新理解旧对话，请在阅读知识页选择“用 AI 整理本任务”，确认后才调用模型。整理成功后可在三类知识中阅读、编辑和确认。</p><p id="knowledge-extraction-last" class="muted"></p><p id="knowledge-extraction-error" class="knowledge-organize-error hidden" role="status"></p><button type="button" id="knowledge-extraction-save" disabled>保存整理方式</button><p id="knowledge-extraction-settings-state" role="status"></p></section>');
+ for(const id of ['knowledge-extraction-enabled','knowledge-extraction-scheduled','knowledge-extraction-interval'])input(id).oninput=input(id).onchange=()=>{knowledgeExtractionSettingsDirty=true;element('knowledge-extraction-settings-state').textContent='整理方式尚未保存。'};
  button('knowledge-extraction-save').onclick=()=>void saveKnowledgeExtractionSettings();
  installKnowledgeGraph();
  element('root').insertAdjacentHTML('beforeend',`<dialog id="curated-dialog" class="curated-dialog" aria-labelledby="curated-heading"><div class="library-header"><h2 id="curated-heading">整理正式知识</h2><button type="button" id="curated-close">关闭</button></div><p>凭据保留在设备或受保护配置，正文只写配置引用。整理和标记状态不会启动模型或独立验证内容。</p><form id="curated-form"><label>知识层级<select id="curated-layer"><option value="consensus">平台共识</option><option value="system">系统知识</option><option value="project">项目知识</option></select></label><label>主题 / 项目名称<input id="curated-scope" maxlength="80" placeholder="平台共识无需填写"></label><label>标题<input id="curated-title" required maxlength="200"></label><label>正文<textarea id="curated-content" required rows="10"></textarea></label><label>适用条件<textarea id="curated-applicability" rows="2"></textarea></label><label>实际依据 / 验证结果<textarea id="curated-evidence" rows="2" placeholder="未验证时明确写出"></textarea></label><label>安全配置引用<input id="curated-credential" placeholder="仅设备或配置名称，不填写密码"></label><label>标签<input id="curated-tags" placeholder="用逗号分隔"></label><label>状态<select id="curated-status"><option value="observed">待验证</option><option value="verified">已验证（用户确认）</option><option value="stale">已过时</option></select></label><label><input type="checkbox" id="curated-confirm">我确认已填写实际依据和适用条件，并明确将此条标为已验证</label><p id="curated-source" class="muted"></p><p id="curated-state" role="status"></p><div class="actions"><button type="submit" id="curated-save" class="primary">保存正式知识</button><button type="button" id="curated-delete" class="danger hidden">移除正式条目</button></div></form></dialog>`);
@@ -354,7 +384,11 @@ function installKnowledgeLayers(){
  element('curated-form').onsubmit=e=>{e.preventDefault();void saveCuratedEditor()};
  button('curated-delete').onclick=()=>void deleteCuratedEditor();
  element('curated-dialog').addEventListener('cancel',e=>{if(curatedSaving)e.preventDefault()});
- disposeWithShell(()=>{curatedRequest++;workspaceMemoryRequest++;workspaceDocumentRequest++;knowledgeExtractionRequest++;knowledgeGraphRequest++;curatedDraft=null;curatedDirty=false;curatedSaving=false;workspaceMemorySaving=false;workspaceDocumentDrafts.clear();workspaceInitialSync.clear();workspaceDocumentTask='';workspaceDocumentPath='';knowledgeExtractionBusy=false;knowledgeExtractionSettingsBusy=false;knowledgeExtractionSettingsReady=false;knowledgeExtractionSettingsDirty=false;knowledgeGraphOpen=false;knowledgeGraphDocuments=[];libraryPreviewDocument=null});
+ disposeWithShell(()=>{curatedRequest++;workspaceMemoryRequest++;workspaceDocumentRequest++;knowledgeExtractionRequest++;knowledgeExtractionActionRequest++;knowledgeRevisionRequest++;knowledgeGraphRequest++;curatedDraft=null;curatedDirty=false;curatedSaving=false;knowledgeRevisionBusy=false;workspaceMemorySaving=false;workspaceDocumentDrafts.clear();workspaceInitialSync.clear();workspaceDocumentTask='';workspaceDocumentPath='';knowledgeExtractionBusy=false;knowledgeExtractionSettingsBusy=false;knowledgeExtractionSettingsReady=false;knowledgeExtractionSettingsDirty=false;knowledgeGraphOpen=false;knowledgeGraphDocuments=[];libraryPreviewDocument=null});
+}
+function renderKnowledgeLayerHelp(){
+ const help=element('library-layer-help');if(!help)return;
+ help.textContent=({consensus:'平台共识：你明确约定的跨任务习惯与协作流程。待验证候选需确认后才作为共识使用。',system:'系统知识：可跨项目复用的原理、排查方法和学习总结，按主题持续修订。',project:'项目知识：具体项目的资料、约束、决策与验证结论，按项目归档。',tasks:'旧任务资料仅供回溯；当前任务主文档请从左侧任务菜单的“任务记录”打开。',knowledge:'旧候选片段仅供整理；可复用内容应归入三类知识，不按提问重复生成笔记。',all:'兼容查看全部已索引文件。任务记录是过程依据，三类知识是可复用结论。'} as Record<string,string>)[input('library-layer').value]||'';
 }
 function openCuratedEditor(doc?:LibraryDocument){
  const dialog=element<HTMLDialogElement>('curated-dialog');
@@ -449,18 +483,24 @@ async function openKnowledgeLayer(layer:string){
  element('library-dialog').querySelectorAll<HTMLButtonElement>('[data-library-layer]').forEach(b=>{const on=b.dataset.libraryLayer===layer;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on))});
  await openLibrary();
 }
-function setKnowledgeExtractionSettingsBusy(busy:boolean){input('knowledge-extraction-enabled').disabled=busy;button('knowledge-extraction-save').disabled=busy}
+function setKnowledgeExtractionSettingsBusy(busy:boolean){for(const id of ['knowledge-extraction-enabled','knowledge-extraction-scheduled','knowledge-extraction-interval','knowledge-extraction-save'])input(id).disabled=busy}
+function showKnowledgeExtractionHistory(config:KnowledgeExtractionConfig){
+ element('knowledge-extraction-last').textContent=config.last_organized?'最近定时整理：'+new Date(config.last_organized).toLocaleString():'尚无成功定时整理记录。';
+ element('knowledge-extraction-error').textContent=config.last_error?'最近定时整理未完成：'+config.last_error:'';
+ element('knowledge-extraction-error').classList.toggle('hidden',!config.last_error);
+}
 async function loadKnowledgeExtractionSettings(){
  if(knowledgeExtractionSettingsBusy||knowledgeExtractionSettingsDirty)return;
  const epoch=shellEpoch,request=++knowledgeExtractionRequest;knowledgeExtractionSettingsReady=false;setKnowledgeExtractionSettingsBusy(true);
- try{const config=await api<KnowledgeExtractionConfig>('library/extraction','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==knowledgeExtractionRequest)return;input('knowledge-extraction-enabled').checked=config.enabled;knowledgeExtractionSettingsReady=true;element('knowledge-extraction-settings-state').textContent=config.needs_directory?'先设置 Obsidian 根目录并开启同步，自动提取才会写入文件。':config.enabled?'自动提取已开启；候选保持待验证。':'自动提取已关闭，已有知识保留。'}
+ try{const config=await api<KnowledgeExtractionConfig>('library/extraction','GET',undefined,shellController.signal);if(!shellCurrent(epoch)||request!==knowledgeExtractionRequest)return;input('knowledge-extraction-enabled').checked=config.enabled;input('knowledge-extraction-scheduled').checked=!!config.scheduled;input('knowledge-extraction-interval').value=String(config.interval_hours||24);showKnowledgeExtractionHistory(config);knowledgeExtractionSettingsReady=true;element('knowledge-extraction-settings-state').textContent=config.needs_directory?'先设置笔记根目录并开启同步，整理结果才会写入文件。':config.scheduled?`定时整理已开启，每 ${config.interval_hours||24} 小时检查已有候选；不调用模型。`:config.enabled?'每轮自动整理已开启；候选保持待验证。':'自动与定时整理已关闭，已有知识保留。'}
  catch(e){if(shellCurrent(epoch)&&request===knowledgeExtractionRequest)element('knowledge-extraction-settings-state').textContent=(e as Error).message}
  finally{if(shellCurrent(epoch)&&request===knowledgeExtractionRequest)setKnowledgeExtractionSettingsBusy(!knowledgeExtractionSettingsReady)}
 }
 async function saveKnowledgeExtractionSettings(){
  if(!knowledgeExtractionSettingsReady||knowledgeExtractionSettingsBusy)return;
+ const interval=Number(input('knowledge-extraction-interval').value);if(!Number.isInteger(interval)||interval<1||interval>168){element('knowledge-extraction-settings-state').textContent='整理间隔请输入 1～168 之间的整数小时。';input('knowledge-extraction-interval').focus();return}
  const epoch=shellEpoch,request=++knowledgeExtractionRequest;knowledgeExtractionSettingsBusy=true;setKnowledgeExtractionSettingsBusy(true);
- try{await api('library/extraction','PUT',{enabled:input('knowledge-extraction-enabled').checked});if(!shellCurrent(epoch)||request!==knowledgeExtractionRequest)return;knowledgeExtractionSettingsDirty=false;element('knowledge-extraction-settings-state').textContent='自动提取设置已保存。'}
+ try{const saved=await api<KnowledgeExtractionConfig>('library/extraction','PUT',{enabled:input('knowledge-extraction-enabled').checked,scheduled:input('knowledge-extraction-scheduled').checked,interval_hours:interval});if(!shellCurrent(epoch)||request!==knowledgeExtractionRequest)return;knowledgeExtractionSettingsDirty=false;showKnowledgeExtractionHistory(saved);element('knowledge-extraction-settings-state').textContent='整理方式已保存；自动与定时整理只使用已有候选，不另起模型调用。'}
  catch(e){if(shellCurrent(epoch)&&request===knowledgeExtractionRequest)element('knowledge-extraction-settings-state').textContent='保存失败：'+(e as Error).message}
  finally{if(shellCurrent(epoch)&&request===knowledgeExtractionRequest){knowledgeExtractionSettingsBusy=false;setKnowledgeExtractionSettingsBusy(false)}}
 }
@@ -468,15 +508,17 @@ async function ensureExtractionDirectory(){
  const epoch=shellEpoch,config=await api<KnowledgeExtractionConfig>('library/extraction','GET',undefined,shellController.signal);
  if(!shellCurrent(epoch))return false;
  if(!config.needs_directory)return true;
- await openLibrarySettings();if(!shellCurrent(epoch))return false;element('vault-status').textContent='请先选择 Obsidian 根目录，开启 Markdown 同步并保存，再返回提取知识。';input('vault-directory').focus();return false;
+ await openLibrarySettings();if(!shellCurrent(epoch))return false;element('vault-status').textContent='请先选择 Obsidian 笔记根目录，开启 Markdown 同步并保存，再返回整理知识。';input('vault-directory').focus();return false;
 }
+function knowledgeExtractionActionTarget(){return {epoch:shellEpoch,request:++knowledgeExtractionActionRequest,view:libraryRequest,selected:selection,task:chosen,create:creatingTask,scope:input('library-scope').value,layer:input('library-layer').value}}
+function knowledgeExtractionActionCurrent(target:ReturnType<typeof knowledgeExtractionActionTarget>){return shellCurrent(target.epoch)&&target.request===knowledgeExtractionActionRequest&&target.view===libraryRequest&&target.selected===selection&&target.task===chosen&&target.create===creatingTask&&target.scope===input('library-scope').value&&target.layer===input('library-layer').value}
 async function extractRecordedKnowledge(){
  if(knowledgeExtractionBusy)return;
- const epoch=shellEpoch,taskScope=input('library-scope').value,layer=input('library-layer').value;
+ const target=knowledgeExtractionActionTarget(),epoch=target.epoch,taskScope=target.scope,layer=target.layer;
  knowledgeExtractionBusy=true;button('library-extract').disabled=true;button('library-ai-extract').disabled=true;element('library-extraction-state').textContent='正在检查知识目录…';
- try{if(!await ensureExtractionDirectory())return;if(!shellCurrent(epoch))return;element('library-extraction-state').textContent='正在从已记录资料中提取，不额外调用模型…';const report=await api<KnowledgeExtractionReport>('library/extract','POST',{task_id:taskScope,layers:['consensus','system','project'].includes(layer)?[layer]:['consensus','system','project']});if(!shellCurrent(epoch))return;element('library-extraction-state').textContent=`提取完成：新增 ${report.created}，已存在 ${report.duplicates}，跳过 ${report.skipped}。${report.created?'新条目保留标签、来源及待验证状态。':'没有新增候选；可选择任务后用 AI 重新整理历史。'}`+(report.warnings?.length?' '+report.warnings.join('；'):'');await searchLibrary();void loadLibraryOverview()}
- catch(e){if(shellCurrent(epoch)){element('library-extraction-state').textContent='提取失败：'+(e as Error).message;if((e as Error&{status?:number}).status===409)await openLibrarySettings()}}
- finally{if(shellCurrent(epoch)){knowledgeExtractionBusy=false;button('library-extract').disabled=false;button('library-ai-extract').disabled=false}}
+ try{if(!await ensureExtractionDirectory()||!knowledgeExtractionActionCurrent(target))return;element('library-extraction-state').textContent='正在整理已保存的分层候选，不额外调用模型…';const report=await api<KnowledgeExtractionReport>('library/extract','POST',{task_id:taskScope,layers:['consensus','system','project'].includes(layer)?[layer]:['consensus','system','project']});if(!shellCurrent(epoch))return;if(!knowledgeExtractionActionCurrent(target)){notify('原范围的候选整理已完成；当前查看范围保持不变。');return}element('library-extraction-state').textContent=`整理完成：新增 ${report.created}，修订候选 ${report.revisions||0}，已存在 ${report.duplicates}，跳过 ${report.skipped}。${report.created||report.revisions?'新条目保持待验证，同主题修订请在原文中查看。':'没有新增候选；可选择任务后用 AI 重新整理历史。'}`+(report.warnings?.length?' '+report.warnings.join('；'):'');await searchLibrary();void loadLibraryOverview()}
+ catch(e){if(knowledgeExtractionActionCurrent(target)){element('library-extraction-state').textContent='整理失败：'+(e as Error).message;if((e as Error&{status?:number}).status===409)await openLibrarySettings()}}
+ finally{if(shellCurrent(epoch)&&target.request===knowledgeExtractionActionRequest){knowledgeExtractionBusy=false;button('library-extract').disabled=false;button('library-ai-extract').disabled=false}}
 }
 
 type KnowledgeGraphNode={id:string;title:string;kind:'document'|'tag';layer:string;x:number;y:number;tags:string[]};
@@ -516,14 +558,14 @@ async function extractTaskKnowledgeWithAI(){
  if(knowledgeExtractionBusy)return;
  const task=input('library-scope').value||(!creatingTask?chosen:'');
  if(!task){element('library-extraction-state').textContent='请先在任务范围选择一个任务，再整理该任务的历史。';input('library-scope').focus();return}
- const epoch=shellEpoch;knowledgeExtractionBusy=true;button('library-extract').disabled=true;button('library-ai-extract').disabled=true;
- try{if(!await ensureExtractionDirectory())return;if(!shellCurrent(epoch))return;
+ const target=knowledgeExtractionActionTarget(),epoch=target.epoch;knowledgeExtractionBusy=true;button('library-extract').disabled=true;button('library-ai-extract').disabled=true;
+ try{if(!await ensureExtractionDirectory()||!knowledgeExtractionActionCurrent(target))return;
   const title=tasks.find(t=>t.id===task)?.title||task;
   const confirmed=confirm(`AI 整理并提取知识\n\n将使用“${title}”当前引擎和模型，发送最近最多 8 轮成功对话的有界文本进行整理。会消耗模型额度，输出平台共识、系统知识和项目知识的带标签候选，均保持待验证；不会继续调试或执行硬件操作。\n\n开始整理？`);
-  if(!confirmed||!shellCurrent(epoch))return;
-  const result=await api<{run:Run}>('tasks/'+encodeURIComponent(task)+'/knowledge/extract','POST',{confirm:true});if(!shellCurrent(epoch))return;element('library-extraction-state').textContent='AI 整理任务已排队，可在该任务执行记录查看进度；完成后刷新知识库。';notify('AI 知识整理已排队：'+title);void result;
- }catch(e){if(shellCurrent(epoch))element('library-extraction-state').textContent='AI 整理未启动：'+(e as Error).message}
- finally{if(shellCurrent(epoch)){knowledgeExtractionBusy=false;button('library-extract').disabled=false;button('library-ai-extract').disabled=false}}
+  if(!confirmed||!knowledgeExtractionActionCurrent(target))return;
+  const result=await api<{run:Run}>('tasks/'+encodeURIComponent(task)+'/knowledge/extract','POST',{confirm:true});if(!shellCurrent(epoch))return;if(knowledgeExtractionActionCurrent(target))element('library-extraction-state').textContent='AI 整理任务已排队，可在该任务执行记录查看进度；完成后刷新知识库。';notify('AI 知识整理已排队：'+title);void result;
+ }catch(e){if(knowledgeExtractionActionCurrent(target))element('library-extraction-state').textContent='AI 整理未启动：'+(e as Error).message}
+ finally{if(shellCurrent(epoch)&&target.request===knowledgeExtractionActionRequest){knowledgeExtractionBusy=false;button('library-extract').disabled=false;button('library-ai-extract').disabled=false}}
 }
 function applyKnowledgeGraphZoom(){const width=knowledgeGraphBounds.width/knowledgeGraphZoom,height=knowledgeGraphBounds.height/knowledgeGraphZoom;element('knowledge-graph').setAttribute('viewBox',`${knowledgeGraphBounds.width/2-width/2} ${knowledgeGraphBounds.height/2-height/2} ${width} ${height}`)}
 function renderKnowledgeGraph(){

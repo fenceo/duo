@@ -24,31 +24,32 @@ type worker struct {
 	interrupting bool
 }
 type App struct {
-	desktop         *DesktopControl
-	engineSetup     *EngineSetup
-	vaultMu         sync.Mutex
-	vaultReport     VaultReport
-	vaultCacheRoot  string
-	vaultCache      map[string]vaultCachedFile
-	codexRequests   *CodexRequests
-	hardwareAI      *HardwareAI
-	hardwareAddress string
-	discovery       *SSHDiscovery
-	hardware        *Hardware
-	terminals       *Terminals
-	store           *Store
-	config          *ConfigFile
-	runner          Runner
-	mu              sync.Mutex
-	codexSyncMu     sync.Mutex
-	workers         map[string]*worker
-	slots           chan struct{}
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	notify          chan struct{}
-	feishu          *Feishu
-	updating        atomic.Bool
+	desktop             *DesktopControl
+	engineSetup         *EngineSetup
+	vaultMu             sync.Mutex
+	knowledgeOrganizeMu sync.Mutex
+	vaultReport         VaultReport
+	vaultCacheRoot      string
+	vaultCache          map[string]vaultCachedFile
+	codexRequests       *CodexRequests
+	hardwareAI          *HardwareAI
+	hardwareAddress     string
+	discovery           *SSHDiscovery
+	hardware            *Hardware
+	terminals           *Terminals
+	store               *Store
+	config              *ConfigFile
+	runner              Runner
+	mu                  sync.Mutex
+	codexSyncMu         sync.Mutex
+	workers             map[string]*worker
+	slots               chan struct{}
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	notify              chan struct{}
+	feishu              *Feishu
+	updating            atomic.Bool
 }
 
 func newApp(s *Store, c *ConfigFile, r Runner) *App {
@@ -485,6 +486,15 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 				}
 				if r.Kind == "chat" {
 					// Name a deliberate tool-free turn before the model runs.
+					if handoffInput == "" {
+						lookupCtx, lookupCancel := context.WithTimeout(runCtx, 5*time.Second)
+						lookup, lookupIDs, lookupErr := a.store.knowledgeLookupContext(lookupCtx, task, r.Input)
+						lookupCancel()
+						if lookupErr == nil && lookup != "" {
+							input = lookup + input
+							_ = a.store.event(id, r.ID, "progress", "已检索相关知识（来源 ID）："+strings.Join(lookupIDs, "、"))
+						}
+					}
 					if note := a.hardwareToolOmission(task); note != "" {
 						_ = a.store.event(id, r.ID, "progress", note)
 					}
@@ -524,7 +534,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 							_ = a.store.event(id, r.ID, "progress", "已恢复已确认平台共识（来源 ID）："+strings.Join(consensusIDs, "、"))
 						}
 					}
-					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture && automatic.Organize {
+					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture {
 						input = memoryPrompt(r.ID) + input
 					}
 				}
@@ -663,9 +673,15 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 				captureErr = captureExtractedMemory(tx, id, r.ID, memory)
 			} else {
 				captured, captureErr = captureAutomaticKnowledge(tx, id, r.ID)
-				if captureErr == nil {
-					captureErr = captureTaskMemory(tx, id, r.ID, memory)
-				}
+			}
+		}
+		// A failed/stopped chat can still report completed substeps and useful
+		// blockers. Preserve validated task-state patches independently of the
+		// done-only long-term knowledge capture/extraction path.
+		if e == nil && r.Kind == "chat" && r.Source != knowledgeExtractionSource && (previous == "running" || previous == "queued") {
+			memoryErr := captureTaskMemory(tx, id, r.ID, memory)
+			if captureErr == nil {
+				captureErr = memoryErr
 			}
 		}
 		if e == nil {
@@ -688,12 +704,16 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 		automatic, automaticErr := automaticKnowledgeConfig(a.store)
 		if status == "done" && captureErr == nil && (r.Source == knowledgeExtractionSource || automaticErr == nil && automatic.Capture && automatic.Organize && a.store.knowledgeExtractionEnabled()) {
 			extractCtx, extractCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			a.knowledgeOrganizeMu.Lock()
 			report, extractErr := a.store.extractTaskKnowledge(extractCtx, id, r.ID, nil)
+			a.knowledgeOrganizeMu.Unlock()
 			extractCancel()
 			if extractErr != nil {
 				_ = a.store.event(id, r.ID, "progress", "运行结果已保存，分层知识提取未完成；可在知识库中重试。")
 			} else if report.Created > 0 {
 				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("已提取 %d 条分层知识候选，仍需核对依据和适用条件。", report.Created))
+			} else if report.Revisions > 0 {
+				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("已记录 %d 条同主题待合并修订，原知识正文保持不变。", report.Revisions))
 			} else if r.Source == knowledgeExtractionSource {
 				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("本次未新增分层知识候选（重复 %d 条）；可查看整理结果及未提取原因。", report.Duplicates))
 			}

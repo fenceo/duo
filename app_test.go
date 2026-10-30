@@ -24,6 +24,9 @@ type fakeRunner struct {
 	sessions []string
 	gate     chan struct{}
 	started  chan struct{}
+	// Optional response transformation for tests whose fake model must answer
+	// only the current user request while inputs still record the full prompt.
+	replyInput func(string) string
 }
 
 func (f *fakeRunner) Run(ctx context.Context, c Config, t Task, input string, emit func(string, string)) (string, string, error) {
@@ -44,8 +47,12 @@ func (f *fakeRunner) Run(ctx context.Context, c Config, t Task, input string, em
 			return "test-session", "", ctx.Err()
 		}
 	}
-	emit("assistant", "reply: "+input)
-	return "test-session", "reply: " + input, nil
+	replyInput := input
+	if f.replyInput != nil {
+		replyInput = f.replyInput(input)
+	}
+	emit("assistant", "reply: "+replyInput)
+	return "test-session", "reply: " + replyInput, nil
 }
 func fixture(t *testing.T, r Runner) *App {
 	t.Helper()
@@ -60,7 +67,7 @@ func fixture(t *testing.T, r Runner) *App {
 	}
 	// Most fixtures test literal prompts and avoid background filesystem writes.
 	// Notebook-specific tests explicitly enable and exercise the production defaults.
-	if _, e = s.Exec(`INSERT INTO settings VALUES('automatic_knowledge','{"capture":true,"recall":true,"organize":false}'); INSERT INTO settings VALUES('knowledge_vault','{"enabled":false}'); INSERT INTO settings VALUES('workspace_memory','{"enabled":false}')`); e != nil {
+	if _, e = s.Exec(`INSERT INTO settings VALUES('automatic_knowledge','{"capture":false,"recall":true,"organize":false}'); INSERT INTO settings VALUES('knowledge_vault','{"enabled":false}'); INSERT INTO settings VALUES('workspace_memory','{"enabled":false}')`); e != nil {
 		t.Fatal(e)
 	}
 	a := newApp(s, c, r)

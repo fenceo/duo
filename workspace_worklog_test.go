@@ -64,7 +64,7 @@ func TestWorkspaceWorklogChronologicalAppendPreservesEditsAndSources(t *testing.
 			t.Fatal("missing human-readable worklog detail", want, content)
 		}
 	}
-	content = strings.Replace(content, "尚未手工填写。可在这里维护下一步计划。", "人工计划：下一步检查电源。", 1) + "\n人工追加内容\n"
+	content = strings.Replace(content, "## 备注\n\n", "## 备注\n\n人工计划：下一步检查电源。\n\n", 1) + "\n人工追加内容\n"
 	// Windows editors commonly convert the whole Markdown file to CRLF.
 	content = strings.ReplaceAll(content, "\n", "\r\n")
 	if err := os.WriteFile(filepath.Join(task.Workspace, filepath.FromSlash(main)), []byte(content), 0600); err != nil {
@@ -79,7 +79,12 @@ func TestWorkspaceWorklogChronologicalAppendPreservesEditsAndSources(t *testing.
 		t.Fatal("edited primary document was moved or made a conflict", report, err)
 	}
 	after := readWorkspaceWorklog(t, task, main)
-	if !strings.HasPrefix(after, content) || strings.Count(after, workspaceWorklogMarker(task.ID+"/"+next.ID)) != 1 {
+	// The explicit automatic state region may change; every byte outside it,
+	// including CRLF human notes and prior milestones, must remain intact.
+	oldState := strings.Index(content, workspaceTaskStateStart)
+	oldEnd := strings.Index(content, workspaceTaskStateEnd) + len(workspaceTaskStateEnd)
+	newEnd := strings.Index(after, workspaceTaskStateEnd) + len(workspaceTaskStateEnd)
+	if !strings.HasPrefix(after, content[:oldState]) || !strings.HasPrefix(after[newEnd:], content[oldEnd:]) || strings.Count(after, workspaceWorklogMarker(task.ID+"/"+next.ID)) != 1 || !strings.Contains(after[:newEnd], "interrupted") {
 		t.Fatal("human edits not preserved before new append", after)
 	}
 	for _, id := range []string{"oldest", "middle-z", "middle-a", "latest"} {

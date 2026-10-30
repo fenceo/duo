@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +22,9 @@ import (
 const vaultFileLimit = 2 * 1024 * 1024
 
 type VaultConfig struct {
+	RootMode           string `json:"root_mode,omitempty"`
+	HumanLayout        bool   `json:"human_layout,omitempty"`
+	IncludeLegacy      *bool  `json:"include_legacy,omitempty"`
 	TaskFolders        bool   `json:"task_folders"`
 	IncludeAutomatic   bool   `json:"include_automatic"`
 	Enabled            bool   `json:"enabled"`
@@ -56,7 +60,10 @@ func (s *Store) vaultConfig() VaultConfig {
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &c)
 	} else {
-		c.Enabled, c.IncludeAutomatic, c.IncludeRuns = true, true, true
+		c.Enabled, c.IncludeAutomatic, c.IncludeRuns = true, true, false
+		c.RootMode, c.HumanLayout = "direct", true
+		legacy := false
+		c.IncludeLegacy = &legacy
 	}
 	if c.Directory == "" && (c.Enabled || raw == "") {
 		c.Directory = filepath.Join(s.directory, "knowledge")
@@ -69,6 +76,9 @@ func (s *Store) vaultConfig() VaultConfig {
 func vaultDocumentDirectory(c VaultConfig) string {
 	if !filepath.IsAbs(c.Directory) {
 		return ""
+	}
+	if c.RootMode == "direct" {
+		return filepath.Clean(c.Directory)
 	}
 	return filepath.Join(c.Directory, "Duo")
 }
@@ -122,7 +132,7 @@ func vaultRoot(c VaultConfig) (string, error) {
 	if !info.IsDir() {
 		return "", errors.New("Vault 必须是已有文件夹")
 	}
-	root := filepath.Join(c.Directory, "Duo")
+	root := vaultDocumentDirectory(c)
 	if err = plainVaultPath(root); err != nil {
 		return "", err
 	}
@@ -197,6 +207,9 @@ func parseVaultFile(path, raw string) (vaultFile, error) {
 func renderVaultFile(d LibraryDocument, properties map[string]any) (string, error) {
 	if properties == nil {
 		properties = map[string]any{}
+	}
+	for _, key := range []string{"duo_pending_revisions", "duo_revision_history", "duo_review_keys"} {
+		delete(properties, key)
 	}
 	// Preserve Obsidian tags and all unknown user properties on local updates.
 	raw, err := yaml.Marshal(d)
@@ -374,6 +387,78 @@ func writeVaultFile(root, rel, expected, content string) error {
 	return os.Rename(tmp, path)
 }
 
+// A tracked import can have additional human-maintained topic folders. Those
+// folders are not a request to flatten its layout. Distinguish them from paths
+// produced by either Duo layout using the previous file's title and scope, so
+// renaming a managed note or explicitly changing its layer root still uses the
+// existing safe-move path. Suffix comparison also recognizes a prior root that
+// became a child of the newly configured root.
+func curatedCustomTrackedPath(c VaultConfig, previous LibraryDocument, tracked string) bool {
+	if !curatedLayer(previous.Layer) || !validCuratedTrackedPath(tracked) {
+		return false
+	}
+	currentFolder := configuredKnowledgeFolder(c, previous.Layer)
+	if !strings.HasPrefix(tracked, currentFolder+"/") {
+		return false
+	}
+	for _, human := range []bool{false, true} {
+		layout := c
+		layout.HumanLayout = human
+		canonical := configuredCuratedPath(layout, previous)
+		folder := configuredKnowledgeFolder(layout, previous.Layer)
+		if canonical == "" || !strings.HasPrefix(canonical, folder+"/") {
+			continue
+		}
+		suffix := strings.TrimPrefix(canonical, folder+"/")
+		if strings.HasSuffix(tracked, "/"+suffix) {
+			return false
+		}
+		if human {
+			// Human layout adds a stable suffix only for actual collisions.
+			base := strings.TrimSuffix(suffix, ".md") + "-" + hash(previous.ID)[:8]
+			if strings.HasSuffix(tracked, "/"+base+".md") {
+				return false
+			}
+			prefix := path.Base(base) + "-"
+			name := strings.TrimSuffix(path.Base(tracked), ".md")
+			ordinal := strings.TrimPrefix(name, prefix)
+			if strings.HasPrefix(name, prefix) && ordinal != "" && strings.Trim(ordinal, "0123456789") == "" && strings.HasSuffix(path.Dir(tracked), "/"+path.Dir(suffix)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// The human's root landing page is not necessarily a Duo-generated document.
+// Pick a stable alternative without replacing it (including unparseable files).
+func availableKnowledgeHomePath(root string, files map[string]vaultFile, wanted string) (string, error) {
+	available := func(relative string) bool {
+		if file, exists := files[relative]; exists {
+			return file.Document.ID == "curated-index:home" && file.Document.Kind == "index"
+		}
+		_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(relative)))
+		return os.IsNotExist(err)
+	}
+	if available(wanted) {
+		return wanted, nil
+	}
+	for i := 0; i < 1000; i++ {
+		name := "Duo知识库索引.md"
+		if i > 0 {
+			name = "Duo知识库索引-" + hash("curated-index:home")[:8]
+			if i > 1 {
+				name += fmt.Sprintf("-%d", i)
+			}
+			name += ".md"
+		}
+		if available(name) {
+			return name, nil
+		}
+	}
+	return "", errors.New("知识库首页文件名冲突过多，请保留用户文件并另选目录")
+}
+
 func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultReport, err error) {
 	a.vaultMu.Lock()
 	defer a.vaultMu.Unlock()
@@ -429,6 +514,7 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 	if err != nil {
 		return report, err
 	}
+	humanPaths := curatedHumanPaths(docs, c)
 	if c.TaskFolders && c.IncludeAutomatic {
 		notebooks, e := a.store.notebookDocuments(ctx)
 		if e != nil {
@@ -439,6 +525,9 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 	for _, d := range docs {
 		if err = ctx.Err(); err != nil {
 			return report, err
+		}
+		if c.IncludeLegacy != nil && !*c.IncludeLegacy && d.Kind != "curated" && !strings.HasPrefix(d.ID, "curated-index:") {
+			continue
 		}
 		if strings.HasPrefix(d.ID, "curated-index:") {
 			// Earlier entries in this pass may have imported external edits and
@@ -466,7 +555,7 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 			}
 		}
 		localHash := documentHash(d)
-		if d.Kind == "curated" {
+		if d.Kind == "curated" || strings.HasPrefix(d.ID, "curated-index:") {
 			// Explicit user-maintained procedures may include meaningful device
 			// paths (/srv/nfs, /mnt, flash targets). Credential checks happen on save.
 		} else if c.TaskFolders {
@@ -494,6 +583,9 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 			rel = d.Path
 		} else if d.Kind == "curated" {
 			rel = configuredCuratedPath(c, d)
+			if c.HumanLayout {
+				rel = humanPaths[d.ID]
+			}
 			if rel == "" {
 				continue
 			}
@@ -508,13 +600,33 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return report, e
 		}
+		if d.ID == "curated-index:home" {
+			if e == nil && validCuratedTrackedPath(link.Path) {
+				rel = link.Path
+			}
+			chosen, chooseErr := availableKnowledgeHomePath(root, files, rel)
+			if chooseErr != nil {
+				return report, chooseErr
+			}
+			if chosen != rel {
+				// An existing human document is never moved or treated as the
+				// generated page's baseline. Track only the new independent index.
+				rel, link, e = chosen, vaultLink{}, sql.ErrNoRows
+			}
+		}
 		layerDirectoryChanged := false
 		if e == nil && d.Kind == "curated" {
 			previousLayer := d.Layer
 			if previous, ok := files[link.Path]; ok && curatedLayer(previous.Document.Layer) {
 				previousLayer = previous.Document.Layer
+				if previousLayer == d.Layer && curatedCustomTrackedPath(c, previous.Document, link.Path) {
+					// Keep imported project/topic hierarchies and their relative
+					// source/index links intact. TaskFolders only normalizes paths
+					// generated by Duo, not arbitrary user-maintained subfolders.
+					rel = link.Path
+				}
 			}
-			layerDirectoryChanged = curatedTrackedFolder(previousLayer, link.Path) != configuredKnowledgeFolder(c, d.Layer)
+			layerDirectoryChanged = rel != link.Path && curatedTrackedFolder(previousLayer, link.Path) != configuredKnowledgeFolder(c, d.Layer)
 		}
 		// Upgrade old tracked paths only when the exact file is unchanged. Rename
 		// preserves user properties and never overwrites another document.
@@ -716,6 +828,11 @@ func (a *App) syncVault(ctx context.Context, background ...bool) (report VaultRe
 func (a *App) vaultLoop() {
 	defer a.wg.Done()
 	for {
+		if !a.updating.Load() {
+			ctx, cancel := context.WithTimeout(a.ctx, 35*time.Second)
+			a.organizeKnowledgeDue(ctx, now())
+			cancel()
+		}
 		if a.store.vaultConfig().Enabled && !a.updating.Load() {
 			ctx, cancel := context.WithTimeout(a.ctx, 45*time.Second)
 			_, _ = a.syncVault(ctx, true)
@@ -774,7 +891,7 @@ func (s *Server) vaultRoutes(m *http.ServeMux) {
 			return
 		}
 		defer tx.Rollback()
-		if old.Directory != c.Directory || !c.Enabled {
+		if vaultDocumentDirectory(old) != vaultDocumentDirectory(c) || !c.Enabled {
 			if _, err = tx.Exec("DELETE FROM library_files; DELETE FROM library_links"); err != nil {
 				fail(w, 500, err.Error())
 				return

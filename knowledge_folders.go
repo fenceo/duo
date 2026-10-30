@@ -19,6 +19,16 @@ func configuredKnowledgeFolder(c VaultConfig, layer string) string {
 	case "project":
 		value, fallback = c.ProjectDirectory, "projects"
 	}
+	if c.HumanLayout && value == "" {
+		switch layer {
+		case "consensus":
+			fallback = "平台共识"
+		case "system":
+			fallback = "系统知识"
+		case "project":
+			fallback = "项目知识"
+		}
+	}
 	if value == "" {
 		return fallback
 	}
@@ -29,13 +39,16 @@ func configuredKnowledgeFolder(c VaultConfig, layer string) string {
 // paths. One confined root keeps conflict detection, citations and Git imports
 // consistent when the same Vault is checked out at another absolute location.
 func prepareKnowledgeFolders(c *VaultConfig) error {
+	if c.RootMode != "" && c.RootMode != "legacy" && c.RootMode != "direct" {
+		return errors.New("知识根目录模式无效")
+	}
 	for _, value := range []*string{&c.ConsensusDirectory, &c.SystemDirectory, &c.ProjectDirectory} {
 		*value = strings.TrimSpace(strings.ReplaceAll(*value, "\\", "/"))
 		if *value == "" {
 			continue
 		}
 		if len(*value) > 200 || path.Clean(*value) != *value || strings.HasPrefix(*value, "/") || *value == "." || *value == ".." || strings.HasPrefix(*value, "../") {
-			return errors.New("知识分类目录请填写 Obsidian 根目录下 Duo 文件夹中的相对路径")
+			return errors.New("知识分类目录请填写实际知识根目录中的相对路径")
 		}
 		for _, part := range strings.Split(*value, "/") {
 			if part == "" || strings.HasPrefix(part, ".") || strings.TrimRight(part, " .") != part || utf8.RuneCountInString(part) > 80 || strings.ContainsAny(part, "<>:\"|?*\x00\r\n\t") {
@@ -53,7 +66,7 @@ func prepareKnowledgeFolders(c *VaultConfig) error {
 		return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 	}
 	for i, folder := range folders {
-		for _, managed := range []string{"tasks", "knowledge", "topics", "conflicts", "run", "note", "task", "insight", "topic", "index", "curated"} {
+		for _, managed := range []string{"tasks", "knowledge", "topics", "conflicts", "run", "note", "task", "insight", "topic", "index", "curated", "首页.md", "README.md"} {
 			if overlaps(folder, managed) {
 				return errors.New("知识分类目录不能与任务资料、索引或冲突目录重叠")
 			}
@@ -71,6 +84,13 @@ func configuredCuratedPath(c VaultConfig, d LibraryDocument) string {
 	canonical := curatedPath(d)
 	if canonical == "" {
 		return ""
+	}
+	if c.HumanLayout {
+		base := configuredKnowledgeFolder(c, d.Layer)
+		if d.Layer != "consensus" {
+			base = path.Join(base, knowledgeFilename(d.ScopeKey))
+		}
+		return path.Join(base, knowledgeFilename(d.Title)+".md")
 	}
 	cut := strings.IndexByte(canonical, '/')
 	if cut < 0 {

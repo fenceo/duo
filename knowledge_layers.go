@@ -22,23 +22,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS curated_knowledge_source ON curated_knowledge(
 CREATE INDEX IF NOT EXISTS curated_knowledge_layer ON curated_knowledge(layer,scope_key,updated);`
 
 type CuratedKnowledge struct {
-	ID            string   `json:"id"`
-	Layer         string   `json:"layer"`
-	ScopeKey      string   `json:"scope_key"`
-	Title         string   `json:"title"`
-	Content       string   `json:"content"`
-	Status        string   `json:"status"`
-	SourceID      string   `json:"source_id"`
-	SourceHash    string   `json:"source_hash"`
-	SourceTaskID  string   `json:"source_task_id"`
-	Applicability string   `json:"applicability"`
-	Evidence      string   `json:"evidence"`
-	CredentialRef string   `json:"credential_ref"`
-	ExtractionKey string   `json:"extraction_key,omitempty"`
-	Tags          []string `json:"tags"`
-	Revision      int64    `json:"revision"`
-	Created       int64    `json:"created"`
-	Updated       int64    `json:"updated"`
+	PendingRevisions []KnowledgeRevision `json:"pending_revisions,omitempty"`
+	RevisionHistory  []KnowledgeRevision `json:"revision_history,omitempty"`
+	ReviewKeys       []string            `json:"review_keys,omitempty"`
+	ID               string              `json:"id"`
+	Layer            string              `json:"layer"`
+	ScopeKey         string              `json:"scope_key"`
+	Title            string              `json:"title"`
+	Content          string              `json:"content"`
+	Status           string              `json:"status"`
+	SourceID         string              `json:"source_id"`
+	SourceHash       string              `json:"source_hash"`
+	SourceTaskID     string              `json:"source_task_id"`
+	Applicability    string              `json:"applicability"`
+	Evidence         string              `json:"evidence"`
+	CredentialRef    string              `json:"credential_ref"`
+	ExtractionKey    string              `json:"extraction_key,omitempty"`
+	Tags             []string            `json:"tags"`
+	Revision         int64               `json:"revision"`
+	Created          int64               `json:"created"`
+	Updated          int64               `json:"updated"`
 }
 
 type curatedWrite struct {
@@ -59,6 +62,20 @@ func curatedSecretFree(text string) bool {
 }
 
 func prepareCurated(v *CuratedKnowledge) error {
+	if err := validateKnowledgeRevisions(v.PendingRevisions); err != nil {
+		return err
+	}
+	if err := validateKnowledgeRevisions(v.RevisionHistory); err != nil {
+		return err
+	}
+	if len(v.ReviewKeys) > 4096 {
+		return errors.New("知识修订标识过多")
+	}
+	for _, key := range v.ReviewKeys {
+		if len(key) != 64 || strings.Trim(key, "0123456789abcdef") != "" {
+			return errors.New("知识修订标识无效")
+		}
+	}
 	for _, field := range []*string{&v.Layer, &v.ScopeKey, &v.Title, &v.Content, &v.Applicability, &v.Evidence, &v.CredentialRef} {
 		*field = strings.TrimSpace(*field)
 	}
@@ -208,6 +225,8 @@ func (s *Store) saveCurated(ctx context.Context, v CuratedKnowledge, create bool
 		// A later edit cannot rewrite provenance or silently detach the source.
 		v.SourceID, v.SourceHash, v.SourceTaskID = previous.SourceID, previous.SourceHash, previous.SourceTaskID
 		v.ExtractionKey = previous.ExtractionKey
+		v.PendingRevisions = previous.PendingRevisions
+		v.RevisionHistory, v.ReviewKeys = previous.RevisionHistory, previous.ReviewKeys
 		v.Created, v.Revision, v.Updated = previous.Created, previous.Revision+1, now()
 	}
 	raw, err := json.Marshal(v)
@@ -269,7 +288,8 @@ func sameCuratedPayload(one, two CuratedKnowledge) bool {
 }
 
 func curatedDocument(v CuratedKnowledge) LibraryDocument {
-	d := LibraryDocument{ID: "curated:" + v.ID, Kind: "curated", Layer: v.Layer, Title: v.Title, Content: v.Content, Status: v.Status, ScopeKey: v.ScopeKey, SourceID: v.SourceID, SourceHash: v.SourceHash, SourceTaskID: v.SourceTaskID, Applicability: v.Applicability, Evidence: v.Evidence, CredentialRef: v.CredentialRef, ExtractionKey: v.ExtractionKey, Tags: v.Tags, Revision: v.Revision, Updated: v.Updated, Origin: "local", Source: "manual"}
+	d := LibraryDocument{PendingRevisions: v.PendingRevisions, ID: "curated:" + v.ID, Kind: "curated", Layer: v.Layer, Title: v.Title, Content: v.Content, Status: v.Status, ScopeKey: v.ScopeKey, SourceID: v.SourceID, SourceHash: v.SourceHash, SourceTaskID: v.SourceTaskID, Applicability: v.Applicability, Evidence: v.Evidence, CredentialRef: v.CredentialRef, ExtractionKey: v.ExtractionKey, Tags: v.Tags, Revision: v.Revision, Updated: v.Updated, Origin: "local", Source: "manual"}
+	d.RevisionHistory, d.ReviewKeys = v.RevisionHistory, v.ReviewKeys
 	if v.ExtractionKey != "" {
 		d.Source, d.Automatic = "auto", true
 	}
@@ -326,16 +346,31 @@ func (s *Store) curatedDocuments(ctx context.Context) ([]LibraryDocument, error)
 	}
 	docs := make([]LibraryDocument, 0, len(items))
 	c := s.vaultConfig()
+	initial := make([]LibraryDocument, 0, len(items))
+	for _, item := range items {
+		initial = append(initial, curatedDocument(item))
+	}
+	humanPaths := curatedHumanPaths(initial, c)
 	for _, item := range items {
 		d := curatedDocument(item)
 		d.Path = configuredCuratedPath(c, d)
+		if c.HumanLayout {
+			d.Path = humanPaths[d.ID]
+		}
 		if tracked := paths[d.ID]; tracked != "" {
 			d.Path = tracked
 		}
 		docs = append(docs, d)
 	}
-	if len(items) > 0 || len(paths) > 0 {
+	if len(items) > 0 || len(paths) > 0 || c.HumanLayout {
 		docs = append(docs, curatedIndexes(items, paths, c)...)
+		if c.HumanLayout {
+			home := knowledgeHome(c)
+			if tracked := paths[home.ID]; tracked != "" {
+				home.Path = tracked
+			}
+			docs = append(docs, home)
+		}
 	}
 	return docs, nil
 }
@@ -344,6 +379,9 @@ func curatedIndexes(items []CuratedKnowledge, paths map[string]string, configs .
 	c := VaultConfig{}
 	if len(configs) > 0 {
 		c = configs[0]
+	}
+	if c.HumanLayout {
+		return humanCuratedIndexes(items, paths, c)
 	}
 	indexes := []LibraryDocument{}
 	for _, layer := range []string{"consensus", "system", "project"} {
@@ -412,7 +450,7 @@ func curatedTrackedFolder(layer, relative string) string {
 }
 
 func (s *Store) curatedTrackedPaths(ctx context.Context) (map[string]string, error) {
-	rows, err := s.QueryContext(ctx, "SELECT id,path FROM library_links WHERE id LIKE 'curated:%'")
+	rows, err := s.QueryContext(ctx, "SELECT id,path FROM library_links WHERE id LIKE 'curated:%' OR id='curated-index:home'")
 	if err != nil {
 		return nil, err
 	}
@@ -481,13 +519,18 @@ func (s *Store) curatedContext(ctx context.Context, task Task) (string, []string
 
 func (s *Server) knowledgeLayerRoutes(m *http.ServeMux) {
 	s.knowledgeExtractionRoutes(m)
+	s.knowledgeRevisionRoutes(m)
 	m.HandleFunc("GET /api/library/layers", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		c := s.app.store.vaultConfig()
+		prefix := ""
+		if c.RootMode != "direct" {
+			prefix = "Duo/"
+		}
 		jsonOut(w, 200, map[string]any{"layers": []map[string]string{
 			{"id": "workspace", "title": "工作区任务资料", "directory": "<workspace>/.duo/", "purpose": "任务过程、逐轮记录和待整理资料；不自动视为已验证知识"},
-			{"id": "consensus", "title": "平台共识", "directory": "Duo/" + configuredKnowledgeFolder(c, "consensus") + "/", "purpose": "跨任务工作习惯、调试与烧录约定；自动提取为候选，用户确认后可供新会话参考"},
-			{"id": "system", "title": "系统知识", "directory": "Duo/" + configuredKnowledgeFolder(c, "system") + "/<主题>/", "purpose": "概念、方法、学习总结与主题体系"},
-			{"id": "project", "title": "项目知识", "directory": "Duo/" + configuredKnowledgeFolder(c, "project") + "/<项目>/", "purpose": "项目资料、解决方案和查找索引"},
+			{"id": "consensus", "title": "平台共识", "directory": prefix + configuredKnowledgeFolder(c, "consensus") + "/", "purpose": "跨任务工作习惯、调试与烧录约定；自动提取为候选，用户确认后可供新会话参考"},
+			{"id": "system", "title": "系统知识", "directory": prefix + configuredKnowledgeFolder(c, "system") + "/<主题>/", "purpose": "概念、方法、学习总结与主题体系"},
+			{"id": "project", "title": "项目知识", "directory": prefix + configuredKnowledgeFolder(c, "project") + "/<项目>/", "purpose": "项目资料、解决方案和查找索引"},
 		}, "vault": c, "credential_policy": "密码、令牌仍保存在受保护配置，知识仅保存配置引用；常见凭据赋值会被拒绝", "promotion": "可从记录自动提取或手动整理；默认待验证。已验证需要用户确认、依据与适用条件。技能和 MCP 转化仅预留，未自动执行。"})
 	}))
 	m.HandleFunc("GET /api/library/curated", s.secure(func(w http.ResponseWriter, r *http.Request) {
@@ -580,7 +623,7 @@ func (s *Server) knowledgeLayerRoutes(m *http.ServeMux) {
 }
 
 func curatedFromDocument(d LibraryDocument) CuratedKnowledge {
-	return CuratedKnowledge{ID: strings.TrimPrefix(d.ID, "curated:"), Layer: d.Layer, ScopeKey: d.ScopeKey, Title: d.Title, Content: d.Content, Status: d.Status, SourceID: d.SourceID, SourceHash: d.SourceHash, SourceTaskID: d.SourceTaskID, Applicability: d.Applicability, Evidence: d.Evidence, CredentialRef: d.CredentialRef, ExtractionKey: d.ExtractionKey, Tags: d.Tags, Revision: d.Revision, Updated: d.Updated}
+	return CuratedKnowledge{RevisionHistory: d.RevisionHistory, ReviewKeys: d.ReviewKeys, PendingRevisions: d.PendingRevisions, ID: strings.TrimPrefix(d.ID, "curated:"), Layer: d.Layer, ScopeKey: d.ScopeKey, Title: d.Title, Content: d.Content, Status: d.Status, SourceID: d.SourceID, SourceHash: d.SourceHash, SourceTaskID: d.SourceTaskID, Applicability: d.Applicability, Evidence: d.Evidence, CredentialRef: d.CredentialRef, ExtractionKey: d.ExtractionKey, Tags: d.Tags, Revision: d.Revision, Updated: d.Updated}
 }
 
 func (s *Store) importCuratedFile(ctx context.Context, local LibraryDocument, external LibraryDocument) (LibraryDocument, error) {
@@ -606,6 +649,11 @@ func (s *Store) importCuratedFile(ctx context.Context, local LibraryDocument, ex
 func validateCuratedIdentity(local, external LibraryDocument) error {
 	if local.ID != external.ID || local.SourceID != external.SourceID || local.SourceHash != external.SourceHash || local.SourceTaskID != external.SourceTaskID || local.ExtractionKey != external.ExtractionKey {
 		return errors.New("来源标识已变化，请保留原标识或在 Duo 中新建知识")
+	}
+	a, _ := json.Marshal(local.PendingRevisions)
+	b, _ := json.Marshal(external.PendingRevisions)
+	if string(a) != string(b) {
+		return errors.New("待合并修订由 Duo 管理，请在知识库中采用或忽略修订")
 	}
 	return nil
 }

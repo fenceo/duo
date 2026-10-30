@@ -22,34 +22,37 @@ CREATE TABLE IF NOT EXISTS library_links(id TEXT PRIMARY KEY,path TEXT NOT NULL,
 
 // Portable documents are evidence, never executable tasks or native sessions.
 type LibraryDocument struct {
-	ScopeKey      string   `json:"scope_key,omitempty" yaml:"duo_scope_key,omitempty"`
-	SourceID      string   `json:"source_id,omitempty" yaml:"duo_source_id,omitempty"`
-	SourceHash    string   `json:"source_hash,omitempty" yaml:"duo_source_hash,omitempty"`
-	SourceTaskID  string   `json:"source_task_id,omitempty" yaml:"duo_source_task,omitempty"`
-	Applicability string   `json:"applicability,omitempty" yaml:"duo_applicability,omitempty"`
-	Evidence      string   `json:"evidence,omitempty" yaml:"duo_evidence,omitempty"`
-	CredentialRef string   `json:"credential_ref,omitempty" yaml:"duo_credential_ref,omitempty"`
-	ExtractionKey string   `json:"extraction_key,omitempty" yaml:"duo_extraction_key,omitempty"`
-	Tags          []string `json:"tags,omitempty" yaml:"-"`
-	Layer         string   `json:"layer,omitempty" yaml:"duo_layer,omitempty"`
-	Generated     bool     `json:"generated,omitempty" yaml:"duo_generated,omitempty"`
-	Automatic     bool     `json:"-" yaml:"-"`
-	Source        string   `json:"source,omitempty" yaml:"-"`
-	ID            string   `json:"id" yaml:"duo_id"`
-	Kind          string   `json:"kind" yaml:"duo_kind"`
-	TaskID        string   `json:"task_id" yaml:"duo_task"`
-	TaskTitle     string   `json:"task_title" yaml:"duo_task_title"`
-	RunID         string   `json:"run_id" yaml:"duo_run"`
-	Title         string   `json:"title" yaml:"title"`
-	Status        string   `json:"status" yaml:"status"`
-	Revision      int64    `json:"revision" yaml:"duo_revision"`
-	Updated       int64    `json:"updated" yaml:"duo_updated"`
-	Content       string   `json:"content,omitempty" yaml:"-"`
-	Path          string   `json:"path,omitempty" yaml:"-"`
-	Origin        string   `json:"origin" yaml:"-"`
-	Hash          string   `json:"hash" yaml:"-"`
-	Snippet       string   `json:"snippet,omitempty" yaml:"-"`
-	Score         int      `json:"-" yaml:"-"`
+	PendingRevisions []KnowledgeRevision `json:"pending_revisions,omitempty" yaml:"duo_pending_revisions,omitempty"`
+	RevisionHistory  []KnowledgeRevision `json:"revision_history,omitempty" yaml:"duo_revision_history,omitempty"`
+	ReviewKeys       []string            `json:"review_keys,omitempty" yaml:"duo_review_keys,omitempty"`
+	ScopeKey         string              `json:"scope_key,omitempty" yaml:"duo_scope_key,omitempty"`
+	SourceID         string              `json:"source_id,omitempty" yaml:"duo_source_id,omitempty"`
+	SourceHash       string              `json:"source_hash,omitempty" yaml:"duo_source_hash,omitempty"`
+	SourceTaskID     string              `json:"source_task_id,omitempty" yaml:"duo_source_task,omitempty"`
+	Applicability    string              `json:"applicability,omitempty" yaml:"duo_applicability,omitempty"`
+	Evidence         string              `json:"evidence,omitempty" yaml:"duo_evidence,omitempty"`
+	CredentialRef    string              `json:"credential_ref,omitempty" yaml:"duo_credential_ref,omitempty"`
+	ExtractionKey    string              `json:"extraction_key,omitempty" yaml:"duo_extraction_key,omitempty"`
+	Tags             []string            `json:"tags,omitempty" yaml:"-"`
+	Layer            string              `json:"layer,omitempty" yaml:"duo_layer,omitempty"`
+	Generated        bool                `json:"generated,omitempty" yaml:"duo_generated,omitempty"`
+	Automatic        bool                `json:"-" yaml:"-"`
+	Source           string              `json:"source,omitempty" yaml:"-"`
+	ID               string              `json:"id" yaml:"duo_id"`
+	Kind             string              `json:"kind" yaml:"duo_kind"`
+	TaskID           string              `json:"task_id" yaml:"duo_task"`
+	TaskTitle        string              `json:"task_title" yaml:"duo_task_title"`
+	RunID            string              `json:"run_id" yaml:"duo_run"`
+	Title            string              `json:"title" yaml:"title"`
+	Status           string              `json:"status" yaml:"status"`
+	Revision         int64               `json:"revision" yaml:"duo_revision"`
+	Updated          int64               `json:"updated" yaml:"duo_updated"`
+	Content          string              `json:"content,omitempty" yaml:"-"`
+	Path             string              `json:"path,omitempty" yaml:"-"`
+	Origin           string              `json:"origin" yaml:"-"`
+	Hash             string              `json:"hash" yaml:"-"`
+	Snippet          string              `json:"snippet,omitempty" yaml:"-"`
+	Score            int                 `json:"-" yaml:"-"`
 }
 
 func documentHash(d LibraryDocument) string {

@@ -82,6 +82,24 @@ with tempfile.TemporaryDirectory(prefix='duo-worklog-protocol-') as root:
     assert invalid.get('error') and pathlib.Path(root,path).read_text(encoding='utf-8')==edited, invalid
     traversal=call(action='document',path=base+'/../README.md')
     assert traversal.get('error'), traversal
+    # The state block is replaceable only while its content hash is intact.
+    # Legacy/human content outside it remains byte-for-byte unchanged.
+    def state_sync(body):
+        return call([{'path':path,'content':'unused','append_worklog':True,'entries':[],'state_content':body}])
+    state_body='## 当前任务状态\n\n### 任务目标\n\n合成目标\n'
+    first_state=state_sync(state_body)
+    state_text=pathlib.Path(root,path).read_text(encoding='utf-8')
+    assert not first_state.get('error') and '<!-- duo:task-state:' in state_text and '合成目标' in state_text and '首轮结果' in state_text, first_state
+    outside_note='\n人工区域：保留两个空格  \n'
+    pathlib.Path(root,path).write_bytes((state_text+outside_note).replace('\n','\r\n').encode('utf-8'))
+    second_state=state_sync(state_body.replace('合成目标','新合成目标'))
+    state_bytes=pathlib.Path(root,path).read_bytes()
+    assert not second_state.get('error') and '新合成目标'.encode('utf-8') in state_bytes and state_bytes.endswith(outside_note.replace('\n','\r\n').encode('utf-8')), second_state
+    human_state=state_bytes.replace('新合成目标'.encode('utf-8'),'人工目标'.encode('utf-8'))
+    pathlib.Path(root,path).write_bytes(human_state)
+    protected=state_sync(state_body.replace('合成目标','不得覆盖'))
+    assert not protected.get('error') and protected['warnings'] and pathlib.Path(root,path).read_bytes()==human_state, protected
+    pathlib.Path(root,path).write_bytes(edited.encode('utf-8'))
     # A deterministic external write between staging and the final comparison
     # must win; only the temporary generated replacement is discarded.
     anchor='            if current != old:\n                raise DocumentConflict(CONFLICT_MESSAGE)'
@@ -127,10 +145,13 @@ print('workspace-worklog-posix-ok')
 			t.Skip("POSIX filesystem protocol needs Linux or explicit DUO_WORKSPACE_MEMORY_WSL_DISTRO")
 		}
 		cfg := Config{Distro: distro, User: os.Getenv("DUO_WORKSPACE_MEMORY_WSL_USER")}
-		cmd = commandWithContext(ctx, nativeTargetCommand(cfg, "python3", "-c", program))
+		cmd = commandWithContext(ctx, nativeTargetCommand(cfg, "python3", "-"))
 	} else {
-		cmd = exec.CommandContext(ctx, "python3", "-c", program)
+		cmd = exec.CommandContext(ctx, "python3", "-")
 	}
+	// The protocol and fixture together may exceed Windows' argv limit; source
+	// goes through stdin while only the short interpreter command is launched.
+	cmd.Stdin = strings.NewReader(program)
 	output, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), "workspace-worklog-posix-ok") {
 		t.Fatalf("POSIX worklog protocol: %v\n%s", err, output)

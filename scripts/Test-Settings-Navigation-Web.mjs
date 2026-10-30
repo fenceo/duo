@@ -89,7 +89,7 @@ node('library-dialog').close();
 const section=node('settings-knowledge'),panels=[...section.children];
 assert(panels.indexOf(node('vault-settings'))<panels.indexOf(node('automatic-knowledge-settings')));
 assert(panels.indexOf(section.querySelector('.knowledge-storage-info'))>panels.indexOf(node('automatic-knowledge-settings')));
-assert.match(section.textContent,/工作区过程/);assert.match(section.textContent,/\.duo\/tasks\/任务名-短ID\//);assert.match(section.textContent,/Duo\/consensus\//);assert.match(section.textContent,/Duo\/system\//);assert.match(section.textContent,/Duo\/projects\//);
+assert.match(section.textContent,/第一层.*工作区.*第二层.*笔记目录/);assert.match(section.textContent,/\.duo\/tasks\/任务名-短ID\/任务记录\.md/);assert.match(section.textContent,/平台共识.*系统知识.*项目知识/);assert.equal(node('vault-root-mode').value,'direct','new configurations use the selected root directly');assert.match(section.textContent,/兼容旧配置/);
 assert.match(section.textContent,/选择根目录并开启同步/);assert.match(node('automatic-knowledge-settings').textContent,/候选/);
 for(const id of ['vault-enabled','vault-automatic','automatic-capture','automatic-organize'])assert(node(id));
 

@@ -17,6 +17,9 @@ import (
 func workspaceMemoryFixture(t *testing.T) (*App, Task) {
 	t.Helper()
 	a := fixture(t, &fakeRunner{})
+	if err := a.store.set("automatic_knowledge", `{"capture":true,"recall":true,"organize":false}`); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.store.set("workspace_memory", `{"enabled":true}`); err != nil {
 		t.Fatal(err)
 	}
@@ -370,6 +373,20 @@ with tempfile.TemporaryDirectory(prefix='duo-workspace-memory-fixture-') as root
         file['path']=file['path'].replace(legacy,readable)
         file['content']=managed(file['content'].split('\n<!-- duo-workspace-generated:')[0].replace(legacy,readable))
     transcript=transcript.replace(legacy,readable)
+    # Incomplete history must preserve the current managed state byte for
+    # byte while still appending a new source through the real POSIX writer.
+    state_body='## Current task state\n\nExisting goal and plan\n'
+    state_block='<!-- duo:task-state:'+hashlib.sha256(state_body.encode()).hexdigest()+' -->\n'+state_body+'<!-- /duo:task-state -->'
+    worklog=readable+'/任务记录.md'
+    initial_state=call([{'path':worklog,'content':'# Task record\n\n'+state_block+'\n','append_worklog':True}],task_id='fixture-task',task_directory=readable)
+    assert not initial_state.get('error'), initial_state
+    limited_file={'path':worklog,'content':'unused header','append_worklog':True,'state_content':'## Current task state\n\nIncomplete progress only\n','state_incomplete':True,'entries':[{'id':'fixture-task/new-progress','content':'New progress source'}]}
+    limited=call([limited_file],task_id='fixture-task',task_directory=readable)
+    saved_state=pathlib.Path(root,worklog).read_text()
+    assert not limited.get('error') and any('历史不完整' in warning for warning in limited['warnings']), limited
+    assert state_block in saved_state and 'Incomplete progress only' not in saved_state and saved_state.count('<!-- duo:worklog:fixture-task/new-progress -->')==1, saved_state
+    repeat_limited=call([limited_file],task_id='fixture-task',task_directory=readable)
+    assert not repeat_limited.get('error') and pathlib.Path(root,worklog).read_text()==saved_state, repeat_limited
     doc=call([],action='document',path=transcript)
     assert doc.get('content')==managed('first canonical record'), doc
     unsafe=call([],action='document',path='.duo/tasks/fixture-task/../../README.md')

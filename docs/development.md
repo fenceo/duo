@@ -25,7 +25,7 @@ go test ./... -count=1
 node scripts/Test-Updates-Web.mjs
 ```
 
-完整 Windows 发布包使用 `scripts/Build-Portable.ps1`。构建依赖 Go 1.27+、支持 TypeScript 类型去除的 Node.js、npm、Windows .NET Framework C# 编译器及 Inno Setup 6.7.3。先运行 `scripts/Setup-InnoToolchain.ps1` 可将固定版本编译器以便携模式放到项目上级 `.tools`，不创建系统入口；脚本验证下载 SHA-256 和 Pyrsys B.V. 发布者签名，并固定官方源码版本中的中文语言资源校验值。运行包不需要这些构建工具。
+完整 Windows 发布包使用 `scripts/Build-Portable.ps1`。构建依赖 Go 1.27+、支持 TypeScript 类型去除的 Node.js、npm、Python 3、Windows .NET Framework C# 编译器及 Inno Setup 6.7.3。Python 用于离线知识整理回归。先运行 `scripts/Setup-InnoToolchain.ps1` 可将固定版本编译器以便携模式放到项目上级 `.tools`，不创建系统入口；脚本验证下载 SHA-256 和 Pyrsys B.V. 发布者签名，并固定官方源码版本中的中文语言资源校验值。运行包不需要这些构建工具。
 
 `scripts/Build-Installer.ps1` 单独构建 Inno 安装器：白名单解开便携 ZIP，编译维护 helper，再由 Inno 原生管理 Files / Icons / Registry / uninstaller。新安装器无副作用校验参数为 `/VERIFY=1`；不要把旧自制安装器的 `--verify` 或 `--quiet` 参数用于新包。
 

@@ -227,17 +227,17 @@ func TestNotebookDefaultDirectoryFollowsDataRoot(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
 	a.store.Exec("DELETE FROM settings WHERE key='knowledge_vault'")
 	config := a.store.vaultConfig()
-	if !config.Enabled || !config.TaskFolders || !config.IncludeRuns || !config.IncludeAutomatic || config.Directory != filepath.Join(a.store.directory, "knowledge") {
+	if !config.Enabled || !config.TaskFolders || config.IncludeRuns || !config.IncludeAutomatic || config.RootMode != "direct" || !config.HumanLayout || config.IncludeLegacy == nil || *config.IncludeLegacy || config.Directory != filepath.Join(a.store.directory, "knowledge") {
 		t.Fatal(config)
 	}
 	syncTestVault(t, a)
-	if _, err := os.Stat(filepath.Join(config.Directory, "Duo")); err != nil {
+	if _, err := os.Stat(filepath.Join(config.Directory, "首页.md")); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestNotebookVaultMigratesLegacyPathsAndKeepsTags(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	k := libraryKnowledge(t, a, task, "查看 https://example.com/docs 后确认", "observed")
 	dir := t.TempDir()

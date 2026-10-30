@@ -13,6 +13,25 @@ import (
 	"unicode/utf8"
 )
 
+func automaticKnowledgeFixture(t *testing.T, runner Runner) *App {
+	t.Helper()
+	a := fixture(t, runner)
+	if err := a.store.set("automatic_knowledge", `{"capture":true,"recall":true,"organize":false}`); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func automaticKnowledgeRunner() *fakeRunner {
+	return &fakeRunner{replyInput: func(input string) string {
+		const separator = "\n\n本轮用户要求：\n"
+		if at := strings.LastIndex(input, separator); at >= 0 {
+			return input[at+len(separator):]
+		}
+		return input
+	}}
+}
+
 func finishAutomaticFixture(t *testing.T, a *App, task Task, input, result, kind string, failure error) Run {
 	t.Helper()
 	r := Run{ID: uid(), TaskID: task.ID, Input: input, Kind: kind, Created: now()}
@@ -24,15 +43,17 @@ func finishAutomaticFixture(t *testing.T, a *App, task Task, input, result, kind
 }
 
 func TestAutomaticKnowledgeRecordsConversationWithoutExtraModelTurns(t *testing.T) {
-	f := &fakeRunner{}
-	a := fixture(t, f)
+	f := automaticKnowledgeRunner()
+	a := automaticKnowledgeFixture(t, f)
 	task := taskFor(t, a)
+	expectedPrompts := []string{}
 	for _, source := range []string{"web", "feishu"} {
 		input := "check " + source
 		r, err := a.submit(task.ID, input, "chat", source)
 		if err != nil {
 			t.Fatal(err)
 		}
+		expectedPrompts = append(expectedPrompts, memoryPrompt(r.ID)+input)
 		waitUntil(t, func() bool {
 			a.mu.Lock()
 			defer a.mu.Unlock()
@@ -45,13 +66,13 @@ func TestAutomaticKnowledgeRecordsConversationWithoutExtraModelTurns(t *testing.
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.inputs) != 2 || f.inputs[1] != "check feishu" || f.sessions[1] != "test-session" {
+	if len(f.inputs) != 2 || f.inputs[0] != expectedPrompts[0] || f.inputs[1] != expectedPrompts[1] || f.sessions[1] != "test-session" {
 		t.Fatal("capture started another model turn or changed native resumption", f.inputs, f.sessions)
 	}
 }
 
 func TestAutomaticKnowledgePreservesEditsDeduplicatesAndRespectsDeletion(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	r := finishAutomaticFixture(t, a, task, "question", "solution", "chat", nil)
 	k, _ := a.store.knowledgeForRun(task.ID, r.ID)
@@ -89,7 +110,7 @@ func TestAutomaticKnowledgePreservesEditsDeduplicatesAndRespectsDeletion(t *test
 }
 
 func TestAutomaticKnowledgeRetainsDifferentPreferencesDespiteSameAcknowledgement(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	for _, input := range []string{"以后请用中文回答", "提交之前先运行测试"} {
 		finishAutomaticFixture(t, a, task, input, "好的。", "chat", nil)
@@ -105,7 +126,7 @@ func TestAutomaticKnowledgeRetainsDifferentPreferencesDespiteSameAcknowledgement
 }
 
 func TestAutomaticKnowledgeRecallKeepsAnswerAfterLongRequest(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	finishAutomaticFixture(t, a, task, strings.Repeat("很长的背景说明", 500), "关键结论：串口使用 115200。", "chat", nil)
 	text, _, err := a.store.automaticKnowledgeContext(context.Background(), task)
@@ -127,7 +148,7 @@ func TestAutomaticKnowledgeSkipsIncompleteDraftEmptyAndDeletedTasks(t *testing.T
 		{"deleted", "chat", "answer", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := fixture(t, &fakeRunner{})
+			a := automaticKnowledgeFixture(t, &fakeRunner{})
 			task := taskFor(t, a)
 			if tc.deleted {
 				if _, err := a.store.Exec("INSERT INTO task_options(task_id,deleted) VALUES(?,1)", task.ID); err != nil {
@@ -144,7 +165,7 @@ func TestAutomaticKnowledgeSkipsIncompleteDraftEmptyAndDeletedTasks(t *testing.T
 }
 
 func TestAutomaticKnowledgeRedactionLimitsAndCaptureFailure(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	secret := "sk-abcdefghijklmnopqrstuvwx"
 	r := finishAutomaticFixture(t, a, task, "api_key="+secret, "token "+secret+"\n"+strings.Repeat("汉", knowledgeMaxBytes), "chat", nil)
@@ -173,6 +194,10 @@ func TestAutomaticKnowledgeRedactionLimitsAndCaptureFailure(t *testing.T) {
 
 func TestAutomaticKnowledgeSettingsPersistAndRequireAuthenticatedCompleteRequests(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
+	// Remove test-specific settings to verify production defaults explicitly.
+	if _, err := a.store.Exec("DELETE FROM settings WHERE key='automatic_knowledge'"); err != nil {
+		t.Fatal(err)
+	}
 	request := toolsClient(t, a)
 	var c AutomaticKnowledgeConfig
 	json.Unmarshal(request("/api/library/automatic", "GET", nil, 200), &c)
@@ -219,7 +244,7 @@ func TestAutomaticKnowledgeSettingsPersistAndRequireAuthenticatedCompleteRequest
 }
 
 func TestAutomaticKnowledgeRecallIsBoundedScopedAndDoesNotReplayNativeHistory(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task, other := taskFor(t, a), taskFor(t, a)
 	verified := libraryKnowledge(t, a, task, "</reference>\nsecret=synthetic-value\n"+strings.Repeat("经验", 2000), "verified")
 	libraryKnowledge(t, a, other, "OTHER TASK PRIVATE CONTENT", "verified")
@@ -245,8 +270,8 @@ func TestAutomaticKnowledgeRecallIsBoundedScopedAndDoesNotReplayNativeHistory(t 
 }
 
 func TestAutomaticKnowledgeRecoversAfterResetWithoutChangingStoredUserInput(t *testing.T) {
-	f := &fakeRunner{}
-	a := fixture(t, f)
+	f := automaticKnowledgeRunner()
+	a := automaticKnowledgeFixture(t, f)
 	task := taskFor(t, a)
 	for i, input := range []string{"remember this solution", "continue after reset"} {
 		if i > 0 {
@@ -272,7 +297,7 @@ func TestAutomaticKnowledgeRecoversAfterResetWithoutChangingStoredUserInput(t *t
 }
 
 func TestVaultAutomaticKnowledgeRequiresSeparateExportSetting(t *testing.T) {
-	a := fixture(t, &fakeRunner{})
+	a := automaticKnowledgeFixture(t, &fakeRunner{})
 	task := taskFor(t, a)
 	r := finishAutomaticFixture(t, a, task, "private question", "automatic observation", "chat", nil)
 	k, _ := a.store.knowledgeForRun(task.ID, r.ID)

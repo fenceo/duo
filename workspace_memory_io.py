@@ -14,6 +14,8 @@ TASK_MARKER = "<!-- duo-workspace-task:"
 WORKLOG_NAME = "任务记录.md"
 WORKLOG_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}$")
 WORKLOG_SOURCE = re.compile(r"(?m)^<!-- duo:worklog:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
+STATE_START = "<!-- duo:task-state:"
+STATE_END = "<!-- /duo:task-state -->"
 CONFLICT_MESSAGE = "任务记录已被修改，请重新读取后合并；当前编辑未覆盖"
 
 
@@ -37,6 +39,40 @@ def managed(body):
 def unmodified(text):
     start = text.rfind(MARKER)
     return start >= 0 and text.endswith(" -->\n") and text[start + len(MARKER):-5] == digest(text[:start])
+
+
+def state_block(body):
+    body = body.replace("\r\n", "\n").rstrip("\n") + "\n"
+    return STATE_START + digest(body) + " -->\n" + body + STATE_END
+
+
+def update_worklog_state(text, body):
+    if not body:
+        return text, False
+    if not isinstance(body, str) or "\x00" in body or len(body.encode("utf-8")) > LIMIT:
+        raise ValueError("任务状态内容无效或超过 1 MiB")
+    start = text.find(STATE_START)
+    if start < 0:
+        if STATE_END in text:
+            return text, True
+        block = state_block(body) + "\n\n"
+        at = text.find("\n## ")
+        return (text[:at+1] + block + text[at+1:] if at >= 0 else text + "\n\n" + block), False
+    if text.count(STATE_START) != 1 or text.count(STATE_END) != 1:
+        return text, True
+    header_end, end = text.find(" -->", start), text.find(STATE_END, start)
+    if header_end < 0 or end < header_end:
+        return text, True
+    revision = text[start+len(STATE_START):header_end]
+    stored = text[header_end+len(" -->"):end].replace("\r\n", "\n")
+    if stored.startswith("\n"):
+        stored = stored[1:]
+    if not re.fullmatch(r"[0-9a-f]{64}", revision) or digest(stored) != revision:
+        return text, True
+    block = state_block(body)
+    if "\r\n" in text[start:end]:
+        block = block.replace("\n", "\r\n")
+    return text[:start] + block + text[end+len(STATE_END):], False
 
 
 def valid_directory(task_id, directory):
@@ -277,6 +313,15 @@ def main():
         if len(text.encode("utf-8")) > LIMIT:
             report["warnings"].append("任务记录初始内容超过 1 MiB；未写入：" + relative)
             return
+        if file.get("state_incomplete", False):
+            report["warnings"].append("任务状态历史不完整，已暂停自动状态区替换并保留原文；新进展仍按来源追加，当前目标与计划可能尚未更新。")
+        else:
+            text, state_conflict = update_worklog_state(text, file.get("state_content", ""))
+            if state_conflict:
+                report["warnings"].append("任务状态自动管理区域已被人工修改或标记不完整，已保留原文；新进展仍追加到时间记录。")
+        if len(text.encode("utf-8")) > LIMIT:
+            report["warnings"].append("更新任务状态将超过 1 MiB，保留原文；完整轮次仍在 Duo 数据库。")
+            return
         plain_write(relative, text, old)
 
     def migrate(item):
@@ -399,6 +444,17 @@ def main():
                 if not valid_directory(task_id, directory) or not old_path.endswith("/README.md") or not valid_directory(task_id, old_base) or len(task.get("sources", [])) > 6:
                     continue
                 task["path"] = directory + "/README.md"
+                if task.get("state"):
+                    task["state"] = ""
+                    try:
+                        current = read(directory + "/" + WORKLOG_NAME)
+                        start = current.find(STATE_START)
+                        header = current.find(" -->", start) if start >= 0 else -1
+                        state_end = current.find(STATE_END, start) if start >= 0 else -1
+                        if header >= 0 and state_end > header:
+                            task["state"] = current[header+len(" -->"):state_end].strip()[:2400]
+                    except (OSError, ValueError):
+                        pass
                 for source in task.get("sources", []):
                     if source.get("path", "").startswith(old_base + "/"):
                         source["path"] = directory + source["path"][len(old_base):]

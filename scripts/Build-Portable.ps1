@@ -77,6 +77,8 @@ try {
     New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
     & npm.cmd run check
     if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed' }
+    & python scripts/Test-KnowledgeVault-Organizer.py
+    if ($LASTEXITCODE -ne 0) { throw 'Knowledge organizer regression failed' }
     foreach ($test in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '.') -Filter 'Test-*-Web.mjs' -File | Sort-Object Name) {
         & node $test.FullName
         if ($LASTEXITCODE -ne 0) { throw ('Web regression failed: ' + $test.Name) }

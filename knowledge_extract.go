@@ -28,6 +28,7 @@ type knowledgeCandidate struct {
 
 type KnowledgeExtractionReport struct {
 	Created    int                `json:"created"`
+	Revisions  int                `json:"revisions"`
 	Duplicates int                `json:"duplicates"`
 	Skipped    int                `json:"skipped"`
 	Items      []CuratedKnowledge `json:"items"`
@@ -122,15 +123,7 @@ SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM task_options WHERE task_id=? AND d
 }
 
 func (s *Store) knowledgeExtractionEnabled() bool {
-	var value struct {
-		Enabled bool `json:"enabled"`
-	}
-	value.Enabled = true
-	raw := s.setting("knowledge_extraction")
-	if raw != "" && json.Unmarshal([]byte(raw), &value) != nil {
-		return false
-	}
-	return value.Enabled
+	return s.knowledgeExtractionConfig().Enabled
 }
 
 func (s *Store) knowledgeExtractionNeedsDirectory() bool {
@@ -165,10 +158,16 @@ func (s *Store) extractTaskKnowledge(ctx context.Context, taskID, runID string, 
 		return report, err
 	}
 	known := map[string]bool{}
+	topics := map[string]CuratedKnowledge{}
+	deletedTopics := map[string]bool{}
 	for _, item := range existing {
+		topics[knowledgeTopic(item.Layer, item.ScopeKey, item.Title)] = item
 		known[candidateIdentity(item.Layer, item.ScopeKey, item.Content)] = true
 		if item.ExtractionKey != "" {
 			known[item.ExtractionKey] = true
+		}
+		for _, key := range item.ReviewKeys {
+			known[key] = true
 		}
 	}
 	// Respect local deletion tombstones even if the source is re-harvested.
@@ -183,6 +182,7 @@ func (s *Store) extractTaskKnowledge(ctx context.Context, taskID, runID string, 
 			break
 		}
 		if json.Unmarshal([]byte(raw), &item) == nil {
+			deletedTopics[knowledgeTopic(item.Layer, item.ScopeKey, item.Title)] = true
 			known[candidateIdentity(item.Layer, item.ScopeKey, item.Content)] = true
 			known[item.ExtractionKey] = true
 		}
@@ -264,8 +264,31 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 				continue
 			}
 			identity := candidateIdentity(item.Layer, item.ScopeKey, item.Content)
-			if known[identity] {
+			topic := knowledgeTopic(item.Layer, item.ScopeKey, item.Title)
+			if known[identity] || deletedTopics[topic] {
 				report.Duplicates++
+				continue
+			}
+			if existing, ok := topics[topic]; ok {
+				proposal := KnowledgeRevision{Key: identity, Content: item.Content, Evidence: item.Evidence, Applicability: item.Applicability, Tags: item.Tags, SourceID: "run:" + originRun, SourceTaskID: originTask}
+				updated, duplicate, proposalErr := s.queueKnowledgeRevision(ctx, existing.ID, proposal)
+				if proposalErr != nil {
+					report.Skipped++
+					if len(report.Warnings) < 20 {
+						report.Warnings = append(report.Warnings, markdownTitle(item.Title)+"："+proposalErr.Error())
+					}
+					continue
+				}
+				known[identity] = true
+				topics[topic] = updated
+				if duplicate {
+					report.Duplicates++
+				} else {
+					report.Revisions++
+					if len(report.Items) < 100 {
+						report.Items = append(report.Items, updated)
+					}
+				}
 				continue
 			}
 			v := CuratedKnowledge{Layer: item.Layer, ScopeKey: item.ScopeKey, Title: item.Title, Content: item.Content, Status: "observed", Applicability: item.Applicability, Evidence: item.Evidence, Tags: candidateTags(item.Tags, item.Title+" "+item.Content, item.Layer, item.ScopeKey), SourceID: "run:" + originRun, SourceTaskID: originTask, SourceHash: hash(source.raw), ExtractionKey: identity}
@@ -281,6 +304,7 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 				continue
 			}
 			known[identity] = true
+			topics[topic] = out
 			if duplicate {
 				report.Duplicates++
 			} else {
@@ -291,7 +315,7 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 			}
 		}
 	}
-	if report.Created == 0 && report.Duplicates == 0 {
+	if report.Created == 0 && report.Revisions == 0 && report.Duplicates == 0 {
 		report.Warnings = append(report.Warnings, "没有可提取的结构化知识候选。旧记录可使用 AI 重新提取；该操作会发送选定任务的有限历史并消耗额度。")
 	}
 	return report, nil
@@ -299,26 +323,42 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 
 func (s *Server) knowledgeExtractionRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/library/extraction", s.secure(func(w http.ResponseWriter, r *http.Request) {
-		jsonOut(w, 200, map[string]bool{"enabled": s.app.store.knowledgeExtractionEnabled(), "needs_directory": s.app.store.knowledgeExtractionNeedsDirectory()})
+		jsonOut(w, 200, s.app.store.knowledgeExtractionConfig())
 	}))
 	m.HandleFunc("PUT /api/library/extraction", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Enabled *bool `json:"enabled"`
+			Enabled       *bool `json:"enabled"`
+			Scheduled     *bool `json:"scheduled"`
+			IntervalHours *int  `json:"interval_hours"`
 		}
 		if !body(w, r, &v) {
 			return
 		}
-		if v.Enabled == nil {
+		if v.Enabled == nil && v.Scheduled == nil && v.IntervalHours == nil {
 			fail(w, 400, "请提供自动提取开关")
 			return
 		}
-		raw, _ := json.Marshal(map[string]bool{"enabled": *v.Enabled})
+		c := s.app.store.knowledgeExtractionConfig()
+		if v.Enabled != nil {
+			c.Enabled = *v.Enabled
+		}
+		if v.Scheduled != nil {
+			c.Scheduled = *v.Scheduled
+		}
+		if v.IntervalHours != nil {
+			c.IntervalHours = *v.IntervalHours
+		}
+		if c.IntervalHours < 1 || c.IntervalHours > 168 {
+			fail(w, 400, "定时整理间隔为 1～168 小时")
+			return
+		}
+		raw, _ := json.Marshal(c)
 		if err := s.app.store.set("knowledge_extraction", string(raw)); err != nil {
 			fail(w, 500, "保存自动提取设置失败")
 			return
 		}
 		s.app.changed()
-		jsonOut(w, 200, map[string]bool{"enabled": *v.Enabled, "needs_directory": s.app.store.knowledgeExtractionNeedsDirectory()})
+		jsonOut(w, 200, s.app.store.knowledgeExtractionConfig())
 	}))
 	m.HandleFunc("POST /api/library/extract", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
@@ -345,6 +385,8 @@ func (s *Server) knowledgeExtractionRoutes(m *http.ServeMux) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
+		s.app.knowledgeOrganizeMu.Lock()
+		defer s.app.knowledgeOrganizeMu.Unlock()
 		report, err := s.app.store.extractTaskKnowledge(ctx, v.TaskID, "", v.Layers)
 		if err != nil {
 			fail(w, 400, err.Error())

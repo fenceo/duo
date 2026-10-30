@@ -57,3 +57,4 @@ __pycache__/
 !/docs/claude-mimo.md
 !/docs/model-latency-tests.md
 !/docs/knowledge-layers.md
+!/docs/knowledge-rebuild-architecture.md
