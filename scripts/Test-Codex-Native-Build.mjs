@@ -50,8 +50,8 @@ try{
  assert.equal((await fetch(base+'/api/library/automatic',{method:'PUT',headers,body:JSON.stringify({capture:false,recall:false})})).status,200);
  assert.deepEqual(await fetch(base+'/api/library/automatic',{headers}).then(r=>r.json()),{capture:false,recall:false,organize:false},'older clients also preserve an explicit organization opt-out');
  const vault=await fetch(base+'/api/library/vault',{headers}).then(r=>r.json());
- assert.equal(vault.document_directory,join(data,'knowledge','Duo'),'new installations use their own data directory for portable documents');
- assert.deepEqual(vault.config,{enabled:true,directory:join(data,'knowledge'),include_runs:true,include_automatic:true,task_folders:true},'new installations record task documents without manual configuration');
+ assert.equal(vault.document_directory,join(data,'knowledge'),'new installations use the selected knowledge root directly');
+ assert.deepEqual(vault.config,{root_mode:'direct',human_layout:true,include_legacy:false,enabled:true,directory:join(data,'knowledge'),include_runs:false,include_automatic:true,task_folders:true},'new installations organize readable knowledge without duplicating legacy material or full conversations');
  const engines=await fetch(base+'/api/engines',{headers}).then(r=>r.json());
  assert.equal(engines.engines.find(e=>e.id==='deepseek-harness').transport,'acp');
  const createHarness=mode_id=>fetch(base+'/api/tasks',{method:'POST',headers,body:JSON.stringify({title:'Harness isolated workflow',workspace:'/tmp',engine:'deepseek-harness',model:'deepseek-flash',mode_id})});
