@@ -128,6 +128,8 @@ func TestCuratedRecallOnlyConfirmedPlatformKnowledgeInFreshSession(t *testing.T)
 
 func TestCuratedVaultExternalEditsDowngradeAndConflictsPreserveBothSides(t *testing.T) {
 	a := fixture(t, &fakeRunner{})
+	// Explicit sync counters need one actor; the idle loop may otherwise import first.
+	a.updating.Store(true)
 	v := curatedFixture(t, a, "consensus", "", "verified")
 	dir := t.TempDir()
 	setTestVault(t, a, dir, true)
