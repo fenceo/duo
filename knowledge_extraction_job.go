@@ -12,7 +12,7 @@ func (s *Server) extractKnowledgeWithAI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !request.Confirm {
-		fail(w, http.StatusBadRequest, "请确认将最近对话发送给当前模型进行知识提取。")
+		fail(w, http.StatusBadRequest, "请确认将尚未整理的任务资料发送给当前模型进行知识提取。")
 		return
 	}
 	if s.app.store.knowledgeExtractionNeedsDirectory() {
@@ -32,7 +32,16 @@ func (s *Server) extractKnowledgeWithAI(w http.ResponseWriter, r *http.Request) 
 		fail(w, http.StatusBadRequest, "当前引擎尚不支持独立知识整理，请先切换到 Codex、Claude Code 或 Harness；已有候选仍可直接提取。")
 		return
 	}
-	run, err := s.app.submit(task.ID, "请整理最近已完成对话，提取平台共识、系统知识和项目知识候选，并附标签、依据及适用条件。", "knowledge", knowledgeExtractionSource)
+	preview, err := s.app.store.knowledgeSynthesisPreview(r.Context(), task.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "读取整理进度失败")
+		return
+	}
+	if preview.Remaining == 0 {
+		fail(w, http.StatusConflict, "没有尚未整理的已结束对话；已有知识保留，无需重复调用模型。")
+		return
+	}
+	run, err := s.app.submit(task.ID, synthesisQueuedMessage(preview), "knowledge", knowledgeExtractionSource)
 	if err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return

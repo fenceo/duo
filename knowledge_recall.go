@@ -20,11 +20,11 @@ func (s *Store) knowledgeLookupContext(ctx context.Context, task Task, question 
 	if err != nil || !c.Recall || task.Deleted || task.Archived {
 		return "", nil, err
 	}
-	items, err := s.curatedKnowledgeList(ctx, "", "")
+	items, err := s.knowledgeRecallCandidates(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	query := strings.ToLower(question)
+	query := strings.ToLower(knowledgeRecallQuestion(question))
 	queryRunes := []rune(query)
 	if len(queryRunes) > 2000 {
 		query = string(queryRunes[:2000])
@@ -34,6 +34,27 @@ func (s *Store) knowledgeLookupContext(ctx context.Context, task Task, question 
 		score int
 	}
 	matches := []match{}
+	project, err := s.taskKnowledgeProject(ctx, task.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	projects, err := s.knowledgeProjects(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	explicitProjectScopes := knowledgeMentionedProjectScopes(projects, query)
+	workspaceName := task.Workspace
+	if task.Environment != nil && task.Environment.Type == "windows" {
+		workspaceName = strings.ReplaceAll(workspaceName, "\\", "/")
+	}
+	inferredScopes := map[string]bool{}
+	if project == nil {
+		for _, v := range items {
+			if v.Layer == "project" && v.Status != "stale" && knowledgeScopeMentioned(v.ScopeKey, task.Title+" "+path.Base(workspaceName)) {
+				inferredScopes[knowledgeScopeAlias(v.ScopeKey)] = true
+			}
+		}
+	}
 	type sourceIdentity struct{ key, task string }
 	sourceKeys := map[string]sourceIdentity{}
 	workspaceKey := knowledgeWorkspaceKey(task)
@@ -43,34 +64,40 @@ func (s *Store) knowledgeLookupContext(ctx context.Context, task Task, question 
 		}
 		// Generic words such as AI or architecture must not bring unrelated
 		// projects into a task. Explicit project references still allow reuse.
-		explicitScope := knowledgeScopeMentioned(v.ScopeKey, query)
-		workspaceName := task.Workspace
-		if task.Environment != nil && task.Environment.Type == "windows" {
-			workspaceName = strings.ReplaceAll(workspaceName, "\\", "/")
-		}
-		if v.Layer == "project" && !explicitScope && !knowledgeScopeMentioned(v.ScopeKey, task.Title+" "+path.Base(workspaceName)) {
-			if workspaceKey == "" || !strings.HasPrefix(v.SourceID, "run:") {
-				continue
-			}
-			run := strings.TrimPrefix(v.SourceID, "run:")
-			previous, loaded := sourceKeys[run]
-			if !loaded {
-				var raw string
-				sourceErr := s.QueryRowContext(ctx, "SELECT x.snapshot,r.task_id FROM run_execution x JOIN runs r ON r.id=x.run_id WHERE x.run_id=?", run).Scan(&raw, &previous.task)
-				if sourceErr == nil {
-					var snapshot RunExecution
-					if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
-						return "", nil, err
-					}
-					previous.key = snapshot.WorkspaceKey
-				} else if !errors.Is(sourceErr, sql.ErrNoRows) {
-					return "", nil, sourceErr
+		explicitScope := knowledgeScopeMentioned(v.ScopeKey, query) || explicitProjectScopes[knowledgeScopeAlias(v.ScopeKey)]
+		if v.Layer == "project" && !explicitScope {
+			if project != nil {
+				// An explicit project replaces path/title guesses. A shared source
+				// workspace is provenance, not permission to mix project knowledge.
+				if !knowledgeProjectMatchesScope(project, v.ScopeKey) {
+					continue
 				}
-				sourceKeys[run] = previous
-			}
-			// Legacy runs without a snapshot cannot establish historical identity.
-			if previous.key != workspaceKey || v.SourceTaskID != "" && previous.task != v.SourceTaskID {
+			} else if len(inferredScopes) > 0 && !inferredScopes[knowledgeScopeAlias(v.ScopeKey)] {
 				continue
+			} else if len(inferredScopes) == 0 {
+				if workspaceKey == "" || !strings.HasPrefix(v.SourceID, "run:") {
+					continue
+				}
+				run := strings.TrimPrefix(v.SourceID, "run:")
+				previous, loaded := sourceKeys[run]
+				if !loaded {
+					var raw string
+					sourceErr := s.QueryRowContext(ctx, "SELECT x.snapshot,r.task_id FROM run_execution x JOIN runs r ON r.id=x.run_id WHERE x.run_id=?", run).Scan(&raw, &previous.task)
+					if sourceErr == nil {
+						var snapshot RunExecution
+						if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
+							return "", nil, err
+						}
+						previous.key = snapshot.WorkspaceKey
+					} else if !errors.Is(sourceErr, sql.ErrNoRows) {
+						return "", nil, sourceErr
+					}
+					sourceKeys[run] = previous
+				}
+				// Legacy runs without a snapshot cannot establish historical identity.
+				if previous.key != workspaceKey || v.SourceTaskID != "" && previous.task != v.SourceTaskID {
+					continue
+				}
 			}
 		}
 		score := 0
@@ -84,14 +111,14 @@ func (s *Store) knowledgeLookupContext(ctx context.Context, task Task, question 
 		}
 		for _, anchor := range anchors {
 			anchor = strings.ToLower(strings.TrimSpace(anchor))
-			if !knowledgeGenericTerm(anchor) && len([]rune(anchor)) >= 2 && strings.Contains(query, anchor) {
+			if !knowledgeGenericTerm(anchor) && len([]rune(anchor)) >= 2 && knowledgeScopeMentioned(anchor, query) {
 				score += 8
 			}
 		}
 		terms := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' })
 		body := strings.ToLower(v.Title + " " + v.ScopeKey + " " + strings.Join(v.Tags, " ") + "\n" + v.Content)
 		for _, term := range terms {
-			if !knowledgeGenericTerm(term) && len([]rune(term)) >= 2 && len([]rune(term)) <= 40 && strings.Contains(body, term) {
+			if !knowledgeGenericTerm(term) && len([]rune(term)) >= 2 && len([]rune(term)) <= 40 && knowledgeScopeMentioned(term, body) {
 				score += 3
 			}
 		}
@@ -139,14 +166,89 @@ func knowledgeGenericTerm(value string) bool {
 	return false
 }
 
-func knowledgeScopeMentioned(scope, text string) bool {
-	scope, text = strings.ToLower(strings.TrimSpace(scope)), strings.ToLower(text)
-	for _, suffix := range []string{"平台", "项目", "工程"} {
-		if strings.HasSuffix(scope, suffix) && len([]rune(strings.TrimSuffix(scope, suffix))) >= 2 {
-			scope = strings.TrimSuffix(scope, suffix)
-			break
+// Context injected by a previous recall is evidence to inspect, not a new
+// expression of the user's project interest. Excluding it avoids self-recall.
+func knowledgeRecallQuestion(question string) string {
+	for _, opening := range []string{"【Duo 相关知识检索】", "【Duo相关知识检索】"} {
+		for {
+			start := strings.Index(question, opening)
+			if start < 0 {
+				break
+			}
+			end := strings.Index(question[start+len(opening):], "【相关知识结束】")
+			if end < 0 {
+				question = question[:start]
+				break
+			}
+			question = question[:start] + "\n" + question[start+len(opening)+end+len("【相关知识结束】"):]
 		}
 	}
+	return question
+}
+
+// Recall is deliberately bounded even when a vault contains many large notes.
+// It is a recent keyword candidate window, not an exhaustive semantic search.
+func (s *Store) knowledgeRecallCandidates(ctx context.Context) ([]CuratedKnowledge, error) {
+	rows, err := s.QueryContext(ctx, "SELECT document FROM curated_knowledge WHERE deleted=0 AND layer IN ('system','project') AND json_extract(document,'$.status')<>'stale' ORDER BY updated DESC,id LIMIT 2000")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CuratedKnowledge{}
+	bytes := 0
+	for rows.Next() {
+		var raw string
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		bytes += len(raw)
+		if bytes > 32<<20 {
+			break
+		}
+		var v CuratedKnowledge
+		if err = json.Unmarshal([]byte(raw), &v); err != nil {
+			return nil, err
+		}
+		items = append(items, v)
+	}
+	return items, rows.Err()
+}
+
+func knowledgeScopeAlias(scope string) string {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	for _, suffix := range []string{"平台", "项目", "工程"} {
+		if strings.HasSuffix(scope, suffix) && len([]rune(strings.TrimSuffix(scope, suffix))) >= 2 {
+			return strings.TrimSuffix(scope, suffix)
+		}
+	}
+	return scope
+}
+
+// Registering a project alias makes it an explicit cross-project reference to
+// any of that project's known scope labels. Resolve once per query so recall
+// does not rescan the entire registry for every candidate note.
+func knowledgeMentionedProjectScopes(projects []KnowledgeProject, query string) map[string]bool {
+	scopes := map[string]bool{}
+	for _, project := range projects {
+		labels := append([]string{project.Name}, project.Aliases...)
+		mentioned := false
+		for _, label := range labels {
+			if knowledgeScopeMentioned(label, query) {
+				mentioned = true
+				break
+			}
+		}
+		if mentioned {
+			for _, label := range labels {
+				scopes[knowledgeScopeAlias(label)] = true
+			}
+		}
+	}
+	return scopes
+}
+
+func knowledgeScopeMentioned(scope, text string) bool {
+	scope, text = knowledgeScopeAlias(scope), strings.ToLower(text)
 	if len([]rune(scope)) < 2 || knowledgeGenericTerm(scope) {
 		return false
 	}

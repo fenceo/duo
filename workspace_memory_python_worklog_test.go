@@ -20,6 +20,9 @@ func TestWorkspaceMemoryPOSIXWorklogAppendAndCAS(t *testing.T) {
 	raw, _ := json.Marshal(workspaceMemoryScript)
 	program := "script = " + string(raw) + `
 import hashlib,json,os,pathlib,subprocess,sys,tempfile
+# Git/autocrlf may check this embedded source out with CRLF. Normalize only the
+# test's injected program so the deterministic CAS fault anchor is portable.
+script=script.replace('\r\n','\n')
 def sha(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 with tempfile.TemporaryDirectory(prefix='duo-worklog-protocol-') as root:
@@ -121,18 +124,35 @@ with tempfile.TemporaryDirectory(prefix='duo-worklog-protocol-') as root:
     # must win; only the temporary generated replacement is discarded.
     anchor='            if current != old:\n                raise DocumentConflict(CONFLICT_MESSAGE)'
     staged="            with open(os.path.join(root, relative), 'w', encoding='utf-8') as external:\n                external.write('external concurrent edit\\n')\n            current = read(relative)\n"
+    assert script.count(anchor)==1, {'anchor_count':script.count(anchor),'cas_lines':[line for line in script.splitlines() if 'current != old' in line or 'raise DocumentConflict' in line]}
     race_script=script.replace(anchor,staged+anchor)
-    assert race_script != script
+    assert race_script != script, {'anchor_count':script.count(anchor),'source_characters':len(script)}
     race=call(action='save_document',path=path,content=edited+'new save\n',revision=sha(edited),source=race_script)
     assert race.get('error_code')=='conflict' and pathlib.Path(root,path).read_text(encoding='utf-8')=='external concurrent edit\n', race
     assert not list(pathlib.Path(root,base).glob('.duo-*.tmp'))
-    # Crossing the cap may not truncate old human text or skip ahead to a later
-    # smaller entry. Exactly the already fitting chronological prefix is kept.
+    # Crossing the cap preserves the original main and sends every chronological
+    # entry to history pages. Later small entries must no longer be stranded.
     large='x'*(1024*1024-200)
     pathlib.Path(root,path).write_text(large,encoding='utf-8')
     full=sync([entry(task+'/fits','small'),entry(task+'/too-large','y'*400),entry(task+'/later','must wait')])
     capped=pathlib.Path(root,path).read_text(encoding='utf-8')
-    assert not full.get('error') and full['warnings'] and capped.startswith(large) and '<!-- duo:worklog:'+task+'/fits -->' in capped and 'must wait' not in capped, full
+    history=pathlib.Path(root,base,'history')
+    page_files=sorted(history.glob('undated-*.md'))
+    all_pages=''.join(file.read_text(encoding='utf-8') for file in page_files)
+    assert not full.get('error') and capped==large and page_files and full['warnings'], full
+    for identity in ['fits','too-large','later']:
+        assert all_pages.count('<!-- duo:worklog:'+task+'/'+identity+' -->')==1, (identity,all_pages)
+    before_page=page_files[0].read_text(encoding='utf-8')+'\nmanual page annotation\n'
+    page_files[0].write_text(before_page,encoding='utf-8')
+    repeated_pages=sync([entry(task+'/fits','small'),entry(task+'/too-large','y'*400),entry(task+'/later','must wait')])
+    assert not repeated_pages.get('error') and page_files[0].read_text(encoding='utf-8')==before_page, repeated_pages
+    large_entries=[dict(entry(task+'/page-'+str(i),'page-'+str(i)+'\n'+'v'*180000),month='2026-10') for i in range(4)]
+    rolled=sync(large_entries)
+    monthly_pages=sorted(history.glob('2026-10-*.md'))
+    assert not rolled.get('error') and len(monthly_pages)>=4 and all(file.stat().st_size<=1024*1024 for file in monthly_pages), rolled
+    for document in [base+'/history/README.md',base+'/history/2026-10.md',base+'/history/2026-10-0001.md']:
+        opened=call(action='document',path=document)
+        assert not opened.get('error') and opened['editable'] is False, opened
     oversized='z'*(1024*1024+1)
     pathlib.Path(root,path).write_text(oversized,encoding='utf-8')
     over=sync([entry(task+'/after-limit','not appended')])

@@ -484,7 +484,10 @@ async function importWorkspaceData(){
  try{
   const response=await fetch('/api/workspace/import',{method:'POST',credentials:'same-origin',cache:'no-store',signal:shellController.signal,headers:{'Content-Type':'application/zip','X-CSRF-Token':csrf},body:workspaceImportBytes});
   const result=await response.json().catch(()=>({error:'服务返回内容异常'}));if(!response.ok){if(response.status===401&&shellCurrent(epoch)){showLogin();return}throw Object.assign(new Error(result.error||'导入失败'),{status:response.status});}
-  if(!shellCurrent(epoch))return;element('workspace-transfer-result').textContent='导入完成，正在刷新任务列表…';setTimeout(()=>{if(shellCurrent(epoch))location.reload()},250);
+  if(!shellCurrent(epoch))return;
+  const transferWarnings=Array.isArray(result.warnings)?result.warnings.filter((v:unknown):v is string=>typeof v==='string').slice(0,20):[];
+  if(transferWarnings.length){element('workspace-transfer-result').textContent='导入完成，存在需要核对的项目范围：'+transferWarnings.join('；');workspaceImportFile=null;workspaceImportBytes=null;workspaceTransferBusy=false;button('workspace-export').disabled=false;button('workspace-import').disabled=true;const refresh=document.createElement('button');refresh.type='button';refresh.textContent='刷新任务列表';refresh.onclick=()=>location.reload();element('workspace-transfer-result').append(document.createTextNode(' '),refresh);return}
+  element('workspace-transfer-result').textContent='导入完成，正在刷新任务列表…';setTimeout(()=>{if(shellCurrent(epoch))location.reload()},250);
  }catch(error){if(shellCurrent(epoch)){element('workspace-transfer-result').textContent=(error as Error).message||'导入失败';workspaceTransferBusy=false;button('workspace-export').disabled=false;button('workspace-import').disabled=!workspaceImportBytes}}
 }
 async function switchDataDirectory(){

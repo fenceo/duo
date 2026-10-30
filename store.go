@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS hardware(id TEXT PRIMARY KEY,task_id TEXT NOT NULL RE
 		db.Close()
 		return nil, err
 	}
-	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema + engineBindingSchema + runOutputSchema + knowledgeLayersSchema); err != nil {
+	if _, err = db.Exec(workbenchSchema + librarySchema + notebookSchema + engineBindingSchema + runOutputSchema + knowledgeLayersSchema + knowledgeSynthesisSchema + workspaceWorklogContextSchema + workspaceMemoryRetrySchema); err != nil {
 		db.Close()
 		return nil, err
 	}

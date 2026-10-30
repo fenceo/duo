@@ -61,18 +61,19 @@ type workspaceArchiveWorkbench struct {
 }
 
 type workspaceArchiveTask struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	Model           string `json:"model"`
-	ReasoningEffort string `json:"reasoning_effort"`
-	Engine          string `json:"engine"`
-	Status          string `json:"status"`
-	Created         int64  `json:"created"`
-	Updated         int64  `json:"updated"`
-	Pinned          bool   `json:"pinned"`
-	Archived        bool   `json:"archived"`
-	Deleted         bool   `json:"deleted"`
-	ModeID          string `json:"mode_id,omitempty"`
+	KnowledgeProject *KnowledgeProject `json:"knowledge_project,omitempty"`
+	ID               string            `json:"id"`
+	Title            string            `json:"title"`
+	Model            string            `json:"model"`
+	ReasoningEffort  string            `json:"reasoning_effort"`
+	Engine           string            `json:"engine"`
+	Status           string            `json:"status"`
+	Created          int64             `json:"created"`
+	Updated          int64             `json:"updated"`
+	Pinned           bool              `json:"pinned"`
+	Archived         bool              `json:"archived"`
+	Deleted          bool              `json:"deleted"`
+	ModeID           string            `json:"mode_id,omitempty"`
 }
 
 type workspaceArchiveRun struct {
@@ -321,7 +322,11 @@ func (s *Store) workspaceArchiveSnapshot() (workspaceArchive, map[string][]byte,
 		return workspaceArchive{}, nil, errors.New("工作台自定义模式或快捷指令超过导出上限")
 	}
 	for _, task := range tasks {
-		a.Tasks = append(a.Tasks, workspaceArchiveTask{ID: task.ID, Title: redactWorkspaceText(task.Title), Model: redactWorkspaceText(task.Model), ReasoningEffort: task.ReasoningEffort, Engine: task.Engine, Status: task.Status, Created: task.Created, Updated: task.Updated, Pinned: task.Pinned, Archived: task.Archived, Deleted: task.Deleted, ModeID: s.workspaceModeID(task.ID)})
+		project, projectErr := s.taskKnowledgeProject(context.Background(), task.ID)
+		if projectErr != nil {
+			return workspaceArchive{}, nil, projectErr
+		}
+		a.Tasks = append(a.Tasks, workspaceArchiveTask{KnowledgeProject: project, ID: task.ID, Title: redactWorkspaceText(task.Title), Model: redactWorkspaceText(task.Model), ReasoningEffort: task.ReasoningEffort, Engine: task.Engine, Status: task.Status, Created: task.Created, Updated: task.Updated, Pinned: task.Pinned, Archived: task.Archived, Deleted: task.Deleted, ModeID: s.workspaceModeID(task.ID)})
 		runs, err := s.runs(task.ID)
 		if err != nil {
 			return workspaceArchive{}, nil, err
@@ -453,6 +458,9 @@ func mustJSON(v any) string {
 }
 
 func marshalWorkspaceArchive(a workspaceArchive) ([]byte, error) {
+	if err := validateWorkspaceKnowledgeProjects(a.Tasks); err != nil {
+		return nil, err
+	}
 	for _, item := range a.Curated {
 		if err := prepareCurated(&item); err != nil {
 			return nil, fmt.Errorf("正式知识无法导出：%w", err)
@@ -628,6 +636,9 @@ func validArchiveText(value string, max int) bool {
 }
 
 func validateWorkspaceArchive(a workspaceArchive) error {
+	if err := validateWorkspaceKnowledgeProjects(a.Tasks); err != nil {
+		return err
+	}
 	if a.Sticky != nil {
 		if err := validateStickyBoard(*a.Sticky); err != nil {
 			return err
@@ -868,6 +879,11 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	projectReport, err := importWorkspaceKnowledgeProjects(tx, data.Archive.Tasks, taskIDs)
+	if err != nil {
+		rollback("导入知识项目失败：" + err.Error())
+		return
+	}
 	for _, run := range data.Archive.Runs {
 		id := uid()
 		runIDs[run.ID] = id
@@ -954,7 +970,7 @@ func (s *Server) workspaceImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.app.changed()
-	jsonOut(w, http.StatusCreated, map[string]any{"ok": true, "tasks": len(data.Archive.Tasks), "runs": len(data.Archive.Runs), "events": len(data.Archive.Events), "knowledge": len(data.Archive.Knowledge), "scratch": len(data.Archive.Scratch), "modes": len(data.Archive.Workbench.Modes), "commands": len(data.Archive.Workbench.Commands), "attachments": len(data.Archive.Attachments)})
+	jsonOut(w, http.StatusCreated, map[string]any{"ok": true, "tasks": len(data.Archive.Tasks), "runs": len(data.Archive.Runs), "events": len(data.Archive.Events), "knowledge": len(data.Archive.Knowledge), "scratch": len(data.Archive.Scratch), "modes": len(data.Archive.Workbench.Modes), "commands": len(data.Archive.Workbench.Commands), "attachments": len(data.Archive.Attachments), "knowledge_projects": projectReport.Projects, "project_tasks": projectReport.Tasks, "warnings": projectReport.Warnings})
 }
 
 func boolInt(value bool) int {

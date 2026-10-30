@@ -60,6 +60,7 @@ func (a *App) forkTask(id string) (Task, error) {
 		{"INSERT INTO task_execution(task_id,engine,reasoning_effort) VALUES(?,?,?)", []any{target.ID, target.Engine, target.ReasoningEffort}},
 		{"INSERT INTO task_options(task_id,mode) VALUES(?,?)", []any{target.ID, string(mode)}},
 		{"INSERT INTO notes(task_id,content,revision,updated) SELECT ?,content,revision,updated FROM notes WHERE task_id=?", []any{target.ID, id}},
+		{"INSERT INTO task_knowledge_projects(task_id,project_id) SELECT ?,project_id FROM task_knowledge_projects WHERE task_id=?", []any{target.ID, id}},
 	} {
 		if _, err = tx.Exec(statement.query, statement.args...); err != nil {
 			return Task{}, err
@@ -108,7 +109,7 @@ func (a *App) forkTask(id string) (Task, error) {
 		} else if !errors.Is(e, sql.ErrNoRows) {
 			return Task{}, e
 		}
-		snapshot, _ := json.Marshal(RunExecution{Engine: engine, Model: run.Model, WorkspaceKey: originalExecution.WorkspaceKey})
+		snapshot, _ := json.Marshal(RunExecution{Engine: engine, Model: run.Model, WorkspaceKey: originalExecution.WorkspaceKey, ProjectID: originalExecution.ProjectID})
 		for _, statement := range []struct {
 			query string
 			args  []any

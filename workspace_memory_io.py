@@ -12,6 +12,11 @@ TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 MARKER = "\n<!-- duo-workspace-generated:"
 TASK_MARKER = "<!-- duo-workspace-task:"
 WORKLOG_NAME = "任务记录.md"
+PAGE_TARGET = 256 * 1024
+WORKLOG_MONTH = re.compile(r"^(?:[0-9]{4}-(?:0[1-9]|1[0-2])|undated)$")
+WORKLOG_PAGE = re.compile(r"^([0-9]{4}-(?:0[1-9]|1[0-2])|undated)-([0-9]{4})\.md$")
+NAV_START = "<!-- duo:history-navigation:"
+NAV_END = "<!-- /duo:history-navigation -->"
 WORKLOG_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}$")
 WORKLOG_SOURCE = re.compile(r"(?m)^<!-- duo:worklog:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
 WORKLOG_DETAIL = re.compile(r"(?m)^<!-- duo:worklog-detail:([A-Za-z0-9_-]{1,96}/[A-Za-z0-9_-]{1,96}) -->\r?$")
@@ -121,7 +126,29 @@ def valid_document(relative):
         return True
     if len(parts) not in (4, 5) or parts[:2] != [".duo", "tasks"] or not parts[2] or len(parts[2]) > 96 or not all(c.isalpha() or c.isdecimal() or c in "_-" for c in parts[2]):
         return False
-    return (len(parts) == 4 and parts[3] in ("README.md", "handoff.md", WORKLOG_NAME)) or (len(parts) == 5 and parts[3] == "runs" and parts[4].endswith(".md") and bool(TASK_ID.fullmatch(parts[4][:-3])))
+    return (len(parts) == 4 and parts[3] in ("README.md", "handoff.md", WORKLOG_NAME)) or (len(parts) == 5 and parts[3] == "runs" and parts[4].endswith(".md") and bool(TASK_ID.fullmatch(parts[4][:-3]))) or (len(parts) == 5 and parts[3] == "history" and (parts[4] == "README.md" or WORKLOG_PAGE.fullmatch(parts[4]) or parts[4].endswith(".md") and WORKLOG_MONTH.fullmatch(parts[4][:-3])))
+
+
+def update_worklog_navigation(text, body):
+    if NAV_START not in text:
+        if NAV_END in text:
+            return text, True
+        block = state_block(body).replace(STATE_START, NAV_START).replace(STATE_END, NAV_END)
+        separator = "\n\n"
+        if "\r\n" in text:
+            block = block.replace("\n", "\r\n")
+            separator = "\r\n\r\n"
+        at = text.find(STATE_END)
+        if at >= 0:
+            at += len(STATE_END)
+            return text[:at] + separator + block + text[at:], False
+        return text + separator + block + separator, False
+    placeholder_start, placeholder_end = "<!-- duo-navigation-placeholder-start:", "<!-- duo-navigation-placeholder-end -->"
+    if placeholder_start in text or placeholder_end in text:
+        return text, True
+    text = text.replace(STATE_START, placeholder_start).replace(STATE_END, placeholder_end)
+    updated, conflict = update_worklog_state(text.replace(NAV_START, STATE_START).replace(NAV_END, STATE_END), body)
+    return updated.replace(STATE_START, NAV_START).replace(STATE_END, NAV_END).replace(placeholder_start, STATE_START).replace(placeholder_end, STATE_END), conflict
 
 
 def document_link(source, target):
@@ -206,6 +233,7 @@ def main():
             report["conflicts"].append(relative)
             fd, name = parent(relative, True)
             os.close(fd)
+
             try:
                 conflict = read(relative)
                 if conflict == text:
@@ -235,6 +263,33 @@ def main():
                 os.unlink(temporary, dir_fd=fd)
             except FileNotFoundError:
                 pass
+            os.close(fd)
+
+    def scan_worklog_markers(relative):
+        fd, name = parent(relative)
+        try:
+            source_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            with os.fdopen(source_fd, "rb") as source:
+                import stat as stat_module
+                if not stat_module.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise ValueError("工作区记忆不是普通文件")
+                seen, detailed, skip = set(), set(), False
+                while True:
+                    line = source.readline(4096)
+                    if not line:
+                        return seen, detailed
+                    if not line.endswith(b"\n") and len(line) >= 4096:
+                        skip = True
+                        continue
+                    if not skip and len(line) <= 512:
+                        try:
+                            decoded = line.decode("ascii")
+                        except UnicodeDecodeError:
+                            decoded = ""
+                        seen.update(WORKLOG_SOURCE.findall(decoded))
+                        detailed.update(WORKLOG_DETAIL.findall(decoded))
+                    skip = False
+        finally:
             os.close(fd)
 
     def entries(relative):
@@ -313,56 +368,139 @@ def main():
         directory = relative.rsplit("/", 1)[0]
         if directory != report["task_directory"] or not valid_directory(request.get("task_id", ""), directory) or relative != directory + "/" + WORKLOG_NAME:
             raise ValueError("只能追加当前任务目录内的任务记录.md")
-        old = None
+        old, oversized = None, False
         try:
             old = read(relative)
         except FileNotFoundError:
             pass
         except MemoryFileTooLarge:
-            report["warnings"].append("任务记录已超过 1 MiB；保留全部原文，本次停止追加：" + relative)
-            return
+            oversized = True
+            report["warnings"].append("任务记录超过 1 MiB；保留人工原文，新轮次仍写入历史分页，请从任务来源索引打开历史记录。")
         text = old if old is not None else file.get("content", "")
-        if not isinstance(text, str) or not isinstance(file.get("entries", []), list):
-            raise ValueError("任务记录内容格式无效")
-        text, upgraded = upgrade_legacy_worklog_header(text)
-        if upgraded:
-            report["warnings"].append("已按已知自动模板修正旧版问候目标；历史记录和人工内容保留，当前目标仍需有效任务状态确认。")
-        seen = set(WORKLOG_SOURCE.findall(text))
-        detailed = set(WORKLOG_DETAIL.findall(text))
-        for entry in file.get("entries", []):
-            identity, content = entry.get("id", ""), entry.get("content", "")
-            if not isinstance(identity, str) or not WORKLOG_ID.fullmatch(identity) or not isinstance(content, str):
-                raise ValueError("任务记录来源格式无效")
-            details = entry.get("details", False)
-            if not isinstance(details, bool):
-                raise ValueError("任务记录补全标记格式无效")
+        source_entries = file.get("entries", [])
+        if not isinstance(text, str) or not isinstance(source_entries, list) or len(source_entries) > 2000:
+            raise ValueError("任务记录内容格式无效或来源超过 2000 条")
+        if oversized:
+            text = ""
+        else:
+            text, upgraded = upgrade_legacy_worklog_header(text)
+            if upgraded:
+                report["warnings"].append("已按已知自动模板修正旧版问候目标；历史记录和人工内容保留，当前目标仍需有效任务状态确认。")
+        seen, detailed = set(WORKLOG_SOURCE.findall(text)), set(WORKLOG_DETAIL.findall(text))
+        if oversized:
+            seen, detailed = scan_worklog_markers(relative)
+        try:
+            history_names = entries(directory + "/history")
+        except FileNotFoundError:
+            history_names = []
+        pages = {}
+        for name in history_names:
+            match = WORKLOG_PAGE.fullmatch(name)
+            if match and match[2] != "0000":
+                pages.setdefault(match[1], []).append(name)
+        touched = set()
+        for entry in source_entries:
+            identity, content, month = entry.get("id", ""), entry.get("content", ""), entry.get("month", "") or "undated"
+            if not isinstance(identity, str) or not WORKLOG_ID.fullmatch(identity) or not isinstance(content, str) or not isinstance(month, str) or not WORKLOG_MONTH.fullmatch(month) or not isinstance(entry.get("details", False), bool):
+                raise ValueError("任务记录来源或月份无效")
+            source = entry.get("source", "")
+            if source and (not isinstance(source, str) or not valid_document(source) or "/runs/" not in source):
+                raise ValueError("任务来源链接无效")
+            touched.add(month)
+        contents, originals, blocked = {}, {}, set()
+        for month in pages:
+            for name in sorted(pages.get(month, [])):
+                page_path = directory + "/history/" + name
+                try:
+                    raw = read(page_path)
+                except MemoryFileTooLarge:
+                    markers, details = scan_worklog_markers(page_path)
+                    seen.update(markers)
+                    detailed.update(details)
+                    blocked.add(name)
+                    report["warnings"].append("历史分页超过 1 MiB，保留原文；后续记录使用新分页：" + name)
+                    continue
+                if month in touched:
+                    contents[name] = originals[name] = raw
+                seen.update(WORKLOG_SOURCE.findall(raw))
+                detailed.update(WORKLOG_DETAIL.findall(raw))
+        for entry in source_entries:
+            identity, content, details = entry["id"], entry["content"], entry.get("details", False)
             if identity in seen and (not details or identity in detailed):
                 continue
-            separator = "" if not text or text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
-            prefix = "<!-- duo:worklog:" + identity + " -->\n\n"
+            prefix = "<!-- duo:worklog:" + identity + " -->\n"
             if details:
-                prefix += "<!-- duo:worklog-detail:" + identity + " -->\n\n"
+                prefix += "<!-- duo:worklog-detail:" + identity + " -->\n"
                 if identity in seen:
                     prefix = "<!-- duo:worklog-detail:" + identity + " -->\n\n> 历史轮次资料补全：补充原需求、回复与执行摘录；此前记录和人工编辑保持原样。\n\n"
-            addition = separator + prefix + content.rstrip("\n") + "\n"
-            if len((text + addition).encode("utf-8")) > LIMIT:
-                report["warnings"].append("任务记录达到 1 MiB；保留全部原文，本次停止追加，完整执行记录仍在 Duo：" + relative)
-                break
-            text += addition
+            addition = "\n\n" + prefix + content.strip() + "\n"
+            if not oversized and len((text + addition).encode("utf-8")) <= PAGE_TARGET:
+                text += addition
+            else:
+                month = entry.get("month", "") or "undated"
+                month_pages = pages.setdefault(month, [])
+                month_pages.sort()
+                name = month_pages[-1] if month_pages else ""
+                if not name or name in blocked or len((contents[name] + addition).encode("utf-8")) > PAGE_TARGET:
+                    number = int(WORKLOG_PAGE.fullmatch(name)[2]) + 1 if name else 1
+                    if number > 9999:
+                        raise ValueError("任务单月历史已达到 9999 分页；保留原文，未推进同步检查点")
+                    name = f"{month}-{number:04d}.md"
+                    month_pages.append(name)
+                    contents[name] = "# " + month + " · 任务进展记录\n\n[返回任务当前状态](../" + WORKLOG_NAME + ") · [历史月份索引](README.md)\n\n按来源追加保存任务需求、结论、决策与证据；历史回填保留原发生时间，不推断为已验证知识。\n"
+                if entry.get("source"):
+                    source = entry["source"]
+                    addition = addition.replace("](" + document_link(relative, source) + ")", "](" + document_link(directory + "/history/" + name, source) + ")", 1)
+                if len((contents[name] + addition).encode("utf-8")) > LIMIT:
+                    raise ValueError("单条任务记录超过历史分页上限；保留原文，未推进同步检查点")
+                contents[name] += addition
             seen.add(identity)
             if details:
                 detailed.add(identity)
-        if len(text.encode("utf-8")) > LIMIT:
-            report["warnings"].append("任务记录初始内容超过 1 MiB；未写入：" + relative)
+        for name in sorted(contents):
+            if contents[name] != originals.get(name):
+                plain_write(directory + "/history/" + name, contents[name], originals.get(name))
+
+        def history_index(target, body):
+            try:
+                before = read(target)
+            except FileNotFoundError:
+                before = None
+            if before is not None and not unmodified(before):
+                report["warnings"].append("历史索引已被人工修改，保留原文：" + target)
+                return
+            plain_write(target, managed(body), before)
+
+        want_navigation = bool(pages or file.get("history_pending") or NAV_START in text)
+        if want_navigation:
+            index = "# 任务历史记录\n\n[返回任务当前状态](../" + WORKLOG_NAME + ")\n\n按发生月份查找；每页保留来源与执行状态，人工修改不被重写。\n\n"
+            for month in sorted(pages, reverse=True):
+                index += f"- [{month}]({month}.md) ? {len(pages[month])} ?\n"
+                if month in touched:
+                    month_index = "# " + month + " · 任务记录分页\n\n[全部月份](README.md) · [任务当前状态](../" + WORKLOG_NAME + ")\n\n"
+                    month_index += "".join("- [" + name + "](" + name + ")\n" for name in sorted(pages[month]))
+                    history_index(directory + "/history/" + month + ".md", month_index)
+            history_index(directory + "/history/README.md", index)
+        if oversized:
             return
         if file.get("state_incomplete", False):
-            report["warnings"].append("任务状态历史不完整，已暂停自动状态区替换并保留原文；新进展仍按来源追加，当前目标与计划可能尚未更新。")
+            report["warnings"].append("任务状态历史不完整，已保留自动状态区；新进展仍写入时间记录。")
         else:
-            text, state_conflict = update_worklog_state(text, file.get("state_content", ""))
-            if state_conflict:
+            text, conflict = update_worklog_state(text, file.get("state_content", ""))
+            if conflict:
                 report["warnings"].append("任务状态自动管理区域已被人工修改或标记不完整，已保留原文；新进展仍追加到时间记录。")
+        if want_navigation:
+            body = "## 历史与最近进展\n\n[按月份查看完整任务记录](history/README.md) · [完整轮次来源](README.md)\n\n主文档保留当前状态与既有人工内容；新增长历史自动分页，不会在达到 1 MiB 后停止记录。\n"
+            recent_entries = file.get("recent_entries") or source_entries
+            for entry in recent_entries[-4:]:
+                raw = entry["content"].strip()
+                excerpt = raw if len(raw) <= 700 else raw[:466] + "\n\n…（中间内容省略，保留开头与结尾；请打开本轮来源记录查看）…\n\n" + raw[-234:]
+                body += "\n" + excerpt + "\n"
+            text, conflict = update_worklog_navigation(text, body)
+            if conflict:
+                report["warnings"].append("历史导航区域已被人工修改，已保留原文；分页可从任务来源索引打开。")
         if len(text.encode("utf-8")) > LIMIT:
-            report["warnings"].append("更新任务状态将超过 1 MiB，保留原文；完整轮次仍在 Duo 数据库。")
+            report["warnings"].append("更新任务状态或导航将超过 1 MiB，保留主文档；新轮次已保存到历史分页。")
             return
         plain_write(relative, text, old)
 
@@ -501,9 +639,15 @@ def main():
                     if source.get("path", "").startswith(old_base + "/"):
                         source["path"] = directory + source["path"][len(old_base):]
                 if not unmodified(raw):
+                    task["sync_cursor"] = 0
+                    task["sync_cursor_run_id"] = ""
+                    task["sync_pending_rows"] = []
+                    task["sync_pending"] = True
                     task["excerpt"] = raw[end + 5:][:2400]
                     task["sources"] = [{"id": "edited:" + task_id, "path": directory + "/handoff.md", "content": task["excerpt"]}]
                 report["tasks"].append(task)
+                if task_id == request.get("task_id"):
+                    report["sync_pending"] = bool(task.get("sync_pending", False))
             except FileNotFoundError:
                 pass
             except (OSError, ValueError, TypeError, KeyError):
@@ -525,6 +669,13 @@ def main():
                         report["editable"] = True
                 except (OSError, ValueError):
                     pass
+            try:
+                for name in sorted(entries(directory + "/history"))[:1997]:
+                    relative = directory + "/history/" + name
+                    if valid_document(relative):
+                        report["documents"].append({"path": relative, "title": "历史 · " + name, "kind": "history"})
+            except (OSError, ValueError):
+                pass
             try:
                 for name in sorted(entries(directory + "/runs"))[:2001]:
                     relative = directory + "/runs/" + name

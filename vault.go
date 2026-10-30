@@ -829,6 +829,11 @@ func (a *App) vaultLoop() {
 	defer a.wg.Done()
 	for {
 		if !a.updating.Load() {
+			ctx, cancel := context.WithTimeout(a.ctx, 25*time.Second)
+			a.retryWorkspaceMemoryDue(ctx, now())
+			cancel()
+		}
+		if !a.updating.Load() {
 			ctx, cancel := context.WithTimeout(a.ctx, 35*time.Second)
 			a.organizeKnowledgeDue(ctx, now())
 			cancel()

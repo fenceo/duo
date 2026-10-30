@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS run_execution(run_id TEXT PRIMARY KEY REFERENCES runs
 CREATE TABLE IF NOT EXISTS task_handoff_context(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),context TEXT NOT NULL,archive TEXT NOT NULL,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS task_handoff_archive_parts(history_id TEXT NOT NULL REFERENCES task_handoff_context(id),part INTEGER NOT NULL,archive TEXT NOT NULL,PRIMARY KEY(history_id,part));
 CREATE TABLE IF NOT EXISTS task_engine_switches(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),previous TEXT NOT NULL,created INTEGER NOT NULL);
-`
+` + knowledgeProjectSchema
 
 func (s *Store) selectedEngineProfile(environment, engine, id string) (*EngineCredentialProfile, error) {
 	if id == "" {
@@ -71,11 +71,17 @@ type RunExecution struct {
 	Reasoning    string             `json:"reasoning"`
 	Binding      *TaskEngineBinding `json:"binding"`
 	WorkspaceKey string             `json:"workspace_key,omitempty"`
+	ProjectID    string             `json:"project_id,omitempty"`
 }
 
 func saveRunExecution(tx *sql.Tx, run string, task Task) error {
 	// Persist only an opaque identity, never the path or environment credentials.
-	raw, err := json.Marshal(RunExecution{Engine: task.Engine, Model: task.Model, Reasoning: task.ReasoningEffort, Binding: task.Binding, WorkspaceKey: knowledgeWorkspaceKey(task)})
+	var projectID string
+	err := tx.QueryRow("SELECT project_id FROM task_knowledge_projects WHERE task_id=?", task.ID).Scan(&projectID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	raw, err := json.Marshal(RunExecution{Engine: task.Engine, Model: task.Model, Reasoning: task.ReasoningEffort, Binding: task.Binding, WorkspaceKey: knowledgeWorkspaceKey(task), ProjectID: projectID})
 	if err != nil {
 		return err
 	}

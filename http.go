@@ -260,7 +260,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		jsonOut(w, 202, v)
 	}))
+	m.HandleFunc("GET /api/tasks/{id}/knowledge/extract", s.secure(s.previewKnowledgeSynthesis))
 	m.HandleFunc("POST /api/tasks/{id}/knowledge/extract", s.secure(s.extractKnowledgeWithAI))
+	s.knowledgeProjectRoutes(m)
 	m.HandleFunc("POST /api/tasks/{id}/fork", s.secure(s.forkTask))
 	m.HandleFunc("GET /api/tasks/{id}/open-command", s.secure(s.taskOpenCommand))
 	m.HandleFunc("POST /api/tasks/{id}/session/reset", s.secure(func(w http.ResponseWriter, r *http.Request) {

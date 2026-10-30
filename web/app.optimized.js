@@ -986,12 +986,14 @@ async function followLibraryLink(href) {
         if (request === libraryPreviewRequest && shellCurrent(epoch)) element('library-preview-status').textContent = '无法打开来源文档：' + e.message;
     }
 }
+const taskKnowledgeProjectDrafts = new Map();
+let taskKnowledgeProjectRequest = 0;
 const workspaceDocumentDrafts = new Map(), workspaceInitialSync = new Set();
 function workspaceDraftKey(task, path) {
     return task + '\n' + path;
 }
 function workspaceDraftsPending() {
-    return Array.from(workspaceDocumentDrafts.values()).some((d)=>d.dirty || d.saving);
+    return Array.from(workspaceDocumentDrafts.values()).some((d)=>d.dirty || d.saving) || Array.from(taskKnowledgeProjectDrafts.values()).some((d)=>d.dirty || d.saving);
 }
 let libraryPreviewDocument = null, curatedDraft = null, curatedDirty = false, curatedSaving = false, curatedRequest = 0, workspaceMemoryRequest = 0, workspaceMemorySaving = false, knowledgeRevisionBusy = false, knowledgeRevisionRequest = 0;
 function installKnowledgeLayers() {
@@ -1093,8 +1095,8 @@ function installKnowledgeLayers() {
     element('automatic-knowledge-settings').querySelector('p').textContent = '自动记录维护工作区任务文档。自动整理让正常回复给出任务状态变化和带标签的分层候选，不另起模型；没有新进展时不编造记录，没有可复用内容时不创建知识。';
     input('automatic-capture').closest('label').lastChild.textContent = '自动记录完成的对话并更新工作区任务资料';
     input('automatic-organize').closest('label').lastChild.textContent = '随正常回复整理任务状态与可复用知识候选（增加本轮输出）';
-    input('automatic-recall').closest('label').lastChild.textContent = '新会话自动补回本任务摘要、同工作区交接和已确认的平台共识';
-    element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent = '同一原生会话不重复补入历史。跨引擎新会话按来源去重，只恢复有界摘要。平台共识须明确确认；系统与项目知识先手动引用。';
+    input('automatic-recall').closest('label').lastChild.textContent = '自动读取任务文档变化；新会话补回摘要、同工作区交接和已确认的平台共识';
+    element('automatic-knowledge-settings').querySelectorAll('p')[1].textContent = '同一原生会话只补入任务 Markdown 的变更范围，未变内容不重复发送；失败不确认读取进度。跨引擎新会话恢复有界摘要。平台共识须明确确认；系统与项目知识按问题与项目范围检索。';
     element('notebook').querySelector('.knowledge-panel-help').textContent = '这里是本任务的初级资料与候选结论。过程自动写入工作区；跨任务复用的内容可到知识库整理为平台共识、系统知识或项目知识。';
     const notebook = element('notebook'), head = notebook.querySelector('.note-head');
     head.querySelector('h2').textContent = '任务记录';
@@ -1108,6 +1110,39 @@ function installKnowledgeLayers() {
     history1.querySelector('summary').after(element('note-status'), head.querySelector('.actions'));
     head.querySelector('div').insertAdjacentHTML('beforeend', '<p>一个任务，一份 Markdown；按时间连续记录，可直接阅读和编辑。</p>');
     head.insertAdjacentHTML('afterend', '<section class="workspace-memory-panel"><p id="workspace-memory-state" role="status">正在读取任务记录…</p><button type="button" id="workspace-memory-sync">回填 / 同步本任务已有记录</button><section id="workspace-memory-reader" class="workspace-memory-reader hidden"><h3 id="workspace-memory-title"></h3><div class="workspace-memory-actions"><button type="button" id="workspace-memory-read">阅读</button><button type="button" id="workspace-memory-edit">编辑 Markdown</button><button type="button" id="workspace-memory-save" class="primary">保存</button><button type="button" id="workspace-memory-discard">放弃修改 / 读取最新</button><button type="button" id="workspace-memory-reload">重新读取</button></div><p id="workspace-memory-document-state" role="status"></p><textarea id="workspace-memory-editor" aria-label="任务记录 Markdown 正文" class="hidden" spellcheck="false"></textarea><div id="workspace-memory-content" class="content"></div></section></section>');
+    element('workspace-memory-state').insertAdjacentHTML('beforebegin', '<details id="task-knowledge-project" class="workspace-document-location"><summary>知识项目范围</summary><p>为本任务指定稳定的项目名称，切换引擎、重命名或更换目录后仍使用同一项目的知识。系统知识和已确认的平台共识仍可跨项目复用；明确提到其他项目时也可检索。</p><label>知识项目<select id="task-knowledge-project-select" disabled><option value="">自动推断（未指定项目）</option></select></label><div id="task-knowledge-project-new" class="hidden"><label>新项目名称<input id="task-knowledge-project-name" maxlength="80" placeholder="例如 Duo、375 平台" disabled></label><label>项目别名<input id="task-knowledge-project-aliases" placeholder="用逗号分隔，最多 8 个" disabled></label></div><p id="task-knowledge-project-state" role="status">展开后读取本任务的项目设置。</p><div class="actions"><button type="button" id="task-knowledge-project-save" disabled>保存项目范围</button><button type="button" id="task-knowledge-project-reload" disabled>放弃草稿 / 读取最新</button></div></details>');
+    element('task-knowledge-project').ontoggle = ()=>{
+        if (element('task-knowledge-project').open) void loadTaskKnowledgeProject();
+    };
+    input('task-knowledge-project-select').onchange = ()=>{
+        const draft = activeTaskKnowledgeProjectDraft();
+        if (!draft || !draft.ready || draft.loading || draft.saving || !taskKnowledgeProjectWritable()) return;
+        draft.selected = input('task-knowledge-project-select').value;
+        draft.dirty = true;
+        draft.status = '项目范围尚未保存；切换任务后草稿仍保留。';
+        renderTaskKnowledgeProject(draft);
+    };
+    for (const id of [
+        'task-knowledge-project-name',
+        'task-knowledge-project-aliases'
+    ])input(id).oninput = ()=>{
+        const draft = activeTaskKnowledgeProjectDraft();
+        if (!draft || !draft.ready || draft.loading || draft.saving || !taskKnowledgeProjectWritable()) return;
+        draft.name = input('task-knowledge-project-name').value;
+        draft.aliases = input('task-knowledge-project-aliases').value;
+        draft.dirty = true;
+        draft.status = '项目范围尚未保存；切换任务后草稿仍保留。';
+        renderTaskKnowledgeProject(draft);
+    };
+    button('task-knowledge-project-save').onclick = ()=>void saveTaskKnowledgeProject();
+    button('task-knowledge-project-reload').onclick = ()=>{
+        const draft = activeTaskKnowledgeProjectDraft();
+        if (draft && !draft.saving && !draft.loading) {
+            draft.dirty = false;
+            draft.ready = false;
+            void loadTaskKnowledgeProject();
+        }
+    };
     history1.querySelector('summary').insertAdjacentHTML('afterend', '<div id="workspace-memory-documents" class="workspace-memory-documents" aria-label="本任务历史记录文件"></div>');
     element('workspace-memory-reader').insertAdjacentHTML('beforebegin', '<details id="workspace-memory-related" class="workspace-related-tasks hidden"><summary>同工作区任务</summary><div id="workspace-memory-tasks"></div></details>');
     element('workspace-memory-title').insertAdjacentHTML('afterend', '<details class="workspace-document-location"><summary>文件位置</summary><code id="workspace-memory-path"></code></details>');
@@ -1203,6 +1238,10 @@ function installKnowledgeLayers() {
         knowledgeGraphOpen = false;
         knowledgeGraphDocuments = [];
         libraryPreviewDocument = null;
+    });
+    disposeWithShell(()=>{
+        taskKnowledgeProjectRequest++;
+        taskKnowledgeProjectDrafts.clear();
     });
 }
 function renderKnowledgeLayerHelp() {
@@ -1329,6 +1368,8 @@ async function deleteCuratedEditor() {
 }
 async function loadWorkspaceMemory(sync = false) {
     if (!chosen || creatingTask || !detail || sync && workspaceMemorySaving) return;
+    if (element('task-knowledge-project').open) void loadTaskKnowledgeProject();
+    else renderTaskKnowledgeProject(activeTaskKnowledgeProjectDraft());
     const task = chosen, selected = selection, epoch = shellEpoch, request = ++workspaceMemoryRequest;
     if (workspaceDocumentTask !== task) {
         workspaceDocumentRequest++;
@@ -1358,7 +1399,7 @@ async function loadWorkspaceMemory(sync = false) {
             report = await api('tasks/' + encodeURIComponent(task) + '/workspace-memory', 'POST', {}, shellController.signal);
             if (!current()) return;
         }
-        element('workspace-memory-state').textContent = (report.enabled ? '任务记录自动更新已开启' : '自动记录已关闭；已有文件仍可阅读和编辑') + (writing ? `；写入 ${report.exported}，未变化 ${report.unchanged}` : '') + [
+        element('workspace-memory-state').textContent = (report.enabled ? '任务记录自动更新已开启' : '自动记录已关闭；已有文件仍可阅读和编辑') + (writing ? `；写入 ${report.exported}，未变化 ${report.unchanged}` : '') + (report.sync_pending ? '；早期记录正在分批回填，空闲时会继续；也可再次点击同步' : '') + [
             report.error,
             ...report.conflicts || [],
             ...report.warnings || []
@@ -1377,6 +1418,130 @@ async function loadWorkspaceMemory(sync = false) {
             if (writing) workspaceMemorySaving = false;
             button('workspace-memory-sync').disabled = workspaceMemorySaving;
             if (writing && !current() && toolsTab === 'note') void loadWorkspaceMemory();
+        }
+    }
+}
+function activeTaskKnowledgeProjectDraft() {
+    return chosen && !creatingTask ? taskKnowledgeProjectDrafts.get(chosen) : undefined;
+}
+function taskKnowledgeProjectWritable() {
+    const task = detail?.task;
+    return !!task && task.id === chosen && !creatingTask && !task.archived && !task.deleted && ![
+        'running',
+        'queued'
+    ].includes(task.status) && !(detail?.runs || []).some((run)=>[
+            'running',
+            'queued'
+        ].includes(run.status));
+}
+function renderTaskKnowledgeProject(draft) {
+    const select = input('task-knowledge-project-select'), busy = !!draft && (draft.loading || draft.saving), writable = taskKnowledgeProjectWritable();
+    select.innerHTML = '<option value="">自动推断（未指定项目）</option>' + (draft?.projects || []).map((project)=>'<option value="' + escapeHTML(project.id) + '">' + escapeHTML(project.name) + '</option>').join('') + '<option value="__new__">新建知识项目…</option>';
+    select.value = draft?.selected || '';
+    select.disabled = !draft?.ready || busy || !writable;
+    input('task-knowledge-project-name').value = draft?.name || '';
+    input('task-knowledge-project-aliases').value = draft?.aliases || '';
+    element('task-knowledge-project-new').classList.toggle('hidden', draft?.selected !== '__new__');
+    for (const id of [
+        'task-knowledge-project-name',
+        'task-knowledge-project-aliases'
+    ])input(id).disabled = !draft?.ready || busy || !writable;
+    button('task-knowledge-project-save').disabled = !draft?.ready || !draft.dirty || busy || !writable;
+    button('task-knowledge-project-reload').disabled = !draft || busy;
+    element('task-knowledge-project-state').textContent = (draft?.status || '展开后读取本任务的项目设置。') + (!writable ? ' 请在任务空闲且未归档时修改。' : '');
+    element('task-knowledge-project').querySelector('summary').textContent = '知识项目范围' + (draft?.project ? ' · ' + draft.project.name : '');
+}
+async function loadTaskKnowledgeProject() {
+    if (!chosen || creatingTask || !detail) return;
+    const task = chosen, selected = selection, epoch = shellEpoch;
+    let draft = taskKnowledgeProjectDrafts.get(task);
+    if (!draft) {
+        draft = {
+            project: null,
+            projects: [],
+            selected: '',
+            name: '',
+            aliases: '',
+            dirty: false,
+            ready: false,
+            loading: false,
+            saving: false,
+            status: '',
+            request: 0
+        };
+        taskKnowledgeProjectDrafts.set(task, draft);
+    }
+    renderTaskKnowledgeProject(draft);
+    if (draft.dirty || draft.ready || draft.loading || draft.saving) return;
+    const request = ++taskKnowledgeProjectRequest;
+    draft.request = request;
+    draft.loading = true;
+    draft.status = '正在读取项目范围…';
+    renderTaskKnowledgeProject(draft);
+    const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === draft.request;
+    try {
+        const result = await api('tasks/' + encodeURIComponent(task) + '/knowledge/project', 'GET', undefined, shellController.signal);
+        if (!current()) return;
+        draft.project = result.project;
+        draft.projects = result.projects;
+        draft.selected = result.project?.id || '';
+        draft.ready = true;
+        draft.status = result.project ? '当前使用项目“' + result.project.name + '”；历史文档的项目名称不会自动改写。' : '当前按任务名称、工作区和来源推断；可指定项目，减少无关知识。';
+        renderTaskKnowledgeProject(draft);
+    } catch (e) {
+        if (current()) {
+            draft.status = '项目范围读取失败：' + e.message;
+            renderTaskKnowledgeProject(draft);
+        }
+    } finally{
+        if (shellCurrent(epoch) && request === draft.request) {
+            draft.loading = false;
+            if (current()) renderTaskKnowledgeProject(draft);
+            else if (chosen === task && element('task-knowledge-project').open) void loadTaskKnowledgeProject();
+        }
+    }
+}
+async function saveTaskKnowledgeProject() {
+    const draft = activeTaskKnowledgeProjectDraft();
+    if (!draft?.ready || !draft.dirty || draft.loading || draft.saving || !taskKnowledgeProjectWritable()) return;
+    const task = chosen, selected = selection, epoch = shellEpoch, request = ++taskKnowledgeProjectRequest;
+    const payload = draft.selected === '__new__' ? {
+        name: draft.name.trim(),
+        aliases: draft.aliases.split(/[,，\n]/).map((value)=>value.trim()).filter(Boolean)
+    } : {
+        project_id: draft.selected
+    };
+    if (draft.selected === '__new__' && !draft.name.trim()) {
+        draft.status = '请填写项目名称。';
+        renderTaskKnowledgeProject(draft);
+        return;
+    }
+    draft.request = request;
+    draft.saving = true;
+    draft.status = '正在保存项目范围…';
+    renderTaskKnowledgeProject(draft);
+    const current = ()=>shellCurrent(epoch) && chosen === task && selection === selected && request === draft.request;
+    try {
+        const result = await api('tasks/' + encodeURIComponent(task) + '/knowledge/project', 'PUT', payload);
+        if (!shellCurrent(epoch) || request !== draft.request) return;
+        draft.project = result.project;
+        draft.projects = result.projects;
+        draft.selected = result.project?.id || '';
+        draft.name = '';
+        draft.aliases = '';
+        draft.dirty = false;
+        draft.status = '项目范围已保存；仅用于后续知识检索与新记录，历史文档保持原样。';
+        if (current()) renderTaskKnowledgeProject(draft);
+    } catch (e) {
+        if (shellCurrent(epoch) && request === draft.request) {
+            draft.status = '保存失败，草稿已保留：' + e.message;
+            if (current()) renderTaskKnowledgeProject(draft);
+        }
+    } finally{
+        if (shellCurrent(epoch) && request === draft.request) {
+            draft.saving = false;
+            if (current()) renderTaskKnowledgeProject(draft);
+            else if (chosen === task && element('task-knowledge-project').open) void loadTaskKnowledgeProject();
         }
     }
 }
@@ -1843,13 +2008,19 @@ async function extractTaskKnowledgeWithAI() {
     try {
         if (!await ensureExtractionDirectory() || !knowledgeExtractionActionCurrent(target)) return;
         const title = tasks.find((t)=>t.id === task)?.title || task;
-        const confirmed = confirm(`AI 整理并提取知识\n\n将使用“${title}”当前引擎和模型，发送最近最多 8 轮成功对话的有界文本进行整理。会消耗模型额度，输出平台共识、系统知识和项目知识的带标签候选，均保持待验证；不会继续调试或执行硬件操作。\n\n开始整理？`);
+        const preview = await api('tasks/' + encodeURIComponent(task) + '/knowledge/extract', 'GET', undefined, shellController.signal);
+        if (!knowledgeExtractionActionCurrent(target)) return;
+        if (!preview.remaining) {
+            element('library-extraction-state').textContent = '该任务已结束的对话均已整理；没有新资料，无需重复调用模型。';
+            return;
+        }
+        const confirmed = confirm(`AI 整理并提取知识\n\n将使用“${title}”当前引擎和模型，按时间整理尚未处理的对话，包含失败及停止记录。当前剩余 ${preview.remaining} 轮，本次最多 ${preview.batch_size} 轮；会附加当前任务 Markdown 与相关已有主题的有界摘录。长文本可能截断，执行时以当时尚未整理的资料为准。\n\n会消耗模型额度，候选均保持待验证，同主题变更进入待合并修订。成功后保存进度，再次点击可继续下一批；失败不推进进度。不会继续调试或执行硬件操作。\n\n开始本批整理？`);
         if (!confirmed || !knowledgeExtractionActionCurrent(target)) return;
         const result = await api('tasks/' + encodeURIComponent(task) + '/knowledge/extract', 'POST', {
             confirm: true
         });
         if (!shellCurrent(epoch)) return;
-        if (knowledgeExtractionActionCurrent(target)) element('library-extraction-state').textContent = 'AI 整理任务已排队，可在该任务执行记录查看进度；完成后刷新知识库。';
+        if (knowledgeExtractionActionCurrent(target)) element('library-extraction-state').textContent = `AI 整理已排队（本批最多 ${preview.batch_size} 轮），可在任务执行记录查看进度；成功后再次点击继续下一批。`;
         notify('AI 知识整理已排队：' + title);
         void result;
     } catch (e) {
@@ -12857,6 +13028,21 @@ async function importWorkspaceData() {
             });
         }
         if (!shellCurrent(epoch)) return;
+        const transferWarnings = Array.isArray(result.warnings) ? result.warnings.filter((v)=>typeof v === 'string').slice(0, 20) : [];
+        if (transferWarnings.length) {
+            element('workspace-transfer-result').textContent = '导入完成，存在需要核对的项目范围：' + transferWarnings.join('；');
+            workspaceImportFile = null;
+            workspaceImportBytes = null;
+            workspaceTransferBusy = false;
+            button('workspace-export').disabled = false;
+            button('workspace-import').disabled = true;
+            const refresh = document.createElement('button');
+            refresh.type = 'button';
+            refresh.textContent = '刷新任务列表';
+            refresh.onclick = ()=>location.reload();
+            element('workspace-transfer-result').append(document.createTextNode(' '), refresh);
+            return;
+        }
         element('workspace-transfer-result').textContent = '导入完成，正在刷新任务列表…';
         setTimeout(()=>{
             if (shellCurrent(epoch)) location.reload();

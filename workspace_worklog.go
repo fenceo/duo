@@ -31,6 +31,8 @@ type workspaceWorklogEntry struct {
 	ID      string `json:"id"`
 	Content string `json:"content"`
 	Details bool   `json:"details,omitempty"`
+	Month   string `json:"month,omitempty"`
+	Source  string `json:"source,omitempty"`
 }
 
 func workspaceWorklogMarker(id string) string { return "<!-- duo:worklog:" + id + " -->" }

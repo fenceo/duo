@@ -440,6 +440,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 			}
 		}
 		var session, result string
+		var worklogRecall *workspaceWorklogRecall
 		if err == nil && task.Environment == nil {
 			err = errors.New("任务缺少固定的执行环境，请检查迁移结果")
 		}
@@ -473,7 +474,11 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					if r.Source == knowledgeExtractionSource {
 						input = knowledgeExtractionPrompt(r.ID)
 					}
-					input, err = a.store.harnessKnowledgeInput(id, input)
+					if r.Source == knowledgeExtractionSource {
+						input, err = a.knowledgeSynthesisInput(runCtx, task, r.ID, input)
+					} else {
+						input, err = a.store.harnessKnowledgeInput(id, input)
+					}
 					if task.Engine != "deepseek-harness" {
 						input = strings.ReplaceAll(input, "本次独立会话的全部工具操作被拒绝。", "本次使用独立只读会话。请仅根据提供的文本整理，不调用工具。")
 					}
@@ -502,13 +507,14 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 					// Do not silently add a second set of knowledge to that scope.
 					if handoffInput == "" || task.Binding == nil || task.Binding.HistoryMode != "brief" {
 						worklogCtx, worklogCancel := context.WithTimeout(runCtx, 8*time.Second)
-						worklogText, worklogID, worklogErr := a.workspaceWorklogContext(worklogCtx, task)
+						var worklogErr error
+						worklogRecall, worklogErr = a.prepareWorkspaceWorklogContext(worklogCtx, task)
 						worklogCancel()
 						if worklogErr != nil {
 							_ = a.store.event(id, r.ID, "progress", "本任务 Markdown 记录读取失败，本轮继续使用已取得的上下文。")
-						} else if worklogText != "" {
-							input = worklogText + input
-							_ = a.store.event(id, r.ID, "progress", "已读取本任务 Markdown 记录（来源 ID）："+worklogID)
+						} else if worklogRecall != nil {
+							input = worklogRecall.Text + input
+							_ = a.store.event(id, r.ID, "progress", "已读取本任务 Markdown 记录（来源 ID）："+worklogRecall.ID)
 						}
 						contextText, ids, recallErr := a.store.automaticKnowledgeContext(runCtx, task)
 						if recallErr != nil {
@@ -605,6 +611,21 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						a.changed()
 					})
 				}
+				if err == nil && r.Kind == "chat" && worklogRecall != nil {
+					ackSession := session
+					if ackSession == "" {
+						// Some runners report durable identity only through events.
+						if current, e := a.store.task(id); e == nil {
+							ackSession = current.Session
+						}
+					}
+					ackCtx, ackCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					ackErr := a.acknowledgeWorkspaceWorklogContext(ackCtx, task, worklogRecall, ackSession)
+					ackCancel()
+					if ackErr != nil {
+						_ = a.store.event(id, r.ID, "progress", "本轮已读取任务文档，但交接进度未保存；下轮会重试读取。")
+					}
+				}
 				if task.NoTools {
 					session = ""
 				}
@@ -637,6 +658,7 @@ func (a *App) clearRunControl(id string, w *worker) {
 }
 func (a *App) finish(id string, r Run, session, result string, err error) {
 	var memory *taskMemory
+	synthesisValid := r.Source != knowledgeExtractionSource || validKnowledgeSynthesisResponse(result, r.ID)
 	if r.Source == knowledgeExtractionSource {
 		// The temporary extraction identity must never replace the chat session,
 		// including runners that report a session only in their return value.
@@ -644,6 +666,9 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 	}
 	if r.Kind == "chat" || r.Source == knowledgeExtractionSource {
 		result, memory = splitTaskMemory(result, r.ID)
+	}
+	if !synthesisValid {
+		memory = nil
 	}
 	status := "done"
 	failure := ""
@@ -718,6 +743,23 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 				_ = a.store.event(id, r.ID, "progress", fmt.Sprintf("本次未新增分层知识候选（重复 %d 条）；可查看整理结果及未提取原因。", report.Duplicates))
 			}
 			if r.Source == knowledgeExtractionSource && extractErr == nil {
+				expected := 0
+				if memory != nil {
+					expected = len(memory.KnowledgeCandidates)
+					if expected == 0 {
+						expected = len(memory.Insights)
+					}
+				}
+				if captureErr == nil && report.Skipped == 0 && report.Created+report.Revisions+report.Duplicates >= expected {
+					ackCtx, ackCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					ackErr := a.store.acknowledgeKnowledgeSynthesis(ackCtx, id, r.ID, memory)
+					ackCancel()
+					if ackErr != nil {
+						_ = a.store.event(id, r.ID, "progress", "整理结果已保留，但来源进度未推进；请检查有效候选或重新整理。")
+					} else {
+						_ = a.store.event(id, r.ID, "progress", "本批整理进度已保存；再次使用 AI 整理会继续尚未处理的历史。")
+					}
+				}
 				for _, warning := range report.Warnings {
 					_ = a.store.event(id, r.ID, "progress", warning)
 				}

@@ -317,3 +317,60 @@ func TestWorkspaceTaskStateHashHonorsCRLFAndRejectsMalformedBlocks(t *testing.T)
 		}
 	}
 }
+
+func TestWorkspaceTaskStateMissingOrMalformedDeltaRetainsPriorPlanWithMechanicalWarning(t *testing.T) {
+	a, task := workspaceMemoryFixture(t)
+	old := workspaceMemoryRun(t, a, task, "检查合成连接", "仍需检查设备，未执行烧录。", "done")
+	patch := &taskStatePatch{Goal: "检查合成375平台连接", Plan: []taskStatePlanStep{{Text: "先检查连接，禁止推断烧录完成", Status: "pending"}}, Blockers: []string{"仍需真实设备"}}
+	raw, _ := json.Marshal(taskMemory{Summary: "明确目标与未执行计划", TaskState: patch})
+	if _, err := a.store.Exec("INSERT INTO task_memories(run_id,task_id,payload,updated) VALUES(?,?,?,?)", old.ID, task.ID, string(raw), old.Finished); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.syncWorkspaceMemory(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, reply, coverage string
+		memory                *taskMemory
+	}{
+		{"omitted", "你好，继续查看之前的结果。", "最近一轮未提供有效 task_state", nil},
+		{"malformed", "没有实际执行。\n" + memoryMarker("coverage-malformed") + "\n{invalid-json}\n<!-- /duo-memory:coverage-malformed -->", "附加状态未通过格式或引用检查", nil},
+		{"unquoted-done", "尚未执行检查。", "附加状态未通过格式或引用检查", &taskMemory{TaskState: &taskStatePatch{Goal: "不应覆盖旧目标", Plan: []taskStatePlanStep{{Text: "未经验证的完成", Status: "done", Evidence: "不存在的成功证据"}}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := workspaceMemoryRun(t, a, task, "你好", test.reply, "done")
+			if test.name == "malformed" {
+				// Match the actual turn marker without giving the malformed suffix
+				// a valid parsed memory row.
+				run.Result = strings.ReplaceAll(run.Result, "coverage-malformed", run.ID)
+				if _, err := a.store.Exec("UPDATE runs SET result=? WHERE id=?", run.Result, run.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.memory != nil {
+				encoded, _ := json.Marshal(test.memory)
+				if _, err := a.store.Exec("INSERT INTO task_memories(run_id,task_id,payload,updated) VALUES(?,?,?,?)", run.ID, task.ID, string(encoded), run.Finished); err != nil {
+					t.Fatal(err)
+				}
+			}
+			report, err := a.syncWorkspaceMemory(context.Background(), task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := readWorkspaceWorklog(t, task, report.MainDocument)
+			end := strings.Index(body, workspaceTaskStateEnd)
+			if end < 0 {
+				t.Fatal("managed state missing", body)
+			}
+			state := body[:end]
+			for _, want := range []string{"检查合成375平台连接", "[待执行]", "仍需真实设备", test.coverage, "最近执行：", "done"} {
+				if !strings.Contains(state, want) {
+					t.Fatal("mechanical coverage or prior state missing", want, state)
+				}
+			}
+			if strings.Contains(state, "不应覆盖旧目标") || strings.Contains(state, "未经验证的完成") || strings.Contains(state, "### 任务目标\n\n你好") {
+				t.Fatal("missing/invalid state inferred or overwrote a goal/completion", state)
+			}
+		})
+	}
+}

@@ -154,7 +154,34 @@ func mergeTaskState(current taskStatePatch, patch *taskStatePatch) taskStatePatc
 	return current
 }
 
-func workspaceTaskStateContent(task Task, state taskStatePatch, latest Run, source string) string {
+// A persisted patch is still a model report. Reject malformed or unsupported
+// patches when rebuilding state as well as when initially parsing the reply.
+// A missing patch never becomes an inferred goal, plan or completed action.
+func workspaceTaskStatePatchForRun(task Task, run Run, memory *taskMemory) *taskStatePatch {
+	if memory == nil || memory.TaskState == nil {
+		return nil
+	}
+	patch := portableTaskStatePatch(memory.TaskState, task.Workspace)
+	if !validTaskStatePatch(patch, workspaceMemoryText(run.Result, task.Workspace)) {
+		return nil
+	}
+	return patch
+}
+
+func workspaceTaskStateCoverage(task Task, latest Run, memory *taskMemory) string {
+	if latest.ID == "" {
+		return "尚无已结束轮次；目标和计划等待有依据的更新。"
+	}
+	if workspaceTaskStatePatchForRun(task, latest, memory) != nil {
+		return "最近一轮提供了格式与引用检查通过的任务状态增量；这仍是来源报告，不代表独立验证。"
+	}
+	if memory != nil && memory.TaskState != nil || strings.Contains(latest.Result, memoryMarker(latest.ID)) {
+		return "最近一轮的附加状态未通过格式或引用检查，未用于覆盖已有目标、计划或验证结论；原始回复和执行状态仍按时间保存。"
+	}
+	return "最近一轮未提供有效 task_state；已有目标、计划和验证结论保留为先前记录，不能据此判断本轮已经更新或完成。原始需求、回复及执行状态仍按时间保存。"
+}
+
+func workspaceTaskStateContent(task Task, state taskStatePatch, latest Run, source string, latestMemory ...*taskMemory) string {
 	var body strings.Builder
 	clean := func(value string) string { return workspaceWorklogText(value, task.Workspace, 1800) }
 	body.WriteString("## 当前任务状态\n\n验证结果保留来源和适用条件，来源报告不等于独立复核。人工补充可写在下方备注中。\n\n")
@@ -164,6 +191,11 @@ func workspaceTaskStateContent(task Task, state taskStatePatch, latest Run, sour
 			body.WriteString("最近执行错误（未解决）：" + clean(latest.Error) + "\n\n")
 		}
 	}
+	var memory *taskMemory
+	if len(latestMemory) != 0 {
+		memory = latestMemory[0]
+	}
+	body.WriteString("状态维护：" + workspaceTaskStateCoverage(task, latest, memory) + "\n\n")
 	goal := clean(state.Goal)
 	if strings.TrimSpace(goal) == "" {
 		goal = "待明确任务目标。本轮需求与助手结果已按时间保留在下方；尚无有效目标增量，不从问候、任务名称或单条问题推断。"
