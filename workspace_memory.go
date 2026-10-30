@@ -116,6 +116,7 @@ type workspaceMemoryFile struct {
 	StateIncomplete  bool                    `json:"state_incomplete,omitempty"`
 	ExecutionContent *string                 `json:"execution_content,omitempty"`
 	CheckpointOnly   bool                    `json:"checkpoint_only,omitempty"`
+	CheckpointState  string                  `json:"checkpoint_state,omitempty"`
 	ReplaceDocument  bool                    `json:"-"`
 	PreserveDocument bool                    `json:"-"`
 	ExpectedRevision string                  `json:"-"`
@@ -449,6 +450,11 @@ func (s *Store) workspaceMemoryFiles(ctx context.Context, task Task) ([]workspac
 		if e != nil {
 			return nil, nil, e
 		}
+		liveUpdates, liveErr := s.liveTaskStateForRun(ctx, task, r.ID)
+		if liveErr != nil {
+			return nil, warnings, liveErr
+		}
+		process += liveTaskStateContent(liveUpdates, task.Workspace)
 		body += process
 		if inputCut || answerCut {
 			warnings = append(warnings, "轮次 "+originRun+" 内容过长，工作区副本已截断；完整记录仍在 Duo 数据库。")
@@ -526,6 +532,11 @@ func (s *Store) workspaceMemoryFiles(ctx context.Context, task Task) ([]workspac
 		latest = runs[0]
 	}
 	stateContent := workspaceTaskStateContent(task, state, latest, runSources[latest.ID], memories[latest.ID])
+	if liveUpdates, liveErr := s.liveTaskStateForRun(ctx, task, latest.ID); liveErr != nil {
+		return nil, warnings, liveErr
+	} else if len(liveUpdates) > 0 {
+		stateContent = strings.Replace(stateContent, "状态维护："+workspaceTaskStateCoverage(task, latest, memories[latest.ID]), "状态维护：本轮已保存执行中公开任务状态增量，最终有效增量在其后合并；完成和验证仍为来源报告。", 1)
+	}
 	if len(stateSources) > 0 {
 		if len(stateSources) > 8 {
 			stateSources = stateSources[len(stateSources)-8:]
@@ -785,7 +796,13 @@ func workspaceMemoryLocal(ctx context.Context, task Task, payload workspaceMemor
 			updated, conflict := updateWorkspaceExecutionCheckpoint(current, file.ExecutionContent)
 			if conflict {
 				report.Warnings = append(report.Warnings, "执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
-				return nil
+			}
+			if file.CheckpointState != "" {
+				var stateConflict bool
+				updated, stateConflict = updateWorkspaceWorklogState(updated, file.CheckpointState)
+				if stateConflict {
+					report.Warnings = append(report.Warnings, "任务状态区域已被人工修改，保留人工状态；执行中的状态增量仍保存在来源记录。")
+				}
 			}
 			revision := ""
 			if existed {

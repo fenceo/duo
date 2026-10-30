@@ -140,7 +140,7 @@ function renderShell(){
  installTools();installWorkspace();installConversationFilter();installSettingsSections();installEngineSettings();installProductivity();installEditor();installTerminal();installExecution();installDiscovery();installLayout();installEnvironmentDiscovery();installWorkflow();installCodexApprovals();installStickyBoard();installAppearance();installPanelLayout();installUpdates();installLibrary();installDesktopSharing();installUsageDashboard();installSettingsNavigation();
  button('new-task').onclick=showCreate;button('empty-new').onclick=showCreate;button('menu').onclick=()=>element('sidebar').classList.toggle('open');
  element('root').querySelectorAll<HTMLElement>('[data-close]').forEach(b=>b.onclick=()=>element<HTMLDialogElement>(b.dataset.close!).close());
- button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving||workspaceDraftsPending()){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
+ button('logout').onclick=async()=>{if(!mayLeave())return;if(stickyDirty||stickySaving){notify('便签尚未保存，请等待保存完成或重试后再退出。');return;}if(knowledgeMigrationBusy||knowledgeExtractionBusy||knowledgeRevisionBusy){notify('知识库正在迁移或提交整理，请等待操作返回后再退出。');return;}if(automaticSettingsDirty||vaultSettingsDirty||automaticSettingsSaving||vaultSettingsSaving||knowledgeExtractionSettingsDirty||knowledgeExtractionSettingsBusy||curatedDirty||curatedSaving||workspaceDraftsPending()){notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');return;}const epoch=shellEpoch;try{await api('logout','POST',{});if(shellCurrent(epoch))showLogin()}catch(e){if(shellCurrent(epoch))notify((e as Error).message)}};
  button('sidebar-close').onclick=()=>element('sidebar').classList.remove('open');button('chat-tab').onclick=()=>switchTab('chat');button('note-tab').onclick=()=>switchTab('note');
  input('create-environment').onchange=()=>void loadCreateEnvironment();button('reload-models').onclick=()=>void loadCreateModels(false,true);
  element('create-form').onsubmit=createTask;element('composer').onsubmit=e=>{e.preventDefault();void send(input('message').value,true)};
@@ -237,7 +237,7 @@ function renderSessionBanner(){
  const started=detail.session_started?new Date(detail.session_started).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}):'';
  const harness=detail.task.engine==='deepseek-harness',closed=harnessSessionClosed(),busy=detail.runs.some(r=>r.status==='running'||r.status==='queued')||detail.runtime?.state==='busy';
  const title=harness?(closed?'运行会话已结束':detail.runtime?.state==='new'?'新会话已就绪':detail.runtime?.state==='busy'?'Harness 正在执行':detail.runtime?.state==='resumable'?'发送消息即可恢复会话':'Harness 连续对话'):detail.task.session?`正在续用${started?' '+started+' 开始的':''}历史会话`:'新会话已就绪';
- const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 重建 AI 会话时可自动补回当前任务知识，可在“知识库 → 积累设置”关闭自动恢复。';
+ const explanation=(harness?(detail.runtime?.reason||harnessSessionHint):'聊天记录保留在当前任务中。')+' 重建 AI 会话时可自动补回有界任务资料，可在“知识库 → 目录与整理 → 任务记录与每轮候选”关闭自动读取。';
  element('session-summary').textContent=detail.task.archived?'任务已归档':title;
  element('session-location').textContent=[detail.task.environment?.name,detail.task.workspace].filter(Boolean).join(' · ');
  element('session-description').textContent=explanation;
@@ -255,7 +255,7 @@ function renderSessionBanner(){
 async function resetSession(){
  if(!detail||detail.task.archived||!detail.task.session||sessionResetTask)return;
  if(detail.runs.some(r=>r.status==='running'||r.status==='queued')){notify('请先停止执行并取消排队，再新建会话。');return}
- if(!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 积累设置 → 对话自动积累关闭自动恢复。'))return;
+ if(!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动读取，将补回本任务摘要与文档、同工作区交接和已确认平台共识的有界摘录。需要空白恢复范围，请先在知识库 → 目录与整理 → 任务记录与每轮候选关闭自动读取；已经建立的原生会话不会撤回先前上下文。'))return;
  const id=detail.task.id,token=++selection;sessionResetTask=id;renderTask();
  try{
   const task=await api<Task>('tasks/'+id+'/session/reset','POST',{});

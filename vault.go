@@ -852,6 +852,7 @@ func (a *App) vaultLoop() {
 }
 
 func (s *Server) vaultRoutes(m *http.ServeMux) {
+	s.vaultMigrationRoutes(m)
 	m.HandleFunc("GET /api/library/vault", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		s.app.vaultMu.Lock()
 		defer s.app.vaultMu.Unlock()

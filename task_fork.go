@@ -121,7 +121,7 @@ func (a *App) forkTask(id string) (Task, error) {
 			{"INSERT INTO run_metrics SELECT ?,started,usage FROM run_metrics WHERE run_id=?", []any{newID, run.ID}},
 			{"INSERT INTO run_context SELECT ?,value FROM run_context WHERE run_id=?", []any{newID, run.ID}},
 			{"INSERT INTO output_images SELECT lower(hex(randomblob(12))),?,?,source,mime,data,width,height,created FROM output_images WHERE task_id=? AND run_id=?", []any{target.ID, newID, id, run.ID}},
-			{"INSERT INTO events(task_id,run_id,kind,text,created) SELECT ?,?,kind,text,created FROM events WHERE task_id=? AND run_id=? AND kind IN ('user','assistant','command','tool','progress','usage','error','status') ORDER BY seq", []any{target.ID, newID, id, run.ID}},
+			{"INSERT INTO events(task_id,run_id,kind,text,created) SELECT ?,?,kind,text,created FROM events WHERE task_id=? AND run_id=? AND kind IN ('user','assistant','command','tool','progress','usage','error','status','task_state') ORDER BY seq", []any{target.ID, newID, id, run.ID}},
 			{"INSERT INTO task_memories SELECT ?,?,payload,updated FROM task_memories WHERE run_id=? AND task_id=?", []any{newID, target.ID, run.ID, id}},
 		} {
 			if _, err = tx.Exec(statement.query, statement.args...); err != nil {

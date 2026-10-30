@@ -541,7 +541,7 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 						}
 					}
 					if automatic, configErr := automaticKnowledgeConfig(a.store); configErr == nil && automatic.Capture {
-						input = memoryPrompt(r.ID) + input
+						input = liveTaskStatePrompt(r.ID) + memoryPrompt(r.ID) + input
 					}
 				}
 				if task.Engine == "codex" && r.Kind == "chat" {
@@ -599,6 +599,18 @@ func (a *App) work(ctx context.Context, id string, w *worker) {
 								_, _ = a.store.Exec("UPDATE tasks SET session=? WHERE id=?", text, id)
 							}
 							return
+						}
+						if r.Kind == "chat" && (kind == "progress" || kind == "assistant") {
+							visible, updates, hidden := extractLiveTaskStates(text, r.ID)
+							for _, update := range updates {
+								if stateErr := a.store.captureLiveTaskState(task, r.ID, &update.State, update.Report); stateErr != nil {
+									_ = a.store.event(id, r.ID, "progress", "公开任务状态增量未保存；本轮继续，原始进度仍保留。")
+								}
+							}
+							if hidden && (visible == "" || kind == "assistant" && visible == lastVisibleAssistant) {
+								return
+							}
+							text = visible
 						}
 						if kind == "assistant" && (r.Kind == "chat" || r.Source == knowledgeExtractionSource) {
 							visible, hidden := visibleMemoryStream(text, r.ID)
@@ -660,6 +672,17 @@ func (a *App) clearRunControl(id string, w *worker) {
 }
 func (a *App) finish(id string, r Run, session, result string, err error) {
 	var memory *taskMemory
+	if r.Kind == "chat" {
+		visible, updates, hidden := extractLiveTaskStates(result, r.ID)
+		if hidden {
+			if task, taskErr := a.store.task(id); taskErr == nil {
+				for _, update := range updates {
+					_ = a.store.captureLiveTaskState(task, r.ID, &update.State, update.Report)
+				}
+			}
+			result = visible
+		}
+	}
 	synthesisValid := r.Source != knowledgeExtractionSource || validKnowledgeSynthesisResponse(result, r.ID)
 	if r.Source == knowledgeExtractionSource {
 		// The temporary extraction identity must never replace the chat session,
@@ -754,10 +777,13 @@ func (a *App) finish(id string, r Run, session, result string, err error) {
 				}
 				if captureErr == nil && report.Skipped == 0 && report.Created+report.Revisions+report.Duplicates >= expected {
 					ackCtx, ackCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					topic, _ := a.store.knowledgeTopicSnapshot(ackCtx, id, r.ID)
 					ackErr := a.store.acknowledgeKnowledgeSynthesis(ackCtx, id, r.ID, memory)
 					ackCancel()
 					if ackErr != nil {
 						_ = a.store.event(id, r.ID, "progress", "整理结果已保留，但来源进度未推进；请检查有效候选或重新整理。")
+					} else if topic != nil {
+						_ = a.store.event(id, r.ID, "progress", "主题整理结果已保存；原正文保持不变。请在知识预览中审阅待采用合并稿及未解决分歧。")
 					} else {
 						_ = a.store.event(id, r.ID, "progress", "本批整理进度已保存；再次使用 AI 整理会继续尚未处理的历史。")
 					}

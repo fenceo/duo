@@ -105,7 +105,9 @@ function conversationTurn(id:string):ConversationTurn{
  conversationTurns.set(id,turn);return turn;
 }
 function addConversationEvent(event:EventRecord){
- if(conversationItems.has(event.seq))return;
+ // Structured task-state increments are consumed by workspace memory. They
+ // must not become visible process JSON; the caller still advances sequence.
+ if(event.kind==='task_state'||conversationItems.has(event.seq))return;
  const item:ConversationItem={event};conversationItems.set(event.seq,item);
  const turn=conversationTurn(event.run_id||'');turn.items.push(item);turn.items.sort((a,b)=>a.event.seq-b.event.seq);turn.dirty=true;
 }

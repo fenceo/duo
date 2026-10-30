@@ -58,3 +58,4 @@ __pycache__/
 !/docs/model-latency-tests.md
 !/docs/knowledge-layers.md
 !/docs/knowledge-rebuild-architecture.md
+!/docs/knowledge-acceptance.md

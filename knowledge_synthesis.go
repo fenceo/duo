@@ -15,6 +15,7 @@ import (
 const knowledgeSynthesisSchema = `
 CREATE TABLE IF NOT EXISTS knowledge_ai_sources(task_id TEXT NOT NULL REFERENCES tasks(id),run_id TEXT NOT NULL REFERENCES runs(id),extraction_run_id TEXT NOT NULL REFERENCES runs(id),PRIMARY KEY(task_id,run_id));
 CREATE TABLE IF NOT EXISTS knowledge_ai_batches(extraction_run_id TEXT PRIMARY KEY REFERENCES runs(id),task_id TEXT NOT NULL REFERENCES tasks(id),sources TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS knowledge_topic_jobs(request TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),extraction_run_id TEXT NOT NULL DEFAULT '',document TEXT NOT NULL);
 `
 
 const knowledgeSynthesisBatchSize = 16
@@ -177,6 +178,9 @@ func validKnowledgeSynthesisResponse(reply, run string) bool {
 }
 
 func (a *App) knowledgeSynthesisInput(ctx context.Context, task Task, run, request string) (string, error) {
+	if input, handled, err := a.store.knowledgeTopicInput(ctx, task, run); handled || err != nil {
+		return input, err
+	}
 	sources, err := a.store.knowledgeSynthesisSources(ctx, task)
 	if err != nil {
 		return "", err

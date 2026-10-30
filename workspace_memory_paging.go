@@ -165,7 +165,13 @@ func (s *Store) workspaceMemoryRunPage(ctx context.Context, task Task, previous 
 func (s *Store) workspaceMemoryCurrentState(ctx context.Context, task Task) (taskStatePatch, []Run, error) {
 	state := taskStatePatch{}
 	recent := []Run{}
-	rows, err := s.QueryContext(ctx, `SELECT r.id,r.status,r.created,r.finished,substr(r.result,1,140001),substr(m.payload,1,100001) FROM task_memories m JOIN runs r ON r.id=m.run_id AND r.task_id=m.task_id WHERE r.task_id=? AND r.status IN ('done','failed','interrupted') ORDER BY r.created,r.rowid`, task.ID)
+	rows, err := s.QueryContext(ctx, `SELECT id,status,created,finished,result,payload,phase FROM (
+ SELECT r.id,r.status,r.created,r.finished,substr(r.result,1,140001) result,substr(m.payload,1,100001) payload,1 phase,0 seq,r.rowid ordering
+ FROM task_memories m JOIN runs r ON r.id=m.run_id AND r.task_id=m.task_id WHERE r.task_id=? AND r.kind='chat' AND r.status IN ('done','failed','interrupted')
+ UNION ALL
+ SELECT r.id,r.status,r.created,r.finished,'' result,substr(e.text,1,64001) payload,0 phase,e.seq,r.rowid ordering
+ FROM events e JOIN runs r ON r.id=e.run_id AND r.task_id=e.task_id WHERE r.task_id=? AND r.kind='chat' AND r.status IN ('running','done','failed','interrupted') AND e.kind='task_state'
+ ) ORDER BY created,ordering,phase,seq`, task.ID, task.ID)
 	if err != nil {
 		return state, nil, err
 	}
@@ -173,17 +179,27 @@ func (s *Store) workspaceMemoryCurrentState(ctx context.Context, task Task) (tas
 	for rows.Next() {
 		var run Run
 		var raw string
+		var phase int
 		run.TaskID = task.ID
-		if err = rows.Scan(&run.ID, &run.Status, &run.Created, &run.Finished, &run.Result, &raw); err != nil {
+		if err = rows.Scan(&run.ID, &run.Status, &run.Created, &run.Finished, &run.Result, &raw, &phase); err != nil {
 			return state, nil, err
 		}
-		var memory taskMemory
-		if json.Unmarshal([]byte(raw), &memory) != nil {
-			continue
+		var patch *taskStatePatch
+		if phase == 0 {
+			if update := decodeLiveTaskState(raw, task.Workspace); update != nil {
+				patch = &update.State
+			}
+		} else {
+			var memory taskMemory
+			if json.Unmarshal([]byte(raw), &memory) == nil {
+				patch = workspaceTaskStatePatchForRun(task, run, &memory)
+			}
 		}
-		if patch := workspaceTaskStatePatchForRun(task, run, &memory); patch != nil {
+		if patch != nil {
 			state = mergeTaskState(state, patch)
-			recent = append(recent, run)
+			if len(recent) == 0 || recent[len(recent)-1].ID != run.ID {
+				recent = append(recent, run)
+			}
 			if len(recent) > 8 {
 				recent = recent[len(recent)-8:]
 			}

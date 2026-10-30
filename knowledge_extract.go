@@ -114,6 +114,9 @@ func captureExtractedMemory(tx *sql.Tx, task, run string, m *taskMemory) error {
 		return err
 	}
 	clean := portableTaskMemory(*m, workspace)
+	// This independent job organizes existing material. Its model's optional
+	// task_state describes the extraction, never the source task's live goal.
+	clean.TaskState = nil
 	raw, err := json.Marshal(clean)
 	if err != nil {
 		return err
@@ -260,6 +263,43 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 		if originErr != nil {
 			return report, originErr
 		}
+		topicSnapshot, snapshotErr := s.knowledgeTopicSnapshot(ctx, source.task, source.run)
+		if snapshotErr != nil {
+			return report, snapshotErr
+		}
+		if topicSnapshot != nil {
+			if len(items) == 0 && len(memory.KnowledgeCandidates) == 0 {
+				if len(report.Warnings) < 20 {
+					report.Warnings = append(report.Warnings, "本次主题整理未产生完整替代稿；原正文和待修订保持不变，原因与未决事项请查看整理回复。")
+				}
+				continue // An explicit no-op never changes the original or revisions.
+			}
+			if len(items) != 1 || len(memory.KnowledgeCandidates) != 1 {
+				report.Skipped++
+				if len(report.Warnings) < 20 {
+					report.Warnings = append(report.Warnings, "主题整理必须返回一份同主题完整合并稿；原知识与待修订已保留。")
+				}
+				continue
+			}
+			if !wanted[items[0].Layer] {
+				continue
+			}
+			updated, duplicate, mergeErr := s.queueConsolidatedKnowledge(ctx, *topicSnapshot, items[0], originTask, originRun)
+			if mergeErr != nil {
+				report.Skipped++
+				if len(report.Warnings) < 20 {
+					report.Warnings = append(report.Warnings, "主题合并稿未采用："+mergeErr.Error())
+				}
+			} else if duplicate {
+				report.Duplicates++
+			} else {
+				report.Revisions++
+				if len(report.Items) < 100 {
+					report.Items = append(report.Items, updated)
+				}
+			}
+			continue
+		}
 		for _, item := range items {
 			if !wanted[item.Layer] {
 				continue
@@ -316,7 +356,7 @@ AND length(m.payload)<=65536 ORDER BY m.updated DESC,m.run_id DESC LIMIT 1001`, 
 			}
 		}
 	}
-	if report.Created == 0 && report.Revisions == 0 && report.Duplicates == 0 {
+	if report.Created == 0 && report.Revisions == 0 && report.Duplicates == 0 && len(report.Warnings) == 0 {
 		report.Warnings = append(report.Warnings, "没有可提取的结构化知识候选。旧记录可使用 AI 重新提取；该操作会发送选定任务的有限历史并消耗额度。")
 	}
 	return report, nil

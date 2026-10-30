@@ -170,6 +170,11 @@ with tempfile.TemporaryDirectory(prefix='duo-checkpoint-protocol-') as root:
     assert during.endswith('保留两个空格  \r\n'.encode('utf-8')) and index.read_text(encoding='utf-8')=='人工索引\n'
     repeat=call([item])
     assert not repeat.get('error') and repeat['exported']==0 and file.read_bytes()==during, repeat
+    semantic=call([dict(item,checkpoint_state='## 当前任务状态\n\n合成公开里程碑目标\n')])
+    semantic_text=file.read_bytes()
+    assert not semantic.get('error') and '合成公开里程碑目标'.encode('utf-8') in semantic_text and '等待验证'.encode('utf-8') in semantic_text, semantic
+    assert semantic_text.endswith('保留两个空格  \r\n'.encode('utf-8'))
+    file.write_bytes(during)
     empty_path=call([dict(item,path='')])
     assert not empty_path.get('error') and empty_path['exported']==0 and empty_path['main_document']==path and file.read_bytes()==during, empty_path
     forbidden=call([{'path':path,'content':'generic write'}])

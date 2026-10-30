@@ -130,10 +130,22 @@ func (a *App) syncWorkspaceExecutionCheckpoint(ctx context.Context, taskID, runI
 	}
 	body.WriteString("本区按变化限频更新；停止、失败或完成后由正式时间记录接替。服务重启后的状态以 Duo 执行记录为准。\n")
 	content := body.String()
+	stateContent := ""
+	if updates, stateErr := a.store.liveTaskStateForRun(ctx, task, run.ID); stateErr != nil {
+		return previousSeq, false, report, stateErr
+	} else if len(updates) > 0 {
+		state, _, stateErr := a.store.workspaceMemoryCurrentState(ctx, task)
+		if stateErr != nil {
+			return previousSeq, false, report, stateErr
+		}
+		stateContent = workspaceTaskStateContent(task, state, run, "#执行快照未结束")
+		stateContent = strings.Replace(stateContent, "状态维护："+workspaceTaskStateCoverage(task, run, nil), "状态维护：正在使用已保存的公开任务状态增量；完成与验证仅为来源报告，等待本轮结束核对。", 1)
+		content += liveTaskStateContent(updates[max(0, len(updates)-2):], task.Workspace)
+	}
 	// An omitted path is resolved by the file protocol to this task's existing
 	// canonical directory, including after a title change. It never authorizes
 	// an arbitrary target and avoids a second full discovery call.
-	report, err = workspaceMemoryIORequest(ctx, task, workspaceMemoryPayload{Action: "checkpoint", Files: []workspaceMemoryFile{{Content: workspaceWorklogHeader(task, ""), CheckpointOnly: true, ExecutionContent: &content}}})
+	report, err = workspaceMemoryIORequest(ctx, task, workspaceMemoryPayload{Action: "checkpoint", Files: []workspaceMemoryFile{{Content: workspaceWorklogHeader(task, ""), CheckpointOnly: true, ExecutionContent: &content, CheckpointState: stateContent}}})
 	report.Enabled = true
 	return seq, err == nil && len(report.Warnings) == 0 && len(report.Conflicts) == 0, report, err
 }

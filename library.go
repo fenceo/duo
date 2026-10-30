@@ -56,6 +56,8 @@ type LibraryDocument struct {
 }
 
 func documentHash(d LibraryDocument) string {
+	d.PendingRevisions = knowledgeRevisionFlags(d.PendingRevisions, "")
+	d.RevisionHistory = knowledgeRevisionFlags(d.RevisionHistory, "")
 	// Source is display/filter metadata. Keep existing citation and Vault hashes
 	// stable when introducing it; portable files do not establish local origin.
 	d.Source = ""

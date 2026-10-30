@@ -60,6 +60,7 @@ for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push
 cases.push(['stickyempty','light',1280,800],['stickyempty','dark',320,844],['stickyfull','dark',1280,800],['stickyfull','light',390,844],['stickyfull','dark',320,844]);
 cases.push(['settings','dark',1280,800],['settings','light',390,844],['settings','dark',320,844],['library','dark',390,844],['library','light',320,844],['library','dark',320,844],['librarypreview','light',320,844],['librarypreview','dark',320,844]);
 cases.push(['librarysettings','light',1280,800],['librarysettings','dark',390,844],['librarysettings','light',320,844],['librarysettingsbottom','dark',390,844],['librarysettingsbottom','light',320,844]);
+for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['libraryrevision',theme,width,width===1280?800:844],['librarysettingsmigration',theme,width,width===1280?800:844]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['navigation',theme,width,width===1280?800:844]);
 cases.push(['sidebarnarrow','dark',1280,800],['sidebar','light',320,844],['sidebar','dark',320,844]);
 for(const theme of ['light','dark'])for(const width of [390,320])cases.push(['taskmenu',theme,width,844],['taskmenubottom',theme,width,844]);
@@ -289,15 +290,17 @@ for(const [view,theme,width,height] of cases){
   }else{
    const baseAPI=ctx.api;
    const readingGuide={...entries[0],id:'curated-index:consensus',kind:'index',generated:true,layer:'consensus',title:'平台共识阅读手册',path:'平台共识/README.md',hash:'synthetic-guide',snippet:entries[0].content};
+   const revisionDocument={...entries[0],id:'curated:merge-preview',kind:'curated',layer:'project',scope_key:'Duo',title:'任务记录与主题知识的完整整理方法',path:'项目知识/Duo/任务记录与主题知识.md',hash:'synthetic-topic',snippet:'按任务保留过程，按主题持续沉淀。',tags:['知识库','工作流程'],pending_revisions:[{key:'merged',content:'## 整理步骤\n\n先保存任务目标、计划与验证，再将有依据的线索归入同一个主题。\n\n## 分歧与限制\n\n不同版本的适用条件要分别保留，不自动裁决矛盾结论。',evidence:'合成网页资料，未调用真实模型。',applicability:'仅用于界面布局验收。',tags:['知识库','主题合并'],source_id:'synthetic:revision',created:1790310000000,supersedes:['first','second']}]};
    ctx.api=async(route,...args)=>{
-    if(route.startsWith('library/search')){const layer=new URLSearchParams(route.split('?')[1]).get('layer')||'consensus',formal=['consensus','system','project'].includes(layer);return {documents:entries.filter(k=>k.status!=='stale').map((k,i)=>view==='librarypreview'&&i===0?readingGuide:{...k,id:'knowledge:'+k.id,kind:formal?'curated':'task',layer,path:(formal?layer:'tasks')+'/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content}),total:4,truncated:false,next_offset:4}}
+    if(route.startsWith('library/search')){const layer=new URLSearchParams(route.split('?')[1]).get('layer')||'consensus',formal=['consensus','system','project'].includes(layer);return {documents:entries.filter(k=>k.status!=='stale').map((k,i)=>view==='librarypreview'&&i===0?readingGuide:view==='libraryrevision'&&i===0?revisionDocument:{...k,id:'knowledge:'+k.id,kind:formal?'curated':'task',layer,path:(formal?layer:'tasks')+'/fixture/'+k.id+'.md',tags:['知识库','性能'],origin:'local',task_title:'Duo 优化',hash:'synthetic-version',snippet:k.content}),total:4,truncated:false,next_offset:4}}
     if(route.startsWith('library/reference'))return {preview:entries[0].content,reference:'合成引用',truncated:false};
-    if(route.startsWith('library/document'))return view==='librarypreview'?readingGuide:{content:entries[0].content};
+    if(route.startsWith('library/document'))return view==='librarypreview'?readingGuide:view==='libraryrevision'?revisionDocument:{content:entries[0].content};
     if(route==='library/curated')return Array.from({length:18},(_,i)=>({id:'graph-'+i,layer:i<15?'consensus':['system','project','project'][i-15],scope_key:i<15?'':'开发板调试',title:['NFS 调试与共享目录','烧录前的镜像检查','串口问题的逐步定位','保持文档与验证依据同步','任务接续与工作习惯'][i%5]+' '+(i+1),content:entries[i%entries.length].content,status:'observed',tags:[['NFS','烧录','串口'][i%3],i%2?'调试':'知识积累'],source_task_id:'layout-preview',revision:1,updated:1790310000000}));
     return baseAPI(route,...args);
    };
    await ctx.openLibrary();
    if(view==='librarypreview')await ctx.previewLibrary(readingGuide.id);
+   if(view==='libraryrevision')await ctx.previewLibrary(revisionDocument.id);
    if(view==='librarygraph'){ctx.window.innerWidth=width;document.getElementById('library-graph-open').onclick();await ctx.loadKnowledgeGraph()}
    if(view.startsWith('librarysettings')){
     const dialog=document.getElementById('library-dialog');await ctx.openLibrarySettings();
@@ -305,6 +308,7 @@ for(const [view,theme,width,height] of cases){
     document.getElementById('library-browse-open').onclick();await ctx.openLibrarySettings();
     assert.equal(document.getElementById('library-dialog'),dialog,'knowledge page switches reuse the same dialog');
     assert.equal(directory.value,'D:/Notes/Duo','browsing does not overwrite accumulation drafts');
+    if(view==='librarysettingsmigration'){document.getElementById('knowledge-migration-settings').open=true;document.getElementById('knowledge-migration-directory').value='D:/Notes/Duo知识-新目录';ctx.showKnowledgeMigrationPreview({source_directory:'D:/Notes/Duo旧目录',target_directory:'D:/Notes/Duo知识-新目录',fingerprint:'synthetic',file_count:32,total_bytes:131072,copy_count:30,identical_count:2,files:[{path:'平台共识/协作与验证约定.md',size:2048,action:'copy'},{path:'项目知识/Duo/任务记录与知识归档.md',size:4096,action:'identical'}],conflicts:[],warnings:[],source_dirty:false,ready:true});document.getElementById('knowledge-migration-apply').disabled=false}
    }
   }
  }
@@ -331,7 +335,7 @@ for(const [view,theme,width,height] of cases){
  // Static fixtures keep only the request-free popup-position listener above.
  // Restore modal geometry and scroll positions for the exercised DOM state.
  script.textContent=script.textContent.replace("==='settings'?'settings-dialog':'library-dialog'","==='settings'?'library-dialog':'library-dialog'");
- script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='librarysettingsbottom'){const panel=document.getElementById('settings-knowledge');panel.scrollTop=panel.scrollHeight}if(${JSON.stringify(view)}.startsWith('curated')){const dialog=document.getElementById('curated-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}==='curatedbottom')document.getElementById('curated-save').scrollIntoView({block:'end'})}const ids=['curated-dialog','curated-form','curated-title','curated-content','curated-applicability','curated-evidence','curated-credential','curated-status','curated-confirm','curated-save','curated-close','preview-task-menu-panel','preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu','preview-task-menu-trash','app-menu-toggle','hardware-tab','desktop-open','sticky-tab','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
+ script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='librarysettingsbottom')document.getElementById('automatic-save').scrollIntoView({block:'end'});if(${JSON.stringify(view)}==='librarysettingsmigration')document.getElementById('knowledge-migration-apply').scrollIntoView({block:'center'});if(${JSON.stringify(view)}==='libraryrevision')document.getElementById('library-topic-consolidate').scrollIntoView({block:'center'});if(${JSON.stringify(view)}.startsWith('curated')){const dialog=document.getElementById('curated-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}==='curatedbottom')document.getElementById('curated-save').scrollIntoView({block:'end'})}const ids=['knowledge-migration-preview','knowledge-migration-apply','knowledge-migration-files','library-topic-consolidate','curated-dialog','curated-form','curated-title','curated-content','curated-applicability','curated-evidence','curated-credential','curated-status','curated-confirm','curated-save','curated-close','preview-task-menu-panel','preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu','preview-task-menu-trash','app-menu-toggle','hardware-tab','desktop-open','sticky-tab','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
  script.textContent=script.textContent.replace('scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:','scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight,visible:');
  const settingsMetrics=document.createElement('script');settingsMetrics.textContent=`window.addEventListener('load',()=>{
   const pre=document.getElementById('layout-metrics'),nav=document.getElementById('workspace-settings');if(!pre||!nav)return;
@@ -356,7 +360,8 @@ for(const [view,theme,width,height] of cases){
   pre.textContent=JSON.stringify(data);
  });`;document.body.append(settingsMetrics);
  const memoryPanel=document.querySelector('.workspace-memory-panel');if(memoryPanel)memoryPanel.id='preview-workspace-memory-panel';
- script.textContent=script.textContent.replace("const ids=['curated-dialog'","const ids=['preview-workspace-memory-panel','workspace-memory-state','workspace-memory-tasks','workspace-memory-sync','curated-dialog'");
+ script.textContent=script.textContent.replace('const ids=[',"const ids=['preview-workspace-memory-panel','workspace-memory-state','workspace-memory-tasks','workspace-memory-sync',");
+ if(memoryPanel)assert(script.textContent.includes("'preview-workspace-memory-panel'"),'workspace metrics must survive additions to the captured control list');
  script.textContent=script.textContent.replace("'preview-task-menu-handoff','preview-task-menu-reset-session'","'preview-task-menu-records','preview-task-menu-session-info'");
  script.textContent=script.textContent.replace('const ids=[',"const ids=['knowledge-graph-accessible',");
  script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}.startsWith('knowledgerecord'))document.getElementById('workspace-memory-reader').scrollIntoView({block:'start',inline:'nearest'});const ids=['workspace-memory-editor','workspace-memory-save','workspace-memory-discard','workspace-memory-edit','workspace-memory-read','create-name','task-engine-select','knowledge-graph-panel','knowledge-graph-viewport','knowledge-graph','knowledge-graph-plus','knowledge-graph-minus','knowledge-graph-refresh','library-graph-open','workspace-memory-reader','workspace-memory-content','workspace-memory-documents','vault-consensus-directory','vault-system-directory','vault-project-directory','knowledge-extraction-save',`);
@@ -465,7 +470,7 @@ for(const [view,theme,width,height] of cases){
   if(view.startsWith('library')){
    const box=items['library-dialog'];assert(box.visible&&box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,'library dialog exceeds viewport');
    assert(box.scrollWidth<=box.clientWidth+1,'library dialog overflows horizontally');
-   const content=items[view.startsWith('librarysettings')?'settings-knowledge':view==='librarypreview'?'library-preview-content':view==='librarygraph'?'knowledge-graph-viewport':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
+   const content=items[view.startsWith('librarysettings')?'settings-knowledge':['librarypreview','libraryrevision'].includes(view)?'library-preview-content':view==='librarygraph'?'knowledge-graph-viewport':'library-results'];assert(content.visible&&content.height>120,'library has insufficient readable content space');
    if(view==='librarypreview'){const cite=items['library-preview-cite'];assert(cite.visible&&cite.y+cite.height<=height&&cite.x+cite.width<=width,'preview action is clipped')}
   }
   if(view==='settings'||view.startsWith('library')){
@@ -475,6 +480,8 @@ for(const [view,theme,width,height] of cases){
    if(view==='settings'||view.startsWith('librarysettings')){assert(items['settings-knowledge'].visible&&!items['library-browse-panel'].visible,'only the selected knowledge page may be shown');assert(items['settings-knowledge'].scrollWidth<=items['settings-knowledge'].clientWidth+1,'accumulation settings overflow horizontally')}
    else assert(items['library-browse-panel'].visible&&!items['settings-knowledge'].visible,'browse page must hide accumulation controls');
    if(view==='librarysettingsbottom'){const b=items['automatic-save'];assert(b.visible&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'automatic accumulation save cannot be reached by scrolling')}
+   if(view==='librarysettingsmigration')for(const id of ['knowledge-migration-preview','knowledge-migration-apply']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'migration action is clipped: '+id);if(width<=760)assert(b.height>=44,'migration action has a small touch target')}
+   if(view==='libraryrevision'){const b=items['library-topic-consolidate'];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'topic consolidation action is clipped');if(width<=760)assert(b.height>=44,'topic consolidation action has a small touch target')}
   }
   if(view.startsWith('knowledge')){
    const box=items['notebook'];assert(box.visible&&box.scrollWidth<=box.clientWidth+1,'task knowledge panel overflows');

@@ -158,7 +158,7 @@ func mergeTaskState(current taskStatePatch, patch *taskStatePatch) taskStatePatc
 // patches when rebuilding state as well as when initially parsing the reply.
 // A missing patch never becomes an inferred goal, plan or completed action.
 func workspaceTaskStatePatchForRun(task Task, run Run, memory *taskMemory) *taskStatePatch {
-	if memory == nil || memory.TaskState == nil {
+	if memory == nil || memory.TaskState == nil || run.Kind != "" && run.Kind != "chat" {
 		return nil
 	}
 	patch := portableTaskStatePatch(memory.TaskState, task.Workspace)

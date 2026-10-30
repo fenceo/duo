@@ -620,7 +620,10 @@ def main():
         updated, conflict = update_execution_checkpoint(text, file.get("execution_content"))
         if conflict:
             report["warnings"].append("执行快照区域已被人工修改或标记不完整，已保留原文；任务状态及终态时间记录仍独立保存。")
-            return
+        if file.get("checkpoint_state"):
+            updated, state_conflict = update_worklog_state(updated, file["checkpoint_state"])
+            if state_conflict:
+                report["warnings"].append("任务状态区域已被人工修改，保留人工状态；执行中的状态增量仍保存在来源记录。")
         plain_write(relative, updated, old)
 
     def migrate(item):

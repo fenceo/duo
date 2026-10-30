@@ -62,6 +62,18 @@ func curatedSecretFree(text string) bool {
 }
 
 func prepareCurated(v *CuratedKnowledge) error {
+	if len(v.PendingRevisions) > 9 {
+		return errors.New("同一主题最多保留 8 条待修订和 1 份完整合并稿")
+	}
+	if len(v.PendingRevisions) == 9 {
+		merged := false
+		for _, p := range v.PendingRevisions {
+			merged = merged || len(p.Supersedes) > 0
+		}
+		if !merged {
+			return errors.New("第 9 条待修订必须是完整主题合并稿")
+		}
+	}
 	if err := validateKnowledgeRevisions(v.PendingRevisions); err != nil {
 		return err
 	}
@@ -125,6 +137,7 @@ func (s *Store) curatedKnowledge(ctx context.Context, id string) (CuratedKnowled
 	err := s.QueryRowContext(ctx, "SELECT document FROM curated_knowledge WHERE id=? AND deleted=0", strings.TrimPrefix(id, "curated:")).Scan(&raw)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &v)
+		v.PendingRevisions = knowledgeRevisionFlags(v.PendingRevisions, knowledgeBaseHash(v))
 	}
 	return v, err
 }
@@ -148,6 +161,7 @@ func (s *Store) curatedKnowledgeList(ctx context.Context, layer, scope string) (
 		if err = json.Unmarshal([]byte(raw), &v); err != nil {
 			return nil, err
 		}
+		v.PendingRevisions = knowledgeRevisionFlags(v.PendingRevisions, knowledgeBaseHash(v))
 		items = append(items, v)
 	}
 	return items, rows.Err()
@@ -288,6 +302,7 @@ func sameCuratedPayload(one, two CuratedKnowledge) bool {
 }
 
 func curatedDocument(v CuratedKnowledge) LibraryDocument {
+	v.PendingRevisions = knowledgeRevisionFlags(v.PendingRevisions, knowledgeBaseHash(v))
 	d := LibraryDocument{PendingRevisions: v.PendingRevisions, ID: "curated:" + v.ID, Kind: "curated", Layer: v.Layer, Title: v.Title, Content: v.Content, Status: v.Status, ScopeKey: v.ScopeKey, SourceID: v.SourceID, SourceHash: v.SourceHash, SourceTaskID: v.SourceTaskID, Applicability: v.Applicability, Evidence: v.Evidence, CredentialRef: v.CredentialRef, ExtractionKey: v.ExtractionKey, Tags: v.Tags, Revision: v.Revision, Updated: v.Updated, Origin: "local", Source: "manual"}
 	d.RevisionHistory, d.ReviewKeys = v.RevisionHistory, v.ReviewKeys
 	if v.ExtractionKey != "" {
@@ -650,8 +665,8 @@ func validateCuratedIdentity(local, external LibraryDocument) error {
 	if local.ID != external.ID || local.SourceID != external.SourceID || local.SourceHash != external.SourceHash || local.SourceTaskID != external.SourceTaskID || local.ExtractionKey != external.ExtractionKey {
 		return errors.New("来源标识已变化，请保留原标识或在 Duo 中新建知识")
 	}
-	a, _ := json.Marshal(local.PendingRevisions)
-	b, _ := json.Marshal(external.PendingRevisions)
+	a, _ := json.Marshal(knowledgeRevisionFlags(local.PendingRevisions, ""))
+	b, _ := json.Marshal(knowledgeRevisionFlags(external.PendingRevisions, ""))
 	if string(a) != string(b) {
 		return errors.New("待合并修订由 Duo 管理，请在知识库中采用或忽略修订")
 	}
@@ -660,6 +675,8 @@ func validateCuratedIdentity(local, external LibraryDocument) error {
 
 func sameCuratedContent(one, two LibraryDocument) bool {
 	a, b := curatedFromDocument(one), curatedFromDocument(two)
+	a.PendingRevisions, b.PendingRevisions = knowledgeRevisionFlags(a.PendingRevisions, ""), knowledgeRevisionFlags(b.PendingRevisions, "")
+	a.RevisionHistory, b.RevisionHistory = knowledgeRevisionFlags(a.RevisionHistory, ""), knowledgeRevisionFlags(b.RevisionHistory, "")
 	a.Revision, a.Created, a.Updated = 0, 0, 0
 	b.Revision, b.Created, b.Updated = 0, 0, 0
 	x, _ := json.Marshal(a)

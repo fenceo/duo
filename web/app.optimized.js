@@ -8,6 +8,7 @@ let automaticSettingsDirty = false, vaultSettingsDirty = false, knowledgeSetting
 let knowledgeSettingsLoading = null;
 let knowledgeExtractionRequest = 0, knowledgeExtractionBusy = false, knowledgeExtractionSettingsReady = false, knowledgeExtractionSettingsDirty = false, knowledgeExtractionSettingsBusy = false;
 let knowledgeExtractionActionRequest = 0;
+let knowledgeMigrationRequest = 0, knowledgeMigrationBusy = false, knowledgeMigrationPreview = null;
 let workspaceDocumentRequest = 0, workspaceDocumentTask = '', workspaceDocumentPath = '';
 function libraryTargetCurrent() {
     return !!libraryTarget && shellCurrent(libraryTarget.epoch) && selection === libraryTarget.selection && creatingTask === libraryTarget.create && (creatingTask || chosen === libraryTarget.task);
@@ -28,19 +29,21 @@ function installLibrary() {
     headerActions.insertAdjacentHTML('afterbegin', '<button type="button" id="library-refresh-files">刷新文件</button>');
     button('library-refresh-files').onclick = async ()=>{
         const epoch = shellEpoch, b = button('library-refresh-files');
-        if (b.disabled) return;
+        if (b.disabled || knowledgeMigrationBusy) return;
         b.disabled = true;
         try {
             const report = await api('library/vault/refresh', 'POST', {});
             if (!shellCurrent(epoch)) return;
-            if (report.error) throw new Error(report.error);
+            showVaultReport(report);
             if (element('library-dialog').open) {
                 await searchLibrary();
                 void loadLibraryOverview();
-                if (report.conflicts?.length) notify('文件同步存在冲突，已保留两端内容；请在知识库设置查看详情。');
             }
         } catch (e) {
-            if (shellCurrent(epoch)) notify(e.message);
+            if (shellCurrent(epoch)) {
+                showKnowledgeSyncFailure(e.message);
+                notify(e.message);
+            }
         } finally{
             if (shellCurrent(epoch)) b.disabled = false;
         }
@@ -361,6 +364,7 @@ function showLibraryPage(page) {
             button('library-graph-open').setAttribute('aria-pressed', 'false');
         } else applyKnowledgeGraphMode();
     }
+    renderKnowledgeOrganizationScope();
 }
 async function openLibrarySettings() {
     const epoch = shellEpoch, dialog = element('library-dialog');
@@ -567,7 +571,7 @@ function librarySnippet(text) {
     return text.replace(/^---\s*\n[\s\S]*?\n---\s*(?:\n|$)/, '').replace(/^\s{0,3}#{1,6}\s+/gm, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 function renderLibraryHits() {
-    element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}"${d.path ? ' title="' + escapeHTML(d.path) + '"' : ''}>${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.scope_key || d.task_title || '共用知识')} · ${escapeHTML(libraryDocumentState(d))}</p>${d.snippet ? '<p class="library-snippet">' + escapeHTML(librarySnippet(d.snippet)) + '</p>' : ''}<p class="library-tags">${(d.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ')}</p><footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>当前只查找所选知识分类。可切换平台共识、系统知识、项目知识；旧任务过程可在“旧资料（兼容）”中查看，当前任务主文档从“打开任务记录”进入。</p></div>';
+    element('library-results').innerHTML = libraryHits.length ? libraryHits.map((d)=>`<article class="library-card"${d.id === libraryPreviewID ? ' data-selected="true"' : ''}><h3><button type="button" data-library-preview="${escapeHTML(d.id)}"${d.path ? ' title="' + escapeHTML(d.path) + '"' : ''}>${escapeHTML(d.title)}</button></h3><p class="library-card-meta">${escapeHTML(libraryDescription(d))} · ${escapeHTML(d.scope_key || d.task_title || '共用知识')} · ${escapeHTML(libraryDocumentState(d))}</p>${d.snippet ? '<p class="library-snippet">' + escapeHTML(librarySnippet(d.snippet)) + '</p>' : ''}<p class="library-tags">${(d.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ')}</p>${d.pending_revisions?.length ? '<button type="button" class="knowledge-revision-link" data-library-preview="' + escapeHTML(d.id) + '">查看待合并修订（' + d.pending_revisions.length + '）</button>' : ''}<footer><span>${new Date(d.updated).toLocaleDateString()}</span><button type="button" data-library-reference="${escapeHTML(d.id)}"${libraryCitationBusy || !libraryTargetCurrent() || !libraryTarget?.task && !libraryTarget?.create ? ' disabled' : ''}>引用</button></footer></article>`).join('') : '<div class="library-empty"><strong>暂时没有匹配的文档</strong><p>当前只查找所选知识分类。可切换平台共识、系统知识、项目知识；旧任务过程可在“旧资料（兼容）”中查看，当前任务主文档从“打开任务记录”进入。</p></div>';
 }
 async function previewLibrary(id) {
     const hit = libraryHits.find((d)=>d.id === id);
@@ -682,6 +686,40 @@ function showVaultReport(r) {
     ];
     element('vault-problems').textContent = details.join('\n');
     element('vault-problems').classList.toggle('hidden', !details.length);
+    const state = element('library-sync-state');
+    if (state) {
+        const problems = [
+            r.error,
+            ...r.conflicts || [],
+            ...r.warnings || []
+        ].filter(Boolean);
+        state.textContent = problems.length ? '笔记文件同步需要处理：' + problems.join('；') + '。请到“目录与整理”查看详情；知识整理成功不代表文件已同步。' : r.updated ? `笔记文件已同步：写入 ${r.exported}，导入 ${r.imported}，索引 ${r.indexed}。` : '';
+        state.classList.toggle('hidden', !state.textContent);
+        state.classList.toggle('knowledge-organize-error', !!problems.length);
+    }
+}
+function showKnowledgeSyncFailure(message) {
+    const state = element('library-sync-state');
+    if (state) {
+        state.textContent = '笔记文件同步失败：' + message + '。已整理的候选保留；请修复后刷新文件。';
+        state.classList.remove('hidden');
+        state.classList.add('knowledge-organize-error');
+    }
+}
+function markKnowledgeSyncPending() {
+    const state = element('library-sync-state');
+    if (state) {
+        state.textContent = '知识变更已保存；请点击“刷新文件”核对 Markdown 同步结果。候选入库和文件同步是两个步骤。';
+        state.classList.remove('hidden', 'knowledge-organize-error');
+    }
+}
+function updateKnowledgeOrganizationButtons() {
+    for (const id of [
+        'library-extract',
+        'library-ai-extract'
+    ])if (button(id)) button(id).disabled = knowledgeExtractionBusy || knowledgeRevisionBusy;
+    if (button('library-topic-consolidate')) button('library-topic-consolidate').disabled = knowledgeExtractionBusy || knowledgeRevisionBusy;
+    element('library-preview-content')?.querySelectorAll('[data-knowledge-revision]').forEach((b)=>b.disabled = knowledgeExtractionBusy || knowledgeRevisionBusy || b.dataset.accept === 'true' && !!libraryPreviewDocument?.pending_revisions?.find((r)=>r.key === b.dataset.knowledgeRevision)?.base_changed);
 }
 function setVaultControlsDisabled(disabled) {
     for (const id of [
@@ -702,7 +740,7 @@ function showVaultLocation(directory, enabled) {
     element('vault-document-directory').textContent = directory ? directory + (enabled ? '' : '（同步未启用）') : '尚未设置有效的知识文件根目录';
 }
 async function loadVault() {
-    if (vaultSettingsSaving || vaultRefreshing || vaultSettingsDirty) return;
+    if (vaultSettingsSaving || vaultRefreshing || vaultSettingsDirty || knowledgeMigrationBusy) return;
     const epoch = shellEpoch, token = ++vaultSettingsRequest;
     vaultSettingsReady = false;
     setVaultControlsDisabled(true);
@@ -730,7 +768,7 @@ async function loadVault() {
     }
 }
 async function saveVault() {
-    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing) return;
+    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing || knowledgeMigrationBusy) return;
     const epoch = shellEpoch, token = ++vaultSettingsRequest;
     vaultSettingsSaving = true;
     setVaultControlsDisabled(true);
@@ -770,7 +808,7 @@ async function syncVaultView(epoch, token) {
     if (chosen) await loadKnowledge();
 }
 async function refreshVault() {
-    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing) return;
+    if (!vaultSettingsReady || vaultSettingsSaving || vaultRefreshing || knowledgeMigrationBusy) return;
     const epoch = shellEpoch, token = ++vaultSettingsRequest;
     vaultRefreshing = true;
     setVaultControlsDisabled(true);
@@ -818,11 +856,13 @@ function renderLibraryDocument() {
         ]
     ];
     const metadata = fields.some(([, value])=>value) ? '<details class="curated-metadata"><summary>' + (d?.kind === 'curated' ? '适用条件、依据与来源' : '文件位置与来源') + '</summary>' + fields.filter(([, value])=>value).map(([title, value])=>'<p><strong>' + title + '</strong><br>' + escapeHTML(value) + '</p>').join('') + '</details>' : '';
-    const revisions = d?.kind === 'curated' && d.pending_revisions?.length ? '<details class="knowledge-pending-revisions"><summary>待处理修订（' + d.pending_revisions.length + '）</summary><p>原正文保持不变。采用修订会更新正文并退回待验证；请先检查依据与适用条件。</p>' + d.pending_revisions.map((r)=>'<article><h4>修订候选 · ' + escapeHTML(new Date(r.created).toLocaleString()) + '</h4><div class="content">' + markdown(r.content) + '</div><p><strong>依据</strong> ' + escapeHTML(r.evidence || '未提供，需核查') + '</p><p><strong>适用条件</strong> ' + escapeHTML(r.applicability || '未说明') + '</p><p class="library-tags">' + (r.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ') + '</p><p class="muted">来源：' + escapeHTML(r.source_id || r.source_task_id || '未提供') + '</p><div class="actions"><button type="button" data-knowledge-revision="' + escapeHTML(r.key) + '" data-accept="true"' + (knowledgeRevisionBusy ? ' disabled' : '') + '>采用修订（退回待验证）</button><button type="button" data-knowledge-revision="' + escapeHTML(r.key) + '" data-accept="false"' + (knowledgeRevisionBusy ? ' disabled' : '') + '>忽略修订</button></div></article>').join('') + '<p id="library-revision-state" role="status"></p></details>' : '';
+    const revisions = d?.kind === 'curated' && d.pending_revisions?.length ? '<details class="knowledge-pending-revisions" open><summary>待处理修订（' + d.pending_revisions.length + '）</summary><p>先对照上方原文与下方候选。采用会替换正文并退回待验证；忽略保留原文。多条线索可先让 AI 整理成完整合并稿，再检查采用。</p><button type="button" id="library-topic-consolidate"' + (knowledgeRevisionBusy || knowledgeExtractionBusy ? ' disabled' : '') + '>用 AI 整理此主题</button>' + d.pending_revisions.map((r)=>'<article><h4>' + (r.supersedes?.length ? '完整合并稿 · 覆盖 ' + r.supersedes.length + ' 条修订' : '修订候选') + ' · ' + escapeHTML(new Date(r.created).toLocaleString()) + '</h4>' + (r.base_changed ? '<p class="knowledge-organize-error">原正文已在此候选生成后变化，请重新整理；不能直接采用旧基线的候选。</p>' : '') + '<div class="content">' + markdown(r.content) + '</div><p><strong>依据</strong> ' + escapeHTML(r.evidence || '未提供，需核查') + '</p><p><strong>适用条件</strong> ' + escapeHTML(r.applicability || '未说明') + '</p><p class="library-tags">' + (r.tags || []).map((t)=>'#' + escapeHTML(t)).join(' · ') + '</p><p class="muted">来源：' + escapeHTML(r.source_id || r.source_task_id || '未提供') + '</p><div class="actions"><button type="button" data-knowledge-revision="' + escapeHTML(r.key) + '" data-accept="true"' + (knowledgeRevisionBusy || r.base_changed ? ' disabled' : '') + '>采用修订（退回待验证）</button><button type="button" data-knowledge-revision="' + escapeHTML(r.key) + '" data-accept="false"' + (knowledgeRevisionBusy ? ' disabled' : '') + '>忽略修订</button></div></article>').join('') + '<p id="library-revision-state" role="status"></p></details>' : '';
     const guide = d && libraryReadingGuide(d) ? '<p class="library-guide-notice muted">这是一份自动汇集的只读阅读手册；要修改具体内容，请打开文中的原笔记。每条结论的验证状态、依据与适用条件以原笔记为准。</p>' : '';
     const visible = libraryPreviewText.slice(0, libraryPreviewLimit);
     const previewBody = cut && /```[^\n]*\n/.test(visible.replace(/```[^\n]*\n[\s\S]*?```/g, '')) ? visible + '\n```' : visible;
     element('library-preview-content').innerHTML = guide + metadata + '<div id="library-article">' + markdown(previewBody) + '</div>' + revisions;
+    if (button('library-topic-consolidate')) button('library-topic-consolidate').onclick = ()=>void consolidateKnowledgeTopic();
+    updateKnowledgeOrganizationButtons();
     renderDocumentOutline('library-article', 'library-outline', 'library-section', cut);
     button('library-read-more').classList.toggle('hidden', !cut);
     button('library-download').classList.toggle('hidden', !libraryPreviewText);
@@ -914,8 +954,8 @@ function relativeMarkdownLink(currentPath, href) {
     return path;
 }
 async function resolveKnowledgeRevision(key, accept) {
-    const doc = libraryPreviewDocument;
-    if (knowledgeRevisionBusy || !doc || doc.kind !== 'curated' || !doc.pending_revisions?.some((r)=>r.key === key)) return;
+    const doc = libraryPreviewDocument, revision = doc?.pending_revisions?.find((r)=>r.key === key);
+    if (knowledgeRevisionBusy || knowledgeExtractionBusy || !doc || doc.kind !== 'curated' || !revision || accept && revision.base_changed) return;
     if (curatedDirty || curatedSaving || element('curated-dialog').open) {
         notify('请先保存、放弃或关闭正在编辑的知识草稿，再处理修订。');
         return;
@@ -932,6 +972,7 @@ async function resolveKnowledgeRevision(key, accept) {
             accept
         });
         applied = true;
+        if (shellCurrent(epoch)) markKnowledgeSyncPending();
         if (!current()) {
             if (shellCurrent(epoch)) notify(accept ? '原文档修订已采用，并退回待验证。' : '原文档修订已忽略。');
             return;
@@ -954,7 +995,7 @@ async function resolveKnowledgeRevision(key, accept) {
     } finally{
         if (shellCurrent(epoch) && request === knowledgeRevisionRequest) {
             knowledgeRevisionBusy = false;
-            if (current()) element('library-preview-content').querySelectorAll('[data-knowledge-revision]').forEach((b)=>b.disabled = false);
+            updateKnowledgeOrganizationButtons();
         }
     }
 }
@@ -1042,6 +1083,7 @@ function installKnowledgeLayers() {
     renderKnowledgeLayerHelp();
     element('library-preview').querySelector('.library-preview-actions').insertAdjacentHTML('beforeend', '<button type="button" id="library-promote" class="hidden">整理为正式知识</button><button type="button" id="library-curated-edit" class="hidden">编辑正式知识</button>');
     element('library-search-form').insertAdjacentHTML('afterend', '<div class="actions" id="library-curated-actions"><button type="button" id="library-curated-new">新建知识</button><button type="button" id="library-extract">一键整理已有候选</button><button type="button" id="library-ai-extract">用 AI 整理本任务</button><span class="muted">一键整理复用已保存的分层候选，不调用模型。AI 整理需确认并消耗额度。</span></div><p id="library-extraction-state" class="muted" role="status"></p>');
+    element('library-curated-actions').insertAdjacentHTML('afterend', '<p id="library-organization-scope" class="muted knowledge-organization-scope"></p><p id="library-sync-state" class="knowledge-sync-state hidden" role="status"></p>');
     button('library-extract').onclick = ()=>void extractRecordedKnowledge();
     button('library-ai-extract').onclick = ()=>void extractTaskKnowledgeWithAI();
     button('library-curated-new').onclick = ()=>openCuratedEditor();
@@ -1050,6 +1092,7 @@ function installKnowledgeLayers() {
     element('library-dialog').querySelector('.library-header p').textContent = '在这里查找和编辑平台共识、系统知识、项目知识。每个任务的连续记录从左侧任务菜单打开。';
     element('library-dialog').querySelector('.library-help p').textContent = '连续对话沿用原生会话；开启自动恢复后，新会话补回本任务摘要、同工作区其他任务的交接和已确认的平台共识。只补回有限片段；系统及项目知识先搜索、引用。引用计入模型输入。知识不授予工具或设备权限。';
     element('settings-knowledge').querySelector('p').textContent = '第一层是工作区里的任务记录，维护目标、计划、进展、决策与证据，供切换 AI 和同工作区任务接续。第二层是笔记目录里的平台共识、系统知识、项目知识，提取可复用内容供你阅读学习和 AI 查找。';
+    element('settings-knowledge').querySelector('p').insertAdjacentHTML('afterend', '<details id="knowledge-start-guide" class="knowledge-start-guide"><summary>第一次使用与验收顺序</summary><ol><li>在第 1 组选择笔记根目录，开启同步并保存；三类知识会写入此处，任务原件继续保存在工作区。</li><li>在第 2 组开启自动记录、随回复整理和自动读取，再单独保存；新进展进入同一个任务 Markdown，已有记录可在任务菜单中回填。</li><li>在第 3 组保存每轮自动归档或定时归档；二者只处理已保存候选，不另起模型。</li><li>打开“阅读知识”，选分类和任务范围。一键整理处理已有候选；“用 AI 整理本任务”确认后分批重读历史。</li><li>打开知识核对正文、依据和适用条件。同主题修订可采用、忽略或先用 AI 生成合并稿；只有实际核查后才标记已验证。</li><li>点击“刷新文件”，确认同步无错误，再去 Obsidian 核对。外部编辑后再刷新，Duo 应显示新内容并退回待验证。</li></ol><p>切换引擎使用输入框旁选择器并确认接续范围；自动补入有界任务摘录，不保证任意模型无损接替。跨电脑笔记同步由 Obsidian 或 Git 完成，工作区与完整运行数据需分别同步。</p></details>');
     element('vault-settings').querySelector('summary').textContent = '1. 笔记根目录与知识分类';
     element('vault-settings').querySelector('p').textContent = '选择运行 Duo 的这台电脑上的 Obsidian 笔记目录。新设置默认直接使用所选目录；已有配置保留兼容路径。开启同步后每分钟检查 Markdown，也可立即同步。';
     input('vault-directory').previousSibling.textContent = '笔记根目录（Duo 服务所在电脑）';
@@ -1180,7 +1223,7 @@ function installKnowledgeLayers() {
         e.preventDefault();
         void followWorkspaceDocumentLink(href);
     };
-    element('automatic-knowledge-settings').insertAdjacentHTML('beforeend', '<section class="knowledge-extraction-settings"><h4>3. 将候选整理进笔记</h4><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>每轮结束后自动归入三类知识</label><label><input id="knowledge-extraction-scheduled" type="checkbox" disabled>定时整理已有候选</label><label class="knowledge-schedule-interval">整理间隔（小时，1～168）<input id="knowledge-extraction-interval" type="number" min="1" max="168" step="1" value="24" disabled></label><p>自动、定时及“一键整理已有候选”都复用已保存的分层结果，不额外调用模型。没有候选时保留任务记录；要重新理解旧对话，请在阅读知识页选择“用 AI 整理本任务”，确认后才调用模型。整理成功后可在三类知识中阅读、编辑和确认。</p><p id="knowledge-extraction-last" class="muted"></p><p id="knowledge-extraction-error" class="knowledge-organize-error hidden" role="status"></p><button type="button" id="knowledge-extraction-save" disabled>保存整理方式</button><p id="knowledge-extraction-settings-state" role="status"></p></section>');
+    element('automatic-knowledge-settings').insertAdjacentHTML('afterend', '<details id="knowledge-extraction-settings" class="knowledge-extraction-settings" open><summary>3. 将候选整理进笔记</summary><label><input id="knowledge-extraction-enabled" type="checkbox" disabled>每轮结束后自动归入三类知识</label><label><input id="knowledge-extraction-scheduled" type="checkbox" disabled>定时整理已有候选</label><label class="knowledge-schedule-interval">整理间隔（小时，1～168）<input id="knowledge-extraction-interval" type="number" min="1" max="168" step="1" value="24" disabled></label><p>自动、定时及“一键整理已有候选”都复用已保存的分层结果，不额外调用模型。没有候选时保留任务记录；要重新理解旧对话，请在阅读知识页选择“用 AI 整理本任务”，确认后才调用模型。整理成功与 Markdown 同步成功分别显示；候选默认待验证。</p><p id="knowledge-extraction-last" class="muted"></p><p id="knowledge-extraction-error" class="knowledge-organize-error hidden" role="status"></p><button type="button" id="knowledge-extraction-save" disabled>保存整理方式</button><p id="knowledge-extraction-settings-state" role="status"></p></details>');
     for (const id of [
         'knowledge-extraction-enabled',
         'knowledge-extraction-scheduled',
@@ -1190,6 +1233,7 @@ function installKnowledgeLayers() {
         element('knowledge-extraction-settings-state').textContent = '整理方式尚未保存。';
     };
     button('knowledge-extraction-save').onclick = ()=>void saveKnowledgeExtractionSettings();
+    installKnowledgeMigration();
     installKnowledgeGraph();
     element('root').insertAdjacentHTML('beforeend', `<dialog id="curated-dialog" class="curated-dialog" aria-labelledby="curated-heading"><div class="library-header"><h2 id="curated-heading">整理正式知识</h2><button type="button" id="curated-close">关闭</button></div><p>凭据保留在设备或受保护配置，正文只写配置引用。整理和标记状态不会启动模型或独立验证内容。</p><form id="curated-form"><label>知识层级<select id="curated-layer"><option value="consensus">平台共识</option><option value="system">系统知识</option><option value="project">项目知识</option></select></label><label>主题 / 项目名称<input id="curated-scope" maxlength="80" placeholder="平台共识无需填写"></label><label>标题<input id="curated-title" required maxlength="200"></label><label>正文<textarea id="curated-content" required rows="10"></textarea></label><label>适用条件<textarea id="curated-applicability" rows="2"></textarea></label><label>实际依据 / 验证结果<textarea id="curated-evidence" rows="2" placeholder="未验证时明确写出"></textarea></label><label>安全配置引用<input id="curated-credential" placeholder="仅设备或配置名称，不填写密码"></label><label>标签<input id="curated-tags" placeholder="用逗号分隔"></label><label>状态<select id="curated-status"><option value="observed">待验证</option><option value="verified">已验证（用户确认）</option><option value="stale">已过时</option></select></label><label><input type="checkbox" id="curated-confirm">我确认已填写实际依据和适用条件，并明确将此条标为已验证</label><p id="curated-source" class="muted"></p><p id="curated-state" role="status"></p><div class="actions"><button type="submit" id="curated-save" class="primary">保存正式知识</button><button type="button" id="curated-delete" class="danger hidden">移除正式条目</button></div></form></dialog>`);
     button('curated-close').onclick = ()=>{
@@ -1242,6 +1286,9 @@ function installKnowledgeLayers() {
     disposeWithShell(()=>{
         taskKnowledgeProjectRequest++;
         taskKnowledgeProjectDrafts.clear();
+        knowledgeMigrationRequest++;
+        knowledgeMigrationBusy = false;
+        knowledgeMigrationPreview = null;
     });
 }
 function renderKnowledgeLayerHelp() {
@@ -1255,6 +1302,18 @@ function renderKnowledgeLayerHelp() {
         knowledge: '旧候选片段仅供整理；可复用内容应归入三类知识，不按提问重复生成笔记。',
         all: '兼容查看全部已索引文件。任务记录是过程依据，三类知识是可复用结论。'
     })[input('library-layer').value] || '';
+    renderKnowledgeOrganizationScope();
+}
+function renderKnowledgeOrganizationScope() {
+    const help = element('library-organization-scope');
+    if (!help) return;
+    const scope = input('library-scope').value, layer = input('library-layer').value, task = scope || (!creatingTask ? chosen : '');
+    const layerName = {
+        consensus: '平台共识',
+        system: '系统知识',
+        project: '项目知识'
+    }[layer] || '三类知识';
+    help.textContent = '一键整理范围：' + (scope ? '“' + (tasks.find((t)=>t.id === scope)?.title || scope) + '”' : '所有任务') + '的' + layerName + '候选。AI 历史整理对象：' + (task ? '“' + (tasks.find((t)=>t.id === task)?.title || task) + '”（三类知识）' : '请先选择一个任务') + '。';
 }
 function openCuratedEditor(doc) {
     if (doc && libraryReadingGuide(doc)) {
@@ -1330,6 +1389,7 @@ async function saveCuratedEditor() {
         curatedDirty = false;
         curatedDraft = null;
         element('curated-dialog').close();
+        markKnowledgeSyncPending();
         notify('正式知识已保存；同一来源在同一层级与范围内不会重复提升。');
         await searchLibrary();
         void loadLibraryOverview();
@@ -1410,7 +1470,7 @@ async function loadWorkspaceMemory(sync = false) {
         element('workspace-memory-tasks').innerHTML = related.map((t)=>'<article>' + (tasks.some((known)=>known.id === t.id && !known.deleted) ? '<button type="button" data-workspace-task="' + escapeHTML(t.id) + '">' + escapeHTML(t.title) + ' →</button>' : '<strong>' + escapeHTML(t.title) + '</strong>') + (t.excerpt ? '<p>' + escapeHTML(librarySnippet(t.excerpt)) + '</p>' : '') + '</article>').join('');
         element('workspace-memory-documents').innerHTML = (report.documents || []).filter((d)=>d.path !== report.main_document).map((d)=>'<button type="button" data-workspace-document="' + escapeHTML(d.path) + '">' + escapeHTML(d.title || d.kind || d.path) + '</button>').join('');
         if (hasMain(report)) await readWorkspaceMemoryDocument(report.main_document);
-        else if (!workspaceDocumentPath) element('workspace-memory-state').textContent += '；尚无主任务记录。' + (report.enabled ? '可点击“回填 / 同步本任务已有记录”重试。' : '请在知识库的“积累设置”开启自动记录，再手动回填。');
+        else if (!workspaceDocumentPath) element('workspace-memory-state').textContent += '；尚无主任务记录。' + (report.enabled ? '可点击“回填 / 同步本任务已有记录”重试。' : '请在知识库 → 目录与整理 → 任务记录与每轮候选中开启自动记录，再手动回填。');
     } catch (e) {
         if (current()) element('workspace-memory-state').textContent = '工作区资料读取失败：' + e.message;
     } finally{
@@ -1827,6 +1887,7 @@ async function extractRecordedKnowledge() {
             ]
         });
         if (!shellCurrent(epoch)) return;
+        if (report.created || report.revisions) markKnowledgeSyncPending();
         if (!knowledgeExtractionActionCurrent(target)) {
             notify('原范围的候选整理已完成；当前查看范围保持不变。');
             return;
@@ -1842,8 +1903,7 @@ async function extractRecordedKnowledge() {
     } finally{
         if (shellCurrent(epoch) && target.request === knowledgeExtractionActionRequest) {
             knowledgeExtractionBusy = false;
-            button('library-extract').disabled = false;
-            button('library-ai-extract').disabled = false;
+            updateKnowledgeOrganizationButtons();
         }
     }
 }
@@ -2028,8 +2088,159 @@ async function extractTaskKnowledgeWithAI() {
     } finally{
         if (shellCurrent(epoch) && target.request === knowledgeExtractionActionRequest) {
             knowledgeExtractionBusy = false;
-            button('library-extract').disabled = false;
-            button('library-ai-extract').disabled = false;
+            updateKnowledgeOrganizationButtons();
+        }
+    }
+}
+function installKnowledgeMigration() {
+    element('knowledge-extraction-settings').insertAdjacentHTML('afterend', '<details id="knowledge-migration-settings" class="knowledge-extraction-settings"><summary>4. 迁移已有知识到新目录</summary><p>完整复制当前知识根中的 Markdown 与来源资料，并保留原有身份、修订和相对链接。预览确认后才切换根目录；不覆盖目标异文、不删除旧目录，不负责语义重写旧内容。三类相对目录保持不变；仅改变设置不会搬迁独立原件。</p><label>新笔记根目录<input id="knowledge-migration-directory" placeholder="选择一个新的 Obsidian 专用文件夹" maxlength="1000"></label><label>新根目录方式<select id="knowledge-migration-root-mode"><option value="direct">所选目录就是知识根</option><option value="legacy">所选目录下的 Duo/</option></select></label><div class="actions"><button type="button" id="knowledge-migration-preview">预览迁移</button><button type="button" id="knowledge-migration-apply" class="primary" disabled>确认迁移并切换目录</button></div><p id="knowledge-migration-state" role="status"></p><pre id="knowledge-migration-files" class="hidden"></pre></details>');
+    const invalidate = ()=>{
+        knowledgeMigrationRequest++;
+        knowledgeMigrationPreview = null;
+        button('knowledge-migration-apply').disabled = true;
+        element('knowledge-migration-state').textContent = '目标目录有变化，请重新预览。';
+        element('knowledge-migration-files').classList.add('hidden');
+    };
+    for (const id of [
+        'knowledge-migration-directory',
+        'knowledge-migration-root-mode'
+    ])input(id).oninput = input(id).onchange = invalidate;
+    button('knowledge-migration-preview').onclick = ()=>void previewKnowledgeMigration();
+    button('knowledge-migration-apply').onclick = ()=>void applyKnowledgeMigration();
+}
+function setKnowledgeMigrationBusy(busy) {
+    knowledgeMigrationBusy = busy;
+    for (const id of [
+        'knowledge-migration-directory',
+        'knowledge-migration-root-mode',
+        'knowledge-migration-preview'
+    ])input(id).disabled = busy;
+    button('knowledge-migration-apply').disabled = busy || !knowledgeMigrationPreview?.ready;
+    setVaultControlsDisabled(busy || !vaultSettingsReady || vaultSettingsSaving || vaultRefreshing);
+    button('library-refresh-files').disabled = busy;
+}
+function showKnowledgeMigrationPreview(report) {
+    element('knowledge-migration-state').textContent = (report.completed ? '迁移完成：复制 ' + (report.copied || 0) + ' 份，已切换到新知识根。旧目录保留。' : '预览：' + report.file_count + ' 份文件，共 ' + report.total_bytes + ' 字节；待复制 ' + report.copy_count + '，内容相同 ' + report.identical_count + '。') + ' 来源：' + report.source_directory + '；目标：' + report.target_directory + '。' + (report.source_dirty ? '当前知识还有未同步修改，请先“立即同步 / 重建索引”，处理冲突后重新预览。' : '') + [
+        ...report.conflicts || [],
+        ...report.warnings || []
+    ].map((s)=>' ' + s).join('');
+    element('knowledge-migration-state').classList.toggle('knowledge-organize-error', !report.ready && !report.completed);
+    const actions = {
+        copy: '复制',
+        identical: '相同，跳过',
+        conflict: '冲突，停止'
+    };
+    element('knowledge-migration-files').textContent = (report.files || []).slice(0, 200).map((f)=>actions[f.action] + ' · ' + f.path + ' · ' + f.size + ' 字节').join('\n') + ((report.files || []).length > 200 ? '\n… 界面只显示前 200 份，确认时仍校验全部清单。' : '');
+    element('knowledge-migration-files').classList.toggle('hidden', !report.files?.length);
+}
+async function previewKnowledgeMigration() {
+    if (knowledgeMigrationBusy || vaultSettingsSaving || vaultRefreshing) return;
+    if (vaultSettingsDirty) {
+        element('knowledge-migration-state').textContent = '请先保存或放弃第 1 组的路径草稿，再预览当前已保存知识根的迁移。';
+        return;
+    }
+    const directory = input('knowledge-migration-directory').value.trim(), rootMode = input('knowledge-migration-root-mode').value;
+    if (!directory) {
+        element('knowledge-migration-state').textContent = '请填写新笔记根目录。';
+        input('knowledge-migration-directory').focus();
+        return;
+    }
+    const epoch = shellEpoch, request = ++knowledgeMigrationRequest;
+    knowledgeMigrationPreview = null;
+    setKnowledgeMigrationBusy(true);
+    element('knowledge-migration-state').textContent = '正在比对源文件、目标文件和同步基线…';
+    try {
+        const report = await api('library/vault/migration/preview', 'POST', {
+            directory,
+            root_mode: rootMode
+        });
+        if (!shellCurrent(epoch) || request !== knowledgeMigrationRequest) return;
+        knowledgeMigrationPreview = report;
+        showKnowledgeMigrationPreview(report);
+    } catch (e) {
+        if (shellCurrent(epoch) && request === knowledgeMigrationRequest) element('knowledge-migration-state').textContent = '迁移预览失败，当前路径未更改：' + e.message;
+    } finally{
+        if (shellCurrent(epoch) && request === knowledgeMigrationRequest) setKnowledgeMigrationBusy(false);
+    }
+}
+async function applyKnowledgeMigration() {
+    const preview = knowledgeMigrationPreview;
+    if (knowledgeMigrationBusy || !preview?.ready || !preview.fingerprint) return;
+    if (vaultSettingsDirty || vaultSettingsSaving || vaultRefreshing) {
+        knowledgeMigrationPreview = null;
+        button('knowledge-migration-apply').disabled = true;
+        element('knowledge-migration-state').textContent = '笔记路径设置有未保存或正在进行的变化，请先处理第 1 组设置，再重新预览。';
+        return;
+    }
+    const epoch = shellEpoch, request = knowledgeMigrationRequest, directory = input('knowledge-migration-directory').value.trim(), rootMode = input('knowledge-migration-root-mode').value;
+    if (!confirm('迁移已有知识并切换笔记目录？\n\n来源：' + preview.source_directory + '\n目标：' + preview.target_directory + '\n复制 ' + preview.copy_count + ' 份，跳过 ' + preview.identical_count + ' 份同内容文件，共 ' + preview.total_bytes + ' 字节。\n\n将保留知识身份、来源及修订，不删除旧目录，不覆盖不同内容的目标文件。源文件、数据库或目标文件变化时会停止，需要重新预览。')) return;
+    if (!shellCurrent(epoch) || request !== knowledgeMigrationRequest) return;
+    setKnowledgeMigrationBusy(true);
+    element('knowledge-migration-state').textContent = '正在按预览清单复制并切换知识根…';
+    try {
+        const report = await api('library/vault/migration', 'POST', {
+            directory,
+            root_mode: rootMode,
+            fingerprint: preview.fingerprint,
+            confirm: true
+        });
+        if (!shellCurrent(epoch) || request !== knowledgeMigrationRequest) return;
+        knowledgeMigrationPreview = null;
+        showKnowledgeMigrationPreview(report);
+        vaultSettingsReady = false;
+        vaultSettingsDirty = false;
+        setKnowledgeMigrationBusy(false);
+        await loadVault();
+        if (shellCurrent(epoch) && request === knowledgeMigrationRequest) {
+            void loadLibraryOverview();
+            element('knowledge-migration-settings').setAttribute('open', '');
+        }
+    } catch (e) {
+        if (shellCurrent(epoch) && request === knowledgeMigrationRequest) {
+            knowledgeMigrationPreview = null;
+            element('knowledge-migration-state').textContent = '迁移完成状态未确认：' + e.message + '。旧目录保留；请关闭后重新打开目录设置，核对实际知识根再操作。若尚未切换，可重新预览并跳过已复制的同内容文件。';
+            element('knowledge-migration-state').classList.add('knowledge-organize-error');
+            vaultSettingsReady = false;
+        }
+    } finally{
+        if (shellCurrent(epoch) && request === knowledgeMigrationRequest) setKnowledgeMigrationBusy(false);
+    }
+}
+async function consolidateKnowledgeTopic() {
+    const doc = libraryPreviewDocument;
+    if (knowledgeExtractionBusy || knowledgeRevisionBusy || !doc || doc.kind !== 'curated' || !doc.pending_revisions?.length) return;
+    if (curatedDirty || curatedSaving || element('curated-dialog').open) {
+        notify('请先保存、放弃或关闭正在编辑的知识草稿，再整理主题。');
+        return;
+    }
+    const task = input('library-scope').value || (!creatingTask ? chosen : '');
+    if (!task) {
+        element('library-revision-state').textContent = '请先在任务范围选择用于整理的任务，其引擎和模型将承担本次调用。';
+        return;
+    }
+    const target = knowledgeExtractionActionTarget(), epoch = target.epoch, id = doc.id, preview = libraryPreviewRequest, request = target.request, taskTitle = tasks.find((t)=>t.id === task)?.title || task;
+    const current = ()=>knowledgeExtractionActionCurrent(target) && preview === libraryPreviewRequest && libraryPreviewID === id;
+    knowledgeExtractionBusy = true;
+    updateKnowledgeOrganizationButtons();
+    try {
+        if (!await ensureExtractionDirectory() || !current()) return;
+        if (!confirm('用 AI 整理此主题？\n\n主题：' + doc.title + '\n调用任务：“' + taskTitle + '”当前引擎和模型。\n\n会发送本主题当前正文、依据、适用条件及全部待合并修订，消耗模型额度。只整理本主题，不重读整个任务历史，不执行工具。原正文保持不变，结果保存为待采用合并稿，需你核查。无依据的冲突将保留为未决事项。')) return;
+        if (!current()) return;
+        element('library-revision-state').textContent = '正在排队整理本主题…';
+        await api('library/curated/' + encodeURIComponent(id.replace(/^curated:/, '')) + '/consolidate', 'POST', {
+            task_id: task,
+            revision: doc.revision,
+            confirm: true
+        });
+        if (!shellCurrent(epoch)) return;
+        if (current()) element('library-revision-state').textContent = 'AI 主题整理已排队。可在任务执行记录查看；结束后刷新文件并重新打开本主题，核对完整合并稿后采用。原正文尚未更改。';
+        notify('AI 主题整理已排队：' + doc.title);
+    } catch (e) {
+        if (current()) element('library-revision-state').textContent = '主题整理请求未确认成功：' + e.message + '。请先在任务执行记录核对是否已排队，再重试。';
+    } finally{
+        if (shellCurrent(epoch) && request === knowledgeExtractionActionRequest) {
+            knowledgeExtractionBusy = false;
+            updateKnowledgeOrganizationButtons();
         }
     }
 }
@@ -4015,7 +4226,7 @@ function conversationTurn(id) {
     return turn;
 }
 function addConversationEvent(event) {
-    if (conversationItems.has(event.seq)) return;
+    if (event.kind === 'task_state' || conversationItems.has(event.seq)) return;
     const item = {
         event
     };
@@ -11821,6 +12032,10 @@ function renderShell() {
             notify('便签尚未保存，请等待保存完成或重试后再退出。');
             return;
         }
+        if (knowledgeMigrationBusy || knowledgeExtractionBusy || knowledgeRevisionBusy) {
+            notify('知识库正在迁移或提交整理，请等待操作返回后再退出。');
+            return;
+        }
         if (automaticSettingsDirty || vaultSettingsDirty || automaticSettingsSaving || vaultSettingsSaving || knowledgeExtractionSettingsDirty || knowledgeExtractionSettingsBusy || curatedDirty || curatedSaving || workspaceDraftsPending()) {
             notify('知识库设置或知识草稿尚未保存，请先保存或放弃草稿后再退出。');
             return;
@@ -12227,7 +12442,7 @@ function renderSessionBanner() {
     }) : '';
     const harness = detail.task.engine === 'deepseek-harness', closed = harnessSessionClosed(), busy = detail.runs.some((r)=>r.status === 'running' || r.status === 'queued') || detail.runtime?.state === 'busy';
     const title = harness ? closed ? '运行会话已结束' : detail.runtime?.state === 'new' ? '新会话已就绪' : detail.runtime?.state === 'busy' ? 'Harness 正在执行' : detail.runtime?.state === 'resumable' ? '发送消息即可恢复会话' : 'Harness 连续对话' : detail.task.session ? `正在续用${started ? ' ' + started + ' 开始的' : ''}历史会话` : '新会话已就绪';
-    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 重建 AI 会话时可自动补回当前任务知识，可在“知识库 → 积累设置”关闭自动恢复。';
+    const explanation = (harness ? detail.runtime?.reason || harnessSessionHint : '聊天记录保留在当前任务中。') + ' 重建 AI 会话时可自动补回有界任务资料，可在“知识库 → 目录与整理 → 任务记录与每轮候选”关闭自动读取。';
     element('session-summary').textContent = detail.task.archived ? '任务已归档' : title;
     element('session-location').textContent = [
         detail.task.environment?.name,
@@ -12255,7 +12470,7 @@ async function resetSession() {
         notify('请先停止执行并取消排队，再新建会话。');
         return;
     }
-    if (!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动恢复，将补回当前任务最多 3 条知识。需要完全空白的上下文，请先在知识库 → 积累设置 → 对话自动积累关闭自动恢复。')) return;
+    if (!confirm('重建 AI 会话？任务记录、知识和未发送的草稿都会保留。下一轮不重放完整对话；若开启自动读取，将补回本任务摘要与文档、同工作区交接和已确认平台共识的有界摘录。需要空白恢复范围，请先在知识库 → 目录与整理 → 任务记录与每轮候选关闭自动读取；已经建立的原生会话不会撤回先前上下文。')) return;
     const id = detail.task.id, token = ++selection;
     sessionResetTask = id;
     renderTask();

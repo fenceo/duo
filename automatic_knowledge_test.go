@@ -53,7 +53,7 @@ func TestAutomaticKnowledgeRecordsConversationWithoutExtraModelTurns(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		expectedPrompts = append(expectedPrompts, memoryPrompt(r.ID)+input)
+		expectedPrompts = append(expectedPrompts, liveTaskStatePrompt(r.ID)+memoryPrompt(r.ID)+input)
 		waitUntil(t, func() bool {
 			a.mu.Lock()
 			defer a.mu.Unlock()
