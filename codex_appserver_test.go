@@ -139,6 +139,11 @@ func runCodexAppServerFixture() {
 	}
 	responses := []json.RawMessage{}
 	switch scenario {
+	case "context-occupancy":
+		runCodexContextFixture(notify, threadID, turnID)
+		item("final", "final_answer", "context fixture complete")
+		complete("completed")
+		return
 	case "retry-success", "retry-failed", "retry-no-cause", "retry-foreign", "retry-other-failure":
 		nativeError := func(target, targetTurn, message string, retry bool, info any, details any) {
 			notify("error", map[string]any{"threadId": target, "turnId": targetTurn, "willRetry": retry, "error": map[string]any{"message": message, "codexErrorInfo": info, "additionalDetails": details}})

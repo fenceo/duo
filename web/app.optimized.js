@@ -1,3 +1,5 @@
+let knowledgeQualityRequest = 0, knowledgeQualityBusy = false;
+let knowledgeQualityItems = new Map();
 let libraryRequest = 0, libraryTarget = null;
 let libraryHits = [];
 let libraryLoading = false, libraryBrowseStarted = false, libraryNextOffset = 0, libraryHasMore = false, libraryPreviewRequest = 0, libraryOverviewRequest = 0, libraryCitationRequest = 0, libraryCitationBusy = false;
@@ -76,6 +78,7 @@ function installLibrary() {
     installLibraryBrowser();
     installLibraryPages();
     installKnowledgeLayers();
+    installKnowledgeQuality();
     disposeWithShell(()=>{
         libraryRequest++;
         libraryOverviewRequest++;
@@ -101,6 +104,83 @@ function installLibrary() {
         knowledgeSettingsRequest++;
         knowledgeSettingsLoading = null;
     });
+}
+function installKnowledgeQuality() {
+    const panel = document.createElement('details');
+    panel.id = 'knowledge-quality-panel';
+    panel.innerHTML = '<summary>检查知识空白与重复</summary><p>检查已导入的三类正式知识。仅列出缺少正文、同分类与范围内正文相同的条目；不扫描未同步文件或历史归档，不判断语义重复，不修改原文。</p><button type="button" id="knowledge-quality-run">检查空白与重复</button><p id="knowledge-quality-state" role="status" aria-live="polite"></p><p id="knowledge-quality-notice" class="muted"></p><div id="knowledge-quality-results" class="library-results"></div>';
+    element('settings-knowledge').querySelector('.knowledge-storage-info').before(panel);
+    button('knowledge-quality-run').onclick = ()=>void inspectKnowledgeQuality();
+    element('knowledge-quality-results').onclick = (e)=>{
+        const control = e.target.closest('[data-quality-document]'), item = knowledgeQualityItems.get(control?.dataset.qualityDocument || '');
+        if (!item) return;
+        libraryRequest++;
+        libraryLoading = false;
+        knowledgeGraphOpen = false;
+        knowledgeGraphRequest++;
+        showLibraryPage('browse');
+        const hit = {
+            ...item,
+            kind: 'curated',
+            task_id: '',
+            task_title: '',
+            revision: 0,
+            updated: 0,
+            origin: 'curated',
+            hash: '',
+            snippet: ''
+        };
+        libraryHits = [
+            hit,
+            ...libraryHits.filter((doc)=>doc.id !== item.id)
+        ];
+        renderLibraryHits();
+        void previewLibrary(item.id);
+    };
+    const reset = ()=>{
+        knowledgeQualityRequest++;
+        knowledgeQualityBusy = false;
+        button('knowledge-quality-run').disabled = false;
+    };
+    element('library-dialog').addEventListener('close', reset);
+    disposeWithShell(()=>{
+        knowledgeQualityRequest++;
+        knowledgeQualityBusy = false;
+        knowledgeQualityItems.clear();
+    });
+}
+async function inspectKnowledgeQuality() {
+    if (knowledgeQualityBusy) return;
+    const request = ++knowledgeQualityRequest, epoch = shellEpoch, current = ()=>request === knowledgeQualityRequest && shellCurrent(epoch);
+    knowledgeQualityBusy = true;
+    button('knowledge-quality-run').disabled = true;
+    knowledgeQualityItems.clear();
+    element('knowledge-quality-results').textContent = '';
+    element('knowledge-quality-notice').textContent = '';
+    element('knowledge-quality-state').textContent = '正在检查已导入的正式知识…';
+    try {
+        const report = await api('library/quality', 'GET', undefined, shellController.signal);
+        if (!current()) return;
+        element('knowledge-quality-state').textContent = `已检查 ${report.scanned} 条：缺少正文 ${report.empty_count} 条，同正文候选 ${report.duplicate_group_count} 组。` + (report.scan_truncated ? '扫描达到数量或大小上限，尚未覆盖全部条目。' : '') + (report.issues_truncated ? '结果较多，以下仅显示部分条目。' : '');
+        element('knowledge-quality-notice').textContent = report.notice;
+        const row = (item)=>{
+            knowledgeQualityItems.set(item.id, item);
+            const category = {
+                consensus: '平台共识',
+                system: '系统知识',
+                project: '项目知识'
+            }[item.layer] || item.layer;
+            return `<li><button type="button" data-quality-document="${escapeHTML(item.id)}">${escapeHTML(item.title || '未命名条目')}</button> · ${escapeHTML(category)}${item.scope_key ? ' · ' + escapeHTML(item.scope_key) : ''} · ${escapeHTML(knowledgeStateText(item.status))}</li>`;
+        };
+        element('knowledge-quality-results').innerHTML = (report.empty.length ? '<article class="library-card"><h4>缺少正文，需补充或核对</h4><ul>' + report.empty.map(row).join('') + '</ul></article>' : '') + report.duplicate_groups.map((group)=>'<article class="library-card"><h4>同正文候选 · ' + group.count + ' 条</h4><p>正文一致，依据和适用条件仍可能不同；请逐条打开核对。</p><ul>' + group.items.map(row).join('') + '</ul>' + (group.items_truncated ? '<p>本组仅显示部分条目。</p>' : '') + '</article>').join('');
+    } catch (e) {
+        if (current()) element('knowledge-quality-state').textContent = '检查失败，可重试：' + e.message;
+    } finally{
+        if (current()) {
+            knowledgeQualityBusy = false;
+            button('knowledge-quality-run').disabled = false;
+        }
+    }
 }
 function installLibraryBrowser() {
     const dialog = element('library-dialog');
@@ -600,10 +680,18 @@ async function previewLibrary(id) {
             hash: hit.hash
         }), 'GET', undefined, shellController.signal);
         if (token !== libraryPreviewRequest || !shellCurrent(epoch)) return;
+        if (!hit.hash && libraryHits.includes(hit)) {
+            libraryHits = libraryHits.map((doc)=>doc === hit ? {
+                    ...doc,
+                    ...result
+                } : doc);
+            if (element('library-dialog').open && !element('library-browse-panel').classList.contains('hidden')) renderLibraryHits();
+        }
         libraryPreviewText = result.content || '';
         libraryPreviewLimit = 20000;
         libraryPreviewDocument = result;
         renderLibraryDocument();
+        element('library-preview-meta').textContent = libraryDescription(result) + ' · ' + (result.scope_key || result.task_title || '共用知识') + ' · ' + libraryDocumentState(result);
         button('library-promote').classList.toggle('hidden', result.kind === 'curated' || libraryReadingGuide(result));
         button('library-curated-edit').classList.toggle('hidden', result.kind !== 'curated');
         button('library-preview-cite').classList.remove('hidden');
@@ -3605,7 +3693,7 @@ function parseAppearance(raw) {
 function installStickyBoard() {
     element('trash-open').insertAdjacentHTML('afterend', '<button id="sticky-tab" type="button" aria-controls="sticky-board" aria-pressed="false">便签</button>');
     element('sticky-tab').parentElement.classList.add('task-navigation');
-    element('task-list').insertAdjacentHTML('afterend', `<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color, label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
+    element('task-list').insertAdjacentHTML('afterend', `<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
     button('sticky-tab').onclick = openStickyBoard;
     button('sticky-close').onclick = ()=>closeStickyBoard();
     const showTrash = button('trash-open').onclick;
@@ -3622,12 +3710,6 @@ function installStickyBoard() {
         button('sticky-expand').title = collapsed ? '展开便签' : '收起便签';
         button('sticky-expand').textContent = collapsed ? '›' : '⌄';
     };
-    element('sticky-palette').querySelectorAll('button').forEach((b)=>b.onclick = ()=>{
-            if (!stickyReady) return;
-            quickNotes.color = b.dataset.stickyColor;
-            touchSticky();
-            syncStickyState();
-        });
     button('sticky-new').onclick = addQuickNote;
     button('sticky-retry').onclick = ()=>{
         if (stickyReady) {
@@ -3706,11 +3788,19 @@ function syncStickySidebar() {
     button('sticky-tab').classList.toggle('selected', active);
     button('sticky-tab').setAttribute('aria-pressed', String(active));
 }
-function stickyPayload() {
+function stickyColor(value) {
+    return stickyColors.some(([color])=>color === value) ? value : 'neutral';
+}
+function stickyPayload(board = quickNotes) {
+    const color = stickyColor(board.color);
     return {
-        color: quickNotes.color,
-        items: quickNotes.items.filter((n)=>n.content.trim()).map((n)=>({
-                ...n
+        color,
+        items: board.items.filter((n)=>n.content.trim()).map((n)=>({
+                id: n.id,
+                content: n.content,
+                done: n.done === true,
+                pinned: n.pinned === true,
+                color: n.color ? stickyColor(n.color) : color
             }))
     };
 }
@@ -3721,7 +3811,9 @@ function blankQuickNote() {
     return {
         id: 'n_' + Date.now().toString(36) + '_' + ++stickySequence + '_' + Math.random().toString(36).slice(2, 9),
         content: '',
-        done: false
+        done: false,
+        pinned: false,
+        color: 'neutral'
     };
 }
 function touchSticky() {
@@ -3738,11 +3830,11 @@ async function loadStickyBoard(force = false) {
     try {
         const board = await api('sticky');
         if (request !== stickyRequest || !shellCurrent(epoch) || generation !== stickyGeneration || !force && element('sticky-list').contains(document.activeElement)) return;
-        const changed = !stickyReady || JSON.stringify({
-            color: board.color,
-            items: board.items
-        }) !== stickySaved;
-        if (changed || force) quickNotes = board;
+        const payload = stickyPayload(board), changed = !stickyReady || JSON.stringify(payload) !== stickySaved;
+        if (changed || force) quickNotes = {
+            ...payload,
+            revision: board.revision
+        };
         else quickNotes.revision = board.revision;
         stickyReady = true;
         stickyDirty = false;
@@ -3781,10 +3873,7 @@ async function saveQuickNotes() {
         if (e.status === 409) {
             try {
                 const board = await api('sticky');
-                if (JSON.stringify({
-                    color: board.color,
-                    items: board.items
-                }) === fingerprint) {
+                if (JSON.stringify(stickyPayload(board)) === fingerprint) {
                     quickNotes.revision = board.revision;
                     stickySaved = fingerprint;
                     stickyDirty = stickyFingerprint() !== stickySaved;
@@ -3806,13 +3895,8 @@ async function saveQuickNotes() {
 function syncStickyState() {
     const board = element('sticky-board');
     if (!board) return;
-    board.dataset.color = quickNotes.color;
     const count = quickNotes.items.filter((n)=>n.content.trim() && !n.done).length;
     element('sticky-count').textContent = count ? count + ' 项' : '';
-    element('sticky-palette').querySelectorAll('button').forEach((b)=>{
-        b.disabled = !stickyReady;
-        b.setAttribute('aria-pressed', String(b.dataset.stickyColor === quickNotes.color));
-    });
     button('sticky-new').disabled = !stickyReady || quickNotes.items.length >= 500;
     const status = element('sticky-save-status');
     status.textContent = stickyError || (stickySaving ? '保存中…' : stickyDirty ? '待保存…' : stickyReady ? '已保存 · 共用便签' : '正在读取…');
@@ -3854,11 +3938,30 @@ function fitQuickNotes() {
         if (Number.isFinite(heights[i])) field.style.height = heights[i] + 'px';
     });
 }
+function orderedQuickNotes() {
+    return [
+        ...quickNotes.items.filter((n)=>n.pinned),
+        ...quickNotes.items.filter((n)=>!n.pinned)
+    ];
+}
+function orderStickyRows(focus) {
+    const list = element('sticky-list'), rows = new Map(Array.from(list.querySelectorAll('[data-note]')).map((row)=>[
+            row.dataset.note,
+            row
+        ]));
+    for (const note of orderedQuickNotes()){
+        const row = rows.get(note.id);
+        if (row) list.appendChild(row);
+    }
+    focus?.focus({
+        preventScroll: true
+    });
+}
 function renderStickyBoard() {
     const list = element('sticky-list');
     if (!list) return;
     if (stickyReady && !quickNotes.items.length) quickNotes.items.push(blankQuickNote());
-    list.innerHTML = quickNotes.items.map((n)=>`<div class="quick-note" data-note="${escapeHTML(n.id)}" data-done="${n.done}"><input type="checkbox" data-note-done="${escapeHTML(n.id)}" aria-label="标记便签完成" ${n.done ? 'checked' : ''}><textarea id="sticky-input-${escapeHTML(n.id)}" data-note-input="${escapeHTML(n.id)}" rows="1" maxlength="8000" aria-label="便签内容" placeholder="写下备忘…">${escapeHTML(n.content)}</textarea><button type="button" data-note-delete="${escapeHTML(n.id)}" aria-label="删除这条便签" title="删除">×</button></div>`).join('');
+    list.innerHTML = orderedQuickNotes().map((n)=>`<div class="quick-note" data-note="${escapeHTML(n.id)}" data-done="${n.done}" data-pinned="${n.pinned}" data-color="${escapeHTML(n.color)}"><input type="checkbox" data-note-done="${escapeHTML(n.id)}" aria-label="标记便签完成" ${n.done ? 'checked' : ''}><textarea id="sticky-input-${escapeHTML(n.id)}" data-note-input="${escapeHTML(n.id)}" rows="1" maxlength="8000" aria-label="便签内容" placeholder="写下备忘…">${escapeHTML(n.content)}</textarea><button type="button" data-note-delete="${escapeHTML(n.id)}" aria-label="删除这条便签" title="删除">×</button><div class="quick-note-actions"><button type="button" data-note-pin="${escapeHTML(n.id)}" aria-pressed="${n.pinned}" aria-label="${n.pinned ? '取消置顶这条便签' : '置顶这条便签'}" title="${n.pinned ? '取消置顶' : '置顶'}">${n.pinned ? '已置顶' : '置顶'}</button><select data-note-color="${escapeHTML(n.id)}" aria-label="这条便签的颜色" title="这条便签的颜色">${stickyColors.map(([color, label])=>`<option value="${color}" ${color === n.color ? 'selected' : ''}>${label}</option>`).join('')}</select></div></div>`).join('');
     list.querySelectorAll('[data-note-input]').forEach((field)=>{
         field.value = quickNotes.items.find((n)=>n.id === field.dataset.noteInput)?.content || '';
         let composing = false;
@@ -3897,6 +4000,25 @@ function renderStickyBoard() {
             note.done = box.checked;
             box.closest('.quick-note').dataset.done = String(note.done);
             touchSticky();
+        });
+    list.querySelectorAll('[data-note-color]').forEach((select)=>select.onchange = ()=>{
+            const note = quickNotes.items.find((n)=>n.id === select.dataset.noteColor);
+            if (!note) return;
+            note.color = stickyColor(select.value);
+            select.closest('.quick-note').dataset.color = note.color;
+            touchSticky();
+        });
+    list.querySelectorAll('[data-note-pin]').forEach((b)=>b.onclick = ()=>{
+            const note = quickNotes.items.find((n)=>n.id === b.dataset.notePin);
+            if (!note) return;
+            note.pinned = !note.pinned;
+            b.closest('.quick-note').dataset.pinned = String(note.pinned);
+            b.setAttribute('aria-pressed', String(note.pinned));
+            b.setAttribute('aria-label', note.pinned ? '取消置顶这条便签' : '置顶这条便签');
+            b.title = note.pinned ? '取消置顶' : '置顶';
+            b.textContent = note.pinned ? '已置顶' : '置顶';
+            touchSticky();
+            orderStickyRows(b);
         });
     list.querySelectorAll('[data-note-delete]').forEach((b)=>b.onclick = ()=>{
             const index = quickNotes.items.findIndex((n)=>n.id === b.dataset.noteDelete);

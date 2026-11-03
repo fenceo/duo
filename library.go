@@ -516,6 +516,7 @@ func (s *Store) libraryReference(ctx context.Context, id, expected string) (Libr
 }
 
 func (s *Server) libraryRoutes(m *http.ServeMux) {
+	m.HandleFunc("GET /api/library/quality", s.secure(s.knowledgeQuality))
 	m.HandleFunc("GET /api/library/search", s.secure(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		offset := 0

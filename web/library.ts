@@ -8,6 +8,10 @@ type AutomaticKnowledgeConfig={capture:boolean;recall:boolean;organize?:boolean}
 type VaultReport={updated:number;exported:number;imported:number;indexed:number;conflicts:string[];warnings:string[];error?:string};
 type VaultSettingsResponse={config:VaultConfig;report:VaultReport;document_directory:string};
 type KnowledgeMigrationPreview={source_directory:string;target_directory:string;fingerprint:string;files:{path:string;size:number;action:'copy'|'identical'|'conflict'}[];file_count:number;total_bytes:number;copy_count:number;identical_count:number;conflicts:string[];warnings:string[];source_dirty:boolean;ready:boolean;completed?:boolean;copied?:number;config?:VaultConfig};
+type KnowledgeQualityItem={id:string;title:string;layer:string;scope_key:string;status:string};
+type KnowledgeQualityReport={scanned:number;scan_limit:number;scan_truncated:boolean;empty_count:number;duplicate_group_count:number;issues_truncated:boolean;empty:KnowledgeQualityItem[];duplicate_groups:{layer:string;scope_key:string;count:number;items:KnowledgeQualityItem[];items_truncated:boolean}[];notice:string};
+let knowledgeQualityRequest=0,knowledgeQualityBusy=false;
+let knowledgeQualityItems=new Map<string,KnowledgeQualityItem>();
 let libraryRequest=0,libraryTarget:{task:string;create:boolean;selection:number;epoch:number}|null=null;
 let libraryHits:LibraryDocument[]=[];
 let libraryLoading=false,libraryBrowseStarted=false,libraryNextOffset=0,libraryHasMore=false,libraryPreviewRequest=0,libraryOverviewRequest=0,libraryCitationRequest=0,libraryCitationBusy=false;
@@ -47,7 +51,39 @@ function installLibrary(){
  installLibraryBrowser();
  installLibraryPages();
  installKnowledgeLayers();
+ installKnowledgeQuality();
  disposeWithShell(()=>{libraryRequest++;libraryOverviewRequest++;libraryPreviewRequest++;libraryCitationRequest++;libraryCitationBusy=false;libraryLoading=false;libraryBrowseStarted=false;libraryTarget=null;libraryHits=[];knowledgeEditTarget=null;knowledgeSaving=false;knowledgeExpanded.clear();automaticSettingsRequest++;automaticSettingsReady=false;automaticSettingsSaving=false;automaticSettingsDirty=false;vaultSettingsRequest++;vaultSettingsReady=false;vaultSettingsSaving=false;vaultRefreshing=false;vaultSettingsDirty=false;knowledgeSettingsRequest++;knowledgeSettingsLoading=null});
+}
+function installKnowledgeQuality(){
+ const panel=document.createElement('details');panel.id='knowledge-quality-panel';
+ panel.innerHTML='<summary>检查知识空白与重复</summary><p>检查已导入的三类正式知识。仅列出缺少正文、同分类与范围内正文相同的条目；不扫描未同步文件或历史归档，不判断语义重复，不修改原文。</p><button type="button" id="knowledge-quality-run">检查空白与重复</button><p id="knowledge-quality-state" role="status" aria-live="polite"></p><p id="knowledge-quality-notice" class="muted"></p><div id="knowledge-quality-results" class="library-results"></div>';
+ element('settings-knowledge').querySelector('.knowledge-storage-info')!.before(panel);
+ button('knowledge-quality-run').onclick=()=>void inspectKnowledgeQuality();
+ element('knowledge-quality-results').onclick=e=>{
+  const control=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-quality-document]'),item=knowledgeQualityItems.get(control?.dataset.qualityDocument||'');if(!item)return;
+  // Reuse the normal document reader and editor, including revision checks.
+  libraryRequest++;libraryLoading=false;knowledgeGraphOpen=false;knowledgeGraphRequest++;showLibraryPage('browse');
+  const hit:LibraryDocument={...item,kind:'curated',task_id:'',task_title:'',revision:0,updated:0,origin:'curated',hash:'',snippet:''};
+  libraryHits=[hit,...libraryHits.filter(doc=>doc.id!==item.id)];
+  renderLibraryHits();void previewLibrary(item.id);
+ };
+ const reset=()=>{knowledgeQualityRequest++;knowledgeQualityBusy=false;button('knowledge-quality-run').disabled=false};
+ element('library-dialog').addEventListener('close',reset);
+ disposeWithShell(()=>{knowledgeQualityRequest++;knowledgeQualityBusy=false;knowledgeQualityItems.clear()});
+}
+async function inspectKnowledgeQuality(){
+ if(knowledgeQualityBusy)return;
+ const request=++knowledgeQualityRequest,epoch=shellEpoch,current=()=>request===knowledgeQualityRequest&&shellCurrent(epoch);
+ knowledgeQualityBusy=true;button('knowledge-quality-run').disabled=true;knowledgeQualityItems.clear();
+ element('knowledge-quality-results').textContent='';element('knowledge-quality-notice').textContent='';element('knowledge-quality-state').textContent='正在检查已导入的正式知识…';
+ try{
+  const report=await api<KnowledgeQualityReport>('library/quality','GET',undefined,shellController.signal);if(!current())return;
+  element('knowledge-quality-state').textContent=`已检查 ${report.scanned} 条：缺少正文 ${report.empty_count} 条，同正文候选 ${report.duplicate_group_count} 组。`+(report.scan_truncated?'扫描达到数量或大小上限，尚未覆盖全部条目。':'')+(report.issues_truncated?'结果较多，以下仅显示部分条目。':'');
+  element('knowledge-quality-notice').textContent=report.notice;
+  const row=(item:KnowledgeQualityItem)=>{knowledgeQualityItems.set(item.id,item);const category=({consensus:'平台共识',system:'系统知识',project:'项目知识'} as Record<string,string>)[item.layer]||item.layer;return `<li><button type="button" data-quality-document="${escapeHTML(item.id)}">${escapeHTML(item.title||'未命名条目')}</button> · ${escapeHTML(category)}${item.scope_key?' · '+escapeHTML(item.scope_key):''} · ${escapeHTML(knowledgeStateText(item.status))}</li>`};
+  element('knowledge-quality-results').innerHTML=(report.empty.length?'<article class="library-card"><h4>缺少正文，需补充或核对</h4><ul>'+report.empty.map(row).join('')+'</ul></article>':'')+report.duplicate_groups.map(group=>'<article class="library-card"><h4>同正文候选 · '+group.count+' 条</h4><p>正文一致，依据和适用条件仍可能不同；请逐条打开核对。</p><ul>'+group.items.map(row).join('')+'</ul>'+(group.items_truncated?'<p>本组仅显示部分条目。</p>':'')+'</article>').join('');
+ }catch(e){if(current())element('knowledge-quality-state').textContent='检查失败，可重试：'+(e as Error).message}
+ finally{if(current()){knowledgeQualityBusy=false;button('knowledge-quality-run').disabled=false}}
 }
 function installLibraryBrowser(){
  const dialog=element<HTMLDialogElement>('library-dialog');dialog.setAttribute('aria-label','知识库');
@@ -226,7 +262,14 @@ async function previewLibrary(id:string){
  element('library-outline').textContent='';element('library-outline').classList.add('hidden');
  element('library-preview-content').textContent='';element('library-preview-status').textContent='正在读取预览…';button('library-preview-cite').classList.add('hidden');button('library-preview-source').classList.add('hidden');highlightLibraryPreview();
  try{const result=await api<LibraryDocument>('library/document?'+new URLSearchParams({id,hash:hit.hash}),'GET',undefined,shellController.signal);if(token!==libraryPreviewRequest||!shellCurrent(epoch))return;
+  // Inspection results start without a hash; retain the exact version read for
+  // later citation checks, while leaving an intervening search untouched.
+  if(!hit.hash&&libraryHits.includes(hit)){
+   libraryHits=libraryHits.map(doc=>doc===hit?{...doc,...result}:doc);
+   if(element<HTMLDialogElement>('library-dialog').open&&!element('library-browse-panel').classList.contains('hidden'))renderLibraryHits();
+  }
   libraryPreviewText=result.content||'';libraryPreviewLimit=20000;libraryPreviewDocument=result;renderLibraryDocument();
+  element('library-preview-meta').textContent=libraryDescription(result)+' · '+(result.scope_key||result.task_title||'共用知识')+' · '+libraryDocumentState(result);
   button('library-promote').classList.toggle('hidden',result.kind==='curated'||libraryReadingGuide(result));button('library-curated-edit').classList.toggle('hidden',result.kind!=='curated');
   button('library-preview-cite').classList.remove('hidden');button('library-preview-cite').disabled=libraryCitationBusy||!libraryTargetCurrent()||(!libraryTarget?.task&&!libraryTarget?.create);
   button('library-preview-source').classList.toggle('hidden',!tasks.some(t=>t.id===(result.source_task_id||result.task_id)&&!t.deleted));

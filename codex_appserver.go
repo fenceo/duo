@@ -455,6 +455,7 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 	fileChangesBytes := 0
 	var priorUsage *codexTokenUsage
 	var usage RunUsage
+	var lastContext RunContext
 	var retryDiagnostics codexRetryDiagnostics
 	for {
 		select {
@@ -676,8 +677,9 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 				Error      codexTurnError `json:"error"`
 				WillRetry  bool           `json:"willRetry"`
 				TokenUsage struct {
-					Total codexTokenUsage `json:"total"`
-					Last  codexTokenUsage `json:"last"`
+					Total              codexTokenUsage `json:"total"`
+					Last               codexTokenUsage `json:"last"`
+					ModelContextWindow json.RawMessage `json:"modelContextWindow"`
 				} `json:"tokenUsage"`
 			}
 			if json.Unmarshal(m.Params, &p) != nil {
@@ -800,6 +802,18 @@ func runCodexAppServer(ctx context.Context, c Config, t Task, input string, emit
 					}
 				}
 			case "thread/tokenUsage/updated":
+				// The newest request's input is current context occupancy. Native
+				// cumulative totals below remain billing usage, including after a
+				// compaction shrinks this gauge. Never guess an absent model window.
+				var contextSize int64
+				if json.Unmarshal(p.TokenUsage.ModelContextWindow, &contextSize) == nil {
+					currentContext := RunContext{Used: p.TokenUsage.Last.Input, Size: contextSize}
+					if currentContext.Used > 0 && currentContext.valid() && currentContext != lastContext {
+						payload, _ := json.Marshal(currentContext)
+						emit("context", string(payload))
+						lastContext = currentContext
+					}
+				}
 				current := p.TokenUsage.Total
 				delta := p.TokenUsage.Last
 				if priorUsage != nil && current.Input >= priorUsage.Input && current.Output >= priorUsage.Output {

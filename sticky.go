@@ -14,6 +14,8 @@ type StickyNote struct {
 	ID      string `json:"id"`
 	Content string `json:"content"`
 	Done    bool   `json:"done"`
+	Pinned  bool   `json:"pinned"`
+	Color   string `json:"color"`
 }
 
 type StickyBoard struct {
@@ -24,17 +26,39 @@ type StickyBoard struct {
 
 var errStickyConflict = errors.New("便签已在其他窗口修改，当前草稿已保留，请核对后重新加载")
 
+func validStickyColor(color string) bool {
+	switch color {
+	case "neutral", "yellow", "blue", "green", "purple":
+		return true
+	}
+	return false
+}
+
+// Older boards stored one shared color. Resolve it for each old note without
+// rewriting storage on a read; the original bytes remain the CAS comparison.
+func normalizeStickyBoard(b *StickyBoard) {
+	if b.Items == nil {
+		b.Items = []StickyNote{}
+	}
+	for i := range b.Items {
+		if b.Items[i].Color == "" {
+			b.Items[i].Color = b.Color
+		}
+	}
+}
+
 func validateStickyBoard(b StickyBoard) error {
 	if b.Revision < 0 || b.Revision >= 1<<52 || len(b.Items) > 500 {
 		return errors.New("便签数量或版本无效，最多 500 条")
 	}
-	switch b.Color {
-	case "neutral", "yellow", "blue", "green", "purple":
-	default:
+	if !validStickyColor(b.Color) {
 		return errors.New("便签颜色无效")
 	}
 	seen, size := map[string]bool{}, 0
 	for _, n := range b.Items {
+		if n.Color != "" && !validStickyColor(n.Color) {
+			return errors.New("单条便签颜色无效")
+		}
 		size += len(n.Content)
 		if !safeWorkbenchID(n.ID) || seen[n.ID] || strings.TrimSpace(n.Content) == "" || len(n.Content) > 24000 || strings.ContainsRune(n.Content, 0) {
 			return errors.New("便签内容或标识无效，每条最多 24 KiB")
@@ -59,11 +83,15 @@ func readStickyBoard(q interface{ QueryRow(string, ...any) *sql.Row }) (StickyBo
 	}
 	if err = json.Unmarshal([]byte(raw), &b); err == nil {
 		err = validateStickyBoard(b)
+		if err == nil {
+			normalizeStickyBoard(&b)
+		}
 	}
 	return b, raw, err
 }
 
 func writeStickyBoard(tx *sql.Tx, b StickyBoard, previous string) error {
+	normalizeStickyBoard(&b)
 	raw, err := json.Marshal(b)
 	if err != nil {
 		return err
@@ -101,6 +129,7 @@ func (s *Server) stickyRoutes(m *http.ServeMux) {
 			fail(w, 400, err.Error())
 			return
 		}
+		normalizeStickyBoard(&b)
 		tx, err := s.app.store.Begin()
 		if err != nil {
 			fail(w, 500, "无法保存便签")
@@ -117,9 +146,6 @@ func (s *Server) stickyRoutes(m *http.ServeMux) {
 			return
 		}
 		b.Revision++
-		if b.Items == nil {
-			b.Items = []StickyNote{}
-		}
 		if err = writeStickyBoard(tx, b, raw); err != nil {
 			fail(w, 409, errStickyConflict.Error())
 			return
@@ -132,8 +158,8 @@ func (s *Server) stickyRoutes(m *http.ServeMux) {
 	}))
 }
 
-// Imports are additive, just like tasks and commands. Preserve local color and
-// regenerate imported IDs; bump the revision so open editors detect the change.
+// Imports are additive. Preserve every note's own color and pin, resolving old
+// imported colors before combining boards; regenerate IDs and advance revision.
 func importStickyBoard(tx *sql.Tx, incoming *StickyBoard) error {
 	if incoming == nil || len(incoming.Items) == 0 {
 		return nil
@@ -146,6 +172,9 @@ func importStickyBoard(tx *sql.Tx, incoming *StickyBoard) error {
 		current.Color = incoming.Color
 	}
 	for _, n := range incoming.Items {
+		if n.Color == "" {
+			n.Color = incoming.Color
+		}
 		n.ID = uid()
 		current.Items = append(current.Items, n)
 	}

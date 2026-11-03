@@ -11,7 +11,7 @@ import {pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 
-const output=path.resolve('build/ui-review');
+const output=path.resolve(process.env.DUO_UI_OUTPUT||'build/ui-review');
 await fs.mkdir(output,{recursive:true});
 const baseline=path.join(output,'baseline');await fs.mkdir(baseline,{recursive:true});
 const sourceFiles=['library','updates','workflow','sticky','conversation','codex-approvals','layout','environments','hardware','execution','discovery','terminal','productivity','tools','account-import','account-center','engines','handoff','desktop','usage','app','panels'];
@@ -58,8 +58,10 @@ cases.push(['harnessoutput','light',1280,800],['harnessoutput','dark',390,844],[
 cases.push(['settings','light',320,844],['knowledge','light',320,844]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['sticky',theme,width,width===1280?800:844]);
 cases.push(['stickyempty','light',1280,800],['stickyempty','dark',320,844],['stickyfull','dark',1280,800],['stickyfull','light',390,844],['stickyfull','dark',320,844]);
+cases.push(['stickynarrow','light',1280,800],['stickynarrow','dark',1280,800]);
 cases.push(['settings','dark',1280,800],['settings','light',390,844],['settings','dark',320,844],['library','dark',390,844],['library','light',320,844],['library','dark',320,844],['librarypreview','light',320,844],['librarypreview','dark',320,844]);
 cases.push(['librarysettings','light',1280,800],['librarysettings','dark',390,844],['librarysettings','light',320,844],['librarysettingsbottom','dark',390,844],['librarysettingsbottom','light',320,844]);
+cases.push(['librarysettingsquality','light',1280,800],['librarysettingsquality','dark',390,844],['librarysettingsquality','light',320,844]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['libraryrevision',theme,width,width===1280?800:844],['librarysettingsmigration',theme,width,width===1280?800:844]);
 for(const theme of ['light','dark'])for(const width of [1280,390,320])cases.push(['navigation',theme,width,width===1280?800:844]);
 cases.push(['sidebarnarrow','dark',1280,800],['sidebar','light',320,844],['sidebar','dark',320,844]);
@@ -204,7 +206,7 @@ for(const [view,theme,width,height] of cases){
  }
  if(view.startsWith('sidebar')){
   if(width<=760)document.getElementById('sidebar').classList.add('open');
-  if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
+  if(view!=='sidebarempty')runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='sidebarfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版侧栏与便签','记录下次要验证的问题','补充发布说明','整理已完成的事项'][i%4],done:i===3,pinned:i===2,color:stickyColors[i%stickyColors.length][0]}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard()`,ctx);
   if(view==='sidebarnarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
   if(view==='sidebarwide')runInContext('appearance.sidebar=380;applyAppearance(appearance)',ctx);
   if(view==='sidebarmigrated')runInContext("localStorage.setItem('jianzuo-dock-layout-v1',JSON.stringify({sticky:'right',tools:'left'}));installDockLayout()",ctx);
@@ -214,7 +216,8 @@ for(const [view,theme,width,height] of cases){
   assert(!document.querySelector('.workspace-heading'));
  }
  if(view.startsWith('sticky')){
-  runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='stickyempty'?0:view==='stickyfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版便签与硬件入口','记录下次要验证的问题','补充发布说明和未解决问题','整理已完成的事项'][i%4],done:i===3}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard();`,ctx);
+  runInContext(`quickNotes={revision:1,color:'neutral',items:Array.from({length:${view==='stickyempty'?0:view==='stickyfull'?30:4}},(_,i)=>({id:'note-'+i,content:['检查新版便签与硬件入口','记录下次要验证的问题','补充发布说明和未解决问题','整理已完成的事项'][i%4],done:i===3,pinned:i===2,color:stickyColors[i%stickyColors.length][0]}))};stickyReady=true;stickySaved=stickyFingerprint();renderStickyBoard();`,ctx);
+  if(view==='stickynarrow')runInContext('appearance.sidebar=180;applyAppearance(appearance)',ctx);
   ctx.loadStickyBoard=async()=>{};if(width<=760)document.getElementById('sidebar').classList.add('open');ctx.openStickyBoard();
   assert(document.getElementById('tabs').contains(document.getElementById('hardware-tab')),'hardware belongs to the selected task');
   assert(document.querySelector('#sidebar .task-views').contains(document.getElementById('sticky-tab')),'notes belong to the task-list navigation');
@@ -309,6 +312,15 @@ for(const [view,theme,width,height] of cases){
     assert.equal(document.getElementById('library-dialog'),dialog,'knowledge page switches reuse the same dialog');
     assert.equal(directory.value,'D:/Notes/Duo','browsing does not overwrite accumulation drafts');
     if(view==='librarysettingsmigration'){document.getElementById('knowledge-migration-settings').open=true;document.getElementById('knowledge-migration-directory').value='D:/Notes/Duo知识-新目录';ctx.showKnowledgeMigrationPreview({source_directory:'D:/Notes/Duo旧目录',target_directory:'D:/Notes/Duo知识-新目录',fingerprint:'synthetic',file_count:32,total_bytes:131072,copy_count:30,identical_count:2,files:[{path:'平台共识/协作与验证约定.md',size:2048,action:'copy'},{path:'项目知识/Duo/任务记录与知识归档.md',size:4096,action:'identical'}],conflicts:[],warnings:[],source_dirty:false,ready:true});document.getElementById('knowledge-migration-apply').disabled=false}
+    if(view==='librarysettingsquality'){
+     const currentAPI=ctx.api,requests=[],item={id:'curated:quality-empty',title:'<img src=x onerror=fixture()> Sigma NFS 调试中需要补充来源与适用条件的完整主题：'+('保留证据与待核对边界，'.repeat(6)),layer:'project',scope_key:'375-64M / 合成项目范围',status:'observed'};
+     ctx.api=async(route,method='GET',...args)=>{requests.push({route,method});if(route==='library/quality')return {scanned:2000,scan_limit:2000,scan_truncated:true,empty_count:1,duplicate_group_count:1,issues_truncated:true,empty:[item],duplicate_groups:[{layer:'system',scope_key:'Linux 内存',count:5,items:[{id:'curated:quality-first',title:'Linux 内存统计：相同正文仍需分别核对实验版本、证据和适用条件',layer:'system',scope_key:'Linux 内存',status:'verified'},{id:'curated:quality-second',title:'Linux 内存统计：另一条来源，等待人工判断是否合并',layer:'system',scope_key:'Linux 内存',status:'observed'}],items_truncated:true}],notice:'仅检查已导入的正式知识，不扫描未同步文件或历史归档；不会自动合并或删除。'};if(route.startsWith('library/document?'))return {...item,kind:'curated',content:'# 合成知识原文\n\n检查结果使用正常文档阅读与编辑入口，未调用模型。',task_id:'',task_title:'',revision:2,updated:1790310000000,origin:'curated',hash:'quality-fixture',snippet:''};return currentAPI(route,method,...args)};
+     document.getElementById('knowledge-quality-panel').open=true;await ctx.inspectKnowledgeQuality();
+     const results=document.getElementById('knowledge-quality-results');assert(!results.querySelector('img'),'quality titles must be escaped');assert.match(results.textContent,/<img src=x/);assert.match(document.getElementById('knowledge-quality-state').textContent,/尚未覆盖全部条目/);assert.match(results.textContent,/本组仅显示部分条目/);
+     const result=results.querySelector('[data-quality-document]');document.getElementById('knowledge-quality-results').onclick({target:result});await new Promise(resolve=>setImmediate(resolve));
+     assert.match(document.getElementById('library-preview-content').textContent,/合成知识原文/);assert(!document.getElementById('library-curated-edit').classList.contains('hidden'),'quality finding must use the normal editor');assert(requests.every(request=>request.method==='GET'),'quality inspection and preview must remain read-only');
+     ctx.showLibraryPage('settings');
+    }
    }
   }
  }
@@ -337,6 +349,7 @@ for(const [view,theme,width,height] of cases){
  script.textContent=script.textContent.replace("==='settings'?'settings-dialog':'library-dialog'","==='settings'?'library-dialog':'library-dialog'");
  script.textContent=script.textContent.replace('const ids=[',`if(${JSON.stringify(view)}==='librarysettingsbottom')document.getElementById('automatic-save').scrollIntoView({block:'end'});if(${JSON.stringify(view)}==='librarysettingsmigration')document.getElementById('knowledge-migration-apply').scrollIntoView({block:'center'});if(${JSON.stringify(view)}==='libraryrevision')document.getElementById('library-topic-consolidate').scrollIntoView({block:'center'});if(${JSON.stringify(view)}.startsWith('curated')){const dialog=document.getElementById('curated-dialog');dialog.removeAttribute('open');dialog.showModal();if(${JSON.stringify(view)}==='curatedbottom')document.getElementById('curated-save').scrollIntoView({block:'end'})}const ids=['knowledge-migration-preview','knowledge-migration-apply','knowledge-migration-files','library-topic-consolidate','curated-dialog','curated-form','curated-title','curated-content','curated-applicability','curated-evidence','curated-credential','curated-status','curated-confirm','curated-save','curated-close','preview-task-menu-panel','preview-task-menu-editor','preview-task-menu-handoff','preview-task-menu-reset-session','preview-task-menu-bind-feishu','preview-task-menu-trash','app-menu-toggle','hardware-tab','desktop-open','sticky-tab','sticky-close','sticky-palette','library-browse-panel','settings-knowledge','library-browse-open','library-settings-open','library-close','vault-directory','vault-save','vault-refresh','automatic-save',`);
  script.textContent=script.textContent.replace('scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:','scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight,visible:');
+ if(view==='librarysettingsquality')script.textContent=script.textContent.replace('const ids=[',"document.getElementById('knowledge-quality-panel').scrollIntoView({block:'start'});const ids=[");
  const settingsMetrics=document.createElement('script');settingsMetrics.textContent=`window.addEventListener('load',()=>{
   const pre=document.getElementById('layout-metrics'),nav=document.getElementById('workspace-settings');if(!pre||!nav)return;
   const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:e.scrollWidth,clientWidth:e.clientWidth,visible:!!e.getClientRects().length}};
@@ -355,7 +368,8 @@ for(const [view,theme,width,height] of cases){
    sidebarOrder:[...taskNav.querySelectorAll('button')].map(b=>b.id),notesInTaskNav:taskNav.contains(document.getElementById('sticky-tab')),
    globalOrder:[...document.querySelectorAll('#app-menu-items button')].map(b=>b.dataset.settings||b.id),sidebarButtons:[...taskNav.querySelectorAll('button')].map(box)};
   data.knowledgeLibrary={oneDirectory:document.querySelectorAll('#vault-directory').length===1,oneAutomaticControl:document.querySelectorAll('#automatic-capture').length===1,sameDialog:document.getElementById('library-dialog').contains(document.getElementById('settings-knowledge')),noSeparateEditor:!document.getElementById('settings-form').contains(document.getElementById('vault-directory'))};
-  data.stickyNotes={inSidebar:document.getElementById('sidebar').contains(document.getElementById('sticky-board')),fields:[...document.querySelectorAll('[data-note-input]')].map(box)};
+  data.stickyNotes={inSidebar:document.getElementById('sidebar').contains(document.getElementById('sticky-board')),fields:[...document.querySelectorAll('[data-note-input]')].map(box),controls:[...document.querySelectorAll('.quick-note:first-child [data-note-pin],.quick-note:first-child [data-note-color]')].map(box),colors:[...document.querySelectorAll('.quick-note')].map(e=>({color:e.dataset.color,background:getComputedStyle(e).backgroundColor,pinned:e.dataset.pinned})),globalPalette:!!document.getElementById('sticky-palette'),boardColor:document.getElementById('sticky-board').dataset.color};
+  const quality=document.getElementById('knowledge-quality-panel');if(quality)data.knowledgeQuality={panel:box(quality),run:box(document.getElementById('knowledge-quality-run')),results:box(document.getElementById('knowledge-quality-results')),buttons:[...quality.querySelectorAll('[data-quality-document]')].map(box),state:document.getElementById('knowledge-quality-state').textContent,notice:document.getElementById('knowledge-quality-notice').textContent,escaped:!quality.querySelector('img'),truncated:quality.textContent.includes('本组仅显示部分条目。')};
   const graph=document.getElementById('knowledge-graph');if(graph)data.knowledgeGraph={labels:[...graph.querySelectorAll('text')].map(e=>({title:e.textContent,...box(e)})),rootEdges:graph.querySelectorAll('.knowledge-graph-edges>line').length,nestedShapes:graph.querySelectorAll('circle text,line line').length,documentButtons:[...document.querySelectorAll('#knowledge-graph-accessible [data-graph-document]')].map(box)};
   pre.textContent=JSON.stringify(data);
  });`;document.body.append(settingsMetrics);
@@ -481,6 +495,12 @@ for(const [view,theme,width,height] of cases){
    else assert(items['library-browse-panel'].visible&&!items['settings-knowledge'].visible,'browse page must hide accumulation controls');
    if(view==='librarysettingsbottom'){const b=items['automatic-save'];assert(b.visible&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'automatic accumulation save cannot be reached by scrolling')}
    if(view==='librarysettingsmigration')for(const id of ['knowledge-migration-preview','knowledge-migration-apply']){const b=items[id];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'migration action is clipped: '+id);if(width<=760)assert(b.height>=44,'migration action has a small touch target')}
+   if(view==='librarysettingsquality'){
+    const quality=metrics.knowledgeQuality;assert(quality.panel.visible&&quality.panel.scrollWidth<=quality.panel.clientWidth+1,'knowledge quality panel overflows horizontally');assert(quality.results.scrollWidth<=quality.results.clientWidth+1,'knowledge quality results overflow horizontally');
+    assert(quality.run.visible&&quality.run.y>=dialog.y&&quality.run.y+quality.run.height<=dialog.y+dialog.height+1,'quality inspection button cannot be reached by scrolling');assert(quality.run.height>=(width<=760?44:40),'quality inspection touch target is too small');
+    assert(quality.escaped&&quality.truncated&&quality.buttons.length===3,'quality findings must be escaped, actionable and show truncated groups');assert.match(quality.state,/尚未覆盖全部条目/);assert.match(quality.state,/以下仅显示部分条目/);assert.match(quality.notice,/不会自动合并或删除/);
+    for(const button of quality.buttons){assert(button.visible&&button.height>=(width<=760?44:40)&&button.x>=dialog.x&&button.x+button.width<=dialog.x+dialog.width+1,'quality finding button is too small or exceeds the dialog')}
+   }
    if(view==='libraryrevision'){const b=items['library-topic-consolidate'];assert(b.visible&&b.x>=0&&b.x+b.width<=width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,'topic consolidation action is clipped');if(width<=760)assert(b.height>=44,'topic consolidation action has a small touch target')}
   }
   if(view.startsWith('knowledge')){
@@ -511,7 +531,10 @@ for(const [view,theme,width,height] of cases){
    const dialog=items['sticky-board'];assert(dialog.visible&&dialog.x>=0&&dialog.x+dialog.width<=items.sidebar.width+1&&dialog.y>=0&&dialog.y+dialog.height<=height+1,'sidebar notes exceed viewport');assert(dialog.scrollWidth<=dialog.clientWidth+1,'sidebar notes overflow horizontally');
    for(const id of ['sticky-close','sticky-new']){const b=items[id],minimum=width<=760?44:24;assert(b.visible&&b.width>=minimum&&b.height>=minimum&&b.x>=dialog.x&&b.x+b.width<=dialog.x+dialog.width+1&&b.y>=dialog.y&&b.y+b.height<=dialog.y+dialog.height+1,id+' is clipped or too small for touch')}
    assert(items['sticky-list'].height>=100,'notes drawer has too little writing room');assert(items['sticky-save-status'].visible&&items['sticky-save-status'].y+items['sticky-save-status'].height<=height+1,'note save status is inaccessible');
-   const fields=metrics.stickyNotes.fields;assert(fields.length>=1&&fields[0].visible&&fields[0].width>=120&&fields[0].height>=32,'notes have no usable draft field');assert(metrics.stickyNotes.inSidebar&&!items['task-list'].visible&&!items.search.visible,'notes replace the task list in place');
+   const fields=metrics.stickyNotes.fields;assert(fields.length>=1&&fields[0].visible&&fields[0].width>=(view==='stickynarrow'?75:120)&&fields[0].height>=32,'notes have no usable draft field');assert(metrics.stickyNotes.inSidebar&&!items['task-list'].visible&&!items.search.visible,'notes replace the task list in place');
+   assert(!metrics.stickyNotes.globalPalette&&!metrics.stickyNotes.boardColor,'note colors must not recolor the entire board');
+   for(const control of metrics.stickyNotes.controls){assert(control.visible&&control.width>=36&&control.height>=(width<=760?44:28),'note pin/color control is too small');assert(control.x>=dialog.x&&control.x+control.width<=dialog.x+dialog.width+1,'note pin/color control exceeds the sidebar')}
+   if(view!=='stickyempty'){assert.equal(metrics.stickyNotes.colors[0].pinned,'true','pinned notes must appear first');assert(new Set(metrics.stickyNotes.colors.map(n=>n.background)).size>=3,'per-note colors must remain visually distinct')}
   }
   if(view.startsWith('taskmenu')){
    const panel=items['preview-task-menu-panel'];assert(panel.visible&&panel.width>=140&&panel.x>=0&&panel.x+panel.width<=width+1&&panel.y>=0&&panel.y+panel.height<=height+1,'task popup menu exceeds the viewport');assert(panel.scrollWidth<=panel.clientWidth+1,'task popup menu overflows horizontally');

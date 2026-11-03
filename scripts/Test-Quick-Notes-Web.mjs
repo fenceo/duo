@@ -65,8 +65,13 @@ assert.equal(field.value,'保存过程中继续输入');assert.equal(state('stic
 await ctx.saveQuickNotes();assert.equal(server.items[0].content,field.value);assert.equal(writes.at(-1).revision,1);assert.equal(state('stickyDirty'),false);
 state("chosen='another-task'");await ctx.loadStickyBoard();assert.equal(field.value,server.items[0].content);
 const done=document.querySelector('[data-note-done]');done.checked=true;done.onchange();await ctx.saveQuickNotes();assert.equal(server.items[0].done,true);
-document.querySelector('[data-sticky-color="blue"]').onclick();await ctx.saveQuickNotes();assert.equal(server.color,'blue');
-document.querySelector('[data-note-delete]').onclick();assert(!node('sticky-undo').classList.contains('hidden'));node('sticky-undo').onclick();await ctx.saveQuickNotes();assert.equal(server.items.length,1,'delete can be undone without losing note content');
+assert.equal(node('sticky-palette'),null,'board-wide color control is removed');
+const firstID=state('quickNotes.items[0].id');
+const firstColor=document.querySelector('[data-note-color]');firstColor.value='blue';firstColor.onchange();await ctx.saveQuickNotes();
+assert.equal(server.items[0].color,'blue');assert.equal(server.color,'neutral','changing one note never recolors the board');
+assert.equal(document.querySelector('[data-note-input]'),field,'changing color preserves the textarea and draft');
+assert.equal(document.querySelector('[data-note]').dataset.color,'blue');assert.equal(node('sticky-board').dataset.color,undefined);
+document.querySelector('[data-note-delete]').onclick();assert(!node('sticky-undo').classList.contains('hidden'));node('sticky-undo').onclick();await ctx.saveQuickNotes();assert.equal(server.items.length,1,'delete can be undone without losing note content');assert.equal(server.items[0].id,firstID);assert.equal(server.items[0].color,'blue');
 field=document.querySelector('[data-note-input]');
 offline=true;field.value='断网保留的草稿';field.oninput();await ctx.saveQuickNotes();assert.equal(field.value,'断网保留的草稿');assert.match(node('sticky-save-status').textContent,/未保存/);assert(!node('sticky-retry').classList.contains('hidden'));
 offline=false;node('sticky-retry').onclick();await tick();assert.equal(server.items[0].content,'断网保留的草稿');assert.equal(state('stickyDirty'),false);
@@ -78,6 +83,34 @@ ctx.confirm=()=>true;node('sticky-reload').onclick();await tick();assert.equal(d
 field=document.querySelector('[data-note-input]');field.value='已提交但响应丢失';field.oninput();
 server={...JSON.parse(state('JSON.stringify(stickyPayload())')),revision:server.revision+1};
 await ctx.saveQuickNotes();assert.equal(state('stickyDirty'),false);assert.equal(state('stickyConflict'),false);
+// Old board colors migrate to each legacy note, while explicit note colors remain independent.
+server={revision:server.revision+1,color:'yellow',items:[{id:'alpha',content:'旧便签一',done:false},{id:'beta',content:'旧便签二',done:false,color:''},{id:'gamma',content:'已有单独颜色',done:false,color:'purple',pinned:false}]};await ctx.loadStickyBoard(true);
+const row=id=>document.querySelector(`[data-note="${id}"]`),noteControl=(name,id)=>document.querySelector(`[data-note-${name}="${id}"]`);
+const displayedIDs=()=>Array.from(node('sticky-list').querySelectorAll('[data-note]'),item=>item.dataset.note);
+assert.equal(row('alpha').dataset.color,'yellow');assert.equal(row('beta').dataset.color,'yellow');assert.equal(row('gamma').dataset.color,'purple');
+assert.equal(noteControl('pin','alpha').getAttribute('aria-pressed'),'false');assert.equal(node('sticky-board').dataset.color,undefined,'legacy data never tints the entire sidebar');
+field=noteControl('input','alpha');const legacyInput=field;
+await ctx.loadStickyBoard();assert.equal(noteControl('input','alpha'),legacyInput,'canonical defaults avoid repainting unchanged legacy data');
+// A committed legacy response with omitted defaults and a different key order is identical.
+field.value='旧数据保存响应丢失';field.oninput();server.items[0]={done:false,content:field.value,id:'alpha'};server.revision++;
+await ctx.saveQuickNotes();assert.equal(state('stickyConflict'),false);assert.equal(state('stickyDirty'),false,'legacy fields normalize during lost-response recovery');
+const color=noteControl('color','alpha');color.value='blue';color.onchange();await ctx.saveQuickNotes();
+assert.equal(noteControl('input','alpha'),legacyInput);assert.equal(row('alpha').dataset.color,'blue');assert.equal(row('beta').dataset.color,'yellow');assert.equal(row('gamma').dataset.color,'purple');assert.equal(server.color,'yellow');
+node('sticky-new').onclick();const addedID=state('quickNotes.items.at(-1).id'),addedInput=noteControl('input',addedID);addedInput.value='新便签默认颜色';addedInput.oninput();await ctx.saveQuickNotes();
+assert.equal(server.items.at(-1).color,'neutral','new notes start neutral regardless of the old board color');
+const alphaInput=noteControl('input','alpha'),betaInput=noteControl('input','beta'),betaPin=noteControl('pin','beta');let pinFocus=0;betaPin.focus=()=>pinFocus++;
+betaPin.onclick();assert.equal(pinFocus,1,'pinning restores focus to its control');assert.equal(noteControl('input','beta'),betaInput);assert.equal(noteControl('input','alpha'),alphaInput,'pinning moves rows without recreating draft inputs');
+assert.deepEqual(displayedIDs(),['beta','alpha','gamma',addedID]);
+noteControl('pin','gamma').onclick();assert.deepEqual(displayedIDs(),['beta','gamma','alpha',addedID],'pinned notes keep their original relative order');
+assert.deepEqual(JSON.parse(state('JSON.stringify(quickNotes.items.map(n=>n.id))')),['alpha','beta','gamma',addedID],'display order never rewrites the underlying item order');
+await ctx.saveQuickNotes();await ctx.loadStickyBoard(true);assert.deepEqual(displayedIDs(),['beta','gamma','alpha',addedID]);assert.equal(noteControl('pin','beta').getAttribute('aria-pressed'),'true','pinning persists across reload');assert.equal(noteControl('color','alpha').value,'blue');
+noteControl('pin','beta').onclick();assert.deepEqual(displayedIDs(),['gamma','alpha','beta',addedID]);noteControl('pin','gamma').onclick();assert.deepEqual(displayedIDs(),['alpha','beta','gamma',addedID],'unpin restores underlying order');
+noteControl('pin','beta').onclick();noteControl('delete','beta').onclick();node('sticky-undo').onclick();await ctx.saveQuickNotes();
+assert.deepEqual(displayedIDs(),['beta','alpha','gamma',addedID]);assert.equal(server.items.find(n=>n.id==='beta').pinned,true);assert.equal(server.items.find(n=>n.id==='beta').color,'yellow','delete undo retains pinning and color');
+// A competing window changing only pin/color still conflicts and preserves the local draft.
+field=noteControl('input','alpha');field.value='颜色冲突时保留的本地草稿';field.oninput();server.revision++;server.items.find(n=>n.id==='gamma').color='green';server.items.find(n=>n.id==='gamma').pinned=true;
+await ctx.saveQuickNotes();assert.equal(state('stickyConflict'),true);assert.equal(noteControl('input','alpha'),field);assert.equal(field.value,'颜色冲突时保留的本地草稿');
+await ctx.loadStickyBoard(true);assert.equal(noteControl('color','gamma').value,'green');assert.equal(noteControl('pin','gamma').getAttribute('aria-pressed'),'true');
 // Untrusted text stays text, including markup that resembles event handlers.
 server={revision:server.revision+1,color:'neutral',items:[{id:'unsafe',content:'<img src=x onerror=alert(1)>',done:false}]};await ctx.loadStickyBoard(true);
 assert(!node('sticky-list').querySelector('img'));assert.match(node('sticky-list').querySelector('textarea').value,/<img/);
@@ -97,4 +130,4 @@ await ctx.showCreate();assert.equal(state('taskView'),'active');assert(node('sti
 let releaseRead;const savedAPI=ctx.api;ctx.api=path=>path==='sticky'?new Promise(resolve=>releaseRead=resolve):savedAPI(path);
 const loading=ctx.loadStickyBoard();field=document.querySelector('[data-note-input]');field.value='读取途中输入';field.oninput();releaseRead({revision:99,color:'yellow',items:[]});await loading;assert.equal(field.value,'读取途中输入');assert.equal(state('quickNotes.items[0].content'),'读取途中输入');
 state('authenticated=false;renewShellScope()');
-console.log('PASS: shared notes switch in the task sidebar; task/archive/trash/create transitions preserve drafts, with debounce/IME, save locks, completion/color/delete undo, conflict recovery, escaped text and late-read isolation. No model calls.');
+console.log('PASS: shared sidebar notes support stable pinning and independent colors; legacy colors, reload, delete undo, debounce/IME, save locks, lost-response/conflict recovery, draft-preserving navigation, escaped text and late-read isolation pass. No model calls.');

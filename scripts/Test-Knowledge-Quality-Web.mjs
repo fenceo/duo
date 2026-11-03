@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import {runInContext} from 'node:vm';
+import {createWebShellFixture} from './Web-Shell-Fixture.mjs';
+
+const {ctx,document,window,requests}=await createWebShellFixture();
+const node=id=>document.getElementById(id),run=source=>runInContext(source,ctx);
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}};
+assert.equal(requests.filter(request=>request.path==='/api/library/quality').length,0,'inspection must be explicitly requested');
+assert(node('settings-knowledge').contains(node('knowledge-quality-panel')));
+assert.match(node('knowledge-quality-panel').textContent,/不扫描未同步文件或历史归档/);
+node('library-dialog').showModal();ctx.showLibraryPage('settings');
+const empty={id:'curated:empty',title:'<img src=x onerror=bad()>',layer:'project',scope_key:'<project>',status:'observed'};
+const other={id:'curated:other',title:'同正文来源二',layer:'project',scope_key:'board',status:'verified'};
+const report={scanned:3,scan_limit:2000,scan_truncated:false,empty_count:1,duplicate_group_count:1,issues_truncated:false,empty:[empty],duplicate_groups:[{layer:'project',scope_key:'board',count:2,items:[{...empty,id:'curated:first',title:'同正文来源一'},other],items_truncated:false}],notice:'依据和适用条件仍可能不同，不会自动合并或删除。'};
+const gate=deferred();let calls=[];
+ctx.api=async(path,method)=>{calls.push({path,method});return gate.promise};
+const inspecting=ctx.inspectKnowledgeQuality();await ctx.inspectKnowledgeQuality();
+assert.equal(calls.length,1,'duplicate inspections are locked');assert.equal(calls[0].method,'GET');assert(node('knowledge-quality-run').disabled);
+gate.resolve(report);await inspecting;
+assert(!node('knowledge-quality-run').disabled);assert.match(node('knowledge-quality-state').textContent,/已检查 3 条.*缺少正文 1 条.*同正文候选 1 组/);
+assert.equal(node('knowledge-quality-results').querySelector('img'),null,'titles must remain text');assert.match(node('knowledge-quality-results').innerHTML,/&lt;project&gt;/);
+assert.match(node('knowledge-quality-notice').textContent,/不会自动合并或删除/);
+ctx.other=other;run("libraryHits=[{...other,hash:'stale-search-hash'}]");
+const currentDocument={...other,kind:'curated',content:'# 完整原文\n\n保留依据与适用条件。',task_id:'',task_title:'',revision:3,updated:Date.UTC(2026,10,3),origin:'curated',hash:'fixture-hash',snippet:''};
+ctx.api=async(path,method)=>{calls.push({path,method});assert(path.startsWith('library/document?'));assert(!path.includes('stale-search-hash'),'findings must open the current document after an older search');return currentDocument};
+node('knowledge-quality-results').querySelector('[data-quality-document="curated:other"]').dispatchEvent(new window.Event('click',{bubbles:true}));await tick();
+assert(!node('library-browse-panel').classList.contains('hidden'));assert.match(node('library-preview-content').textContent,/完整原文/);assert(!node('library-curated-edit').classList.contains('hidden'),'report opens the existing versioned document editor');
+assert(calls.every(call=>call.method==='GET'),'inspection and opening a result must not write');
+assert.equal(run("libraryHits.find(doc=>doc.id===other.id).hash"),'fixture-hash','citation retains the exact version that was read');
+assert.equal(run("libraryHits.find(doc=>doc.id===other.id).revision"),3);
+assert.equal(run("libraryHits.find(doc=>doc.id===other.id).updated"),currentDocument.updated);
+assert.equal(node('library-results').querySelector('footer span').textContent,new Date(currentDocument.updated).toLocaleDateString(),'the placeholder date is replaced by current metadata');
+const notices=[];ctx.notify=message=>notices.push(message);
+run("chosen='one';creatingTask=false;libraryTarget={task:chosen,create:false,selection,epoch:shellEpoch}");
+node('message').value='keep draft';
+ctx.api=async path=>{const query=new URLSearchParams(path.split('?')[1]);assert(path.startsWith('library/reference?'));assert.equal(query.get('hash'),'fixture-hash');throw Error('文档已更新，请重新读取。')};
+await ctx.citeLibrary(other.id);
+assert.equal(node('message').value,'keep draft','a changed document cannot silently cite unseen content');assert(notices.some(message=>message.includes('文档已更新')));
+
+const latePreview=deferred();ctx.api=()=>latePreview.promise;
+run("libraryHits=[{...other,kind:'curated',hash:'',revision:0,updated:0}]");
+const reading=ctx.previewLibrary(other.id),beforeSettings=node('library-results').innerHTML;
+ctx.showLibraryPage('settings');latePreview.resolve({...currentDocument,hash:'latest-read-hash'});await reading;
+assert.equal(node('library-results').innerHTML,beforeSettings,'finishing a read on another page does not rerender its old result list');
+assert(node('library-browse-panel').classList.contains('hidden'));
+assert.equal(run("libraryHits.find(doc=>doc.id===other.id).hash"),'latest-read-hash','the successful read still retains its version for citation');
+
+const supersededPreview=deferred();ctx.api=()=>supersededPreview.promise;
+run("libraryHits=[{...other,kind:'curated',hash:'',revision:0,updated:0}]");
+const obsolete=ctx.previewLibrary(other.id);
+run("clearLibraryPreview();libraryHits=[{...other,hash:'new-search-hash',revision:9}]");
+supersededPreview.resolve(currentDocument);await obsolete;
+assert.equal(run("libraryHits.find(doc=>doc.id===other.id).hash"),'new-search-hash','a superseded read cannot overwrite the newer result identity');
+
+ctx.api=async()=>({...report,scanned:2000,scan_truncated:true,issues_truncated:true,empty:[],duplicate_groups:[]});await ctx.inspectKnowledgeQuality();
+assert.match(node('knowledge-quality-state').textContent,/尚未覆盖全部条目/);assert.match(node('knowledge-quality-state').textContent,/仅显示部分条目/);
+assert.equal(node('knowledge-quality-results').children.length,0,'fresh results replace previous findings');
+ctx.api=async()=>{throw Error('synthetic unavailable')};await ctx.inspectKnowledgeQuality();assert.match(node('knowledge-quality-state').textContent,/检查失败.*synthetic unavailable/);assert(!node('knowledge-quality-run').disabled);
+
+const late=deferred();ctx.api=()=>late.promise;const pending=ctx.inspectKnowledgeQuality();
+node('library-dialog').close();node('library-dialog').showModal();node('knowledge-quality-state').textContent='new visit';late.resolve(report);await pending;
+assert.equal(node('knowledge-quality-state').textContent,'new visit','a closed dialog invalidates old results');assert(!node('knowledge-quality-run').disabled);
+const oldLogin=deferred();ctx.api=()=>oldLogin.promise;const stale=ctx.inspectKnowledgeQuality();run('shellEpoch++');node('knowledge-quality-state').textContent='new login';oldLogin.resolve(report);await stale;
+assert.equal(node('knowledge-quality-state').textContent,'new login','old requests cannot replace a new login');
+console.log('PASS: explicit read-only knowledge inspection, escaped and actionable findings, duplicate locks, bounds, failure retry, dialog and login isolation. Synthetic only.');

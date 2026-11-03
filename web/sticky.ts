@@ -1,4 +1,4 @@
-type QuickNote={id:string;content:string;done:boolean};
+type QuickNote={id:string;content:string;done:boolean;pinned:boolean;color:string};
 type QuickNoteBoard={revision:number;color:string;items:QuickNote[]};
 let quickNotes:QuickNoteBoard={revision:0,color:'neutral',items:[]};
 let stickyLoading=false,stickyReady=false,stickyDirty=false,stickySaving=false,stickyConflict=false,stickyError='',stickySaved='',stickyRequest=0,stickyGeneration=0,stickySequence=0;
@@ -14,7 +14,7 @@ function parseAppearance(raw:string|null):Appearance{
 function installStickyBoard(){
  element('trash-open').insertAdjacentHTML('afterend','<button id="sticky-tab" type="button" aria-controls="sticky-board" aria-pressed="false">便签</button>');
  element('sticky-tab').parentElement!.classList.add('task-navigation');
- element('task-list').insertAdjacentHTML('afterend',`<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-palette" role="group" aria-label="便签颜色">${stickyColors.map(([color,label])=>`<button type="button" data-sticky-color="${color}" aria-label="${label}" title="${label}" aria-pressed="false"><span></span></button>`).join('')}</div><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
+ element('task-list').insertAdjacentHTML('afterend',`<section id="sticky-board" class="sticky-board quick-notes hidden" data-collapsed="false" aria-labelledby="sticky-title"><header><strong id="sticky-title">共用便签</strong><span id="sticky-count"></span><button id="sticky-expand" type="button" aria-expanded="true" aria-controls="sticky-body" aria-label="收起便签" title="收起便签">⌄</button><button id="sticky-close" type="button" aria-label="返回任务列表" title="返回任务列表">←</button></header><div id="sticky-body"><div id="sticky-list" class="sticky-list"></div><button id="sticky-new" type="button">＋ 添加事项</button><footer class="sticky-save"><span id="sticky-save-status" role="status" aria-live="polite">正在读取…</span><button id="sticky-retry" type="button" class="hidden">重试</button><button id="sticky-reload" type="button" class="hidden">重新加载</button><button id="sticky-undo" type="button" class="hidden">撤销删除</button></footer></div></section>`);
  button('sticky-tab').onclick=openStickyBoard;
  button('sticky-close').onclick=()=>closeStickyBoard();
  const showTrash=button('trash-open').onclick;button('trash-open').onclick=e=>{if(taskView==='sticky')closeStickyBoard(false);showTrash?.call(button('trash-open'),e)};
@@ -22,7 +22,6 @@ function installStickyBoard(){
   const board=element('sticky-board'),collapsed=board.dataset.collapsed!=='true';board.dataset.collapsed=String(collapsed);element('sticky-body').classList.toggle('hidden',collapsed);
   button('sticky-expand').setAttribute('aria-expanded',String(!collapsed));button('sticky-expand').setAttribute('aria-label',collapsed?'展开便签':'收起便签');button('sticky-expand').title=collapsed?'展开便签':'收起便签';button('sticky-expand').textContent=collapsed?'›':'⌄';
  };
- element('sticky-palette').querySelectorAll<HTMLButtonElement>('button').forEach(b=>b.onclick=()=>{if(!stickyReady)return;quickNotes.color=b.dataset.stickyColor!;touchSticky();syncStickyState()});
  button('sticky-new').onclick=addQuickNote;
  button('sticky-retry').onclick=()=>{if(stickyReady){stickyError='';void saveQuickNotes()}else void loadStickyBoard()};
  button('sticky-reload').onclick=()=>{if(!stickyDirty||confirm('重新加载会放弃便签中尚未保存的修改。请先复制需要保留的内容，是否继续？'))void loadStickyBoard(true)};
@@ -49,9 +48,14 @@ function syncStickySidebar(){
  if(active){element('search-summary').classList.add('hidden');button('search-clear').classList.add('hidden')}
  button('sticky-tab').classList.toggle('selected',active);button('sticky-tab').setAttribute('aria-pressed',String(active));
 }
-function stickyPayload(){return {color:quickNotes.color,items:quickNotes.items.filter(n=>n.content.trim()).map(n=>({...n}))}}
+function stickyColor(value:string){return stickyColors.some(([color])=>color===value)?value:'neutral'}
+function stickyPayload(board=quickNotes){
+ // Canonical keys and defaults keep legacy boards and lost-response retries comparable.
+ const color=stickyColor(board.color);
+ return {color,items:board.items.filter(n=>n.content.trim()).map(n=>({id:n.id,content:n.content,done:n.done===true,pinned:n.pinned===true,color:n.color?stickyColor(n.color):color}))};
+}
 function stickyFingerprint(){return JSON.stringify(stickyPayload())}
-function blankQuickNote():QuickNote{return {id:'n_'+Date.now().toString(36)+'_'+(++stickySequence)+'_'+Math.random().toString(36).slice(2,9),content:'',done:false}}
+function blankQuickNote():QuickNote{return {id:'n_'+Date.now().toString(36)+'_'+(++stickySequence)+'_'+Math.random().toString(36).slice(2,9),content:'',done:false,pinned:false,color:'neutral'}}
 function touchSticky(){
  stickyGeneration++;stickyDirty=stickyFingerprint()!==stickySaved;
  clearTimeout(stickyTimer);if(!stickyError&&!stickyConflict)stickyTimer=setTimeout(()=>void saveQuickNotes(),600);syncStickyState();
@@ -61,8 +65,8 @@ async function loadStickyBoard(force=false){
  stickyLoading=true;const request=++stickyRequest,epoch=shellEpoch,generation=stickyGeneration;
  try{
   const board=await api<QuickNoteBoard>('sticky');if(request!==stickyRequest||!shellCurrent(epoch)||generation!==stickyGeneration||!force&&element('sticky-list').contains(document.activeElement))return;
-  const changed=!stickyReady||JSON.stringify({color:board.color,items:board.items})!==stickySaved;
-  if(changed||force)quickNotes=board;else quickNotes.revision=board.revision;
+  const payload=stickyPayload(board),changed=!stickyReady||JSON.stringify(payload)!==stickySaved;
+  if(changed||force)quickNotes={...payload,revision:board.revision};else quickNotes.revision=board.revision;
   stickyReady=true;stickyDirty=false;stickyError='';stickyConflict=false;stickySaved=stickyFingerprint();
   if(changed||force)renderStickyBoard();else syncStickyState();
  }catch(e){if(request===stickyRequest&&shellCurrent(epoch)){stickyError='读取失败：'+(e as Error).message;syncStickyState()}}
@@ -79,7 +83,7 @@ async function saveQuickNotes(){
   // If the response was lost, a retry can observe the identical committed board
   // without treating it as somebody else's edit or writing it twice.
   if((e as {status?:number}).status===409){
-   try{const board=await api<QuickNoteBoard>('sticky');if(JSON.stringify({color:board.color,items:board.items})===fingerprint){quickNotes.revision=board.revision;stickySaved=fingerprint;stickyDirty=stickyFingerprint()!==stickySaved;saved=true}else stickyConflict=true}catch{stickyConflict=true}
+   try{const board=await api<QuickNoteBoard>('sticky');if(JSON.stringify(stickyPayload(board))===fingerprint){quickNotes.revision=board.revision;stickySaved=fingerprint;stickyDirty=stickyFingerprint()!==stickySaved;saved=true}else stickyConflict=true}catch{stickyConflict=true}
   }
   if(!saved)stickyError=stickyConflict?'其他窗口已修改，草稿保留；请复制需要的内容后重新加载。':'未保存：'+(e as Error).message;
  }finally{
@@ -87,9 +91,8 @@ async function saveQuickNotes(){
  }
 }
 function syncStickyState(){
- const board=element('sticky-board');if(!board)return;board.dataset.color=quickNotes.color;
+ const board=element('sticky-board');if(!board)return;
  const count=quickNotes.items.filter(n=>n.content.trim()&&!n.done).length;element('sticky-count').textContent=count?count+' 项':'';
- element('sticky-palette').querySelectorAll<HTMLButtonElement>('button').forEach(b=>{b.disabled=!stickyReady;b.setAttribute('aria-pressed',String(b.dataset.stickyColor===quickNotes.color))});
  button('sticky-new').disabled=!stickyReady||quickNotes.items.length>=500;
  const status=element('sticky-save-status');status.textContent=stickyError||(stickySaving?'保存中…':stickyDirty?'待保存…':stickyReady?'已保存 · 共用便签':'正在读取…');status.classList.toggle('error',!!stickyError);
  button('sticky-retry').classList.toggle('hidden',!stickyError||stickyConflict);button('sticky-retry').disabled=stickySaving;
@@ -104,10 +107,17 @@ function addQuickNote(){
 }
 function fitQuickNote(field:HTMLTextAreaElement){field.style.height='auto';if(Number.isFinite(field.scrollHeight))field.style.height=Math.max(32,Math.min(96,field.scrollHeight))+'px'}
 function fitQuickNotes(){const fields=Array.from(element('sticky-list').querySelectorAll<HTMLTextAreaElement>('textarea'));fields.forEach(field=>field.style.height='auto');const heights=fields.map(field=>Math.max(32,Math.min(96,field.scrollHeight)));fields.forEach((field,i)=>{if(Number.isFinite(heights[i]))field.style.height=heights[i]+'px'})}
+function orderedQuickNotes(){return [...quickNotes.items.filter(n=>n.pinned),...quickNotes.items.filter(n=>!n.pinned)]}
+function orderStickyRows(focus?:HTMLElement){
+ const list=element('sticky-list'),rows=new Map(Array.from(list.querySelectorAll<HTMLElement>('[data-note]')).map(row=>[row.dataset.note,row]));
+ // Move existing rows rather than replacing textareas, preserving draft nodes and selection.
+ for(const note of orderedQuickNotes()){const row=rows.get(note.id);if(row)list.appendChild(row)}
+ focus?.focus({preventScroll:true});
+}
 function renderStickyBoard(){
  const list=element('sticky-list');if(!list)return;
  if(stickyReady&&!quickNotes.items.length)quickNotes.items.push(blankQuickNote());
- list.innerHTML=quickNotes.items.map(n=>`<div class="quick-note" data-note="${escapeHTML(n.id)}" data-done="${n.done}"><input type="checkbox" data-note-done="${escapeHTML(n.id)}" aria-label="标记便签完成" ${n.done?'checked':''}><textarea id="sticky-input-${escapeHTML(n.id)}" data-note-input="${escapeHTML(n.id)}" rows="1" maxlength="8000" aria-label="便签内容" placeholder="写下备忘…">${escapeHTML(n.content)}</textarea><button type="button" data-note-delete="${escapeHTML(n.id)}" aria-label="删除这条便签" title="删除">×</button></div>`).join('');
+ list.innerHTML=orderedQuickNotes().map(n=>`<div class="quick-note" data-note="${escapeHTML(n.id)}" data-done="${n.done}" data-pinned="${n.pinned}" data-color="${escapeHTML(n.color)}"><input type="checkbox" data-note-done="${escapeHTML(n.id)}" aria-label="标记便签完成" ${n.done?'checked':''}><textarea id="sticky-input-${escapeHTML(n.id)}" data-note-input="${escapeHTML(n.id)}" rows="1" maxlength="8000" aria-label="便签内容" placeholder="写下备忘…">${escapeHTML(n.content)}</textarea><button type="button" data-note-delete="${escapeHTML(n.id)}" aria-label="删除这条便签" title="删除">×</button><div class="quick-note-actions"><button type="button" data-note-pin="${escapeHTML(n.id)}" aria-pressed="${n.pinned}" aria-label="${n.pinned?'取消置顶这条便签':'置顶这条便签'}" title="${n.pinned?'取消置顶':'置顶'}">${n.pinned?'已置顶':'置顶'}</button><select data-note-color="${escapeHTML(n.id)}" aria-label="这条便签的颜色" title="这条便签的颜色">${stickyColors.map(([color,label])=>`<option value="${color}" ${color===n.color?'selected':''}>${label}</option>`).join('')}</select></div></div>`).join('');
  list.querySelectorAll<HTMLTextAreaElement>('[data-note-input]').forEach(field=>{
   field.value=quickNotes.items.find(n=>n.id===field.dataset.noteInput)?.content||'';
   let composing=false;const update=()=>{const note=quickNotes.items.find(n=>n.id===field.dataset.noteInput);if(!note)return;note.content=field.value;fitQuickNote(field);touchSticky();if(composing)clearTimeout(stickyTimer)};
@@ -116,6 +126,8 @@ function renderStickyBoard(){
   field.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing){e.preventDefault();if(!stickyError)void saveQuickNotes();addQuickNote()}};fitQuickNote(field);
  });
  list.querySelectorAll<HTMLInputElement>('[data-note-done]').forEach(box=>box.onchange=()=>{const note=quickNotes.items.find(n=>n.id===box.dataset.noteDone);if(!note)return;note.done=box.checked;box.closest<HTMLElement>('.quick-note')!.dataset.done=String(note.done);touchSticky()});
+ list.querySelectorAll<HTMLSelectElement>('[data-note-color]').forEach(select=>select.onchange=()=>{const note=quickNotes.items.find(n=>n.id===select.dataset.noteColor);if(!note)return;note.color=stickyColor(select.value);select.closest<HTMLElement>('.quick-note')!.dataset.color=note.color;touchSticky()});
+ list.querySelectorAll<HTMLButtonElement>('[data-note-pin]').forEach(b=>b.onclick=()=>{const note=quickNotes.items.find(n=>n.id===b.dataset.notePin);if(!note)return;note.pinned=!note.pinned;b.closest<HTMLElement>('.quick-note')!.dataset.pinned=String(note.pinned);b.setAttribute('aria-pressed',String(note.pinned));b.setAttribute('aria-label',note.pinned?'取消置顶这条便签':'置顶这条便签');b.title=note.pinned?'取消置顶':'置顶';b.textContent=note.pinned?'已置顶':'置顶';touchSticky();orderStickyRows(b)});
  list.querySelectorAll<HTMLButtonElement>('[data-note-delete]').forEach(b=>b.onclick=()=>{const index=quickNotes.items.findIndex(n=>n.id===b.dataset.noteDelete);if(index<0)return;const [note]=quickNotes.items.splice(index,1);stickyDeleted=note.content.trim()?{note,index}:null;touchSticky();renderStickyBoard();const target=list.querySelector<HTMLTextAreaElement>('[data-note-input]');target?.focus()});
  syncStickyState();
 }
